@@ -485,7 +485,8 @@ export default function FoodHygieneTempLogger({
                     <TableCell>{l.initials}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <EditLog logs={logs} setLogs={setLogs} targets={targets} log={l} />
+                        <EditLog log={l} setLogs={setLogs} targets={targets} />
+
                         <Button variant="ghost" size="icon" onClick={() => onDelete(l.id)} className="hover:bg-red-50 hover:text-red-600">
                           <Trash2Icon className="h-4 w-4" />
                         </Button>
@@ -817,7 +818,7 @@ function EditLog({
   targets,
 }: {
   log: TempLog;
-  setLogs: React.Dispatch<React.SetStateAction<TempLog[]>>;
+  setLogs: (fn: (prev: TempLog[]) => TempLog[]) => void;
   targets: Record<TempCategory, TargetRange>;
 }) {
   const [open, setOpen] = useState(false);
