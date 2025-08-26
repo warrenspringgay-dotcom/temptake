@@ -1,882 +1,733 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "./ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
-import { Badge } from "./ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "./ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "./ui/tabs";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "./ui/table";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
-import { Switch } from "./ui/switch";
+import NavTabs from "@/components/NavTabs";
 
-import {
-  Calendar as CalendarIcon,
-  Download as DownloadIcon,
-  Plus as PlusIcon,
-  Thermometer as ThermometerIcon,
-  Trash2 as Trash2Icon,
-  Pencil as Edit3Icon,
-  Settings2 as Settings2Icon,
-  CheckCheck as CheckCheckIcon,
-} from "lucide-react";
+/* ---------------- Types ---------------- */
 
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ReferenceArea,
-} from "recharts";
-import { format, startOfWeek, parseISO } from "date-fns";
-
-/* ===================== Types ===================== */
-export type TempCategory =
+type TempCategory =
   | "Fridge"
   | "Freezer"
-  | "Hot Hold"
-  | "Cold Hold"
-  | "Delivery"
-  | "Probe Calibration";
+  | "Cook"
+  | "Hot hold"
+  | "Chill"
+  | "Probe"
+  | "Ambient";
 
-export type TempLog = {
+type TargetRange = {
+  min?: number | null; // °C
+  max?: number | null; // °C
+  label?: string;
+};
+
+type TempLog = {
   id: string;
-  date: string; // yyyy-mm-dd
-  time: string; // HH:mm
-  item: string;
+  timeISO: string; // ISO datetime string
   category: TempCategory;
+  item: string;
   location: string;
-  temperature: number; // °C
-  initials: string;
-  correctiveAction?: string;
-  notes?: string;
+  tempC: number;
   pass: boolean;
-  signedBy?: string;
+  initials?: string | null;
+  notes?: string | null;
 };
 
-export type TargetRange = { min?: number | null; max?: number | null };
-
-/* ===================== Defaults ===================== */
-const defaultTargets: Record<TempCategory, TargetRange> = {
-  Fridge: { min: null, max: 5 },
-  Freezer: { min: null, max: -18 },
-  "Hot Hold": { min: 63, max: null },
-  "Cold Hold": { min: null, max: 8 },
-  Delivery: { min: null, max: 8 },
-  "Probe Calibration": { min: 0, max: 1 },
+type Catalogs = {
+  items: string[];
+  locations: string[];
+  staffInitials: string[];
 };
 
-const tempUnit = "°C";
-
-/* ===================== Utils ===================== */
-function uid() {
-  return Math.random().toString(36).slice(2);
-}
-
-function withinRange(value: number, range: TargetRange, category: TempCategory) {
-  if (category === "Freezer") {
-    const max = typeof range.max === "number" ? range.max : -18;
-    return value <= max;
-  }
-  const aboveMin = range.min == null || value >= range.min;
-  const belowMax = range.max == null || value <= range.max;
-  return aboveMin && belowMax;
-}
-
-function csvDownload(filename: string, rows: (string | number)[][]) {
-  const csv = rows
-    .map((r) =>
-      r
-        .map((c) => {
-          const s = String(c ?? "");
-          return s.includes(",") || s.includes("\n") || s.includes('"')
-            ? `"${s.replace(/"/g, '""')}"`
-            : s;
-        })
-        .join(","),
-    )
-    .join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-/* ===================== Simple UI bits ===================== */
-const CategoryBadge: React.FC<{ category: TempCategory }> = ({ category }) => (
-  <Badge variant="secondary" className="rounded-2xl px-3 text-xs">
-    {category}
-  </Badge>
-);
-
-const PassPill: React.FC<{ pass: boolean }> = ({ pass }) => (
-  <span
-    className={`inline-flex items-center gap-1 rounded-2xl px-2.5 py-1 text-xs font-medium ${
-      pass ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
-    }`}
-  >
-    <ThermometerIcon className="h-3 w-3" />
-    {pass ? "Pass" : "Fail"}
-  </span>
-);
-
-/* ===================== Seed (deterministic) ===================== */
-const seed: TempLog[] = [
-  {
-    id: uid(),
-    date: "2024-01-01",
-    time: "08:00",
-    item: "Fridge 1",
-    category: "Fridge",
-    location: "Kitchen",
-    temperature: 3.2,
-    initials: "AB",
-    pass: true,
-    notes: "",
-  },
-  {
-    id: uid(),
-    date: "2024-01-01",
-    time: "09:00",
-    item: "Hot Hold Bain Marie",
-    category: "Hot Hold",
-    location: "Servery",
-    temperature: 64.5,
-    initials: "CD",
-    pass: true,
-  },
-  {
-    id: uid(),
-    date: "2024-01-01",
-    time: "07:30",
-    item: "Freezer 2",
-    category: "Freezer",
-    location: "Stores",
-    temperature: -16.0,
-    initials: "EF",
-    pass: false,
-    correctiveAction: "Adjusted thermostat and kept door closed. Recheck in 1h.",
-  },
-];
-
-/* ===================== SSR-safe localStorage hook ===================== */
-function useLocalState<T>(key: string, init: T) {
-  const [state, setState] = useState<T>(init);
-
-  // Load after mount
-  useEffect(() => {
-    try {
-      const raw = typeof window !== "undefined" ? window.localStorage.getItem(key) : null;
-      if (raw) setState(JSON.parse(raw) as T);
-    } catch {
-      // ignore
-    }
-  }, [key]);
-
-  // Persist on change
-  useEffect(() => {
-    try {
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(key, JSON.stringify(state));
-      }
-    } catch {
-      // ignore
-    }
-  }, [key, state]);
-
-  return [state, setState] as const;
-}
-
-/* ===================== Main Component ===================== */
-export default function FoodHygieneTempLogger({
-  brandName = "TempTake",
-  brandAccent = "",
-  logoUrl,
-}: {
+type Props = {
   brandName?: string;
   brandAccent?: string;
   logoUrl?: string;
-}) {
-  // hydration guards
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => setHydrated(true), []);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+};
 
-  // persisted state
-  const [targets, setTargets] = useLocalState<Record<TempCategory, TargetRange>>("fh_targets", defaultTargets);
-  const [logs, setLogs] = useLocalState<TempLog[]>("fh_logs", seed);
-  const [signatureRequired, setSignatureRequired] = useLocalState<boolean>("fh_signature_required", true);
+/* ---------------- Defaults ---------------- */
 
-  // filters
-  const [query, setQuery] = useState("");
-  const [dateFrom, setDateFrom] = useState<string | null>(null);
-  const [dateTo, setDateTo] = useState<string | null>(null);
-  const [categoryFilter, setCategoryFilter] = useState<TempCategory | "All">("All");
-  const [locationFilter, setLocationFilter] = useState<string | "All">("All");
+const DEFAULT_TARGETS: Record<TempCategory, TargetRange> = {
+  Fridge: { min: null, max: 5, label: "≤ 5°C" },
+  Freezer: { min: null, max: -18, label: "≤ -18°C" },
+  Cook: { min: 75, max: null, label: "≥ 75°C" },
+  "Hot hold": { min: 63, max: null, label: "≥ 63°C" },
+  Chill: { min: null, max: 8, label: "≤ 8°C" },
+  Probe: { min: null, max: 5, label: "≤ 5°C" },
+  Ambient: { min: null, max: null, label: "N/A" },
+};
 
-  const locations = useMemo(() => {
-    const s = new Set<string>();
-    logs.forEach((l) => s.add(l.location));
-    return Array.from(s);
-  }, [logs]);
+/* ---------------- Utilities ---------------- */
 
-  const filtered = useMemo(() => {
-    return logs.filter((l) => {
-      if (query && !`${l.item} ${l.location} ${l.initials}`.toLowerCase().includes(query.toLowerCase())) return false;
-      if (categoryFilter !== "All" && l.category !== categoryFilter) return false;
-      if (locationFilter !== "All" && l.location !== locationFilter) return false;
-      if (dateFrom && l.date < dateFrom) return false;
-      if (dateTo && l.date > dateTo) return false;
-      return true;
-    });
-  }, [logs, query, categoryFilter, locationFilter, dateFrom, dateTo]);
+const uid = () => Math.random().toString(36).slice(2);
+const toISODate = (d: Date) => d.toISOString().slice(0, 10);
 
-  const chartData = useMemo(() => {
-    return [...filtered]
-      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
-      .map((l) => ({ ...l, label: `${l.date} ${l.time}` }));
-  }, [filtered]);
-
-  // KPIs
-  const lastEntry = useMemo(() => {
-    if (!logs.length) return null;
-    const sortedDesc = [...logs].sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
-    return sortedDesc[0];
-  }, [logs]);
-
-  const weeklyCount = useMemo(() => {
-    const start = startOfWeek(new Date(), { weekStartsOn: 1 });
-    return logs.filter((l) => parseISO(l.date) >= start).length;
-  }, [logs]);
-
-  const missingDaysLast7 = useMemo(() => {
-    const have = new Set(logs.map((l) => l.date));
-    const out: string[] = [];
-    const today = new Date();
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() - i);
-      const iso = d.toISOString().slice(0, 10);
-      if (!have.has(iso)) out.push(iso);
+// simple localStorage hook (stringify/parse)
+function useLocalState<T>(key: string, initial: T) {
+  const [state, setState] = useState<T>(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? (JSON.parse(raw) as T) : initial;
+    } catch {
+      return initial;
     }
-    return out;
-  }, [logs]);
+  });
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify(state));
+  }, [key, state]);
+  return [state, setState] as const;
+}
 
-  const onDelete = (id: string) => setLogs((prev) => prev.filter((l) => l.id !== id));
+function evaluatePass(category: TempCategory, tempC: number, targets: Record<TempCategory, TargetRange>) {
+  const t = targets[category] ?? {};
+  const hasMin = typeof t.min === "number";
+  const hasMax = typeof t.max === "number";
+  if (!hasMin && !hasMax) return true;
+  if (hasMin && tempC < (t.min as number)) return false;
+  if (hasMax && tempC > (t.max as number)) return false;
+  return true;
+}
 
-  const exportCSV = () => {
-    const header = [
-      "Date",
-      "Time",
-      "Category",
-      "Item",
-      "Location",
-      `Temperature (${tempUnit})`,
-      "Pass",
-      "Initials",
-      "Corrective Action",
-      "Notes",
-      "Signature",
-    ];
-    const rows = filtered.map((l) => [
-      l.date,
-      l.time,
-      l.category,
-      l.item,
-      l.location,
-      l.temperature,
-      l.pass ? "Pass" : "Fail",
-      l.initials,
-      l.correctiveAction ?? "",
-      l.notes ?? "",
-      l.signedBy ?? "",
-    ]);
-    csvDownload(`temperature-logs_${dateFrom ?? ""}-${dateTo ?? ""}.csv`, [header, ...rows]);
-  };
+function safeISOFrom(date?: string, time?: string): string | null {
+  try {
+    if (date && time) return new Date(`${date}T${time}:00`).toISOString();
+    if (date) return new Date(`${date}T00:00:00`).toISOString();
+  } catch {}
+  return null;
+}
 
-  // Deterministic first paint
-  if (!hydrated) {
-    return (
-      <div className="min-h-screen w-full bg-neutral-50 p-6">
-        <div className="mx-auto max-w-7xl space-y-6">
-          <header className="flex items-center gap-3">
-            {logoUrl && <img src={logoUrl} alt={brandName} className="h-16 w-auto" style={{ objectFit: "contain" }} />}
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight">{brandName}</h1>
-              <p className="text-sm text-neutral-600">Food hygiene temperature logs (UK HACCP-friendly)</p>
-            </div>
-          </header>
-          <Card className="rounded-2xl">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Loading…</CardTitle>
-            </CardHeader>
-          </Card>
-        </div>
-      </div>
-    );
-  }
+/* ---------------- SVG Bar Chart ---------------- */
+
+function EntriesBarChart({
+  data,
+  width = 680,
+  height = 160,
+}: {
+  data: Array<{ date: string; count: number }>;
+  width?: number;
+  height?: number;
+}) {
+  const padding = { top: 20, right: 12, bottom: 24, left: 28 };
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+  const maxCount = Math.max(1, ...data.map((d) => d.count));
+  const barW = innerW / Math.max(1, data.length);
 
   return (
-    <div className="min-h-screen w-full bg-neutral-50 p-6">
-      <style>{`:root { --brand-accent: ${brandAccent}; }`}</style>
-      <div className="mx-auto max-w-7xl space-y-6">
-        {/* Header */}
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            {logoUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={logoUrl} alt={brandName} className="h-16 sm:h-20 md:h-24 w-auto" style={{ objectFit: "contain" }} />
-            )}
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Entries per day bar chart">
+      <rect x="0" y="0" width={width} height={height} fill="white" rx="12" />
+      {/* y-axis labels */}
+      <g transform={`translate(${padding.left - 6}, ${padding.top})`} fontSize="10" fill="#475569">
+        <text x="-6" y={innerH} textAnchor="end">0</text>
+        <text x="-6" y={innerH * 0.5} textAnchor="end">{Math.ceil(maxCount / 2)}</text>
+        <text x="-6" y={0} textAnchor="end">{maxCount}</text>
+      </g>
+      {/* grid lines */}
+      <g transform={`translate(${padding.left}, ${padding.top})`} stroke="#e5e7eb">
+        <line x1="0" y1={innerH} x2={innerW} y2={innerH} />
+        <line x1="0" y1={innerH * 0.5} x2={innerW} y2={innerH * 0.5} />
+        <line x1="0" y1={0} x2={innerW} y2={0} />
+      </g>
+      {/* bars + x labels */}
+      <g transform={`translate(${padding.left}, ${padding.top})`}>
+        {data.map((d, i) => {
+          const h = (d.count / maxCount) * innerH;
+          const x = i * barW + 2;
+          const y = innerH - h;
+          return (
+            <g key={d.date}>
+              <rect
+                x={x}
+                y={y}
+                width={Math.max(1, barW - 4)}
+                height={h}
+                fill="#0ea5e9"
+                rx="3"
+              />
+              {/* x labels every few days */}
+              {data.length <= 14 || i % 2 === 0 ? (
+                <text
+                  x={x + Math.max(1, barW - 4) / 2}
+                  y={innerH + 14}
+                  textAnchor="middle"
+                  fontSize="9"
+                  fill="#64748b"
+                >
+                  {d.date.slice(5)}
+                </text>
+              ) : null}
+            </g>
+          );
+        })}
+      </g>
+    </svg>
+  );
+}
+
+/* ---------------- Main Component ---------------- */
+
+export default function FoodTempLogger({
+  brandName = "TempTake",
+  brandAccent = "#2563EB",
+  logoUrl = "/temptake-192.png",
+}: Props) {
+  // UI state
+  const [quickOpen, setQuickOpen] = useState<boolean>(false);
+  const [fullOpen, setFullOpen] = useState<boolean>(false);
+
+  // Catalogs & targets
+  const [catalogs, setCatalogs] = useLocalState<Catalogs>("tt_catalogs", {
+    items: ["Fridge 1", "Fridge 2", "Freezer 1", "Bain Marie", "Probe 1"],
+    locations: ["Kitchen", "Stores", "Back Room"],
+    staffInitials: ["AB", "CD", "EF"],
+  });
+  const [targets, setTargets] = useLocalState<Record<TempCategory, TargetRange>>(
+    "tt_targets",
+    DEFAULT_TARGETS
+  );
+
+  // Logs (may include legacy shape from previous versions)
+  const [logs, setLogs] = useLocalState<TempLog[]>("tt_logs", []);
+
+  /**
+   * One-time **migration** for legacy logs in localStorage so we never crash on
+   * `.slice()` of undefined fields like `timeISO`.
+   * - Backfills `timeISO` from (date,time) or other legacy fields.
+   * - Maps `temp`/`temp_c`/`temperature` into `tempC`.
+   * - Computes `pass` if missing (using current targets).
+   * - Ensures `category` is one of our TempCategory values.
+   */
+  useEffect(() => {
+    setLogs((prev) => {
+      if (!Array.isArray(prev) || prev.length === 0) return prev;
+
+      let changed = false;
+      const migrated: TempLog[] = prev.map((raw: any) => {
+        const old = raw ?? {};
+        let timeISO: string | null =
+          typeof old.timeISO === "string" && old.timeISO ? old.timeISO : null;
+
+        if (!timeISO) {
+          const legacyISO: string | null =
+            (typeof old.time === "string" && old.time) ? old.time :
+            (typeof old.time_iso === "string" && old.time_iso) ? old.time_iso :
+            null;
+          if (legacyISO) timeISO = legacyISO;
+        }
+
+        if (!timeISO) {
+          const guess = safeISOFrom(old.date as string | undefined, old.timeStr as string | undefined);
+          if (guess) timeISO = guess;
+        }
+        if (!timeISO && typeof old.date === "string") {
+          const guess = safeISOFrom(old.date as string, undefined);
+          if (guess) timeISO = guess;
+        }
+        if (!timeISO) {
+          try { timeISO = new Date().toISOString(); } catch { timeISO = null; }
+        }
+
+        let category: TempCategory = "Fridge";
+        if (typeof old.category === "string" && old.category) {
+          const c = old.category as string;
+          if (["Fridge","Freezer","Cook","Hot hold","Chill","Probe","Ambient"].includes(c)) {
+            category = c as TempCategory;
+          } else if (c.toLowerCase() === "hot hold" || c.toLowerCase() === "hot-hold") {
+            category = "Hot hold";
+          } else {
+            // some older names map heuristically
+            const lower = c.toLowerCase();
+            if (lower.includes("freez")) category = "Freezer";
+            else if (lower.includes("cook")) category = "Cook";
+            else if (lower.includes("chill")) category = "Chill";
+            else if (lower.includes("probe")) category = "Probe";
+            else if (lower.includes("ambient")) category = "Ambient";
+            else category = "Fridge";
+          }
+        } else if (typeof old.type === "string") {
+          // very old field name
+          const t = old.type as string;
+          if (["Fridge","Freezer","Cook","Hot hold","Chill","Probe","Ambient"].includes(t)) {
+            category = t as TempCategory;
+          }
+        }
+
+        const tempC =
+          typeof old.tempC === "number" ? old.tempC :
+          typeof old.temp_c === "number" ? old.temp_c :
+          typeof old.temperature === "number" ? old.temperature :
+          typeof old.temp === "string" && old.temp.trim() ? parseFloat(old.temp) :
+          0;
+
+        const pass =
+          typeof old.pass === "boolean" ? old.pass :
+          evaluatePass(category, tempC, DEFAULT_TARGETS);
+
+        const item = (old.item ?? old.name ?? "").toString();
+        const location = (old.location ?? old.place ?? "").toString();
+        const initials = typeof old.initials === "string" ? old.initials : null;
+        const notes = typeof old.notes === "string" ? old.notes : null;
+
+        const normalized: TempLog = {
+          id: typeof old.id === "string" && old.id ? old.id : uid(),
+          timeISO: timeISO ?? new Date().toISOString(),
+          category,
+          item,
+          location,
+          tempC: Number.isFinite(tempC) ? tempC : 0,
+          pass,
+          initials,
+          notes,
+        };
+
+        // Detect if anything changed from the stored raw
+        const changedThis =
+          !old.timeISO ||
+          old.tempC !== normalized.tempC ||
+          old.pass !== normalized.pass ||
+          old.category !== normalized.category;
+        if (changedThis) changed = true;
+
+        return normalized;
+      });
+
+      return changed ? migrated : prev;
+    });
+    // run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Filters
+  const [search, setSearch] = useState("");
+  const [from, setFrom] = useState<string>(() => toISODate(new Date(new Date().getTime() - 13 * 86400000)));
+  const [to, setTo] = useState<string>(() => toISODate(new Date()));
+  const [categoryFilter, setCategoryFilter] = useState<TempCategory | "All">("All");
+
+  // Quick form state
+  const [qForm, setQForm] = useState({
+    date: toISODate(new Date()),
+    time: new Date().toTimeString().slice(0, 5),
+    category: "Fridge" as TempCategory,
+    item: "",
+    location: "",
+    temp: "",
+    initials: "",
+    notes: "",
+  });
+
+  // Full form state
+  const [fForm, setFForm] = useState({
+    date: toISODate(new Date()),
+    time: new Date().toTimeString().slice(0, 5),
+    category: "Fridge" as TempCategory,
+    item: "",
+    location: "",
+    temp: "",
+    initials: "",
+    notes: "",
+  });
+
+  // Derived: filtered logs (defensive on timeISO)
+  const filtered = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    const start = from ? `${from}T00:00:00` : "";
+    const end = to ? `${to}T23:59:59` : "";
+    return logs.filter((l) => {
+      const tiso = typeof l.timeISO === "string" ? l.timeISO : "";
+      if (from && tiso < start) return false;
+      if (to && tiso > end) return false;
+      if (categoryFilter !== "All" && l.category !== categoryFilter) return false;
+      if (!s) return true;
+      return (
+        l.item.toLowerCase().includes(s) ||
+        l.location.toLowerCase().includes(s) ||
+        (l.initials ?? "").toLowerCase().includes(s)
+      );
+    });
+  }, [logs, search, from, to, categoryFilter]);
+
+  // Chart data
+  const chartData = useMemo(() => {
+    const start = new Date(`${from}T00:00:00`);
+    const end = new Date(`${to}T00:00:00`);
+    const days: string[] = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      days.push(toISODate(d));
+    }
+    const counts = new Map<string, number>();
+    for (const day of days) counts.set(day, 0);
+    for (const l of filtered) {
+      const tiso = typeof l.timeISO === "string" ? l.timeISO : "";
+      const d = tiso ? tiso.slice(0, 10) : "";
+      if (d) counts.set(d, (counts.get(d) ?? 0) + 1);
+    }
+    return days.map((d) => ({ date: d, count: counts.get(d) ?? 0 }));
+  }, [filtered, from, to]);
+
+  function addToCatalogs(item: string, location: string, initials?: string) {
+    setCatalogs((prev) => {
+      const items = prev.items.includes(item) || !item.trim() ? prev.items : [item, ...prev.items].slice(0, 50);
+      const locations = prev.locations.includes(location) || !location.trim() ? prev.locations : [location, ...prev.locations].slice(0, 50);
+      const staffInitials =
+        initials && initials.trim()
+          ? prev.staffInitials.includes(initials.toUpperCase())
+            ? prev.staffInitials
+            : [initials.toUpperCase(), ...prev.staffInitials].slice(0, 50)
+          : prev.staffInitials;
+      return { items, locations, staffInitials };
+    });
+  }
+
+  function makeTimeISO(date: string, time: string) {
+    return new Date(`${date}T${time}:00`).toISOString();
+  }
+
+  function handleQuickSave() {
+    const t = parseFloat(qForm.temp);
+    if (!qForm.item.trim() || !qForm.location.trim() || !Number.isFinite(t)) {
+      alert("Please complete item, location and a valid temperature.");
+      return;
+    }
+    const pass = evaluatePass(qForm.category, t, targets);
+    const log: TempLog = {
+      id: uid(),
+      timeISO: makeTimeISO(qForm.date, qForm.time),
+      category: qForm.category,
+      item: qForm.item.trim(),
+      location: qForm.location.trim(),
+      tempC: t,
+      pass,
+      initials: qForm.initials.trim() ? qForm.initials.trim().toUpperCase() : null,
+      notes: qForm.notes.trim() || null,
+    };
+    setLogs((prev) => [log, ...prev]);
+    addToCatalogs(log.item, log.location, log.initials ?? undefined);
+    setQForm((f) => ({ ...f, item: "", temp: "" }));
+  }
+
+  function handleFullSave() {
+    const t = parseFloat(fForm.temp);
+    if (!fForm.item.trim() || !fForm.location.trim() || !Number.isFinite(t)) {
+      alert("Please complete item, location and a valid temperature.");
+      return;
+    }
+    const pass = evaluatePass(fForm.category, t, targets);
+    const log: TempLog = {
+      id: uid(),
+      timeISO: makeTimeISO(fForm.date, fForm.time),
+      category: fForm.category,
+      item: fForm.item.trim(),
+      location: fForm.location.trim(),
+      tempC: t,
+      pass,
+      initials: fForm.initials.trim() ? fForm.initials.trim().toUpperCase() : null,
+      notes: fForm.notes.trim() || null,
+    };
+    setLogs((prev) => [log, ...prev]);
+    addToCatalogs(log.item, log.location, log.initials ?? undefined);
+    setFullOpen(false);
+  }
+
+  /* ---------------- Render ---------------- */
+
+  return (
+    <div className="min-h-screen w-full bg-gray-50">
+      <NavTabs brandName={brandName} brandAccent={brandAccent} logoUrl={logoUrl} />
+
+      <main className="mx-auto max-w-6xl p-4 space-y-6">
+        {/* Actions row */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Quick entry toggle with arrow at left */}
+          <button
+            onClick={() => setQuickOpen((v) => !v)}
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50"
+            aria-expanded={quickOpen}
+            aria-controls="quick-entry"
+          >
+            <span className="inline-block w-3 text-center">
+              {quickOpen ? "▾" : "▸"}
+            </span>
+            <span>Quick entry</span>
+          </button>
+
+          {/* Full entry modal button */}
+          <button
+            onClick={() => setFullOpen(true)}
+            className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800"
+          >
+            + Full entry
+          </button>
+
+          {/* Filters */}
+          <div className="ml-auto flex flex-wrap items-end gap-2">
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight">{brandName}</h1>
-              <p className="text-sm text-neutral-600">Food hygiene temperature logs (UK HACCP-friendly)</p>
+              <label className="block text-xs text-slate-600 mb-1">From</label>
+              <input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">To</label>
+              <input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">Category</label>
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value as TempCategory | "All")}
+                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                <option>All</option>
+                {Object.keys(DEFAULT_TARGETS).map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">Search</label>
+              <input
+                placeholder="item / location / initials"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm w-56"
+              />
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <SettingsPopover targets={targets} setTargets={setTargets} />
-            <Button onClick={exportCSV} variant="outline" className="gap-2">
-              <DownloadIcon className="h-4 w-4" /> Export CSV
-            </Button>
-            <AddLogDialog onAdd={(log) => setLogs((prev) => [log, ...prev])} targets={targets} signatureRequired={signatureRequired} />
-          </div>
-        </header>
-
-        {/* KPIs */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard title="Entries" value={String(filtered.length)} subtitle="in current view" />
-          <StatCard
-            title="Last entry"
-            value={lastEntry ? lastEntry.date : "No entries"}
-            subtitle={lastEntry ? `${lastEntry.item} • ${lastEntry.location}` : undefined}
-          />
-          <StatCard title="This week" value={String(weeklyCount)} subtitle="entries since Monday" />
-          <MissingDaysCard dates={missingDaysLast7} />
         </div>
 
-        {/* Filters */}
-        <Card className="rounded-2xl">
-          <CardContent className="flex flex-col gap-3 py-4 md:flex-row md:items-end md:gap-6">
-            <div className="flex-1 space-y-1">
-              <Label>Search</Label>
-              <Input placeholder="Search item, location, initials…" value={query} onChange={(e) => setQuery(e.target.value)} />
-            </div>
-            <div className="space-y-1">
-              <Label>Category</Label>
-              <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v as TempCategory | "All")}>
-                <SelectTrigger className="w-48"><SelectValue placeholder="All" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="All">All</SelectItem>
-                  {(Object.keys(defaultTargets) as TempCategory[]).map((c) => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
+        {/* Quick entry fold-down */}
+        {quickOpen && (
+          <div id="quick-entry" className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+              <div>
+                <label className="block text-sm mb-1">Date</label>
+                <input
+                  type="date"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  value={qForm.date}
+                  onChange={(e) => setQForm({ ...qForm, date: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Time</label>
+                <input
+                  type="time"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  value={qForm.time}
+                  onChange={(e) => setQForm({ ...qForm, time: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Category</label>
+                <select
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  value={qForm.category}
+                  onChange={(e) => setQForm({ ...qForm, category: e.target.value as TempCategory })}
+                >
+                  {Object.keys(DEFAULT_TARGETS).map((c) => (
+                    <option key={c}>{c}</option>
                   ))}
-                </SelectContent>
-              </Select>
+                </select>
+                <p className="mt-1 text-xs text-slate-500">{targets[qForm.category]?.label ?? ""}</p>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Item</label>
+                <input
+                  list="items-datalist"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  value={qForm.item}
+                  onChange={(e) => setQForm({ ...qForm, item: e.target.value })}
+                />
+                <datalist id="items-datalist">
+                  {catalogs.items.map((i) => (
+                    <option key={i} value={i} />
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Location</label>
+                <input
+                  list="locations-datalist"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  value={qForm.location}
+                  onChange={(e) => setQForm({ ...qForm, location: e.target.value })}
+                />
+                <datalist id="locations-datalist">
+                  {catalogs.locations.map((i) => (
+                    <option key={i} value={i} />
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Temperature (°C)</label>
+                <input
+                  inputMode="decimal"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  placeholder="e.g. 3.5"
+                  value={qForm.temp}
+                  onChange={(e) => setQForm({ ...qForm, temp: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Initials</label>
+                <input
+                  list="staff-initials"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  value={qForm.initials}
+                  onChange={(e) => setQForm({ ...qForm, initials: e.target.value.toUpperCase() })}
+                />
+                <datalist id="staff-initials">
+                  {catalogs.staffInitials.map((i) => (
+                    <option key={i} value={i} />
+                  ))}
+                </datalist>
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-sm mb-1">Notes (optional)</label>
+                <input
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  value={qForm.notes}
+                  onChange={(e) => setQForm({ ...qForm, notes: e.target.value })}
+                />
+              </div>
+              <div className="md:col-span-3 flex items-end justify-end gap-2">
+                <button
+                  onClick={handleQuickSave}
+                  className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800"
+                >
+                  Save entry
+                </button>
+              </div>
             </div>
-            <div className="space-y-1">
-              <Label>Location</Label>
-              <Select value={locationFilter} onValueChange={(v) => setLocationFilter(v as string | "All")}>
-                <SelectTrigger className="w-48"><SelectValue placeholder="All" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="All">All</SelectItem>
-                  {locations.map((loc) => (<SelectItem key={loc} value={loc}>{loc}</SelectItem>))}
-                </SelectContent>
-              </Select>
-            </div>
-            <DateField label="From" value={dateFrom} onChange={setDateFrom} />
-            <DateField label="To" value={dateTo} onChange={setDateTo} />
-          </CardContent>
-        </Card>
+          </div>
+        )}
 
-        {/* Signature required (persisted) */}
-        <Card className="rounded-2xl">
-          <CardHeader className="pb-2"><CardTitle className="text-base">Signature required</CardTitle></CardHeader>
-          <CardContent className="flex items-center justify-between">
-            <p className="text-sm text-neutral-600">Ask staff to sign each entry</p>
-            <Switch checked={signatureRequired} onCheckedChange={setSignatureRequired} />
-          </CardContent>
-        </Card>
-
-        {/* Chart */}
-        <Card className="rounded-2xl">
-          <CardHeader><CardTitle className="text-base">Temperature trend (filtered)</CardTitle></CardHeader>
-          <CardContent>
-            <div className="h-64 w-full">
-              {mounted ? (
-                <ResponsiveContainer>
-                  <LineChart data={chartData}>
-                    <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                    <YAxis unit="°C" tick={{ fontSize: 12 }} />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="temperature" strokeWidth={2} dot={false} />
-                    {categoryFilter !== "All" && (
-                      <SafeBand range={targets[categoryFilter as TempCategory]} category={categoryFilter as TempCategory} />
-                    )}
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full w-full" />
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {/* Entries per day chart */}
+        <div className="rounded-xl border border-gray-200 bg-white p-4">
+          <div className="mb-2 text-sm font-medium">Entries per day (filtered)</div>
+          <EntriesBarChart data={chartData} />
+        </div>
 
         {/* Table */}
-        <Card className="rounded-2xl">
-          <CardHeader><CardTitle className="text-base">Log entries</CardTitle></CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Item</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead className="text-right">Temperature</TableHead>
-                  <TableHead>Result</TableHead>
-                  <TableHead>Initials</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((l) => (
-                  <TableRow key={l.id} className="hover:bg-neutral-50/60">
-                    <TableCell>{l.date}</TableCell>
-                    <TableCell>{l.time}</TableCell>
-                    <TableCell><CategoryBadge category={l.category} /></TableCell>
-                    <TableCell className="max-w-[240px] truncate" title={l.item}>{l.item}</TableCell>
-                    <TableCell>{l.location}</TableCell>
-                    <TableCell className="text-right font-medium">{l.temperature.toFixed(1)} {tempUnit}</TableCell>
-                    <TableCell><PassPill pass={l.pass} /></TableCell>
-                    <TableCell>{l.initials}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <EditLog log={l} setLogs={setLogs} targets={targets} />
-
-                        <Button variant="ghost" size="icon" onClick={() => onDelete(l.id)} className="hover:bg-red-50 hover:text-red-600">
-                          <Trash2Icon className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {!filtered.length && (
-                  <TableRow>
-                    <TableCell colSpan={9} className="py-8 text-center text-sm text-neutral-500">
-                      No entries match your filters.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-/* ===================== Subcomponents ===================== */
-function StatCard({ title, value, subtitle }: { title: string; value: string; subtitle?: string }) {
-  return (
-    <Card className="rounded-2xl">
-      <CardHeader className="pb-2"><CardTitle className="text-base">{title}</CardTitle></CardHeader>
-      <CardContent>
-        <div className="text-3xl font-semibold leading-none">{value}</div>
-        {subtitle && <p className="mt-1 text-xs text-neutral-600">{subtitle}</p>}
-      </CardContent>
-    </Card>
-  );
-}
-
-function MissingDaysCard({ dates }: { dates: string[] }) {
-  const count = dates.length;
-  const sorted = [...dates].sort((a, b) => b.localeCompare(a)); // newest first
-  return (
-    <Card className="rounded-2xl">
-      <CardHeader className="pb-2"><CardTitle className="text-base">Missing days</CardTitle></CardHeader>
-      <CardContent className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-3xl font-semibold leading-none">{count}</div>
-          <p className="mt-1 text-xs text-neutral-600">in last 7 days</p>
-        </div>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="ml-auto">View dates</Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-64">
-            {count === 0 ? (
-              <p className="text-sm text-neutral-600">All days logged ✅</p>
-            ) : (
-              <ul className="max-h-56 overflow-auto text-sm">
-                {sorted.map((iso) => {
-                  const d = new Date(`${iso}T00:00:00`);
-                  const dd = String(d.getDate()).padStart(2, "0");
-                  const mm = String(d.getMonth() + 1).padStart(2, "0");
-                  const yyyy = d.getFullYear();
-                  return <li key={iso} className="py-1 border-b last:border-0">{`${dd}/${mm}/${yyyy}`}</li>;
-                })}
-              </ul>
-            )}
-          </PopoverContent>
-        </Popover>
-      </CardContent>
-    </Card>
-  );
-}
-
-function DateField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string | null;
-  onChange: (v: string | null) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLInputElement | null>(null);
-  return (
-    <div className="space-y-1">
-      <Label>{label}</Label>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button variant="outline" className="w-44 justify-between">
-            <span>{value || "Select date"}</span>
-            <CalendarIcon className="h-4 w-4 opacity-70" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-60 p-3" align="start">
-          <Input ref={ref} type="date" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} />
-          <div className="mt-3 flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => onChange(null)}>Clear</Button>
-            <Button onClick={() => setOpen(false)}>Apply</Button>
-          </div>
-        </PopoverContent>
-      </Popover>
-    </div>
-  );
-}
-
-function SafeBand({ range, category }: { range: TargetRange; category: TempCategory }) {
-  let y1: number | undefined = range.min ?? undefined;
-  let y2: number | undefined = range.max ?? undefined;
-  if (category === "Freezer") {
-    y1 = -100;
-    y2 = typeof range.max === "number" ? range.max : -18;
-  }
-  if (y1 == null && y2 == null) return null;
-  return <ReferenceArea y1={y1} y2={y2} opacity={0.08} />;
-}
-
-function SettingsPopover({
-  targets,
-  setTargets,
-}: {
-  targets: Record<TempCategory, TargetRange>;
-  setTargets: React.Dispatch<React.SetStateAction<Record<TempCategory, TargetRange>>>;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="outline" className="gap-2">
-          <Settings2Icon className="h-4 w-4" /> Targets
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[420px] p-4" align="end">
-        <Tabs defaultValue="ranges">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="ranges">Target ranges</TabsTrigger>
-            <TabsTrigger value="about">About</TabsTrigger>
-          </TabsList>
-          <TabsContent value="ranges" className="mt-3">
-            <div className="space-y-3">
-              {(Object.keys(targets) as TempCategory[]).map((c) => {
-                const r = targets[c];
-                return (
-                  <div key={c} className="grid grid-cols-3 items-end gap-3 rounded-xl bg-neutral-50 p-3">
-                    <div>
-                      <Label className="text-xs text-neutral-600">Category</Label>
-                      <div className="font-medium">{c}</div>
-                    </div>
-                    <div>
-                      <Label>Min (°C)</Label>
-                      <Input
-                        type="number"
-                        step="0.1"
-                        value={r.min ?? ""}
-                        onChange={(e) =>
-                          setTargets((prev) => ({
-                            ...prev,
-                            [c]: {
-                              ...prev[c],
-                              min: e.target.value === "" ? null : Number(e.target.value),
-                            },
-                          }))
-                        }
-                      />
-                    </div>
-                    <div>
-                      <Label>Max (°C)</Label>
-                      <Input
-                        type="number"
-                        step="0.1"
-                        value={r.max ?? ""}
-                        onChange={(e) =>
-                          setTargets((prev) => ({
-                            ...prev,
-                            [c]: {
-                              ...prev[c],
-                              max: e.target.value === "" ? null : Number(e.target.value),
-                            },
-                          }))
-                        }
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-              <p className="text-xs text-neutral-600">
-                Typical UK targets: Fridge ≤5°C; Freezer ≤-18°C; Hot hold ≥63°C; Cold hold ≤8°C.
-              </p>
-            </div>
-          </TabsContent>
-          <TabsContent value="about" className="mt-3 space-y-2 text-sm text-neutral-700">
-            <p>This UI captures temperatures for HACCP records and highlights out-of-range results. Export filtered data as CSV for EHO inspections.</p>
-            <p>Data is stored in your browser (localStorage) for demo purposes.</p>
-          </TabsContent>
-        </Tabs>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function AddLogDialog({
-  onAdd,
-  targets,
-  signatureRequired,
-}: {
-  onAdd: (l: TempLog) => void;
-  targets: Record<TempCategory, TargetRange>;
-  signatureRequired: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<Partial<TempLog>>({
-    date: undefined,
-    time: undefined,
-    category: "Fridge",
-  });
-  const [signature, setSignature] = useState("");
-
-  // default date/time only when dialog opens
-  useEffect(() => {
-    if (open) {
-      const now = new Date();
-      setForm((f) => ({
-        ...f,
-        date: f.date ?? now.toISOString().slice(0, 10),
-        time: f.time ?? format(now, "HH:mm"),
-      }));
-    }
-  }, [open]);
-
-  const canSubmit =
-    !!form.date && !!form.time && !!form.item && !!form.location &&
-    typeof form.temperature === "number" && !!form.initials &&
-    (!signatureRequired || signature.trim().length > 0);
-
-  function submit() {
-    const range = targets[form.category as TempCategory];
-    const pass = withinRange(form.temperature as number, range, form.category as TempCategory);
-    const newLog: TempLog = {
-      id: uid(),
-      date: form.date!, time: form.time!,
-      item: form.item!, category: form.category as TempCategory,
-      location: form.location!, temperature: Number(form.temperature),
-      initials: form.initials!,
-      correctiveAction: form.correctiveAction, notes: form.notes,
-      pass,
-      signedBy: signatureRequired ? signature.trim() : undefined,
-    };
-    onAdd(newLog);
-    setOpen(false);
-    setForm({ date: newLog.date, time: newLog.time, category: newLog.category });
-    setSignature("");
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button className="gap-2">
-          <PlusIcon className="h-4 w-4" /> Add entry
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[640px]">
-        <DialogHeader><DialogTitle>New temperature entry</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label>Date</Label>
-            <Input type="date" value={form.date ?? ""} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-          </div>
-          <div className="space-y-1">
-            <Label>Time</Label>
-            <Input type="time" value={form.time ?? ""} onChange={(e) => setForm({ ...form, time: e.target.value })} />
-          </div>
-          <div className="space-y-1">
-            <Label>Category</Label>
-            <Select value={(form.category ?? "Fridge") as TempCategory} onValueChange={(v) => setForm({ ...form, category: v as TempCategory })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {(Object.keys(defaultTargets) as TempCategory[]).map((c) => (<SelectItem key={c} value={c}>{c}</SelectItem>))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label>Item (e.g., Fridge 1)</Label>
-            <Input placeholder="Fridge 1" value={form.item ?? ""} onChange={(e) => setForm({ ...form, item: e.target.value })} />
-          </div>
-          <div className="space-y-1">
-            <Label>Location</Label>
-            <Input placeholder="Kitchen" value={form.location ?? ""} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-          </div>
-          <div className="space-y-1">
-            <Label>Temperature (°C)</Label>
-            <Input
-              type="number" step="0.1" inputMode="decimal" placeholder="e.g., 3.5"
-              value={(form.temperature as number | undefined) ?? ""}
-              onChange={(e) => setForm({ ...form, temperature: e.target.value === "" ? undefined : Number(e.target.value) })}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label>Initials</Label>
-            <Input placeholder="AB" value={form.initials ?? ""} onChange={(e) => setForm({ ...form, initials: e.target.value.toUpperCase() })} />
-          </div>
-          <div className="space-y-1 sm:col-span-2">
-            <Label>Corrective action (if out of range)</Label>
-            <Input placeholder="What did you do?" value={form.correctiveAction ?? ""} onChange={(e) => setForm({ ...form, correctiveAction: e.target.value })} />
-          </div>
-          <div className="space-y-1 sm:col-span-2">
-            <Label>Notes</Label>
-            <Input placeholder="Optional" value={form.notes ?? ""} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
-          </div>
-          {signatureRequired && (
-            <div className="sm:col-span-2">
-              <Label>Digital signature (type full name)</Label>
-              <Input placeholder="e.g., Alex Brown" value={signature} onChange={(e) => setSignature(e.target.value)} />
-              <p className="mt-1 text-xs text-neutral-600">Your name will be stored alongside this entry.</p>
+        <div className="rounded-xl border border-gray-200 bg-white">
+          <div className="border-b border-gray-200 px-4 py-3 text-sm font-medium">Entries</div>
+          {filtered.length === 0 ? (
+            <div className="p-6 text-sm text-slate-500">No entries in this view.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-slate-600">
+                  <tr>
+                    <th className="py-2 px-3">Date</th>
+                    <th className="py-2 px-3">Time</th>
+                    <th className="py-2 px-3">Category</th>
+                    <th className="py-2 px-3">Item</th>
+                    <th className="py-2 px-3">Location</th>
+                    <th className="py-2 px-3">Temp (°C)</th>
+                    <th className="py-2 px-3">Result</th>
+                    <th className="py-2 px-3">Initials</th>
+                    <th className="py-2 px-3">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((l) => {
+                    const tiso = typeof l.timeISO === "string" ? l.timeISO : "";
+                    const date = tiso ? tiso.slice(0, 10) : "";
+                    const dt = tiso ? new Date(tiso) : new Date();
+                    const time = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+                    return (
+                      <tr key={l.id} className="border-t border-gray-200">
+                        <td className="py-2 px-3">{date || "—"}</td>
+                        <td className="py-2 px-3">{time}</td>
+                        <td className="py-2 px-3">{l.category}</td>
+                        <td className="py-2 px-3">{l.item}</td>
+                        <td className="py-2 px-3">{l.location}</td>
+                        <td className="py-2 px-3">{Number.isFinite(l.tempC) ? l.tempC.toFixed(1) : "—"}</td>
+                        <td className="py-2 px-3">
+                          <span
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                              l.pass ? "bg-green-100 text-green-800" : "bg-red-100 text-red-700"
+                            }`}
+                          >
+                            {l.pass ? "Pass" : "Fail"}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3">{l.initials ?? "—"}</td>
+                        <td className="py-2 px-3">{l.notes ?? "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
-        <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button disabled={!canSubmit} onClick={submit} className="gap-2">
-            <CheckCheckIcon className="h-4 w-4" /> Save entry
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
+      </main>
 
-function EditLog({
-  log,
-  setLogs,
-  targets,
-}: {
-  log: TempLog;
-  setLogs: (fn: (prev: TempLog[]) => TempLog[]) => void;
-  targets: Record<TempCategory, TargetRange>;
-}) {
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<TempLog>(log);
-
-  function submit() {
-    const range = targets[form.category];
-    const updated: TempLog = { ...form, pass: withinRange(form.temperature, range, form.category) };
-    setLogs((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
-    setOpen(false);
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="icon"><Edit3Icon className="h-4 w-4" /></Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[640px]">
-        <DialogHeader><DialogTitle>Edit entry</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="space-y-1"><Label>Date</Label>
-            <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-          </div>
-          <div className="space-y-1"><Label>Time</Label>
-            <Input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} />
-          </div>
-          <div className="space-y-1"><Label>Category</Label>
-            <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v as TempCategory })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {(Object.keys(defaultTargets) as TempCategory[]).map((c) => (<SelectItem key={c} value={c}>{c}</SelectItem>))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1"><Label>Item</Label>
-            <Input value={form.item} onChange={(e) => setForm({ ...form, item: e.target.value })} />
-          </div>
-          <div className="space-y-1"><Label>Location</Label>
-            <Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-          </div>
-          <div className="space-y-1"><Label>Temperature (°C)</Label>
-            <Input type="number" step="0.1" inputMode="decimal" value={form.temperature} onChange={(e) => setForm({ ...form, temperature: Number(e.target.value) })} />
-          </div>
-          <div className="space-y-1"><Label>Initials</Label>
-            <Input value={form.initials} onChange={(e) => setForm({ ...form, initials: e.target.value })} />
-          </div>
-          <div className="space-y-1 sm:col-span-2"><Label>Corrective action</Label>
-            <Input value={form.correctiveAction ?? ""} onChange={(e) => setForm({ ...form, correctiveAction: e.target.value })} />
-          </div>
-          <div className="space-y-1 sm:col-span-2"><Label>Notes</Label>
-            <Input value={form.notes ?? ""} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+      {/* Full entry modal */}
+      {fullOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-2xl rounded-xl border border-gray-200 bg-white shadow-lg">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <div className="text-sm font-medium">New temperature entry</div>
+              <button className="text-slate-500 hover:text-slate-800" onClick={() => setFullOpen(false)} aria-label="Close">✕</button>
+            </div>
+            <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm mb-1">Date</label>
+                <input type="date" className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" value={fForm.date} onChange={(e)=>setFForm({...fForm, date: e.target.value})}/>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Time</label>
+                <input type="time" className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" value={fForm.time} onChange={(e)=>setFForm({...fForm, time: e.target.value})}/>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Category</label>
+                <select className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" value={fForm.category} onChange={(e)=>setFForm({...fForm, category: e.target.value as TempCategory})}>
+                  {Object.keys(DEFAULT_TARGETS).map((c)=> <option key={c}>{c}</option>)}
+                </select>
+                <p className="mt-1 text-xs text-slate-500">{targets[fForm.category]?.label ?? ""}</p>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Item</label>
+                <input list="items-datalist" className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" value={fForm.item} onChange={(e)=>setFForm({...fForm, item: e.target.value})}/>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Location</label>
+                <input list="locations-datalist" className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" value={fForm.location} onChange={(e)=>setFForm({...fForm, location: e.target.value})}/>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Temperature (°C)</label>
+                <input inputMode="decimal" className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" value={fForm.temp} onChange={(e)=>setFForm({...fForm, temp: e.target.value})} />
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Initials</label>
+                <input list="staff-initials" className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" value={fForm.initials} onChange={(e)=>setFForm({...fForm, initials: e.target.value.toUpperCase()})}/>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-sm mb-1">Notes</label>
+                <textarea rows={3} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" value={fForm.notes} onChange={(e)=>setFForm({...fForm, notes: e.target.value})}/>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-200">
+              <button className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50" onClick={()=>setFullOpen(false)}>Cancel</button>
+              <button className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={handleFullSave}>Save entry</button>
+            </div>
           </div>
         </div>
-        <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={submit} className="gap-2"><CheckCheckIcon className="h-4 w-4" /> Save changes</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      )}
+    </div>
   );
 }
