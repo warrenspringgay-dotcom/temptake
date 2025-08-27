@@ -1,82 +1,114 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import React, { useMemo, useState } from "react";
+import { useI18n } from "@/i18n";
 
-type Profile = {
-  id: string;
-  role: "staff" | "manager" | "admin";
-  full_name?: string | null;
-  email?: string | null;
+/**
+ * Minimal auth fascia:
+ * - Shows a Sign in button if no user
+ * - Shows initials + menu with Sign out if user exists
+ * Replace the fake user state with your real auth (Supabase, etc.)
+ */
+
+type NavUserProps = {
+  mobile?: boolean; // renders compact list style for mobile menu
 };
 
-export default function NavUser() {
-  const [email, setEmail] = useState<string | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
+export default function NavUser({ mobile = false }: NavUserProps) {
+  const { t } = useI18n();
 
-  useEffect(() => {
-    function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, []);
+  // TODO: wire to real auth
+  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!mounted) return;
-      setEmail(user?.email ?? null);
-      if (user) {
-        const { data } = await supabase.from("profiles").select("*").eq("id", user.id).single();
-        if (!mounted) return;
-        setProfile(data as Profile);
-      }
-    })();
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setEmail(session?.user?.email ?? null);
-    });
-    return () => { sub.subscription.unsubscribe(); mounted = false; };
-  }, []);
+  const initials = useMemo(() => {
+    if (!user?.name) return "GU";
+    return user.name
+      .split(" ")
+      .map((s) => s[0]?.toUpperCase() ?? "")
+      .slice(0, 2)
+      .join("") || "GU";
+  }, [user]);
 
-  if (!email) {
+  const signIn = () => {
+    // fake sign-in for now
+    setUser({ name: "Guest User", email: "guest@example.com" });
+  };
+
+  const signOut = () => {
+    setUser(null);
+  };
+
+  if (mobile) {
+    // Mobile menu variant: stacked list
     return (
-      <a href="/sign-in" className="rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-gray-100">
-        Sign in
-      </a>
+      <div className="flex flex-col text-sm">
+        {user ? (
+          <>
+            <div className="flex items-center gap-2 px-3 py-2">
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-white text-xs">
+                {initials}
+              </span>
+              <div className="min-w-0">
+                <div className="truncate font-medium">{user.name}</div>
+                <div className="truncate text-xs text-slate-500">{user.email}</div>
+              </div>
+            </div>
+            <button
+              className="text-left px-3 py-2 rounded-md hover:bg-gray-50"
+              onClick={signOut}
+            >
+              {t("signOut")}
+            </button>
+          </>
+        ) : (
+          <button
+            className="text-left px-3 py-2 rounded-md hover:bg-gray-50"
+            onClick={signIn}
+          >
+            {t("signIn")}
+          </button>
+        )}
+      </div>
     );
   }
 
-  const initials = (profile?.full_name || email).split(/[^\w]+/).filter(Boolean).map(s => s[0]).slice(0,2).join("").toUpperCase();
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-gray-100"
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-white text-xs">{initials}</span>
-        <span className="hidden sm:inline text-slate-700">{profile?.role ?? "staff"}</span>
-      </button>
-      {open && (
-        <div className="absolute right-0 z-50 mt-1 w-56 rounded-md border border-gray-200 bg-white shadow">
-          <div className="px-3 py-2 border-b text-sm">
-            <div className="font-medium">{profile?.full_name || email}</div>
-            <div className="text-xs text-slate-600">Role: {profile?.role ?? "staff"}</div>
-          </div>
-          <button
-            className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
-            onClick={async () => { await supabase.auth.signOut(); location.href = "/"; }}
+  // Desktop dropdown
+  return user ? (
+    <div className="relative">
+      <details className="group">
+        <summary className="list-none inline-flex items-center gap-2 cursor-pointer select-none">
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-white text-sm">
+            {initials}
+          </span>
+          <svg
+            className="text-slate-500 group-open:rotate-180 transition-transform"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
           >
-            Sign out
+            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </summary>
+        <div className="absolute right-0 mt-2 w-52 rounded-md border border-gray-200 bg-white shadow-md py-2 text-sm z-50">
+          <div className="px-3 pb-2">
+            <div className="font-medium truncate">{user.name}</div>
+            <div className="text-xs text-slate-500 truncate">{user.email}</div>
+          </div>
+          <div className="border-t border-gray-100 my-1" />
+          <button className="block w-full text-left px-3 py-2 hover:bg-gray-50" onClick={signOut}>
+            {t("signOut")}
           </button>
         </div>
-      )}
+      </details>
     </div>
+  ) : (
+    <button
+      onClick={signIn}
+      className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
+    >
+      {t("signIn")}
+    </button>
   );
 }

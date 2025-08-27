@@ -32,10 +32,17 @@ type TempLog = {
   notes?: string | null;
 };
 
+type TeamMember = {
+  id: string;
+  full_name: string;
+  initials: string;
+  role?: string | null;
+};
+
 type Catalogs = {
   items: string[];
   locations: string[];
-  staffInitials: string[];
+  staffInitials: string[]; // populated from Team
 };
 
 type Props = {
@@ -61,7 +68,7 @@ const DEFAULT_TARGETS: Record<TempCategory, TargetRange> = {
 const uid = () => Math.random().toString(36).slice(2);
 const toISODate = (d: Date) => d.toISOString().slice(0, 10);
 
-// simple localStorage hook (stringify/parse)
+// localStorage state
 function useLocalState<T>(key: string, initial: T) {
   const [state, setState] = useState<T>(() => {
     try {
@@ -120,19 +127,16 @@ function EntriesBarChart({
   return (
     <svg width="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Entries per day bar chart">
       <rect x="0" y="0" width={width} height={height} fill="white" rx="12" />
-      {/* y-axis labels */}
       <g transform={`translate(${padding.left - 6}, ${padding.top})`} fontSize="10" fill="#475569">
         <text x="-6" y={innerH} textAnchor="end">0</text>
         <text x="-6" y={innerH * 0.5} textAnchor="end">{Math.ceil(maxCount / 2)}</text>
         <text x="-6" y={0} textAnchor="end">{maxCount}</text>
       </g>
-      {/* grid lines */}
       <g transform={`translate(${padding.left}, ${padding.top})`} stroke="#e5e7eb">
         <line x1="0" y1={innerH} x2={innerW} y2={innerH} />
         <line x1="0" y1={innerH * 0.5} x2={innerW} y2={innerH * 0.5} />
         <line x1="0" y1={0} x2={innerW} y2={0} />
       </g>
-      {/* bars + x labels */}
       <g transform={`translate(${padding.left}, ${padding.top})`}>
         {data.map((d, i) => {
           const h = (d.count / maxCount) * innerH;
@@ -140,15 +144,7 @@ function EntriesBarChart({
           const y = innerH - h;
           return (
             <g key={d.date}>
-              <rect
-                x={x}
-                y={y}
-                width={Math.max(1, barW - 4)}
-                height={h}
-                fill="#0ea5e9"
-                rx="3"
-              />
-              {/* x labels every few days */}
+              <rect x={x} y={y} width={Math.max(1, barW - 4)} height={h} fill="#0ea5e9" rx="3" />
               {data.length <= 14 || i % 2 === 0 ? (
                 <text
                   x={x + Math.max(1, barW - 4) / 2}
@@ -175,106 +171,84 @@ export default function FoodTempLogger({
   brandAccent = "#2563EB",
   logoUrl = "/temptake-192.png",
 }: Props) {
-  // UI state
+  // UI
   const [quickOpen, setQuickOpen] = useState<boolean>(false);
   const [fullOpen, setFullOpen] = useState<boolean>(false);
 
-  // Catalogs & targets
+  // Data & settings
   const [catalogs, setCatalogs] = useLocalState<Catalogs>("tt_catalogs", {
     items: ["Fridge 1", "Fridge 2", "Freezer 1", "Bain Marie", "Probe 1"],
     locations: ["Kitchen", "Stores", "Back Room"],
     staffInitials: ["AB", "CD", "EF"],
   });
-  const [targets, setTargets] = useLocalState<Record<TempCategory, TargetRange>>(
-    "tt_targets",
-    DEFAULT_TARGETS
-  );
-
-  // Logs (may include legacy shape from previous versions)
+  const [_targets] = useLocalState<Record<TempCategory, TargetRange>>("tt_targets", DEFAULT_TARGETS);
+  const [guestsAllowed, setGuestsAllowed] = useLocalState<boolean>("tt_guests_allowed", true);
   const [logs, setLogs] = useLocalState<TempLog[]>("tt_logs", []);
 
-  /**
-   * One-time **migration** for legacy logs in localStorage so we never crash on
-   * `.slice()` of undefined fields like `timeISO`.
-   * - Backfills `timeISO` from (date,time) or other legacy fields.
-   * - Maps `temp`/`temp_c`/`temperature` into `tempC`.
-   * - Computes `pass` if missing (using current targets).
-   * - Ensures `category` is one of our TempCategory values.
-   */
+  // One-time migration for legacy logs (ensure timeISO exists)
   useEffect(() => {
     setLogs((prev) => {
       if (!Array.isArray(prev) || prev.length === 0) return prev;
-
       let changed = false;
-      const migrated: TempLog[] = prev.map((raw: any) => {
-        const old = raw ?? {};
-        let timeISO: string | null =
-          typeof old.timeISO === "string" && old.timeISO ? old.timeISO : null;
-
+      const migrated: TempLog[] = prev.map((raw: unknown) => {
+        const old = (raw ?? {}) as Record<string, unknown>;
+        let timeISO =
+          typeof old["timeISO"] === "string" && old["timeISO"] ? (old["timeISO"] as string) : null;
         if (!timeISO) {
-          const legacyISO: string | null =
-            (typeof old.time === "string" && old.time) ? old.time :
-            (typeof old.time_iso === "string" && old.time_iso) ? old.time_iso :
+          const legacy =
+            (typeof old["time"] === "string" && (old["time"] as string)) ||
+            (typeof old["time_iso"] === "string" && (old["time_iso"] as string)) ||
             null;
-          if (legacyISO) timeISO = legacyISO;
-        }
-
-        if (!timeISO) {
-          const guess = safeISOFrom(old.date as string | undefined, old.timeStr as string | undefined);
-          if (guess) timeISO = guess;
-        }
-        if (!timeISO && typeof old.date === "string") {
-          const guess = safeISOFrom(old.date as string, undefined);
-          if (guess) timeISO = guess;
+          if (legacy) timeISO = legacy;
         }
         if (!timeISO) {
-          try { timeISO = new Date().toISOString(); } catch { timeISO = null; }
+          const guess = safeISOFrom(
+            old["date"] as string | undefined,
+            old["timeStr"] as string | undefined
+          );
+          if (guess) timeISO = guess;
         }
+        if (!timeISO && typeof old["date"] === "string") {
+          const guess = safeISOFrom(old["date"] as string, undefined);
+          if (guess) timeISO = guess;
+        }
+        if (!timeISO) timeISO = new Date().toISOString();
 
         let category: TempCategory = "Fridge";
-        if (typeof old.category === "string" && old.category) {
-          const c = old.category as string;
+        if (typeof old["category"] === "string" && old["category"]) {
+          const c = (old["category"] as string).trim();
           if (["Fridge","Freezer","Cook","Hot hold","Chill","Probe","Ambient"].includes(c)) {
             category = c as TempCategory;
-          } else if (c.toLowerCase() === "hot hold" || c.toLowerCase() === "hot-hold") {
-            category = "Hot hold";
           } else {
-            // some older names map heuristically
             const lower = c.toLowerCase();
             if (lower.includes("freez")) category = "Freezer";
             else if (lower.includes("cook")) category = "Cook";
             else if (lower.includes("chill")) category = "Chill";
             else if (lower.includes("probe")) category = "Probe";
             else if (lower.includes("ambient")) category = "Ambient";
-            else category = "Fridge";
-          }
-        } else if (typeof old.type === "string") {
-          // very old field name
-          const t = old.type as string;
-          if (["Fridge","Freezer","Cook","Hot hold","Chill","Probe","Ambient"].includes(t)) {
-            category = t as TempCategory;
           }
         }
 
         const tempC =
-          typeof old.tempC === "number" ? old.tempC :
-          typeof old.temp_c === "number" ? old.temp_c :
-          typeof old.temperature === "number" ? old.temperature :
-          typeof old.temp === "string" && old.temp.trim() ? parseFloat(old.temp) :
-          0;
+          typeof old["tempC"] === "number" ? (old["tempC"] as number) :
+          typeof old["temp_c"] === "number" ? (old["temp_c"] as number) :
+          typeof old["temperature"] === "number" ? (old["temperature"] as number) :
+          typeof old["temp"] === "string" && (old["temp"] as string).trim()
+            ? parseFloat(old["temp"] as string)
+            : 0;
 
         const pass =
-          typeof old.pass === "boolean" ? old.pass :
+          typeof old["pass"] === "boolean" ? (old["pass"] as boolean) :
           evaluatePass(category, tempC, DEFAULT_TARGETS);
 
-        const item = (old.item ?? old.name ?? "").toString();
-        const location = (old.location ?? old.place ?? "").toString();
-        const initials = typeof old.initials === "string" ? old.initials : null;
-        const notes = typeof old.notes === "string" ? old.notes : null;
+        const item = (old["item"] ?? old["name"] ?? "").toString();
+        const location = (old["location"] ?? old["place"] ?? "").toString();
+        const initials = typeof old["initials"] === "string" ? (old["initials"] as string) : null;
+        const notes = typeof old["notes"] === "string" ? (old["notes"] as string) : null;
 
         const normalized: TempLog = {
-          id: typeof old.id === "string" && old.id ? old.id : uid(),
-          timeISO: timeISO ?? new Date().toISOString(),
+          id: typeof old["id"] === "string" && old["id"] ? (old["id"] as string) : uid(),
+          timeISO,
           category,
           item,
           location,
@@ -284,54 +258,71 @@ export default function FoodTempLogger({
           notes,
         };
 
-        // Detect if anything changed from the stored raw
-        const changedThis =
-          !old.timeISO ||
-          old.tempC !== normalized.tempC ||
-          old.pass !== normalized.pass ||
-          old.category !== normalized.category;
-        if (changedThis) changed = true;
+        if (
+          !old["timeISO"] ||
+          old["tempC"] !== normalized.tempC ||
+          old["pass"] !== normalized.pass ||
+          old["category"] !== normalized.category
+        ) {
+          changed = true;
+        }
 
         return normalized;
       });
 
       return changed ? migrated : prev;
     });
-    // run once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Filters
-  const [search, setSearch] = useState("");
+  /* ---------------- Sync staff initials from Team ---------------- */
+
+  // Pull initials from localStorage.tt_team and merge into catalogs.staffInitials
+  function readTeamInitials(): string[] {
+    try {
+      const raw = localStorage.getItem("tt_team");
+      if (!raw) return [];
+      const arr = JSON.parse(raw) as TeamMember[];
+      const initials = arr
+        .map((m) => (m?.initials ?? "").trim().toUpperCase())
+        .filter((s) => s.length > 0);
+      return Array.from(new Set(initials));
+    } catch {
+      return [];
+    }
+  }
+
+  useEffect(() => {
+    // initial merge on mount
+    setCatalogs((prev) => {
+      const fromTeam = readTeamInitials();
+      const merged = Array.from(new Set([...prev.staffInitials, ...fromTeam]));
+      return { ...prev, staffInitials: merged };
+    });
+
+    // listen to cross-tab/team changes
+    function onStorage(e: StorageEvent) {
+      if (e.key === "tt_team") {
+        setCatalogs((prev) => {
+          const fromTeam = readTeamInitials();
+          const merged = Array.from(new Set([...prev.staffInitials, ...fromTeam]));
+          return { ...prev, staffInitials: merged };
+        });
+      }
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---------------- Filters (now in Entries card UI) ---------------- */
+
   const [from, setFrom] = useState<string>(() => toISODate(new Date(new Date().getTime() - 13 * 86400000)));
   const [to, setTo] = useState<string>(() => toISODate(new Date()));
   const [categoryFilter, setCategoryFilter] = useState<TempCategory | "All">("All");
+  const [search, setSearch] = useState("");
 
-  // Quick form state
-  const [qForm, setQForm] = useState({
-    date: toISODate(new Date()),
-    time: new Date().toTimeString().slice(0, 5),
-    category: "Fridge" as TempCategory,
-    item: "",
-    location: "",
-    temp: "",
-    initials: "",
-    notes: "",
-  });
-
-  // Full form state
-  const [fForm, setFForm] = useState({
-    date: toISODate(new Date()),
-    time: new Date().toTimeString().slice(0, 5),
-    category: "Fridge" as TempCategory,
-    item: "",
-    location: "",
-    temp: "",
-    initials: "",
-    notes: "",
-  });
-
-  // Derived: filtered logs (defensive on timeISO)
+  // Derived: filtered logs
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
     const start = from ? `${from}T00:00:00` : "";
@@ -349,6 +340,47 @@ export default function FoodTempLogger({
       );
     });
   }, [logs, search, from, to, categoryFilter]);
+
+  // KPI numbers (Top logger, Needs attention, Days missed)
+  const kpis = useMemo(() => {
+    // Top logger by initials
+    const counts = new Map<string, number>();
+    for (const l of filtered) {
+      const ini = (l.initials ?? "").trim();
+      if (!ini) continue;
+      counts.set(ini, (counts.get(ini) ?? 0) + 1);
+    }
+    let topInitials = "—";
+    let topCount = 0;
+    for (const [ini, c] of counts.entries()) {
+      if (c > topCount) { topCount = c; topInitials = ini; }
+    }
+
+    // Needs attention = fails in filtered range
+    const failCount = filtered.reduce((acc, l) => acc + (l.pass ? 0 : 1), 0);
+
+    // Days missed = days between from..to with zero entries
+    const start = new Date(`${from}T00:00:00`);
+    const end = new Date(`${to}T00:00:00`);
+    let daysTotal = 0;
+    let daysWithEntries = 0;
+    const dayCounts = new Map<string, number>();
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const k = toISODate(d);
+      daysTotal += 1;
+      dayCounts.set(k, 0);
+    }
+    for (const l of filtered) {
+      const d = l.timeISO.slice(0, 10);
+      if (dayCounts.has(d)) dayCounts.set(d, (dayCounts.get(d) ?? 0) + 1);
+    }
+    for (const v of dayCounts.values()) {
+      if (v > 0) daysWithEntries += 1;
+    }
+    const daysMissed = Math.max(0, daysTotal - daysWithEntries);
+
+    return { topInitials, topCount, failCount, daysMissed };
+  }, [filtered, from, to]);
 
   // Chart data
   const chartData = useMemo(() => {
@@ -368,6 +400,8 @@ export default function FoodTempLogger({
     return days.map((d) => ({ date: d, count: counts.get(d) ?? 0 }));
   }, [filtered, from, to]);
 
+  /* ---------------- Helpers ---------------- */
+
   function addToCatalogs(item: string, location: string, initials?: string) {
     setCatalogs((prev) => {
       const items = prev.items.includes(item) || !item.trim() ? prev.items : [item, ...prev.items].slice(0, 50);
@@ -386,13 +420,26 @@ export default function FoodTempLogger({
     return new Date(`${date}T${time}:00`).toISOString();
   }
 
+  function enforceTeam(initialsRaw: string): { ok: boolean; msg?: string } {
+    const ini = initialsRaw.trim().toUpperCase();
+    if (guestsAllowed) return { ok: true };
+    if (!ini) return { ok: false, msg: "Enter your initials (guests not allowed)." };
+    if (!catalogs.staffInitials.includes(ini)) {
+      return { ok: false, msg: `“${ini}” is not in the team list (guests not allowed).` };
+    }
+    return { ok: true };
+  }
+
   function handleQuickSave() {
     const t = parseFloat(qForm.temp);
     if (!qForm.item.trim() || !qForm.location.trim() || !Number.isFinite(t)) {
       alert("Please complete item, location and a valid temperature.");
       return;
     }
-    const pass = evaluatePass(qForm.category, t, targets);
+    const teamCheck = enforceTeam(qForm.initials);
+    if (!teamCheck.ok) { alert(teamCheck.msg); return; }
+
+    const pass = evaluatePass(qForm.category, t, DEFAULT_TARGETS);
     const log: TempLog = {
       id: uid(),
       timeISO: makeTimeISO(qForm.date, qForm.time),
@@ -415,7 +462,10 @@ export default function FoodTempLogger({
       alert("Please complete item, location and a valid temperature.");
       return;
     }
-    const pass = evaluatePass(fForm.category, t, targets);
+    const teamCheck = enforceTeam(fForm.initials);
+    if (!teamCheck.ok) { alert(teamCheck.msg); return; }
+
+    const pass = evaluatePass(fForm.category, t, DEFAULT_TARGETS);
     const log: TempLog = {
       id: uid(),
       timeISO: makeTimeISO(fForm.date, fForm.time),
@@ -432,6 +482,30 @@ export default function FoodTempLogger({
     setFullOpen(false);
   }
 
+  /* ---------------- Forms ---------------- */
+
+  const [qForm, setQForm] = useState({
+    date: toISODate(new Date()),
+    time: new Date().toTimeString().slice(0, 5),
+    category: "Fridge" as TempCategory,
+    item: "",
+    location: "",
+    temp: "",
+    initials: "",
+    notes: "",
+  });
+
+  const [fForm, setFForm] = useState({
+    date: toISODate(new Date()),
+    time: new Date().toTimeString().slice(0, 5),
+    category: "Fridge" as TempCategory,
+    item: "",
+    location: "",
+    temp: "",
+    initials: "",
+    notes: "",
+  });
+
   /* ---------------- Render ---------------- */
 
   return (
@@ -439,22 +513,18 @@ export default function FoodTempLogger({
       <NavTabs brandName={brandName} brandAccent={brandAccent} logoUrl={logoUrl} />
 
       <main className="mx-auto max-w-6xl p-4 space-y-6">
-        {/* Actions row */}
+        {/* Top row: actions only (quick directly above fold-down) */}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Quick entry toggle with arrow at left */}
           <button
             onClick={() => setQuickOpen((v) => !v)}
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50"
             aria-expanded={quickOpen}
             aria-controls="quick-entry"
           >
-            <span className="inline-block w-3 text-center">
-              {quickOpen ? "▾" : "▸"}
-            </span>
+            <span className="inline-block w-3 text-center">{quickOpen ? "▾" : "▸"}</span>
             <span>Quick entry</span>
           </button>
 
-          {/* Full entry modal button */}
           <button
             onClick={() => setFullOpen(true)}
             className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800"
@@ -462,52 +532,17 @@ export default function FoodTempLogger({
             + Full entry
           </button>
 
-          {/* Filters */}
-          <div className="ml-auto flex flex-wrap items-end gap-2">
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">From</label>
-              <input
-                type="date"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
-                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">To</label>
-              <input
-                type="date"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">Category</label>
-              <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value as TempCategory | "All")}
-                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
-              >
-                <option>All</option>
-                {Object.keys(DEFAULT_TARGETS).map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">Search</label>
-              <input
-                placeholder="item / location / initials"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm w-56"
-              />
-            </div>
-          </div>
+          <label className="ml-auto inline-flex items-center gap-2 text-sm select-none">
+            <input
+              type="checkbox"
+              checked={guestsAllowed}
+              onChange={(e) => setGuestsAllowed(e.target.checked)}
+            />
+            Guests allowed
+          </label>
         </div>
 
-        {/* Quick entry fold-down */}
+        {/* Quick entry appears DIRECTLY below the button row */}
         {quickOpen && (
           <div id="quick-entry" className="rounded-xl border border-gray-200 bg-white p-4">
             <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
@@ -540,7 +575,7 @@ export default function FoodTempLogger({
                     <option key={c}>{c}</option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-slate-500">{targets[qForm.category]?.label ?? ""}</p>
+                <p className="mt-1 text-xs text-slate-500">{DEFAULT_TARGETS[qForm.category]?.label ?? ""}</p>
               </div>
               <div>
                 <label className="block text-sm mb-1">Item</label>
@@ -614,15 +649,74 @@ export default function FoodTempLogger({
           </div>
         )}
 
-        {/* Entries per day chart */}
-        <div className="rounded-xl border border-gray-200 bg-white p-4">
-          <div className="mb-2 text-sm font-medium">Entries per day (filtered)</div>
-          <EntriesBarChart data={chartData} />
+        {/* KPI row (Top logger / Needs attention / Days missed) */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="text-xs text-slate-500">Top logger</div>
+            <div className="text-2xl font-semibold">
+              {kpis.topInitials} <span className="text-slate-400 text-base">({kpis.topCount})</span>
+            </div>
+            <div className="text-xs text-slate-500 mt-1">in current range</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="text-xs text-slate-500">Needs attention</div>
+            <div className="text-2xl font-semibold text-red-600">{kpis.failCount}</div>
+            <div className="text-xs text-slate-500 mt-1">failed checks</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="text-xs text-slate-500">Days missed</div>
+            <div className="text-2xl font-semibold">{kpis.daysMissed}</div>
+            <div className="text-xs text-slate-500 mt-1">no entries on those days</div>
+          </div>
         </div>
 
-        {/* Table */}
+        {/* Entries card with filters/search (chart is now BELOW this) */}
         <div className="rounded-xl border border-gray-200 bg-white">
-          <div className="border-b border-gray-200 px-4 py-3 text-sm font-medium">Entries</div>
+          <div className="border-b border-gray-200 px-4 py-3 flex flex-wrap items-end gap-3">
+            <div className="text-sm font-medium mr-auto">Entries</div>
+
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">From</label>
+              <input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">To</label>
+              <input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">Category</label>
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value as TempCategory | "All")}
+                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                <option>All</option>
+                {Object.keys(DEFAULT_TARGETS).map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            <div className="min-w-[200px]">
+              <label className="block text-xs text-slate-600 mb-1">Search</label>
+              <input
+                placeholder="item / location / initials"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              />
+            </div>
+          </div>
+
           {filtered.length === 0 ? (
             <div className="p-6 text-sm text-slate-500">No entries in this view.</div>
           ) : (
@@ -674,6 +768,12 @@ export default function FoodTempLogger({
             </div>
           )}
         </div>
+
+        {/* Chart moved to very bottom */}
+        <div className="rounded-xl border border-gray-200 bg-white p-4">
+          <div className="mb-2 text-sm font-medium">Entries per day (filtered)</div>
+          <EntriesBarChart data={chartData} />
+        </div>
       </main>
 
       {/* Full entry modal */}
@@ -698,7 +798,7 @@ export default function FoodTempLogger({
                 <select className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" value={fForm.category} onChange={(e)=>setFForm({...fForm, category: e.target.value as TempCategory})}>
                   {Object.keys(DEFAULT_TARGETS).map((c)=> <option key={c}>{c}</option>)}
                 </select>
-                <p className="mt-1 text-xs text-slate-500">{targets[fForm.category]?.label ?? ""}</p>
+                <p className="mt-1 text-xs text-slate-500">{DEFAULT_TARGETS[fForm.category]?.label ?? ""}</p>
               </div>
               <div>
                 <label className="block text-sm mb-1">Item</label>

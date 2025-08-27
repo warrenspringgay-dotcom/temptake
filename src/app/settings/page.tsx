@@ -1,87 +1,108 @@
 "use client";
-import React from "react";
-import NavTabs from "@/components/NavTabs";
-import { useSettings } from "@/lib/settings";
 
-function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`rounded-xl border border-gray-200 bg-white ${className}`}>{children}</div>;
-}
-function CardHeader({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`px-6 py-4 border-b border-gray-200 ${className}`}>{children}</div>;
-}
-function CardContent({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`px-6 py-4 ${className}`}>{children}</div>;
-}
+import React, { useMemo } from "react";
+import NavTabs from "@/components/NavTabs";
+import { useSettings } from "@/components/SettingsProvider";
+import type { Language } from "@/components/SettingsProvider";
+
+type LanguageCode = "en" | "zh" | "hi";
+type TempUnit = "C" | "F";
+type TimeFormat = "24h" | "12h";
+
+/** Map between UI codes and provider Language type */
+const TO_PROVIDER_LANG: Record<LanguageCode, Language> = {
+  en: "en" as Language,
+  zh: "zh-CN" as Language,
+  hi: "hi-IN" as Language,
+};
+const FROM_PROVIDER_LANG = new Map<Language, LanguageCode>([
+  ["en" as Language, "en"],
+  ["zh-CN" as Language, "zh"],
+  ["hi-IN" as Language, "hi"],
+]);
 
 export default function SettingsPage() {
-  const { settings, setSettings } = useSettings();
-  const lang = settings.language === "auto"
-    ? (typeof navigator !== "undefined" ? navigator.language : "en-GB")
-    : settings.language;
+  const { settings, update } = useSettings();
+
+  const lang: LanguageCode = useMemo(() => {
+    const prov = settings.language as Language | undefined;
+    return (prov && FROM_PROVIDER_LANG.get(prov)) || "en";
+  }, [settings.language]);
+
+  const unit: TempUnit = settings.tempUnit === "F" ? "F" : "C";
+  const timeFmt: TimeFormat = settings.timeFormat === "12h" ? "12h" : "24h";
+
+  function onLangChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const value = e.target.value as LanguageCode;
+    update({ language: TO_PROVIDER_LANG[value] });
+  }
+  function onUnitChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const value = e.target.value as TempUnit;
+    update({ tempUnit: value });
+  }
+  function onTimeFmtChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const value = e.target.value as TimeFormat;
+    update({ timeFormat: value });
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen w-full bg-gray-50">
       <NavTabs />
-      <main className="mx-auto max-w-6xl p-4 space-y-6">
-        <Card>
-          <CardHeader><h1 className="text-sm font-medium">Settings</h1></CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Temperature */}
-              <div>
-                <div className="text-sm font-medium mb-2">Temperature unit</div>
-                <div className="flex gap-2">
-                  {(["C", "F"] as const).map(u => (
-                    <button
-                      key={u}
-                      onClick={() => setSettings({ tempUnit: u })}
-                      className={`rounded-md border px-3 py-1.5 text-sm ${
-                        settings.tempUnit === u ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-800 border-gray-300"
-                      }`}
-                    >
-                      °{u}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs text-slate-600 mt-2">Data is stored in °C internally. Your choice affects inputs and display.</p>
-              </div>
 
-              {/* Theme */}
-              <div>
-                <div className="text-sm font-medium mb-2">Theme</div>
-                <div className="flex gap-2">
-                  {(["system", "light", "dark"] as const).map(m => (
-                    <button
-                      key={m}
-                      onClick={() => setSettings({ theme: m })}
-                      className={`rounded-md border px-3 py-1.5 text-sm capitalize ${
-                        settings.theme === m ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-800 border-gray-300"
-                      }`}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs text-slate-600 mt-2">Uses Tailwind dark mode via class on &lt;html&gt;.</p>
-              </div>
+      <main className="mx-auto max-w-6xl p-4 space-y-4">
+        <header className="flex items-center justify-between">
+          <h1 className="text-lg font-semibold">Settings</h1>
+        </header>
 
-              {/* Language */}
-              <div>
-                <div className="text-sm font-medium mb-2">Language</div>
-                <select
-                  className="rounded-md border border-gray-300 px-3 py-2 text-sm"
-                  value={lang}
-                  onChange={(e) => setSettings({ language: e.target.value })}
-                >
-                  <option value="en-GB">English (UK)</option>
-                  <option value="en-US">English (US)</option>
-                  <option value="fr-FR">Français</option>
-                </select>
-                <p className="text-xs text-slate-600 mt-2">Auto-detected on first run. You can override it here.</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-base font-semibold">Language & Units</h2>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <label className="text-sm">
+              <div className="mb-1 text-gray-600">Language</div>
+              <select
+                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                value={lang}
+                onChange={onLangChange}
+              >
+                <option value="en">English</option>
+                <option value="zh">中文 (Chinese)</option>
+                <option value="hi">हिंदी (Hindi)</option>
+              </select>
+            </label>
+
+            <label className="text-sm">
+              <div className="mb-1 text-gray-600">Temperature unit</div>
+              <select
+                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                value={unit}
+                onChange={onUnitChange}
+              >
+                <option value="C">°C</option>
+                <option value="F">°F</option>
+              </select>
+            </label>
+
+            <label className="text-sm">
+              <div className="mb-1 text-gray-600">Time format</div>
+              <select
+                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                value={timeFmt}
+                onChange={onTimeFmtChange}
+              >
+                <option value="24h">24-hour</option>
+                <option value="12h">12-hour</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        {/* Future section (Access) – uncomment once fields exist in Settings type
+        <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-base font-semibold">Access</h2>
+          ...
+        </section>
+        */}
       </main>
     </div>
   );
