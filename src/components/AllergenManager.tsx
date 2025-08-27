@@ -178,9 +178,7 @@ export default function AllergenManager() {
         </div>
       </div>
 
-      {/* Top actions: Add item alone */}
       
-   
 
       {/* QUERY (fold-down) – SAFE FOODS */}
       <details className="mb-4 rounded-lg border border-gray-200 bg-white p-3">
@@ -266,21 +264,12 @@ export default function AllergenManager() {
           </div>
         )}
       </details>
-{/* Actions between query and matrix */}
-<div className="mt-4 flex items-center justify-between gap-3">
-  <div className="text-xs sm:text-sm text-gray-500">
-    Expected CSV headers: <span className="font-mono">Item, Category, GLU, CRU, EGG, FIS, PEA, SOY, MIL, NUT, CEL, MUS, SES, SUL, LUP, MOL, Notes</span>
-  </div>
-
-  <button
-    type="button"
-    onClick={() => setModal({ open: true, mode: "add" })}
-    className="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-    aria-label="Add allergen item"
-  >
-    + Add item
-  </button>
-</div>
+{/* Top actions: Add item alone */}
+      <div className="mb-3">
+        <button className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800" onClick={openAdd}>
+          + Add item
+        </button>
+      </div>
       {/* FULL MATRIX (always shown at bottom, unfiltered) */}
       <div className="mb-2 text-sm font-semibold">Allergen matrix</div>
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
@@ -443,3 +432,4 @@ export default function AllergenManager() {
     </div>
   );
 }
+
