@@ -501,9 +501,17 @@ function TrainingModal(props: {
     notes: training?.notes ?? "",
   });
 
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-lg bg-white shadow-lg">
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <h3 className="text-base font-semibold">{training ? "Edit training" : "Add training"}</h3>
-          <button onClick={onCancel} className="text-gray-500 hover:text-gray
+  {/* Modal header */}
+<div className="flex items-center justify-between border-b px-4 py-3">
+  <h3 className="text-base font-semibold">
+    {editingTraining ? "Edit training" : "Add training"}
+  </h3>
+  <button
+    type="button"
+    onClick={onCancel}
+    className="text-gray-500 hover:text-gray-700"
+    aria-label="Close"
+  >
+    ×
+  </button>
+</div>
