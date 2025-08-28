@@ -1,546 +1,538 @@
-// src/components/FoodTempLogger.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import NavTabs from "./NavTabs";
-import { supabase } from "@/lib/supabase";
+import React from "react";
+import Image from "next/image";
+import { cn } from "@/lib/cn"; // tiny classnames helper; if you don’t have it, replace cn(a,b) with [a,b].filter(Boolean).join(" ")
+import {
+  listTempLogs,
+  upsertTempLog,
+  deleteTempLog,
+  listStaffInitials,
+  listTargets,
+  type TempLogRow,
+  type TempLogInput,
+} from "@/app/actions/db";
+import { useSettings } from "@/components/SettingsProvider";
+import NavTabs from "@/components/NavTabs";
 
-/* ---------- Types ---------- */
-type Category = "Fridge" | "Freezer" | "Cook" | "Hot Hold" | "Other";
+/* ----------------------------- helpers/types ----------------------------- */
 
-export type TempLogRow = {
-  id: string;
-  created_at: string;
-  category: Category | string;
-  location: string;
-  item: string;
-  temperature: number;
-  initials: string;
-  pass: boolean;
-  notes?: string | null;
-};
+type Target = { id: string; name: string; min: number; max: number };
 
-type NewTempLog = Omit<TempLogRow, "id" | "created_at" | "pass"> & { pass?: boolean };
-
-const CATEGORIES: Category[] = ["Fridge", "Freezer", "Cook", "Hot Hold", "Other"];
-
-/* ---------- Helpers ---------- */
-const todayISO = (): string => new Date().toISOString().slice(0, 10);
-
-function withinRange(temp: number, category: string): boolean {
-  if (category === "Fridge") return temp >= 0 && temp <= 5;
-  if (category === "Freezer") return temp <= -18;
-  if (category === "Cook") return temp >= 75;
-  if (category === "Hot Hold") return temp >= 63;
-  return true;
+function formatDate(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+function toC(unit: "C" | "F", value: number) {
+  return unit === "C" ? value : (value - 32) * (5 / 9);
+}
+function badge(pass: boolean) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold",
+        pass ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+      )}
+    >
+      {pass ? "Pass" : "Fail"}
+    </span>
+  );
+}
+function dayKey(isoDateTime: string) {
+  return isoDateTime.slice(0, 10);
 }
 
-function dateOnly(iso: string): string {
-  return iso.slice(0, 10);
-}
+/* ------------------------------ main component ------------------------------ */
 
-/* ---------- Component ---------- */
 export default function FoodTempLogger() {
-  // data
-  const [logs, setLogs] = useState<TempLogRow[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const { brandName, brandAccent, logoUrl, unit } = useSettings(); // unit: "C" | "F"
 
-  // staff initials list (optional)
-  const [staffInitials, setStaffInitials] = useState<string[]>([]);
+  /* data */
+  const [logs, setLogs] = React.useState<TempLogRow[]>([]);
+  const [staffOptions, setStaffOptions] = React.useState<string[]>([]);
+  const [targets, setTargets] = React.useState<Target[]>([]);
 
-  // quick entry
-  const [showQuick, setShowQuick] = useState<boolean>(false);
-  const [quick, setQuick] = useState<NewTempLog>({
-    category: "Fridge",
-    location: "",
-    item: "",
-    temperature: 0,
-    initials: "",
-    notes: "",
-  });
+  /* UI state */
+  const [quickOpen, setQuickOpen] = React.useState<boolean>(false);
+  const [search, setSearch] = React.useState<string>("");
+  const [rangeDays, setRangeDays] = React.useState<number>(30);
 
-  // full entry modal
-  const [showFull, setShowFull] = useState<boolean>(false);
-  const [full, setFull] = useState<NewTempLog>({
-    category: "Fridge",
-    location: "",
-    item: "",
-    temperature: 0,
-    initials: "",
-    notes: "",
-  });
+  /* quick-entry form */
+  const [qStaff, setQStaff] = React.useState<string>("");
+  const [qLocation, setQLocation] = React.useState<string>("");
+  const [qItem, setQItem] = React.useState<string>("");
+  const [qTarget, setQTarget] = React.useState<string>("");
+  const [qTemp, setQTemp] = React.useState<string>("");
 
-  // filters (next to table)
-  const [fText, setFText] = useState<string>("");
-  const [fCat, setFCat] = useState<string>("All");
-  const [fFrom, setFFrom] = useState<string>("");
-  const [fTo, setFTo] = useState<string>("");
+  /* fetch */
+  React.useEffect(() => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(to.getDate() - rangeDays + 1);
 
-  /* ----- Load logs & initials ----- */
-  useEffect(() => {
-    let mounted = true;
-    async function load() {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from("temp_logs")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (!mounted) return;
-      if (error) {
-        console.error("load temp_logs", error);
-        setLogs([]);
-      } else {
-        setLogs((data ?? []) as TempLogRow[]);
-      }
+    (async () => {
+      const [rows, staff, tgs] = await Promise.all([
+        listTempLogs({ from: formatDate(from), to: formatDate(to) }),
+        listStaffInitials(),
+        listTargets(),
+      ]);
+      setLogs(rows);
+      setStaffOptions(staff);
+      setTargets(tgs);
+      if (!qTarget && tgs.length) setQTarget(tgs[0].id);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeDays]);
 
-      // optional staff list
-      const staff = await supabase.from("staff_profiles").select("initials").order("initials", { ascending: true });
-      if (mounted && !staff.error) {
-        const initials = (staff.data ?? [])
-          .map((r: { initials?: string | null }) => (r.initials ?? "").trim())
-          .filter((v: string) => v.length > 0);
-        setStaffInitials(Array.from(new Set(initials)));
-      }
-      setLoading(false);
-    }
-    load();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  /* ---------- KPI Cards ---------- */
-  const lastNDays = (n: number): string[] => {
-    const out: string[] = [];
-    const now = new Date();
-    for (let i = n - 1; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(now.getDate() - i);
-      out.push(d.toISOString().slice(0, 10));
-    }
-    return out;
-  };
-
-  const kpi = useMemo(() => {
-    const last30 = new Date();
-    last30.setDate(last30.getDate() - 30);
-
-    const recent = logs.filter((r) => new Date(r.created_at) >= last30);
-    const byInitials = new Map<string, number>();
-    for (const r of recent) {
-      byInitials.set(r.initials, (byInitials.get(r.initials) ?? 0) + 1);
-    }
-    let topLogger = "-";
-    let topCount = 0;
-    for (const [k, v] of byInitials) {
-      if (v > topCount) {
-        topLogger = k || "-";
-        topCount = v;
-      }
+  /* computed KPI */
+  const kpis = React.useMemo(() => {
+    if (!logs.length) {
+      return {
+        topLogger: "-",
+        needsAttention: 0,
+        missedDays: 0,
+      };
     }
 
-    const last7 = new Date();
-    last7.setDate(last7.getDate() - 7);
-    const needsAttention = logs.filter((r) => new Date(r.created_at) >= last7 && !r.pass).length;
+    // top logger by count
+    const counts: Record<string, number> = {};
+    logs.forEach((l) => {
+      counts[l.staff] = (counts[l.staff] ?? 0) + 1;
+    });
+    const topLogger = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "-";
 
-    // missed days (last 14 days with zero entries)
-    const days = lastNDays(14);
-    const setByDay = new Map<string, number>();
-    for (const iso of days) setByDay.set(iso, 0);
-    for (const r of logs) {
-      const d = dateOnly(r.created_at);
-      if (setByDay.has(d)) setByDay.set(d, (setByDay.get(d) ?? 0) + 1);
+    // needs attention = failed entries
+    const needsAttention = logs.filter((l) => !l.pass).length;
+
+    // missed days = in period, days with zero logs
+    const seen = new Set(logs.map((l) => dayKey(l.created_at)));
+    const today = new Date();
+    const start = new Date();
+    start.setDate(today.getDate() - rangeDays + 1);
+
+    let missed = 0;
+    for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+      const k = formatDate(d);
+      if (!seen.has(k)) missed++;
     }
-    const missed = Array.from(setByDay.values()).filter((v) => v === 0).length;
 
-    return { topLogger, needsAttention, missed };
-  }, [logs]);
+    return { topLogger, needsAttention, missedDays: missed };
+  }, [logs, rangeDays]);
 
-  /* ---------- Derived table (filters) ---------- */
-  const filtered = useMemo(() => {
-    let rows = [...logs];
-    if (fText.trim()) {
-      const q = fText.toLowerCase();
-      rows = rows.filter(
-        (r) =>
-          r.item.toLowerCase().includes(q) ||
-          r.location.toLowerCase().includes(q) ||
-          r.initials.toLowerCase().includes(q)
-      );
-    }
-    if (fCat !== "All") rows = rows.filter((r) => r.category === fCat);
-    if (fFrom) rows = rows.filter((r) => dateOnly(r.created_at) >= fFrom);
-    if (fTo) rows = rows.filter((r) => dateOnly(r.created_at) <= fTo);
-    return rows;
-  }, [logs, fText, fCat, fFrom, fTo]);
-
-  /* ---------- Chart data (entries per day) ---------- */
-  const chart = useMemo(() => {
-    const days = lastNDays(14);
-    const counts = days.map((d) => ({ day: d.slice(5), count: 0 }));
-    const indexByDay = new Map(days.map((d, i) => [d, i]));
-    for (const r of logs) {
-      const d = dateOnly(r.created_at);
-      const i = indexByDay.get(d);
-      if (i !== undefined) counts[i].count += 1;
-    }
-    const max = Math.max(1, ...counts.map((c) => c.count));
-    return { days: counts, max };
-  }, [logs]);
-
-  /* ---------- Save helpers ---------- */
-  async function insertLog(input: NewTempLog) {
-    const pass = withinRange(input.temperature, input.category);
-    const payload = { ...input, pass };
-    const { data, error } = await supabase.from("temp_logs").insert(payload).select().single();
-    if (error) {
-      console.error("insert temp_log", error);
-      alert("Could not save entry.");
-      return null;
-    }
-    return data as TempLogRow;
-  }
-
+  /* create entry */
   async function submitQuick(e: React.FormEvent) {
     e.preventDefault();
-    if (!quick.item || !quick.location || !quick.initials) {
-      alert("Please fill item, location, and initials.");
-      return;
-    }
-    const saved = await insertLog(quick);
-    if (saved) {
-      setLogs((prev) => [saved, ...prev]);
-      setQuick({ category: "Fridge", location: "", item: "", temperature: 0, initials: "", notes: "" });
-      setShowQuick(false);
-    }
+    if (!qStaff || !qItem || !qTarget || !qTemp) return;
+
+    const target = targets.find((t) => t.id === qTarget);
+    const tempC = toC(unit, parseFloat(qTemp));
+
+    const pass =
+      target ? tempC >= target.min && tempC <= target.max : !Number.isNaN(tempC);
+
+    const payload: TempLogInput = {
+      staff: qStaff,
+      location: qLocation.trim(),
+      item: qItem.trim(),
+      target: target ? target.name : "Unspecified",
+      temp_c: Number(tempC.toFixed(1)),
+      notes: null,
+    };
+
+    const { id } = await upsertTempLog(payload);
+    const created: TempLogRow = {
+      id,
+      created_at: new Date().toISOString(),
+      pass,
+      ...payload,
+    };
+    setLogs((prev) => [created, ...prev]);
+
+    // reset lightweight
+    setQItem("");
+    setQTemp("");
   }
 
-  async function submitFull(e: React.FormEvent) {
-    e.preventDefault();
-    if (!full.item || !full.location || !full.initials) {
-      alert("Please fill item, location, and initials.");
-      return;
-    }
-    const saved = await insertLog(full);
-    if (saved) {
-      setLogs((prev) => [saved, ...prev]);
-      setFull({ category: "Fridge", location: "", item: "", temperature: 0, initials: "", notes: "" });
-      setShowFull(false);
-    }
+  async function handleDelete(id: string) {
+    await deleteTempLog(id);
+    setLogs((prev) => prev.filter((l) => l.id !== id));
   }
 
-  /* ---------- UI ---------- */
+  /* filter for table */
+  const filtered = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return logs;
+    return logs.filter(
+      (l) =>
+        l.item.toLowerCase().includes(q) ||
+        l.location.toLowerCase().includes(q) ||
+        l.staff.toLowerCase().includes(q) ||
+        l.target.toLowerCase().includes(q)
+    );
+  }, [logs, search]);
+
+  /* data for bar chart (entries per day) */
+  const chart = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    logs.forEach((l) => {
+      const k = dayKey(l.created_at);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    });
+
+    const days: { day: string; count: number }[] = [];
+    const today = new Date();
+    const start = new Date();
+    start.setDate(today.getDate() - rangeDays + 1);
+
+    for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+      const k = formatDate(d);
+      days.push({ day: k.slice(5), count: counts.get(k) ?? 0 }); // MM-DD
+    }
+    const max = Math.max(1, ...days.map((d) => d.count));
+    return { days, max };
+  }, [logs, rangeDays]);
+
   return (
     <div className="min-h-screen w-full bg-gray-50">
-      <NavTabs />
+      <NavTabs brandName={brandName} brandAccent={brandAccent} logoUrl={logoUrl} />
 
       <main className="mx-auto max-w-6xl p-4 space-y-6">
-        {/* KPI cards */}
-        <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <KpiCard label="Top logger (30 days)" value={kpi.topLogger || "-"} />
-          <KpiCard label="Items needing attention (7 days)" value={String(kpi.needsAttention)} tone="warn" />
-          <KpiCard label="Missed days (last 14)" value={String(kpi.missed)} tone={kpi.missed > 0 ? "warn" : "ok"} />
+        {/* KPI row */}
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <KpiCard label="Top logger" value={kpis.topLogger} />
+          <KpiCard
+            label="Needs attention"
+            value={String(kpis.needsAttention)}
+            tone={kpis.needsAttention ? "danger" : "ok"}
+          />
+          <KpiCard
+            label="Missed days"
+            value={String(kpis.missedDays)}
+            tone={kpis.missedDays ? "warn" : "ok"}
+            right={
+              <RangePicker value={rangeDays} onChange={(d) => setRangeDays(d)} />
+            }
+          />
         </section>
 
-        {/* Actions row */}
-        <section className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <button
-              className="inline-flex items-center gap-2 rounded-md border px-3 py-2 bg-white hover:bg-gray-50"
-              onClick={() => setShowQuick((v) => !v)}
-              aria-expanded={showQuick}
-              aria-controls="quick-entry"
-            >
-              <span className="select-none">{showQuick ? "▾" : "▸"}</span>
-              <span>Quick entry</span>
-            </button>
+        {/* Actions: quick entry + full entry */}
+        <section className="flex items-center justify-between">
+          <button
+            className="inline-flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+            onClick={() => setQuickOpen((v) => !v)}
+            aria-expanded={quickOpen}
+          >
+            <Chevron open={quickOpen} />
+            Quick entry
+          </button>
 
-            <button
-              className="rounded-md bg-slate-900 text-white px-4 py-2"
-              onClick={() => setShowFull(true)}
-            >
-              Full entry
-            </button>
-          </div>
+          <a
+            href="/full-entry"
+            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold shadow hover:bg-gray-50"
+          >
+            Full entry form
+          </a>
         </section>
 
-        {/* Quick entry panel (directly under the button) */}
-        {showQuick && (
-          <section id="quick-entry" className="rounded-xl border bg-white p-4">
-            <form onSubmit={submitQuick} className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-3 items-end">
-              <div>
-                <label className="block text-sm mb-1">Category</label>
+        {/* Quick Entry Drawer */}
+        {quickOpen && (
+          <form
+            onSubmit={submitQuick}
+            className="rounded-xl border bg-white p-4 shadow-sm"
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-6">
+              <div className="sm:col-span-1">
+                <label className="block text-xs font-semibold text-gray-600">
+                  Staff
+                </label>
                 <select
-                  className="w-full rounded-md border px-2 py-1"
-                  value={quick.category}
-                  onChange={(e) => setQuick({ ...quick, category: e.target.value as Category })}
+                  value={qStaff}
+                  onChange={(e) => setQStaff(e.target.value)}
+                  className="mt-1 w-full rounded-md border px-2 py-1 text-sm"
+                  required
                 >
-                  {CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
+                  <option value="">Select</option>
+                  {staffOptions.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
                     </option>
                   ))}
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm mb-1">Location</label>
+              <div className="sm:col-span-1">
+                <label className="block text-xs font-semibold text-gray-600">
+                  Location
+                </label>
                 <input
-                  className="w-full rounded-md border px-2 py-1"
-                  value={quick.location}
-                  onChange={(e) => setQuick({ ...quick, location: e.target.value })}
-                  placeholder="Kitchen, Fridge 1…"
+                  value={qLocation}
+                  onChange={(e) => setQLocation(e.target.value)}
+                  className="mt-1 w-full rounded-md border px-2 py-1 text-sm"
+                  placeholder="Fridge 1"
                 />
               </div>
 
-              <div>
-                <label className="block text-sm mb-1">Item</label>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-gray-600">
+                  Item
+                </label>
                 <input
-                  className="w-full rounded-md border px-2 py-1"
-                  value={quick.item}
-                  onChange={(e) => setQuick({ ...quick, item: e.target.value })}
-                  placeholder="Chicken curry…"
+                  value={qItem}
+                  onChange={(e) => setQItem(e.target.value)}
+                  className="mt-1 w-full rounded-md border px-2 py-1 text-sm"
+                  placeholder="Chicken curry"
+                  required
                 />
               </div>
 
-              <div>
-                <label className="block text-sm mb-1">Temperature (°C)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  className="w-full rounded-md border px-2 py-1"
-                  value={quick.temperature}
-                  onChange={(e) => setQuick({ ...quick, temperature: Number(e.target.value) })}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm mb-1">Initials</label>
-                {staffInitials.length > 0 ? (
-                  <select
-                    className="w-full rounded-md border px-2 py-1"
-                    value={quick.initials}
-                    onChange={(e) => setQuick({ ...quick, initials: e.target.value })}
-                  >
-                    <option value="">Select…</option>
-                    {staffInitials.map((i) => (
-                      <option key={i} value={i}>
-                        {i}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    className="w-full rounded-md border px-2 py-1"
-                    value={quick.initials}
-                    onChange={(e) => setQuick({ ...quick, initials: e.target.value })}
-                    placeholder="AB"
-                  />
-                )}
-              </div>
-
-              <div className="sm:col-span-2 lg:col-span-3">
-                <label className="block text-sm mb-1">Notes (optional)</label>
-                <input
-                  className="w-full rounded-md border px-2 py-1"
-                  value={quick.notes ?? ""}
-                  onChange={(e) => setQuick({ ...quick, notes: e.target.value })}
-                  placeholder="Corrective action or comments…"
-                />
-              </div>
-
-              <div className="sm:col-span-1 lg:col-span-1">
-                <button className="w-full rounded-md bg-slate-900 text-white px-4 py-2">Save</button>
-              </div>
-            </form>
-          </section>
-        )}
-
-        {/* Filters + table (lower on page) */}
-        <section className="rounded-xl border bg-white p-4 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-            <div className="lg:col-span-2">
-              <label className="block text-sm mb-1">Search</label>
-              <input
-                className="w-full rounded-md border px-2 py-1"
-                value={fText}
-                onChange={(e) => setFText(e.target.value)}
-                placeholder="Search item / location / initials…"
-              />
-            </div>
-            <div>
-              <label className="block text-sm mb-1">Category</label>
-              <select
-                className="w-full rounded-md border px-2 py-1"
-                value={fCat}
-                onChange={(e) => setFCat(e.target.value)}
-              >
-                <option>All</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm mb-1">From</label>
-              <input
-                type="date"
-                className="w-full rounded-md border px-2 py-1"
-                value={fFrom}
-                onChange={(e) => setFFrom(e.target.value)}
-                max={fTo || undefined}
-              />
-            </div>
-            <div>
-              <label className="block text-sm mb-1">To</label>
-              <input
-                type="date"
-                className="w-full rounded-md border px-2 py-1"
-                value={fTo}
-                onChange={(e) => setFTo(e.target.value)}
-                min={fFrom || undefined}
-                max={todayISO()}
-              />
-            </div>
-            <div className="flex items-end">
-              <button
-                className="w-full rounded-md border px-3 py-2 bg-white hover:bg-gray-50"
-                onClick={() => {
-                  setFText("");
-                  setFCat("All");
-                  setFFrom("");
-                  setFTo("");
-                }}
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-slate-600 border-b">
-                  <th className="py-2 pr-3">Date</th>
-                  <th className="py-2 pr-3">Category</th>
-                  <th className="py-2 pr-3">Location</th>
-                  <th className="py-2 pr-3">Item</th>
-                  <th className="py-2 pr-3">Temp</th>
-                  <th className="py-2 pr-3">Initials</th>
-                  <th className="py-2 pr-3">Status</th>
-                  <th className="py-2 pr-3">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan={8} className="py-6 text-center text-slate-500">
-                      Loading…
-                    </td>
-                  </tr>
-                ) : filtered.length ? (
-                  filtered.map((r) => (
-                    <tr key={r.id} className="border-t hover:bg-gray-50">
-                      <td className="py-2 pr-3">{dateOnly(r.created_at)}</td>
-                      <td className="py-2 pr-3">{r.category}</td>
-                      <td className="py-2 pr-3">{r.location}</td>
-                      <td className="py-2 pr-3">{r.item}</td>
-                      <td className="py-2 pr-3">{r.temperature.toFixed(1)}°C</td>
-                      <td className="py-2 pr-3">{r.initials}</td>
-                      <td className="py-2 pr-3">
-                        <span
-                          className={`px-2 py-1 rounded-md text-xs font-medium ${
-                            r.pass ? "bg-green-100 text-green-800" : "bg-red-100 text-red-700"
-                          }`}
-                        >
-                          {r.pass ? "Pass" : "Fail"}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-3">{r.notes || ""}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={8} className="py-6 text-center text-slate-500">
-                      No entries found.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        {/* Bar chart at the very bottom */}
-        <section className="rounded-xl border bg-white p-4">
-          <h3 className="text-sm font-medium mb-3">Entries per day (last 14 days)</h3>
-          <div className="flex items-end gap-2 h-40">
-            {chart.days.map((d) => {
-              const h = Math.round((d.count / chart.max) * 140);
-              return (
-                <div key={d.day} className="flex flex-col items-center justify-end h-full">
-                  <div
-                    title={`${d.day}: ${d.count}`}
-                    className="w-6 rounded-t bg-slate-800"
-                    style={{ height: `${h}px` }}
-                  />
-                  <div className="text-[10px] mt-1 text-slate-600">{d.day}</div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      </main>
-
-      {/* Full entry modal */}
-      {showFull && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl rounded-xl bg-white p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-semibold">New temperature entry</h2>
-              <button className="text-slate-500 hover:text-slate-700" onClick={() => setShowFull(false)}>
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={submitFull} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm mb-1">Category</label>
+              <div className="sm:col-span-1">
+                <label className="block text-xs font-semibold text-gray-600">
+                  Target
+                </label>
                 <select
-                  className="w-full rounded-md border px-2 py-1"
-                  value={full.category}
-                  onChange={(e) => setFull({ ...full, category: e.target.value as Category })}
+                  value={qTarget}
+                  onChange={(e) => setQTarget(e.target.value)}
+                  className="mt-1 w-full rounded-md border px-2 py-1 text-sm"
                 >
-                  {CATEGORIES.map((c) => (
-                    <option key={c}>{c}</option>
+                  {targets.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.min}–{t.max}°C)
+                    </option>
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="block text-sm mb-1">Location</label>
+
+              <div className="sm:col-span-1">
+                <label className="block text-xs font-semibold text-gray-600">
+                  Temperature (°{unit})
+                </label>
                 <input
-                  className="w-full rounded-md border px-2 py-1"
-                  value={full.location}
-                  onChange={(e) => setFull({ ...full, location: e.target.value })}
+                  inputMode="decimal"
+                  value={qTemp}
+                  onChange={(e) => setQTemp(e.target.value)}
+                  className="mt-1 w-full rounded-md border px-2 py-1 text-sm"
+                  placeholder={`e.g. ${unit === "C" ? "5.0" : "41.0"}`}
+                  required
                 />
               </div>
-              <div>
-                <label className="block text-sm mb-1">Item</label>
-                <input
-                  className="w-full rounded-md border px-2 py-1"
-                  value={full.item}
-                  onChange={(e) => setFull({ ...full, item: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-sm mb-1">Temperature (°C)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  className="w-full rounded-md border px-2 py-1"
-                  value={full.temperature}
-                  onChange={(e) => setFull({ ...full, temperature: Number(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label classNam
+            </div>
+
+            <div className="mt-3 flex justify-end">
+              <button
+                type="submit"
+                className="rounded-md bg-black px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+              >
+                Save quick entry
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Table controls */}
+        <section className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-gray-800">Entries</h2>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search entries…"
+            className="w-56 rounded-md border px-3 py-1.5 text-sm"
+          />
+        </section>
+
+        {/* Entries table */}
+        <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-xs uppercase text-gray-600">
+              <tr>
+                <Th>Date</Th>
+                <Th>Staff</Th>
+                <Th>Location</Th>
+                <Th>Item</Th>
+                <Th>Target</Th>
+                <Th className="text-right">Temp (°C)</Th>
+                <Th>Status</Th>
+                <Th className="text-right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="p-6 text-center text-gray-500">
+                    No entries
+                  </td>
+                </tr>
+              )}
+              {filtered.map((l) => (
+                <tr key={l.id} className="border-t">
+                  <Td>{new Date(l.created_at).toLocaleString()}</Td>
+                  <Td>{l.staff}</Td>
+                  <Td>{l.location}</Td>
+                  <Td>{l.item}</Td>
+                  <Td>{l.target}</Td>
+                  <Td className="text-right">{l.temp_c.toFixed(1)}</Td>
+                  <Td>{badge(l.pass)}</Td>
+                  <Td className="text-right">
+                    <button
+                      onClick={() => handleDelete(l.id)}
+                      className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
+                      aria-label="Delete entry"
+                    >
+                      Delete
+                    </button>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Chart at bottom */}
+        <section className="rounded-xl border bg-white p-4 shadow-sm">
+          <h3 className="mb-3 text-sm font-semibold text-gray-800">
+            Entries per day (last {rangeDays} days)
+          </h3>
+          <BarChart data={chart.days} max={chart.max} />
+        </section>
+      </main>
+    </div>
+  );
+}
+
+/* -------------------------------- subcomponents -------------------------------- */
+
+function KpiCard({
+  label,
+  value,
+  tone = "neutral",
+  right,
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "ok" | "warn" | "danger";
+  right?: React.ReactNode;
+}) {
+  const ring =
+    tone === "ok"
+      ? "ring-green-200"
+      : tone === "warn"
+      ? "ring-amber-200"
+      : tone === "danger"
+      ? "ring-red-200"
+      : "ring-gray-200";
+
+  return (
+    <div className={cn("flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm ring-1", ring)}>
+      <div>
+        <div className="text-xs text-gray-500">{label}</div>
+        <div className="text-2xl font-semibold text-gray-900">{value}</div>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+function RangePicker({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value))}
+      className="rounded-md border px-2 py-1 text-xs"
+      aria-label="Range"
+      title="Range"
+    >
+      {[7, 14, 30, 60, 90].map((d) => (
+        <option key={d} value={d}>
+          {d}d
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function Th({
+  children,
+  className,
+}: React.PropsWithChildren<{ className?: string }>) {
+  return <th className={cn("px-3 py-2 text-left", className)}>{children}</th>;
+}
+function Td({
+  children,
+  className,
+}: React.PropsWithChildren<{ className?: string }>) {
+  return <td className={cn("px-3 py-2", className)}>{children}</td>;
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={cn("h-4 w-4 transition-transform", open ? "rotate-90" : "")}
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path
+        fillRule="evenodd"
+        d="M6.293 4.293a1 1 0 011.414 0l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414-1.414L10.586 10 6.293 5.707a1 1 0 010-1.414z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+/* tiny inline bar chart (no external libs) */
+function BarChart({
+  data,
+  max,
+}: {
+  data: Array<{ day: string; count: number }>;
+  max: number;
+}) {
+  const W = Math.max(320, data.length * 16);
+  const H = 140;
+  const pad = 20;
+  const bw = Math.max(4, (W - pad * 2) / data.length - 4);
+
+  return (
+    <div className="overflow-x-auto">
+      <svg width={W} height={H} role="img" aria-label="Entries per day">
+        {/* axis */}
+        <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad} stroke="#e5e7eb" />
+        <line x1={pad} y1={pad} x2={pad} y2={H - pad} stroke="#e5e7eb" />
+
+        {data.map((d, i) => {
+          const x = pad + i * (bw + 4) + 2;
+          const h = Math.round(((H - pad * 2) * d.count) / max);
+          const y = H - pad - h;
+          return (
+            <g key={d.day}>
+              <rect
+                x={x}
+                y={y}
+                width={bw}
+                height={h}
+                rx={3}
+                className="fill-gray-900/80"
+              />
+              {i % Math.ceil(data.length / 10 || 1) === 0 && (
+                <text
+                  x={x + bw / 2}
+                  y={H - 5}
+                  fontSize="9"
+                  textAnchor="middle"
+                  fill="#6b7280"
+                >
+                  {d.day}
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
