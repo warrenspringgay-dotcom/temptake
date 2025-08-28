@@ -1,307 +1,509 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { uid } from "@/lib/uid";
-import { PencilIcon, TrashIcon } from "./Icons";
+import React from "react";
+import { createClient } from "@supabase/supabase-js";
 
-export type StaffRow = {
+/** Supabase browser client */
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+type Staff = {
   id: string;
-  fullName: string;
   initials: string;
-  phone?: string;
-  email?: string;
-  level?: string;
-  awardedOn?: string; // ISO
-  expiresOn?: string; // ISO
+  name: string;
+  jobTitle?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  notes?: string | null;
+  active: boolean;
 };
 
-export type TrainingRow = {
+type Training = {
   id: string;
-  staffId: string;
-  type: string;       // e.g. Food Hygiene L2
-  awardedOn?: string;
-  expiresOn?: string;
-  note?: string;
+  staff_id: string;
+  type: string;
+  awarded_on?: string | null; // ISO date
+  expires_on?: string | null; // ISO date
+  certificate_url?: string | null;
+  notes?: string | null;
 };
 
-const LS_TEAM = "tt_team_v2";
-const LS_TRAINING = "tt_training_v1";
+type ModalStateStaff =
+  | { open: false }
+  | { open: true; mode: "add" | "edit"; staff?: Staff };
 
-function loadTeam(): StaffRow[] {
-  if (typeof window === "undefined") return [];
-  try { return JSON.parse(localStorage.getItem(LS_TEAM) || "[]") as StaffRow[]; }
-  catch { return []; }
-}
-function saveTeam(list: StaffRow[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(LS_TEAM, JSON.stringify(list));
-}
-function loadTraining(): TrainingRow[] {
-  if (typeof window === "undefined") return [];
-  try { return JSON.parse(localStorage.getItem(LS_TRAINING) || "[]") as TrainingRow[]; }
-  catch { return []; }
-}
-function saveTraining(list: TrainingRow[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(LS_TRAINING, JSON.stringify(list));
-}
-const initialsFrom = (name: string) =>
-  name.split(" ").filter(Boolean).map(s => s[0]?.toUpperCase() ?? "").slice(0, 2).join("");
+type ModalStateTraining =
+  | { open: false }
+  | { open: true; staffId: string; training?: Training };
 
 export default function TeamManagerLocal() {
-  const [team, setTeam] = useState<StaffRow[]>(loadTeam);
-  const [training, setTraining] = useState<TrainingRow[]>(loadTraining);
-  useEffect(() => saveTeam(team), [team]);
-  useEffect(() => saveTraining(training), [training]);
+  const [staff, setStaff] = React.useState<Staff[]>([]);
+  const [trainings, setTrainings] = React.useState<Training[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
 
-  const [query, setQuery] = useState("");
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return team;
-    return team.filter(s =>
-      s.fullName.toLowerCase().includes(q) ||
-      (s.email ?? "").toLowerCase().includes(q) ||
-      (s.level ?? "").toLowerCase().includes(q)
-    );
-  }, [team, query]);
+  const [modalStaff, setModalStaff] = React.useState<ModalStateStaff>({ open: false });
+  const [modalTraining, setModalTraining] = React.useState<ModalStateTraining>({ open: false });
 
-  // member modal
-  const [memberModal, setMemberModal] = useState<StaffRow | null>(null);
-  function openAdd() {
-    setMemberModal({
-      id: uid(), fullName: "", initials: "", level: "", email: "", phone: "", awardedOn: "", expiresOn: "",
-    });
-  }
-  function saveMember() {
-    if (!memberModal) return;
-    setTeam(tt => {
-      const exists = tt.some(m => m.id === memberModal.id);
-      return exists ? tt.map(m => m.id === memberModal.id ? memberModal : m) : [...tt, memberModal];
-    });
-    setMemberModal(null);
+  async function fetchAll() {
+    setLoading(true);
+    setError(null);
+
+    const [s1, s2] = await Promise.all([
+      supabase.from("staff").select("*").order("name", { ascending: true }),
+      supabase.from("trainings").select("*").order("expires_on", { ascending: true }),
+    ]);
+
+    if (s1.error) setError(s1.error.message);
+    if (s2.error) setError((e) => e ?? s2.error!.message);
+
+    setStaff((s1.data ?? []) as Staff[]);
+    setTrainings((s2.data ?? []) as Training[]);
+
+    setLoading(false);
   }
 
-  // training modal (attached to a staff id)
-  const [forStaff, setForStaff] = useState<StaffRow | null>(null);
-  const [trainDraft, setTrainDraft] = useState<TrainingRow | null>(null);
+  React.useEffect(() => {
+    fetchAll();
+  }, []);
 
-  function openAddTraining(s: StaffRow) {
-    setForStaff(s);
-    setTrainDraft({ id: uid(), staffId: s.id, type: "", awardedOn: "", expiresOn: "", note: "" });
+  // ----- Staff CRUD -----
+  async function upsertStaff(payload: Omit<Staff, "id">, id?: string) {
+    if (!id) {
+      const { data, error } = await supabase.from("staff").insert(payload).select().single();
+      if (error) return setError(error.message);
+      setStaff((prev) => [...prev, data as Staff]);
+    } else {
+      const prev = staff.find((s) => s.id === id);
+      if (!prev) return;
+      const nextLocal: Staff = { ...prev, ...payload };
+      setStaff((prevAll) => prevAll.map((s) => (s.id === id ? nextLocal : s)));
+      const { error } = await supabase.from("staff").update(payload).eq("id", id);
+      if (error) {
+        setError(error.message);
+        setStaff((prevAll) => prevAll.map((s) => (s.id === id ? prev : s)));
+      }
+    }
   }
-  function openEditTraining(row: TrainingRow) {
-    setForStaff(team.find(t => t.id === row.staffId) ?? null);
-    setTrainDraft({ ...row });
+
+  async function deleteStaff(id: string) {
+    const prevS = staff;
+    setStaff((s) => s.filter((x) => x.id !== id));
+    const { error } = await supabase.from("staff").delete().eq("id", id);
+    if (error) {
+      setError(error.message);
+      setStaff(prevS);
+    }
+    // trainings cascade (if you defined FK on delete cascade). If not, you may also manually delete trainings here.
   }
-  function saveTrainingDraft() {
-    if (!trainDraft) return;
-    setTraining(list => {
-      const exists = list.some(t => t.id === trainDraft.id);
-      return exists ? list.map(t => t.id === trainDraft.id ? trainDraft : t) : [...list, trainDraft];
-    });
-    setTrainDraft(null);
-    setForStaff(null);
+
+  // ----- Training CRUD -----
+  async function upsertTraining(payload: Omit<Training, "id">, id?: string) {
+    if (!id) {
+      const { data, error } = await supabase.from("trainings").insert(payload).select().single();
+      if (error) return setError(error.message);
+      setTrainings((prev) => [...prev, data as Training]);
+    } else {
+      const prev = trainings.find((t) => t.id === id);
+      if (!prev) return;
+      const nextLocal: Training = { ...prev, ...payload };
+      setTrainings((prevAll) => prevAll.map((t) => (t.id === id ? nextLocal : t)));
+      const { error } = await supabase.from("trainings").update(payload).eq("id", id);
+      if (error) {
+        setError(error.message);
+        setTrainings((prevAll) => prevAll.map((t) => (t.id === id ? prev : t)));
+      }
+    }
   }
+
+  async function deleteTraining(id: string) {
+    const prevT = trainings;
+    setTrainings((t) => t.filter((x) => x.id !== id));
+    const { error } = await supabase.from("trainings").delete().eq("id", id);
+    if (error) {
+      setError(error.message);
+      setTrainings(prevT);
+    }
+  }
+
+  // Derived
+  const trainingsByStaff = React.useMemo(() => {
+    const map = new Map<string, Training[]>();
+    for (const t of trainings) {
+      const arr = map.get(t.staff_id) ?? [];
+      arr.push(t);
+      map.set(t.staff_id, arr);
+    }
+    return map;
+  }, [trainings]);
+
+  // Simple KPIs
+  const topLogger = "-"; // wire to temp logs later
+  const expiringSoon = trainings.filter((t) => isExpiring(t.expires_on, 60)).length;
 
   return (
-    <div className="p-4">
-      {/* Toolbar */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <button className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800" onClick={openAdd}>
-          + Add staff
+    <div className="mx-auto w-full max-w-6xl p-4 space-y-4">
+      <header className="flex items-center justify-between gap-3">
+        <h1 className="text-lg font-semibold">Team</h1>
+        <button
+          onClick={() => setModalStaff({ open: true, mode: "add" })}
+          className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+        >
+          + Add team member
         </button>
-        <div className="flex-1" />
-        <input className="w-64 rounded-md border border-gray-300 px-3 py-1.5 text-sm" placeholder="Search team / email / level" value={query} onChange={(e) => setQuery(e.target.value)}/>
+      </header>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="rounded-md border border-gray-200 bg-white p-3">
+          <div className="text-xs text-gray-500">Team members</div>
+          <div className="text-xl font-semibold">{staff.length}</div>
+        </div>
+        <div className="rounded-md border border-gray-200 bg-white p-3">
+          <div className="text-xs text-gray-500">Expiring training (≤60 days)</div>
+          <div className="text-xl font-semibold">{expiringSoon}</div>
+        </div>
+        <div className="rounded-md border border-gray-200 bg-white p-3">
+          <div className="text-xs text-gray-500">Top logger</div>
+          <div className="text-xl font-semibold">{topLogger}</div>
+        </div>
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-        <table className="min-w-[920px] w-full text-sm">
-          <thead className="bg-gray-50">
-            <tr className="text-left text-gray-600">
-              <th className="px-3 py-2 font-medium">Name</th>
-              <th className="px-3 py-2 font-medium">Initials</th>
-              <th className="px-3 py-2 font-medium">Level</th>
-              <th className="px-3 py-2 font-medium">Awarded</th>
-              <th className="px-3 py-2 font-medium">Expires</th>
-              <th className="px-3 py-2 font-medium">Email</th>
-              <th className="px-3 py-2 font-medium">Phone</th>
-              <th className="px-3 py-2 font-medium text-right">Actions</th>
+      <div className="overflow-x-auto rounded-md border border-gray-200 bg-white shadow-sm">
+        <table className="min-w-full text-left text-sm">
+          <thead className="bg-gray-50 text-gray-700">
+            <tr>
+              <th className="px-3 py-2">Initials</th>
+              <th className="px-3 py-2">Name</th>
+              <th className="px-3 py-2">Job title</th>
+              <th className="px-3 py-2">Contact</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-gray-500">No team members yet.</td></tr>
-            )}
-            {filtered.map((s) => {
-              const expired = s.expiresOn && s.expiresOn < new Date().toISOString().slice(0, 10);
-              const staffTrain = training.filter(t => t.staffId === s.id);
-              return (
-                <React.Fragment key={s.id}>
-                  <tr className="border-t">
-                    <td className="px-3 py-2">{s.fullName}</td>
-                    <td className="px-3 py-2">{s.initials}</td>
-                    <td className="px-3 py-2">{s.level ?? ""}</td>
-                    <td className="px-3 py-2">{s.awardedOn ?? ""}</td>
+            {loading ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-gray-500">
+                  Loading…
+                </td>
+              </tr>
+            ) : error ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-rose-600">
+                  {error}
+                </td>
+              </tr>
+            ) : staff.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-gray-500">
+                  No team members yet.
+                </td>
+              </tr>
+            ) : (
+              staff.map((m) => {
+                const list = trainingsByStaff.get(m.id) ?? [];
+                return (
+                  <tr key={m.id} className="border-t align-top">
+                    <td className="px-3 py-2">{m.initials}</td>
                     <td className="px-3 py-2">
-                      <span className={`rounded px-2 py-0.5 text-xs ${expired ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"}`}>
-                        {s.expiresOn ?? ""}
+                      <div className="font-medium">{m.name}</div>
+                      <div className="text-xs text-gray-500">{m.email ?? ""}</div>
+                    </td>
+                    <td className="px-3 py-2">{m.jobTitle ?? ""}</td>
+                    <td className="px-3 py-2">
+                      <div>{m.phone ?? ""}</div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`inline-block rounded px-2 py-0.5 text-xs ${
+                          m.active ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {m.active ? "Active" : "Inactive"}
                       </span>
                     </td>
-                    <td className="px-3 py-2">{s.email ?? ""}</td>
-                    <td className="px-3 py-2">{s.phone ?? ""}</td>
-                    <td className="px-3 py-2 text-right">
-                      <div className="inline-flex gap-2">
-                        <button className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50" title="Edit" onClick={() => setMemberModal(s)}>
-                          <PencilIcon />
+                    <td className="px-3 py-2">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          onClick={() => setModalStaff({ open: true, mode: "edit", staff: m })}
+                          className="rounded-md border bg-white px-2 py-1 text-sm shadow-sm hover:bg-gray-50"
+                          title="Edit"
+                        >
+                          🖉
                         </button>
-                        <button className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50" title="Delete" onClick={() => setTeam(tt => tt.filter(x => x.id !== s.id))}>
-                          <TrashIcon />
-                        </button>
-                        <button className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50" onClick={() => openAddTraining(s)}>
-                          + Training
+                        <button
+                          onClick={() => deleteStaff(m.id)}
+                          className="rounded-md border bg-white px-2 py-1 text-sm text-rose-700 shadow-sm hover:bg-rose-50"
+                          title="Delete"
+                        >
+                          🗑️
                         </button>
                       </div>
                     </td>
                   </tr>
-
-                  {/* Training rows (inline under member) */}
-                  {staffTrain.length > 0 && (
-                    <tr className="bg-gray-50/60">
-                      <td colSpan={8} className="px-3 py-2">
-                        <div className="text-xs font-medium mb-2">Training</div>
-                        <div className="overflow-x-auto">
-                          <table className="min-w-[700px] w-full text-xs">
-                            <thead>
-                              <tr className="text-gray-600">
-                                <th className="px-2 py-1 text-left">Type</th>
-                                <th className="px-2 py-1 text-left">Awarded</th>
-                                <th className="px-2 py-1 text-left">Expires</th>
-                                <th className="px-2 py-1 text-left">Note</th>
-                                <th className="px-2 py-1 text-right">Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {staffTrain.map(t => {
-                                const tExpired = t.expiresOn && t.expiresOn < new Date().toISOString().slice(0,10);
-                                return (
-                                  <tr key={t.id} className="border-t">
-                                    <td className="px-2 py-1">{t.type}</td>
-                                    <td className="px-2 py-1">{t.awardedOn ?? ""}</td>
-                                    <td className="px-2 py-1">
-                                      <span className={`rounded px-1.5 py-0.5 ${tExpired ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"}`}>
-                                        {t.expiresOn ?? ""}
-                                      </span>
-                                    </td>
-                                    <td className="px-2 py-1">{t.note ?? ""}</td>
-                                    <td className="px-2 py-1 text-right">
-                                      <div className="inline-flex gap-2">
-                                        <button className="rounded border px-1.5 py-0.5 hover:bg-white" title="Edit" onClick={() => openEditTraining(t)}>
-                                          <PencilIcon />
-                                        </button>
-                                        <button className="rounded border px-1.5 py-0.5 hover:bg-white" title="Delete" onClick={() => setTraining(list => list.filter(x => x.id !== t.id))}>
-                                          <TrashIcon />
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              );
-            })}
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* Member Modal */}
-      {memberModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <div className="w-full max-w-xl rounded-lg border border-gray-200 bg-white shadow">
-            <div className="border-b px-4 py-3 font-semibold">Staff member</div>
-            <div className="p-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="text-sm">
-                <div className="mb-1 text-gray-600">Full name</div>
-                <input className="w-full rounded-md border border-gray-300 px-2 py-1.5"
-                  value={memberModal.fullName}
-                  onChange={(e) => setMemberModal(m => m ? { ...m, fullName: e.target.value, initials: initialsFrom(e.target.value) } : m)} />
-              </label>
-              <label className="text-sm">
-                <div className="mb-1 text-gray-600">Initials</div>
-                <input className="w-full rounded-md border border-gray-300 px-2 py-1.5"
-                  value={memberModal.initials}
-                  onChange={(e) => setMemberModal(m => m ? { ...m, initials: e.target.value.toUpperCase() } : m)} />
-              </label>
-              <label className="text-sm">
-                <div className="mb-1 text-gray-600">Level</div>
-                <input className="w-full rounded-md border border-gray-300 px-2 py-1.5" placeholder="Level 2 Hygiene"
-                  value={memberModal.level ?? ""} onChange={(e) => setMemberModal(m => m ? { ...m, level: e.target.value } : m)} />
-              </label>
-              <label className="text-sm">
-                <div className="mb-1 text-gray-600">Email</div>
-                <input className="w-full rounded-md border border-gray-300 px-2 py-1.5"
-                  value={memberModal.email ?? ""} onChange={(e) => setMemberModal(m => m ? { ...m, email: e.target.value } : m)} />
-              </label>
-              <label className="text-sm">
-                <div className="mb-1 text-gray-600">Phone</div>
-                <input className="w-full rounded-md border border-gray-300 px-2 py-1.5"
-                  value={memberModal.phone ?? ""} onChange={(e) => setMemberModal(m => m ? { ...m, phone: e.target.value } : m)} />
-              </label>
-              <label className="text-sm">
-                <div className="mb-1 text-gray-600">Awarded</div>
-                <input type="date" className="w-full rounded-md border border-gray-300 px-2 py-1.5"
-                  value={memberModal.awardedOn ?? ""} onChange={(e) => setMemberModal(m => m ? { ...m, awardedOn: e.target.value } : m)} />
-              </label>
-              <label className="text-sm">
-                <div className="mb-1 text-gray-600">Expires</div>
-                <input type="date" className="w-full rounded-md border border-gray-300 px-2 py-1.5"
-                  value={memberModal.expiresOn ?? ""} onChange={(e) => setMemberModal(m => m ? { ...m, expiresOn: e.target.value } : m)} />
-              </label>
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
-              <button className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50" onClick={() => setMemberModal(null)}>Cancel</button>
-              <button className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800" onClick={saveMember}>Save</button>
+      {/* Trainings per member */}
+      {staff.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold">Training</h2>
+          </div>
+
+          <div className="rounded-md border border-gray-200 bg-white p-3">
+            <div className="grid grid-cols-1 gap-4">
+              {staff.map((m) => {
+                const list = trainingsByStaff.get(m.id) ?? [];
+                return (
+                  <div key={m.id} className="rounded border border-gray-200 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="font-medium">
+                        {m.name} <span className="text-gray-400">({m.initials})</span>
+                      </div>
+                      <button
+                        onClick={() => setModalTraining({ open: true, staffId: m.id })}
+                        className="rounded-md border bg-white px-2 py-1 text-sm shadow-sm hover:bg-gray-50"
+                      >
+                        + Add training
+                      </button>
+                    </div>
+                    {list.length === 0 ? (
+                      <div className="text-sm text-gray-500">No training records.</div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-left text-sm">
+                          <thead className="bg-gray-50 text-gray-700">
+                            <tr>
+                              <th className="px-3 py-2">Type</th>
+                              <th className="px-3 py-2">Awarded</th>
+                              <th className="px-3 py-2">Expires</th>
+                              <th className="px-3 py-2">Certificate</th>
+                              <th className="px-3 py-2">Notes</th>
+                              <th className="px-3 py-2 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {list.map((t) => (
+                              <tr key={t.id} className="border-t">
+                                <td className="px-3 py-2">{t.type}</td>
+                                <td className="px-3 py-2">{t.awarded_on ?? ""}</td>
+                                <td className="px-3 py-2">
+                                  <ExpiryBadge date={t.expires_on} />
+                                </td>
+                                <td className="px-3 py-2">
+                                  {t.certificate_url ? (
+                                    <a
+                                      href={t.certificate_url}
+                                      className="text-xs text-blue-600 underline"
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      View
+                                    </a>
+                                  ) : (
+                                    <span className="text-xs text-gray-500">—</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2">{t.notes ?? ""}</td>
+                                <td className="px-3 py-2">
+                                  <div className="flex justify-end gap-2">
+                                    <button
+                                      onClick={() => setModalTraining({ open: true, staffId: m.id, training: t })}
+                                      className="rounded-md border bg-white px-2 py-1 text-sm shadow-sm hover:bg-gray-50"
+                                      title="Edit"
+                                    >
+                                      🖉
+                                    </button>
+                                    <button
+                                      onClick={() => deleteTraining(t.id)}
+                                      className="rounded-md border bg-white px-2 py-1 text-sm text-rose-700 shadow-sm hover:bg-rose-50"
+                                      title="Delete"
+                                    >
+                                      🗑️
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
       )}
 
-      {/* Training Modal */}
-      {trainDraft && forStaff && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <div className="w-full max-w-xl rounded-lg border border-gray-200 bg-white shadow">
-            <div className="border-b px-4 py-3 font-semibold">Training – {forStaff.fullName}</div>
-            <div className="p-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="text-sm">
-                <div className="mb-1 text-gray-600">Type</div>
-                <input className="w-full rounded-md border border-gray-300 px-2 py-1.5" value={trainDraft.type} onChange={(e) => setTrainDraft(d => d ? { ...d, type: e.target.value } : d)} />
-              </label>
-              <label className="text-sm">
-                <div className="mb-1 text-gray-600">Awarded</div>
-                <input type="date" className="w-full rounded-md border border-gray-300 px-2 py-1.5" value={trainDraft.awardedOn ?? ""} onChange={(e) => setTrainDraft(d => d ? { ...d, awardedOn: e.target.value } : d)} />
-              </label>
-              <label className="text-sm">
-                <div className="mb-1 text-gray-600">Expires</div>
-                <input type="date" className="w-full rounded-md border border-gray-300 px-2 py-1.5" value={trainDraft.expiresOn ?? ""} onChange={(e) => setTrainDraft(d => d ? { ...d, expiresOn: e.target.value } : d)} />
-              </label>
-              <label className="sm:col-span-2 text-sm">
-                <div className="mb-1 text-gray-600">Note</div>
-                <textarea className="w-full rounded-md border border-gray-300 px-2 py-1.5" rows={3} value={trainDraft.note ?? ""} onChange={(e) => setTrainDraft(d => d ? { ...d, note: e.target.value } : d)} />
-              </label>
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
-              <button className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50" onClick={() => { setTrainDraft(null); setForStaff(null); }}>Cancel</button>
-              <button className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800" onClick={saveTrainingDraft}>Save</button>
-            </div>
-          </div>
-        </div>
+      {/* Staff modal */}
+      {modalStaff.open && (
+        <StaffModal
+          mode={modalStaff.mode}
+          staff={modalStaff.mode === "edit" ? modalStaff.staff : undefined}
+          onCancel={() => setModalStaff({ open: false })}
+          onSave={async (payload) => {
+            await upsertStaff(payload, modalStaff.mode === "edit" ? modalStaff.staff?.id : undefined);
+            setModalStaff({ open: false });
+            await fetchAll();
+          }}
+        />
+      )}
+
+      {/* Training modal */}
+      {modalTraining.open && (
+        <TrainingModal
+          staffId={modalTraining.staffId}
+          training={modalTraining.training}
+          onCancel={() => setModalTraining({ open: false })}
+          onSave={async (payload, id) => {
+            await upsertTraining(payload, id);
+            setModalTraining({ open: false });
+            await fetchAll();
+          }}
+        />
       )}
     </div>
   );
 }
+
+/* ------------------------------- Subcomponents ------------------------------ */
+
+function StaffModal(props: {
+  mode: "add" | "edit";
+  staff?: Staff;
+  onCancel: () => void;
+  onSave: (payload: Omit<Staff, "id">) => void | Promise<void>;
+}) {
+  const { mode, staff, onCancel, onSave } = props;
+  const [form, setForm] = React.useState<Omit<Staff, "id">>({
+    initials: staff?.initials ?? "",
+    name: staff?.name ?? "",
+    jobTitle: staff?.jobTitle ?? "",
+    phone: staff?.phone ?? "",
+    email: staff?.email ?? "",
+    notes: staff?.notes ?? "",
+    active: staff?.active ?? true,
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+      <div className="w-full max-w-2xl overflow-hidden rounded-lg bg-white shadow-lg">
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <h3 className="text-base font-semibold">{mode === "add" ? "Add team member" : "Edit team member"}</h3>
+          <button onClick={onCancel} className="text-gray-500 hover:text-gray-700">✕</button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 px-4 py-4 sm:grid-cols-2">
+          <label className="text-sm">
+            <div className="mb-1 text-gray-600">Initials</div>
+            <input
+              className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              value={form.initials}
+              onChange={(e) => setForm((f) => ({ ...f, initials: e.target.value.toUpperCase() }))}
+            />
+          </label>
+
+          <label className="text-sm">
+            <div className="mb-1 text-gray-600">Name</div>
+            <input
+              className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            />
+          </label>
+
+          <label className="text-sm">
+            <div className="mb-1 text-gray-600">Job title</div>
+            <input
+              className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              value={form.jobTitle ?? ""}
+              onChange={(e) => setForm((f) => ({ ...f, jobTitle: e.target.value }))}
+            />
+          </label>
+
+          <label className="text-sm">
+            <div className="mb-1 text-gray-600">Phone</div>
+            <input
+              className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              value={form.phone ?? ""}
+              onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+            />
+          </label>
+
+          <label className="text-sm">
+            <div className="mb-1 text-gray-600">Email</div>
+            <input
+              className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              value={form.email ?? ""}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value.trim() }))}
+            />
+          </label>
+
+          <label className="text-sm">
+            <div className="mb-1 text-gray-600">Notes</div>
+            <input
+              className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              value={form.notes ?? ""}
+              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+            />
+          </label>
+
+          <label className="col-span-full inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.active}
+              onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))}
+            />
+            Active
+          </label>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
+          <button onClick={onCancel} className="rounded-md border bg-white px-3 py-1.5 text-sm hover:bg-gray-50">
+            Cancel
+          </button>
+          <button
+            onClick={() => onSave(form)}
+            className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TrainingModal(props: {
+  staffId: string;
+  training?: Training;
+  onCancel: () => void;
+  onSave: (payload: Omit<Training, "id">, id?: string) => void | Promise<void>;
+}) {
+  const { staffId, training, onCancel, onSave } = props;
+  const [form, setForm] = React.useState<Omit<Training, "id">>({
+    staff_id: staffId,
+    type: training?.type ?? "",
+    awarded_on: training?.awarded_on ?? "",
+    expires_on: training?.expires_on ?? "",
+    certificate_url: training?.certificate_url ?? "",
+    notes: training?.notes ?? "",
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+      <div className="w-full max-w-2xl overflow-hidden rounded-lg bg-white shadow-lg">
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <h3 className="text-base font-semibold">{training ? "Edit training" : "Add training"}</h3>
+          <button onClick={onCancel} className="text-gray-500 hover:text-gray
