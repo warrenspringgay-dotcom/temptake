@@ -1,327 +1,308 @@
 // src/app/actions/team.ts
+"use server";
+
 import { cookies as nextCookies } from "next/headers";
 import { supabaseServer } from "@/lib/supabase";
-import type { CookieOptions } from "@supabase/ssr";
+import type { ExpiryStatus } from "@/lib/training"; // types only (helper lives outside server actions)
 
-/* Types */
+/* -----------------------------------------------------------------------------
+   Types – mirror your Supabase tables
+----------------------------------------------------------------------------- */
+
 export type StaffRow = {
   id: string;
-  org_id: string;
+  org_id: string | null;
   full_name: string;
   initials: string | null;
-  job_title: string | null;
   phone: string | null;
   email: string | null;
-  active: boolean;
   notes: string | null;
+  created_at: string;
 };
 
 export type TrainingTypeRow = {
   id: string;
-  org_id: string;
+  org_id: string | null;
   name: string;
 };
 
 export type StaffTrainingRow = {
   id: string;
-  org_id: string;
+  org_id: string | null;
   staff_id: string;
   training_type_id: string;
-  awarded_on: string;
-  expires_on: string;
+  obtained_on: string | null; // YYYY-MM-DD
+  expires_on: string | null;  // YYYY-MM-DD
   certificate_url: string | null;
   notes: string | null;
-  training_name?: string;
 };
 
-export type LeaderboardRow = {
-  user_id: string;
-  name: string;
-  count: number;
-};
+/* -----------------------------------------------------------------------------
+   Helpers
+----------------------------------------------------------------------------- */
 
-/* Helpers */
-async function sbServer() {
+/** Build an authenticated Supabase server client (Next 15: cookies() must be awaited). */
+async function sb() {
   const store = await nextCookies();
+  // Cookie adapter shape for your supabaseServer wrapper
   return supabaseServer({
-    get: (n: string) => store.get(n)?.value ?? null,
-    getAll: () => store.getAll().map((c) => ({ name: c.name, value: c.value })),
-    set: (n: string, v: string, o: CookieOptions) => { void n; void v; void o; },
-    remove: (n: string, o: CookieOptions) => { void n; void o; },
+    get: (name: string) => store.get(name)?.value,
+    set: (name: string, value: string, options: any) => store.set(name, value, options),
+    remove: (name: string, options: any) => store.set(name, "", { ...options, maxAge: 0 }),
+    getAll: () =>
+      store.getAll().map((c) => ({ name: c.name, value: c.value })) as unknown as {
+        name: string;
+        value: string;
+      }[],
   });
 }
+
+/** Get current user org_id (throws if not signed in). */
 async function requireOrg() {
-  const sb = await sbServer();
-  const { data: auth } = await sb.auth.getUser();
-  if (!auth?.user) throw new Error("Not signed in");
-  const { data: profile } = await sb.from("profiles").select("org_id, email").eq("id", auth.user.id).maybeSingle();
-  if (!profile?.org_id) throw new Error("Profile/org missing");
-  return { sb, orgId: profile.org_id as string, userId: auth.user.id as string, email: (profile?.email as string | null) ?? null };
-}
-function first<T>(v: T | T[] | null): T | null {
-  return Array.isArray(v) ? (v[0] ?? null) : v;
+  const client = await sb();
+  const {
+    data: { user },
+  } = await client.auth.getUser();
+
+  if (!user) throw new Error("Not authenticated");
+
+  const { data, error } = await client.from("profiles").select("org_id").eq("id", user.id).single();
+  if (error) throw error;
+
+  return { sb: client, orgId: (data as { org_id: string | null }).org_id };
 }
 
-/* Staff CRUD */
-export async function fetchTeam(): Promise<Array<StaffRow & { trainings: Array<StaffTrainingRow> }>> {
-  "use server";
-  const { sb, orgId } = await requireOrg();
+/* -----------------------------------------------------------------------------
+   Staff CRUD
+----------------------------------------------------------------------------- */
 
-  const { data: staffData, error: staffErr } = await sb
+export async function fetchTeam(): Promise<Array<StaffRow & { trainings: StaffTrainingRow[] }>> {
+  const { sb: client, orgId } = await requireOrg();
+
+  const { data: staff, error: staffErr } = await client
     .from("staff_profiles")
-    .select("id, org_id, full_name, initials, job_title, phone, email, active, notes")
+    .select("id, org_id, full_name, initials, phone, email, notes, created_at")
     .eq("org_id", orgId)
-    .order("full_name", { ascending: true });
+    .order("full_name");
+
   if (staffErr) throw staffErr;
 
-  const staff = (staffData ?? []) as StaffRow[];
-  if (!staff.length) return [];
+  const staffList = (staff ?? []) as StaffRow[];
+  if (staffList.length === 0) return [];
 
-  const staffIds = staff.map((s) => s.id);
-
-  const { data: trnData, error: trnErr } = await sb
+  const ids = staffList.map((s) => s.id);
+  const { data: training, error: trErr } = await client
     .from("staff_training")
-    .select(`
-      id, org_id, staff_id, training_type_id, awarded_on, expires_on, certificate_url, notes,
-      training_types ( id, name )
-    `)
-    .eq("org_id", orgId)
-    .in("staff_id", staffIds)
-    .order("expires_on", { ascending: true });
-  if (trnErr) throw trnErr;
+    .select(
+      "id, org_id, staff_id, training_type_id, obtained_on, expires_on, certificate_url, notes"
+    )
+    .in("staff_id", ids);
 
-  type Raw = StaffTrainingRow & {
-    training_types: { id: string; name: string }[] | { id: string; name: string } | null;
-  };
+  if (trErr) throw trErr;
 
-  const trainingsByStaff = new Map<string, StaffTrainingRow[]>();
-  for (const r of (trnData ?? []) as Raw[]) {
-    const tt = first(r.training_types);
-    const normalized: StaffTrainingRow = {
-      id: r.id,
-      org_id: r.org_id,
-      staff_id: r.staff_id,
-      training_type_id: r.training_type_id,
-      awarded_on: r.awarded_on,
-      expires_on: r.expires_on,
-      certificate_url: r.certificate_url ?? null,
-      notes: r.notes ?? null,
-      training_name: tt?.name ?? undefined,
-    };
-    const arr = trainingsByStaff.get(r.staff_id) ?? [];
-    arr.push(normalized);
-    trainingsByStaff.set(r.staff_id, arr);
+  const byStaff = new Map<string, StaffTrainingRow[]>();
+  for (const row of (training ?? []) as StaffTrainingRow[]) {
+    const arr = byStaff.get(row.staff_id) ?? [];
+    arr.push(row);
+    byStaff.set(row.staff_id, arr);
   }
 
-  return staff.map((s) => ({
-    ...s,
-    trainings: (trainingsByStaff.get(s.id) ?? []).sort((a, b) => a.expires_on.localeCompare(b.expires_on)),
-  }));
+  return staffList.map((s) => ({ ...s, trainings: byStaff.get(s.id) ?? [] }));
 }
 
-export async function upsertStaff(input: Partial<StaffRow> & { full_name: string }): Promise<{ id: string }> {
-  "use server";
-  const { sb, orgId } = await requireOrg();
+export async function upsertStaff(
+  input: Partial<StaffRow> & { full_name: string }
+): Promise<{ id: string }> {
+  const { sb: client, orgId } = await requireOrg();
   const row = {
     id: input.id ?? undefined,
     org_id: orgId,
     full_name: input.full_name,
     initials: input.initials ?? null,
-    job_title: input.job_title ?? null,
     phone: input.phone ?? null,
     email: input.email ?? null,
-    active: input.active ?? true,
     notes: input.notes ?? null,
   };
-  const { data, error } = await sb.from("staff_profiles").upsert(row).select("id").maybeSingle();
+
+  const { data, error } = await client
+    .from("staff_profiles")
+    .upsert(row, { onConflict: "id", ignoreDuplicates: false })
+    .select("id")
+    .single();
+
   if (error) throw error;
-  return { id: (data?.id as string) ?? "" };
+  return data as { id: string };
 }
 
 export async function deleteStaff(id: string) {
-  "use server";
-  const { sb, orgId } = await requireOrg();
-  await sb.from("staff_training").delete().eq("org_id", orgId).eq("staff_id", id);
-  const { error } = await sb.from("staff_profiles").delete().eq("org_id", orgId).eq("id", id);
+  const { sb: client, orgId } = await requireOrg();
+  await client.from("staff_training").delete().eq("org_id", orgId).eq("staff_id", id);
+  const { error } = await client.from("staff_profiles").delete().eq("org_id", orgId).eq("id", id);
   if (error) throw error;
-  return { ok: true as const };
 }
 
-/* Training types */
+/* -----------------------------------------------------------------------------
+   Training Types
+----------------------------------------------------------------------------- */
+
 export async function listTrainingTypes(): Promise<TrainingTypeRow[]> {
-  "use server";
-  const { sb, orgId } = await requireOrg();
-  const { data, error } = await sb.from("training_types").select("id, org_id, name").eq("org_id", orgId).order("name");
+  const { sb: client, orgId } = await requireOrg();
+  const { data, error } = await client
+    .from("training_types")
+    .select("id, org_id, name")
+    .eq("org_id", orgId)
+    .order("name");
   if (error) throw error;
   return (data ?? []) as TrainingTypeRow[];
 }
+
 export async function upsertTrainingType(name: string) {
-  "use server";
-  const { sb, orgId } = await requireOrg();
-  const { error } = await sb.from("training_types").upsert({ org_id: orgId, name }, { onConflict: "org_id,name" });
-  if (error) throw error;
-  return { ok: true as const };
-}
-export async function deleteTrainingType(name: string) {
-  "use server";
-  const { sb, orgId } = await requireOrg();
-  const { error } = await sb.from("training_types").delete().eq("org_id", orgId).eq("name", name);
+  const { sb: client, orgId } = await requireOrg();
+  const { error } = await client
+    .from("training_types")
+    .upsert({ org_id: orgId, name }, { onConflict: "org_id,name" });
   if (error) throw error;
   return { ok: true as const };
 }
 
-/* Staff training */
+export async function deleteTrainingType(name: string) {
+  const { sb: client, orgId } = await requireOrg();
+  const { error } = await client.from("training_types").delete().eq("org_id", orgId).eq("name", name);
+  if (error) throw error;
+  return { ok: true as const };
+}
+
+/* -----------------------------------------------------------------------------
+   Staff Training
+----------------------------------------------------------------------------- */
+
 export async function upsertStaffTraining(input: {
   id?: string;
   staff_id: string;
   training_type_id?: string;
-  training_type_name?: string;
-  awarded_on: string;
-  expires_on: string;
+  training_type_name?: string; // convenience: create-on-the-fly
+  obtained_on?: string | null;
+  expires_on?: string | null;
   certificate_url?: string | null;
   notes?: string | null;
 }) {
-  "use server";
-  const { sb, orgId } = await requireOrg();
+  const { sb: client, orgId } = await requireOrg();
 
+  // Ensure training type exists (if name provided)
   let training_type_id = input.training_type_id ?? null;
   if (!training_type_id && input.training_type_name) {
-    const { data: found } = await sb
+    const { data: up, error: upErr } = await client
       .from("training_types")
+      .upsert(
+        { org_id: orgId, name: input.training_type_name },
+        { onConflict: "org_id,name" }
+      )
       .select("id")
-      .eq("org_id", orgId)
-      .eq("name", input.training_type_name)
-      .maybeSingle();
-    if (found?.id) {
-      training_type_id = found.id;
-    } else {
-      const { data: created, error: err } = await sb
-        .from("training_types")
-        .insert({ org_id: orgId, name: input.training_type_name })
-        .select("id")
-        .maybeSingle();
-      if (err) throw err;
-      training_type_id = created?.id ?? null;
-    }
+      .single();
+    if (upErr) throw upErr;
+    training_type_id = (up as { id: string }).id;
   }
-  if (!training_type_id) throw new Error("training_type_id or training_type_name is required");
 
   const row = {
     id: input.id ?? undefined,
     org_id: orgId,
     staff_id: input.staff_id,
-    training_type_id,
-    awarded_on: input.awarded_on,
-    expires_on: input.expires_on,
+    training_type_id: training_type_id!,
+    obtained_on: input.obtained_on ?? null,
+    expires_on: input.expires_on ?? null,
     certificate_url: input.certificate_url ?? null,
     notes: input.notes ?? null,
   };
-  const { error } = await sb.from("staff_training").upsert(row);
+
+  const { error } = await client
+    .from("staff_training")
+    .upsert(row, { onConflict: "id", ignoreDuplicates: false });
   if (error) throw error;
+
   return { ok: true as const };
 }
+
 export async function deleteStaffTraining(id: string) {
-  "use server";
-  const { sb, orgId } = await requireOrg();
-  const { error } = await sb.from("staff_training").delete().eq("org_id", orgId).eq("id", id);
+  const { sb: client, orgId } = await requireOrg();
+  const { error } = await client.from("staff_training").delete().eq("org_id", orgId).eq("id", id);
   if (error) throw error;
   return { ok: true as const };
 }
 
-/* Reporting */
-export async function listExpiringWithin(days: number): Promise<Array<{ staffName: string; trainingName: string; expiresOn: string }>> {
-  "use server";
-  const { sb, orgId } = await requireOrg();
+/* -----------------------------------------------------------------------------
+   Reporting helpers (expiry + leaderboard)
+----------------------------------------------------------------------------- */
+
+/** List trainings expiring within N days – array-safe mapping of joins */
+export async function listExpiringWithin(
+  days: number
+): Promise<Array<{ staffName: string; trainingName: string; expiresOn: string }>> {
+  const { sb: client, orgId } = await requireOrg();
 
   const start = new Date();
-  const end = new Date();
-  end.setUTCDate(end.getUTCDate() + Math.max(1, days));
-  const startISO = start.toISOString().slice(0, 10);
+  const end = new Date(start.getTime() + days * 24 * 60 * 60 * 1000);
   const endISO = end.toISOString().slice(0, 10);
 
-  const { data, error } = await sb
+  // Join staff_profiles and training_types
+  const { data, error } = await client
     .from("staff_training")
-    .select(`
+    .select(
+      `
       expires_on,
-      staff_profiles!inner ( full_name, org_id ),
-      training_types!inner ( name, org_id )
-    `)
-    .eq("staff_profiles.org_id", orgId)
-    .eq("training_types.org_id", orgId)
-    .gte("expires_on", startISO)
+      staff_profiles ( full_name ),
+      training_types ( name )
+    `
+    )
+    .eq("org_id", orgId)
     .lte("expires_on", endISO)
-    .order("expires_on", { ascending: true });
+    .order("expires_on");
 
   if (error) throw error;
 
-  type RowRaw = {
+  // Accept arrays or single objects
+  const rows = (data ?? []) as Array<{
     expires_on: string;
-    staff_profiles: { full_name: string }[] | { full_name: string } | null;
-    training_types: { name: string }[] | { name: string } | null;
-  };
+    staff_profiles: { full_name: string } | { full_name: string }[] | null;
+    training_types: { name: string } | { name: string }[] | null;
+  }>;
 
-  const rows = (data ?? []) as RowRaw[];
   return rows.map((r) => {
-    const staffP = first<{ full_name: string }>(r.staff_profiles);
-    const ttype = first<{ name: string }>(r.training_types);
+    const sp = Array.isArray(r.staff_profiles) ? r.staff_profiles[0] : r.staff_profiles;
+    const tt = Array.isArray(r.training_types) ? r.training_types[0] : r.training_types;
     return {
-      staffName: staffP?.full_name ?? "Staff",
-      trainingName: ttype?.name ?? "Training",
+      staffName: sp?.full_name ?? "",
+      trainingName: tt?.name ?? "",
       expiresOn: r.expires_on,
     };
   });
 }
 
+/** Simple leaderboard: count logs per staff initials in last N days */
+export type LeaderboardRow = { initials: string; count: number };
+
 export async function loggingLeaderboard(days = 90): Promise<LeaderboardRow[]> {
-  "use server";
-  const { sb, orgId } = await requireOrg();
+  const { sb: client, orgId } = await requireOrg();
 
   const start = new Date();
-  start.setUTCDate(start.getUTCDate() - Math.max(1, days));
+  start.setDate(start.getDate() - days);
   const startISO = start.toISOString().slice(0, 10);
 
-  const { data: logs, error } = await sb
+  const { data, error } = await client
     .from("temp_logs")
-    .select("created_by, time_iso")
+    .select("staff_initials, recorded_at")
     .eq("org_id", orgId)
-    .gte("time_iso", `${startISO}T00:00:00Z`);
+    .gte("recorded_at", startISO);
+
   if (error) throw error;
 
   const counts = new Map<string, number>();
-  for (const row of (logs ?? []) as Array<{ created_by: string | null }>) {
-    const uid = row.created_by ?? "";
-    if (!uid) continue;
-    counts.set(uid, (counts.get(uid) ?? 0) + 1);
+  for (const r of (data ?? []) as Array<{ staff_initials: string | null }>) {
+    const key = (r.staff_initials ?? "").trim();
+    if (!key) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  const ids = Array.from(counts.keys());
-  if (!ids.length) return [];
-
-  const { data: staff } = await sb
-    .from("staff_profiles")
-    .select("user_id, full_name")
-    .eq("org_id", orgId)
-    .in("user_id", ids);
-
-  const staffName = new Map<string, string>();
-  for (const s of (staff ?? []) as Array<{ user_id: string | null; full_name: string | null }>) {
-    if (s.user_id && s.full_name) staffName.set(s.user_id, s.full_name);
-  }
-
-  const missing = ids.filter((id) => !staffName.has(id));
-  const { data: profs } = await sb.from("profiles").select("id, email").in("id", missing);
-
-  const profEmail = new Map<string, string>();
-  for (const p of (profs ?? []) as Array<{ id: string; email: string | null }>) {
-    if (p.email) profEmail.set(p.id, p.email);
-  }
-
-  const rows: LeaderboardRow[] = ids.map((uid) => ({
-    user_id: uid,
-    name: staffName.get(uid) || profEmail.get(uid) || "User",
-    count: counts.get(uid) ?? 0,
-  }));
-
-  rows.sort((a, b) => b.count - a.count);
-  return rows;
+  return Array.from(counts.entries())
+    .map(([initials, count]) => ({ initials, count }))
+    .sort((a, b) => b.count - a.count);
 }
