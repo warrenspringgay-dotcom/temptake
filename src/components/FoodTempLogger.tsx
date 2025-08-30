@@ -1,545 +1,516 @@
+// src/components/FoodTempLogger.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import NavTabs from "./NavTabs";
-import { supabase } from "@/lib/supabase";
+import React from "react";
+import Image from "next/image";
+import NavTabs from "@/components/NavTabs";
+import { useSettings } from "@/components/SettingsProvider";
 
-/* ---------- Types ---------- */
-type Category = "Fridge" | "Freezer" | "Cook" | "Hot Hold" | "Other";
+import {
+  listTempLogs,
+  upsertTempLog,
+  deleteTempLog,
+  listStaffInitials,
+  listTargets,
+  type TempLogRow,
+  type TempLogInput,
+} from "@/app/actions/db";
 
-export type TempLogRow = {
-  id: string;
-  created_at: string;
-  category: Category | string;
-  location: string;
-  item: string;
-  temperature: number;
-  initials: string;
-  pass: boolean;
-  notes?: string | null;
-};
+/* ------------------------------ small helpers ------------------------------ */
+const fmtDate = (d: Date | string) =>
+  (typeof d === "string" ? d : d.toISOString()).slice(0, 10);
 
-type NewTempLog = Omit<TempLogRow, "id" | "created_at" | "pass"> & { pass?: boolean };
-
-const CATEGORIES: Category[] = ["Fridge", "Freezer", "Cook", "Hot Hold", "Other"];
-
-/* ---------- Helpers ---------- */
-const todayISO = (): string => new Date().toISOString().slice(0, 10);
-
-function withinRange(temp: number, category: string): boolean {
-  if (category === "Fridge") return temp >= 0 && temp <= 5;
-  if (category === "Freezer") return temp <= -18;
-  if (category === "Cook") return temp >= 75;
-  if (category === "Hot Hold") return temp >= 63;
-  return true;
+function passForTarget(target: string | null, temp: number | null, unit: "C" | "F"): boolean | null {
+  if (temp == null) return null;
+  const t = (target ?? "").toLowerCase();
+  const c = unit === "F" ? (temp - 32) * (5 / 9) : temp;
+  if (t.includes("fridge")) return c <= 5;
+  if (t.includes("freezer")) return c <= -18;
+  if (t.includes("cook")) return c >= 75;
+  if (t.includes("hot")) return c >= 63;
+  return null;
 }
 
-function dateOnly(iso: string): string {
-  return iso.slice(0, 10);
+/* ---------------------------------- UI bits -------------------------------- */
+function Card({
+  title,
+  value,
+  sub,
+}: {
+  title: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border bg-white p-4 shadow-sm">
+      <div className="text-xs uppercase tracking-wide text-gray-500">{title}</div>
+      <div className="mt-2 text-2xl font-semibold">{value}</div>
+      {sub ? <div className="mt-1 text-xs text-gray-500">{sub}</div> : null}
+    </div>
+  );
 }
 
-/* ---------- Component ---------- */
+function Table({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border bg-white">
+      <table className="min-w-[800px] w-full text-sm">{children}</table>
+    </div>
+  );
+}
+
+function Th({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <th className={`bg-gray-50 px-3 py-2 text-left text-xs font-semibold text-gray-600 ${className ?? ""}`}>
+      {children}
+    </th>
+  );
+}
+
+function Td({
+  children,
+  className,
+  colSpan,
+  title,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  colSpan?: number;
+  title?: string;
+}) {
+  return (
+    <td className={`px-3 py-2 align-top ${className ?? ""}`} colSpan={colSpan} title={title}>
+      {children}
+    </td>
+  );
+}
+
+/* ------------------------------ main component ------------------------------ */
 export default function FoodTempLogger() {
-  // data
-  const [logs, setLogs] = useState<TempLogRow[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const { unit } = useSettings(); // "C" | "F"
 
-  // staff initials list (optional)
-  const [staffInitials, setStaffInitials] = useState<string[]>([]);
+  /* data */
+  const [logs, setLogs] = React.useState<TempLogRow[]>([]);
+  const [loading, setLoading] = React.useState(false);
 
-  // quick entry
-  const [showQuick, setShowQuick] = useState<boolean>(false);
-  const [quick, setQuick] = useState<NewTempLog>({
-    category: "Fridge",
+  /* filters */
+  const [from, setFrom] = React.useState<string>(fmtDate(new Date(Date.now() - 29 * 86400000)));
+  const [to, setTo] = React.useState<string>(fmtDate(new Date()));
+  const [query, setQuery] = React.useState("");
+  const [category, setCategory] = React.useState("All");
+
+  /* quick entry panel */
+  const [openQuick, setOpenQuick] = React.useState(false);
+  const [targets, setTargets] = React.useState<string[]>([]);
+  const [staffInitials, setStaffInitials] = React.useState<string[]>([]);
+  const [qForm, setQForm] = React.useState<TempLogInput>({
+    recorded_at: fmtDate(new Date()),
+    target: "",
     location: "",
+    staff_initials: "",
     item: "",
-    temperature: 0,
-    initials: "",
+    unit,
+    temperature: null,
+    pass: null,
     notes: "",
   });
 
-  // full entry modal
-  const [showFull, setShowFull] = useState<boolean>(false);
-  const [full, setFull] = useState<NewTempLog>({
-    category: "Fridge",
-    location: "",
-    item: "",
-    temperature: 0,
-    initials: "",
-    notes: "",
-  });
+  /* derived KPIs */
+  const filtered = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const inRange = logs.filter(
+      (r) =>
+        (!from || r.recorded_at >= from) &&
+        (!to || r.recorded_at <= to)
+    );
+    const withCat =
+      category === "All"
+        ? inRange
+        : inRange.filter((r) => (r.target ?? "").toLowerCase().includes(category.toLowerCase()));
+    if (!q) return withCat;
+    return withCat.filter((r) =>
+      [r.item, r.location, r.target, r.staff_initials, r.notes]
+        .filter(Boolean)
+        .some((v) => (v as string).toLowerCase().includes(q))
+    );
+  }, [logs, from, to, query, category]);
 
-  // filters (next to table)
-  const [fText, setFText] = useState<string>("");
-  const [fCat, setFCat] = useState<string>("All");
-  const [fFrom, setFFrom] = useState<string>("");
-  const [fTo, setFTo] = useState<string>("");
+  const topLogger = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of filtered) counts.set(r.staff_initials ?? "—", (counts.get(r.staff_initials ?? "—") ?? 0) + 1);
+    let best = "—";
+    let bestN = 0;
+    counts.forEach((n, k) => {
+      if (n > bestN) {
+        best = k;
+        bestN = n;
+      }
+    });
+    return { name: best, count: bestN };
+  }, [filtered]);
 
-  /* ----- Load logs & initials ----- */
-  useEffect(() => {
-    let mounted = true;
-    async function load() {
+  const needsAttention = React.useMemo(
+    () => filtered.filter((r) => r.pass === false).length,
+    [filtered]
+  );
+
+  const daysMissed = React.useMemo(() => {
+    const start = new Date(from + "T00:00:00");
+    const end = new Date(to + "T00:00:00");
+    const have = new Set<string>();
+    for (const r of filtered) have.add(r.recorded_at);
+    let d = 0;
+    for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
+      const k = fmtDate(new Date(t));
+      if (!have.has(k)) d++;
+    }
+    return d;
+  }, [filtered, from, to]);
+
+  /* load data + lookups */
+  React.useEffect(() => {
+    (async () => {
       setLoading(true);
-      const { data, error } = await supabase
-        .from("temp_logs")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (!mounted) return;
-      if (error) {
-        console.error("load temp_logs", error);
-        setLogs([]);
-      } else {
-        setLogs((data ?? []) as TempLogRow[]);
+      try {
+        const [rows, initials, availableTargets] = await Promise.all([
+          listTempLogs({ from, to }),
+          listStaffInitials(),
+          listTargets(),
+        ]);
+        setLogs(rows);
+        setStaffInitials(initials);
+        setTargets(availableTargets);
+      } finally {
+        setLoading(false);
       }
+    })();
+  }, [from, to]);
 
-      // optional staff list
-      const staff = await supabase.from("staff_profiles").select("initials").order("initials", { ascending: true });
-      if (mounted && !staff.error) {
-        const initials = (staff.data ?? [])
-          .map((r: { initials?: string | null }) => (r.initials ?? "").trim())
-          .filter((v: string) => v.length > 0);
-        setStaffInitials(Array.from(new Set(initials)));
-      }
-      setLoading(false);
-    }
-    load();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  /* ---------- KPI Cards ---------- */
-  const lastNDays = (n: number): string[] => {
-    const out: string[] = [];
-    const now = new Date();
-    for (let i = n - 1; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(now.getDate() - i);
-      out.push(d.toISOString().slice(0, 10));
-    }
-    return out;
-  };
-
-  const kpi = useMemo(() => {
-    const last30 = new Date();
-    last30.setDate(last30.getDate() - 30);
-
-    const recent = logs.filter((r) => new Date(r.created_at) >= last30);
-    const byInitials = new Map<string, number>();
-    for (const r of recent) {
-      byInitials.set(r.initials, (byInitials.get(r.initials) ?? 0) + 1);
-    }
-    let topLogger = "-";
-    let topCount = 0;
-    for (const [k, v] of byInitials) {
-      if (v > topCount) {
-        topLogger = k || "-";
-        topCount = v;
-      }
-    }
-
-    const last7 = new Date();
-    last7.setDate(last7.getDate() - 7);
-    const needsAttention = logs.filter((r) => new Date(r.created_at) >= last7 && !r.pass).length;
-
-    // missed days (last 14 days with zero entries)
-    const days = lastNDays(14);
-    const setByDay = new Map<string, number>();
-    for (const iso of days) setByDay.set(iso, 0);
-    for (const r of logs) {
-      const d = dateOnly(r.created_at);
-      if (setByDay.has(d)) setByDay.set(d, (setByDay.get(d) ?? 0) + 1);
-    }
-    const missed = Array.from(setByDay.values()).filter((v) => v === 0).length;
-
-    return { topLogger, needsAttention, missed };
-  }, [logs]);
-
-  /* ---------- Derived table (filters) ---------- */
-  const filtered = useMemo(() => {
-    let rows = [...logs];
-    if (fText.trim()) {
-      const q = fText.toLowerCase();
-      rows = rows.filter(
-        (r) =>
-          r.item.toLowerCase().includes(q) ||
-          r.location.toLowerCase().includes(q) ||
-          r.initials.toLowerCase().includes(q)
-      );
-    }
-    if (fCat !== "All") rows = rows.filter((r) => r.category === fCat);
-    if (fFrom) rows = rows.filter((r) => dateOnly(r.created_at) >= fFrom);
-    if (fTo) rows = rows.filter((r) => dateOnly(r.created_at) <= fTo);
-    return rows;
-  }, [logs, fText, fCat, fFrom, fTo]);
-
-  /* ---------- Chart data (entries per day) ---------- */
-  const chart = useMemo(() => {
-    const days = lastNDays(14);
-    const counts = days.map((d) => ({ day: d.slice(5), count: 0 }));
-    const indexByDay = new Map(days.map((d, i) => [d, i]));
-    for (const r of logs) {
-      const d = dateOnly(r.created_at);
-      const i = indexByDay.get(d);
-      if (i !== undefined) counts[i].count += 1;
-    }
-    const max = Math.max(1, ...counts.map((c) => c.count));
-    return { days: counts, max };
-  }, [logs]);
-
-  /* ---------- Save helpers ---------- */
-  async function insertLog(input: NewTempLog) {
-    const pass = withinRange(input.temperature, input.category);
-    const payload = { ...input, pass };
-    const { data, error } = await supabase.from("temp_logs").insert(payload).select().single();
-    if (error) {
-      console.error("insert temp_log", error);
-      alert("Could not save entry.");
-      return null;
-    }
-    return data as TempLogRow;
-  }
+  /* quick form: recompute pass automatically */
+  React.useEffect(() => {
+    const computed = passForTarget(qForm.target ?? null, qForm.temperature ?? null, unit);
+    setQForm((f) => ({ ...f, unit, pass: computed }));
+  }, [qForm.target, qForm.temperature, unit]);
 
   async function submitQuick(e: React.FormEvent) {
     e.preventDefault();
-    if (!quick.item || !quick.location || !quick.initials) {
-      alert("Please fill item, location, and initials.");
-      return;
-    }
-    const saved = await insertLog(quick);
-    if (saved) {
-      setLogs((prev) => [saved, ...prev]);
-      setQuick({ category: "Fridge", location: "", item: "", temperature: 0, initials: "", notes: "" });
-      setShowQuick(false);
-    }
+    const saved = await upsertTempLog(qForm);
+    setLogs((prev) => [saved, ...prev]);
+    setQForm({
+      recorded_at: fmtDate(new Date()),
+      target: qForm.target ?? "",
+      location: "",
+      staff_initials: qForm.staff_initials ?? "",
+      item: "",
+      unit,
+      temperature: null,
+      pass: null,
+      notes: "",
+    });
+    setOpenQuick(false);
   }
 
-  async function submitFull(e: React.FormEvent) {
-    e.preventDefault();
-    if (!full.item || !full.location || !full.initials) {
-      alert("Please fill item, location, and initials.");
-      return;
-    }
-    const saved = await insertLog(full);
-    if (saved) {
-      setLogs((prev) => [saved, ...prev]);
-      setFull({ category: "Fridge", location: "", item: "", temperature: 0, initials: "", notes: "" });
-      setShowFull(false);
-    }
+  async function remove(id: string) {
+    await deleteTempLog(id);
+    setLogs((prev) => prev.filter((r) => r.id !== id));
   }
 
-  /* ---------- UI ---------- */
+  /* categories for the filter (derived from targets) */
+  const categories = React.useMemo<string[]>(
+    () => ["All", ...new Set((logs.map((r) => r.target ?? "").filter(Boolean)))],
+    [logs]
+  );
+
+  /* entries/day (filtered) for chart */
+  const entriesPerDay = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of filtered) counts.set(r.recorded_at, (counts.get(r.recorded_at) ?? 0) + 1);
+    return [...counts.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([day, n]) => ({ day, n }));
+  }, [filtered]);
+
+  /* --------------------------------- render --------------------------------- */
   return (
     <div className="min-h-screen w-full bg-gray-50">
       <NavTabs />
 
       <main className="mx-auto max-w-6xl p-4 space-y-6">
-        {/* KPI cards */}
-        <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <KpiCard label="Top logger (30 days)" value={kpi.topLogger || "-"} />
-          <KpiCard label="Items needing attention (7 days)" value={String(kpi.needsAttention)} tone="warn" />
-          <KpiCard label="Missed days (last 14)" value={String(kpi.missed)} tone={kpi.missed > 0 ? "warn" : "ok"} />
-        </section>
+        {/* Top actions row: Quick entry + Full entry */}
+        <div className="flex items-center gap-2">
+          <details
+            className="group rounded-md border bg-white"
+            open={openQuick}
+            onToggle={(e) => setOpenQuick((e.target as HTMLDetailsElement).open)}
+          >
+            <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-sm font-medium">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded border">
+                {/* little arrow on the left */}
+                <span className="group-open:hidden">▸</span>
+                <span className="hidden group-open:inline">▾</span>
+              </span>
+              Quick entry
+            </summary>
 
-        {/* Actions row */}
-        <section className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <button
-              className="inline-flex items-center gap-2 rounded-md border px-3 py-2 bg-white hover:bg-gray-50"
-              onClick={() => setShowQuick((v) => !v)}
-              aria-expanded={showQuick}
-              aria-controls="quick-entry"
-            >
-              <span className="select-none">{showQuick ? "▾" : "▸"}</span>
-              <span>Quick entry</span>
-            </button>
-
-            <button
-              className="rounded-md bg-slate-900 text-white px-4 py-2"
-              onClick={() => setShowFull(true)}
-            >
-              Full entry
-            </button>
-          </div>
-        </section>
-
-        {/* Quick entry panel (directly under the button) */}
-        {showQuick && (
-          <section id="quick-entry" className="rounded-xl border bg-white p-4">
-            <form onSubmit={submitQuick} className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-3 items-end">
+            <form onSubmit={submitQuick} className="grid grid-cols-1 gap-3 border-t p-3 sm:grid-cols-2 lg:grid-cols-3">
               <div>
-                <label className="block text-sm mb-1">Category</label>
-                <select
-                  className="w-full rounded-md border px-2 py-1"
-                  value={quick.category}
-                  onChange={(e) => setQuick({ ...quick, category: e.target.value as Category })}
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </datalist>
-              </div>
-
-              <div>
-                <label className="block text-sm mb-1">Location</label>
+                <label className="block text-sm mb-1">Recorded date</label>
                 <input
-                  className="w-full rounded-md border px-2 py-1"
-                  value={quick.location}
-                  onChange={(e) => setQuick({ ...quick, location: e.target.value })}
-                  placeholder="Kitchen, Fridge 1…"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm mb-1">Item</label>
-                <input
-                  className="w-full rounded-md border px-2 py-1"
-                  value={quick.item}
-                  onChange={(e) => setQuick({ ...quick, item: e.target.value })}
-                  placeholder="Chicken curry…"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm mb-1">Temperature (°C)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  className="w-full rounded-md border px-2 py-1"
-                  value={quick.temperature}
-                  onChange={(e) => setQuick({ ...quick, temperature: Number(e.target.value) })}
+                  type="date"
+                  value={qForm.recorded_at}
+                  onChange={(e) => setQForm({ ...qForm, recorded_at: e.target.value })}
+                  className="w-full rounded border px-2 py-1"
+                  required
                 />
               </div>
 
               <div>
                 <label className="block text-sm mb-1">Initials</label>
-                {staffInitials.length > 0 ? (
-                  <select
-                    className="w-full rounded-md border px-2 py-1"
-                    value={quick.initials}
-                    onChange={(e) => setQuick({ ...quick, initials: e.target.value })}
-                  >
-                    <option value="">Select…</option>
-                    {staffInitials.map((i) => (
-                      <option key={i} value={i}>
-                        {i}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    className="w-full rounded-md border px-2 py-1"
-                    value={quick.initials}
-                    onChange={(e) => setQuick({ ...quick, initials: e.target.value })}
-                    placeholder="AB"
-                  />
-                )}
-              </div>
-
-              <div className="sm:col-span-2 lg:col-span-3">
-                <label className="block text-sm mb-1">Notes (optional)</label>
                 <input
-                  className="w-full rounded-md border px-2 py-1"
-                  value={quick.notes ?? ""}
-                  onChange={(e) => setQuick({ ...quick, notes: e.target.value })}
-                  placeholder="Corrective action or comments…"
+                  list="initials"
+                  value={qForm.staff_initials ?? ""}
+                  onChange={(e) => setQForm({ ...qForm, staff_initials: e.target.value })}
+                  className="w-full rounded border px-2 py-1"
+                  placeholder="e.g. WS"
+                  required
                 />
-              </div>
-
-              <div className="sm:col-span-1 lg:col-span-1">
-                <button className="w-full rounded-md bg-slate-900 text-white px-4 py-2">Save</button>
-              </div>
-            </form>
-          </section>
-        )}
-
-        {/* Filters + table (lower on page) */}
-        <section className="rounded-xl border bg-white p-4 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-            <div className="lg:col-span-2">
-              <label className="block text-sm mb-1">Search</label>
-              <input
-                className="w-full rounded-md border px-2 py-1"
-                value={fText}
-                onChange={(e) => setFText(e.target.value)}
-                placeholder="Search item / location / initials…"
-              />
-            </div>
-            <div>
-              <label className="block text-sm mb-1">Category</label>
-              <select
-                className="w-full rounded-md border px-2 py-1"
-                value={fCat}
-                onChange={(e) => setFCat(e.target.value)}
-              >
-                <option>All</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm mb-1">From</label>
-              <input
-                type="date"
-                className="w-full rounded-md border px-2 py-1"
-                value={fFrom}
-                onChange={(e) => setFFrom(e.target.value)}
-                max={fTo || undefined}
-              />
-            </div>
-            <div>
-              <label className="block text-sm mb-1">To</label>
-              <input
-                type="date"
-                className="w-full rounded-md border px-2 py-1"
-                value={fTo}
-                onChange={(e) => setFTo(e.target.value)}
-                min={fFrom || undefined}
-                max={todayISO()}
-              />
-            </div>
-            <div className="flex items-end">
-              <button
-                className="w-full rounded-md border px-3 py-2 bg-white hover:bg-gray-50"
-                onClick={() => {
-                  setFText("");
-                  setFCat("All");
-                  setFFrom("");
-                  setFTo("");
-                }}
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-slate-600 border-b">
-                  <th className="py-2 pr-3">Date</th>
-                  <th className="py-2 pr-3">Category</th>
-                  <th className="py-2 pr-3">Location</th>
-                  <th className="py-2 pr-3">Item</th>
-                  <th className="py-2 pr-3">Temp</th>
-                  <th className="py-2 pr-3">Initials</th>
-                  <th className="py-2 pr-3">Status</th>
-                  <th className="py-2 pr-3">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan={8} className="py-6 text-center text-slate-500">
-                      Loading…
-                    </td>
-                  </tr>
-                ) : filtered.length ? (
-                  filtered.map((r) => (
-                    <tr key={r.id} className="border-t hover:bg-gray-50">
-                      <td className="py-2 pr-3">{dateOnly(r.created_at)}</td>
-                      <td className="py-2 pr-3">{r.category}</td>
-                      <td className="py-2 pr-3">{r.location}</td>
-                      <td className="py-2 pr-3">{r.item}</td>
-                      <td className="py-2 pr-3">{r.temperature.toFixed(1)}°C</td>
-                      <td className="py-2 pr-3">{r.initials}</td>
-                      <td className="py-2 pr-3">
-                        <span
-                          className={`px-2 py-1 rounded-md text-xs font-medium ${
-                            r.pass ? "bg-green-100 text-green-800" : "bg-red-100 text-red-700"
-                          }`}
-                        >
-                          {r.pass ? "Pass" : "Fail"}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-3">{r.notes || ""}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={8} className="py-6 text-center text-slate-500">
-                      No entries found.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        {/* Bar chart at the very bottom */}
-        <section className="rounded-xl border bg-white p-4">
-          <h3 className="text-sm font-medium mb-3">Entries per day (last 14 days)</h3>
-          <div className="flex items-end gap-2 h-40">
-            {chart.days.map((d) => {
-              const h = Math.round((d.count / chart.max) * 140);
-              return (
-                <div key={d.day} className="flex flex-col items-center justify-end h-full">
-                  <div
-                    title={`${d.day}: ${d.count}`}
-                    className="w-6 rounded-t bg-slate-800"
-                    style={{ height: `${h}px` }}
-                  />
-                  <div className="text-[10px] mt-1 text-slate-600">{d.day}</div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      </main>
-
-      {/* Full entry modal */}
-      {showFull && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl rounded-xl bg-white p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-semibold">New temperature entry</h2>
-              <button className="text-slate-500 hover:text-slate-700" onClick={() => setShowFull(false)}>
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={submitFull} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm mb-1">Category</label>
-                <select
-                  className="w-full rounded-md border px-2 py-1"
-                  value={full.category}
-                  onChange={(e) => setFull({ ...full, category: e.target.value as Category })}
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c}>{c}</option>
+                <datalist id="initials">
+                  {staffInitials.map((s) => (
+                    <option key={s} value={s} />
                   ))}
-                </select>
+                </datalist>
               </div>
+
               <div>
-                <label className="block text-sm mb-1">Location</label>
+                <label className="block text-sm mb-1">Target</label>
                 <input
-                  className="w-full rounded-md border px-2 py-1"
-                  value={full.location}
-                  onChange={(e) => setFull({ ...full, location: e.target.value })}
+                  list="targets"
+                  value={qForm.target ?? ""}
+                  onChange={(e) => setQForm({ ...qForm, target: e.target.value })}
+                  className="w-full rounded border px-2 py-1"
+                  placeholder="Fridge / Freezer / Cook / Hot hold"
                 />
+                <datalist id="targets">
+                  {targets.map((t) => (
+                    <option key={t} value={t} />
+                  ))}
+                </datalist>
               </div>
+
               <div>
                 <label className="block text-sm mb-1">Item</label>
                 <input
-                  className="w-full rounded-md border px-2 py-1"
-                  value={full.item}
-                  onChange={(e) => setFull({ ...full, item: e.target.value })}
+                  value={qForm.item ?? ""}
+                  onChange={(e) => setQForm({ ...qForm, item: e.target.value })}
+                  className="w-full rounded border px-2 py-1"
+                  placeholder="Optional item/food"
                 />
               </div>
+
               <div>
-                <label className="block text-sm mb-1">Temperature (°C)</label>
+                <label className="block text-sm mb-1">Location</label>
+                <input
+                  value={qForm.location ?? ""}
+                  onChange={(e) => setQForm({ ...qForm, location: e.target.value })}
+                  className="w-full rounded border px-2 py-1"
+                  placeholder="Kitchen / Service etc."
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm mb-1">
+                  Temperature ({unit === "F" ? "°F" : "°C"})
+                </label>
                 <input
                   type="number"
                   step="0.1"
-                  className="w-full rounded-md border px-2 py-1"
-                  value={full.temperature}
-                  onChange={(e) => setFull({ ...full, temperature: Number(e.target.value) })}
+                  value={qForm.temperature ?? ""}
+                  onChange={(e) =>
+                    setQForm({ ...qForm, temperature: e.target.value === "" ? null : Number(e.target.value) })
+                  }
+                  className="w-full rounded border px-2 py-1"
+                  required
                 />
               </div>
-              <div>
-                <label classNam
+
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label className="block text-sm mb-1">Notes</label>
+                <input
+                  value={qForm.notes ?? ""}
+                  onChange={(e) => setQForm({ ...qForm, notes: e.target.value })}
+                  className="w-full rounded border px-2 py-1"
+                  placeholder="Optional notes"
+                />
+              </div>
+
+              <div className="sm:col-span-2 lg:col-span-3 flex items-center justify-between">
+                <div className="text-sm">
+                  Auto-status:&nbsp;
+                  {qForm.pass == null ? (
+                    <span className="text-gray-500">—</span>
+                  ) : qForm.pass ? (
+                    <span className="rounded bg-green-100 px-2 py-0.5 text-green-700">PASS</span>
+                  ) : (
+                    <span className="rounded bg-red-100 px-2 py-0.5 text-red-700">FAIL</span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOpenQuick(false)}
+                    className="rounded border px-3 py-1 text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded bg-black px-3 py-1 text-sm text-white"
+                  >
+                    Save entry
+                  </button>
+                </div>
+              </div>
+            </form>
+          </details>
+
+          {/* Full entry button (link to your full form route if you have one) */}
+          <a
+            href="#full-entry"
+            className="rounded-md bg-black px-3 py-2 text-sm font-medium text-white"
+          >
+            Full entry
+          </a>
+        </div>
+
+        {/* KPI cards */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Card title="Top logger" value={`${topLogger.name}`} sub={`${topLogger.count} in current range`} />
+          <Card title="Needs attention" value={needsAttention} sub="failed checks" />
+          <Card title="Days missed" value={daysMissed} sub="no entries on those days" />
+        </div>
+
+        {/* Filters */}
+        <div className="grid grid-cols-1 items-end gap-3 rounded-lg border bg-white p-3 sm:grid-cols-[1fr,1fr,1fr,2fr]">
+          <div>
+            <label className="block text-sm mb-1">From</label>
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-full rounded border px-2 py-1" />
+          </div>
+          <div>
+            <label className="block text-sm mb-1">To</label>
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-full rounded border px-2 py-1" />
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Category</label>
+            <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full rounded border px-2 py-1">
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Search</label>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full rounded border px-2 py-1"
+              placeholder="item / location / initials"
+            />
+          </div>
+        </div>
+
+        {/* Table */}
+        <section>
+          <div className="mb-2 text-sm font-medium">Entries</div>
+          <Table>
+            <thead>
+              <tr>
+                <Th>Date</Th>
+                <Th>Initials</Th>
+                <Th>Target</Th>
+                <Th>Item</Th>
+                <Th>Location</Th>
+                <Th className="text-right">Temp ({unit === "F" ? "°F" : "°C"})</Th>
+                <Th>Status</Th>
+                <Th>Notes</Th>
+                <Th className="text-right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <Td colSpan={9}>Loading…</Td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <Td colSpan={9}>No entries in this view.</Td>
+                </tr>
+              ) : (
+                filtered.map((r) => (
+                  <tr key={r.id} className="border-t">
+                    <Td>{r.recorded_at}</Td>
+                    <Td>{r.staff_initials ?? "—"}</Td>
+                    <Td>{r.target ?? "—"}</Td>
+                    <Td>{r.item ?? "—"}</Td>
+                    <Td>{r.location ?? "—"}</Td>
+                    <Td className="text-right">{r.temperature ?? "—"}</Td>
+                    <Td>
+                      {r.pass == null ? (
+                        <span className="rounded border px-2 py-0.5 text-xs text-gray-600">—</span>
+                      ) : r.pass ? (
+                        <span className="rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">PASS</span>
+                      ) : (
+                        <span className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-700">FAIL</span>
+                      )}
+                    </Td>
+                    <Td className="max-w-[240px] truncate" title={r.notes ?? ""}>
+                      {r.notes ?? "—"}
+                    </Td>
+                    <Td className="text-right">
+                      <button
+                        onClick={() => remove(r.id)}
+                        className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+                        title="Delete"
+                      >
+                        Delete
+                      </button>
+                    </Td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </Table>
+        </section>
+
+        {/* Chart placeholder (entries/day) at the bottom */}
+        <section className="rounded-lg border bg-white p-4">
+          <div className="mb-2 text-sm font-medium">Entries per day (filtered)</div>
+          {entriesPerDay.length === 0 ? (
+            <div className="text-sm text-gray-500">—</div>
+          ) : (
+            <div className="relative h-40 w-full">
+              <div className="flex h-full items-end gap-1">
+                {entriesPerDay.map(({ day, n }) => (
+                  <div key={day} className="flex flex-col items-center gap-1">
+                    <div
+                      className="w-4 rounded-t bg-gray-800"
+                      style={{ height: `${Math.min(100, n * 12)}%` }}
+                      title={`${day}: ${n}`}
+                    />
+                    <div className="text-[10px] text-gray-500">{day.slice(5)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      </main>
+
+      {/* Optional corner brand (kept for parity with your earlier screenshot) */}
+      <div className="pointer-events-none fixed left-3 top-3 z-20 flex items-center gap-2 opacity-80">
+        <Image src={"/temptake-192.png"} alt={"TempTake"} width={20} height={20} />
+        <span className="text-sm font-semibold">TempTake</span>
+      </div>
+    </div>
+  );
+}

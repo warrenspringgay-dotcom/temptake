@@ -1,87 +1,69 @@
-// src/i18n.tsx
 "use client";
 
-import React, { createContext, useContext, useState, ReactNode } from "react";
+import React, { createContext, useContext, useMemo } from "react";
+import { useSettings } from "@/components/SettingsProvider";
 
-// Supported languages
-type Language = "en-GB" | "en-US" | "fr-FR" | "zh-CN" | "hi-IN" | "auto";
+export type LanguageCode = "en" | "zh" | "hi" | "ur";
 
-const translations: Record<Language, Record<string, string>> = {
-  "en-GB": {
-    dashboard: "Dashboard",
-    allergens: "Allergens",
-    team: "Team",
-    suppliers: "Suppliers",
-    reports: "Reports",
-    settings: "Settings",
-    signIn: "Sign in",
-    signOut: "Sign out",
+const STRINGS: Record<LanguageCode, Record<string, string>> = {
+  en: {
+    nav_dashboard: "Dashboard",
+    nav_allergens: "Allergens",
+    nav_team: "Team",
+    nav_suppliers: "Suppliers",
+    nav_reports: "Reports",
   },
-  "en-US": {
-    dashboard: "Dashboard",
-    allergens: "Allergens",
-    team: "Team",
-    suppliers: "Suppliers",
-    reports: "Reports",
-    settings: "Settings",
-    signIn: "Sign in",
-    signOut: "Sign out",
+  zh: {
+    nav_dashboard: "仪表板",
+    nav_allergens: "过敏原",
+    nav_team: "团队",
+    nav_suppliers: "供应商",
+    nav_reports: "报告",
   },
-  "fr-FR": {
-    dashboard: "Tableau de bord",
-    allergens: "Allergènes",
-    team: "Équipe",
-    suppliers: "Fournisseurs",
-    reports: "Rapports",
-    settings: "Paramètres",
-    signIn: "Se connecter",
-    signOut: "Se déconnecter",
+  hi: {
+    nav_dashboard: "डैशबोर्ड",
+    nav_allergens: "एलर्जेन्स",
+    nav_team: "टीम",
+    nav_suppliers: "आपूर्तिकर्ता",
+    nav_reports: "रिपोर्ट्स",
   },
-  "zh-CN": {
-    dashboard: "仪表盘",
-    allergens: "过敏原",
-    team: "团队",
-    suppliers: "供应商",
-    reports: "报告",
-    settings: "设置",
-    signIn: "登录",
-    signOut: "登出",
+  ur: {
+    nav_dashboard: "ڈیش بورڈ",
+    nav_allergens: "الرجنز",
+    nav_team: "ٹیم",
+    nav_suppliers: "سپلائرز",
+    nav_reports: "رپورٹس",
   },
-  "hi-IN": {
-    dashboard: "डैशबोर्ड",
-    allergens: "एलर्जन",
-    team: "टीम",
-    suppliers: "आपूर्तिकर्ता",
-    reports: "रिपोर्ट्स",
-    settings: "सेटिंग्स",
-    signIn: "साइन इन",
-    signOut: "साइन आउट",
-  },
-  auto: {}, // auto handled by browser, fallback to en-GB
 };
 
-type I18nContextType = {
-  lang: Language;
-  setLang: (l: Language) => void;
+function resolveLang(code?: string): LanguageCode {
+  if (code === "zh" || code?.startsWith("zh")) return "zh";
+  if (code === "hi" || code?.startsWith("hi")) return "hi";
+  if (code === "ur" || code?.startsWith("ur")) return "ur";
+  return "en";
+}
+
+type I18nContextValue = {
+  lang: LanguageCode;
   t: (key: string) => string;
 };
 
-const I18nContext = createContext<I18nContextType | null>(null);
+const I18nContext = createContext<I18nContextValue | null>(null);
 
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const browserLang =
-    typeof navigator !== "undefined" ? (navigator.language as Language) : "en-GB";
-  const [lang, setLang] = useState<Language>(browserLang in translations ? browserLang : "en-GB");
+export function I18nProvider({ children }: { children: React.ReactNode }) {
+  const { language } = useSettings(); // <-- from SettingsProvider
+  const lang = resolveLang(language);
+  const dict = STRINGS[lang] ?? STRINGS.en;
 
-  function t(key: string) {
-    return translations[lang]?.[key] || translations["en-GB"][key] || key;
-  }
-
-  return (
-    <I18nContext.Provider value={{ lang, setLang, t }}>
-      {children}
-    </I18nContext.Provider>
+  const value = useMemo<I18nContextValue>(
+    () => ({
+      lang,
+      t: (k: string) => dict[k] ?? k,
+    }),
+    [lang, dict]
   );
+
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 
 export function useI18n() {

@@ -1,13 +1,7 @@
-"use client";
-
+// src/app/page.tsx
+import React from "react";
 import FoodTempLogger from "@/components/FoodTempLogger";
 
-export default function Page() {
-  return (
-    <FoodTempLogger
-      brandName="TempTake"
-      brandAccent="#F59E0B"
-      logoUrl="/temptake-192.png"
-    />
-  );
+export default function HomePage() {
+  return <FoodTempLogger />;
 }

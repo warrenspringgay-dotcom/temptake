@@ -4,20 +4,19 @@ import Providers from "./providers";
 
 export const metadata: Metadata = {
   title: "TempTake",
-  description: "Food temperature logging and compliance",
+  description: "Food temperature logging & compliance",
   icons: [
-    { rel: "icon", url: "/temptake-192.png" },
+    { rel: "icon", url: "/favicon.ico" },
     { rel: "apple-touch-icon", url: "/temptake-192.png" },
   ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body>
         <Providers>{children}</Providers>
       </body>
     </html>
   );
 }
-

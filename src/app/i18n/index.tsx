@@ -1,49 +1,111 @@
 "use client";
 
-import React, { createContext, useContext, useMemo } from "react";
-import { STRINGS, type Dict, type Lang } from "./strings";
+import * as React from "react";
 import { useSettings } from "@/components/SettingsProvider";
 
-type I18nValue = {
-  lang: Lang;
-  t: (key: string, vars?: Record<string, string | number>) => string;
+/** Supported language codes */
+export type LanguageCode = "en" | "zh" | "hi" | "ur";
+
+/** Simple string dictionaries (extend as needed) */
+const STRINGS: Record<LanguageCode, Record<string, string>> = {
+  en: {
+    nav_dashboard: "Dashboard",
+    nav_allergens: "Allergens",
+    nav_team: "Team",
+    nav_suppliers: "Suppliers",
+    nav_reports: "Reports",
+    quick_entry: "Quick entry",
+    full_entry: "Full entry",
+    search: "Search",
+    from: "From",
+    to: "To",
+    category: "Category",
+    entries: "Entries",
+    top_logger: "Top logger",
+    needs_attention: "Needs attention",
+    days_missed: "Days missed",
+  },
+  zh: {
+    nav_dashboard: "仪表板",
+    nav_allergens: "过敏原",
+    nav_team: "团队",
+    nav_suppliers: "供应商",
+    nav_reports: "报告",
+    quick_entry: "快速录入",
+    full_entry: "完整录入",
+    search: "搜索",
+    from: "开始",
+    to: "结束",
+    category: "类别",
+    entries: "记录",
+    top_logger: "记录最多",
+    needs_attention: "需要关注",
+    days_missed: "缺失天数",
+  },
+  hi: {
+    nav_dashboard: "डैशबोर्ड",
+    nav_allergens: "एलर्जेन्स",
+    nav_team: "टीम",
+    nav_suppliers: "आपूर्तिकर्ता",
+    nav_reports: "रिपोर्ट्स",
+    quick_entry: "त्वरित प्रविष्टि",
+    full_entry: "पूर्ण प्रविष्टि",
+    search: "खोजें",
+    from: "से",
+    to: "तक",
+    category: "श्रेणी",
+    entries: "एंट्रीज़",
+    top_logger: "शीर्ष लॉगर",
+    needs_attention: "ध्यान आवश्यक",
+    days_missed: "छूटे दिन",
+  },
+  ur: {
+    nav_dashboard: "ڈیش بورڈ",
+    nav_allergens: "الرجنز",
+    nav_team: "ٹیم",
+    nav_suppliers: "سپلائرز",
+    nav_reports: "رپورٹس",
+    quick_entry: "جلد اندراج",
+    full_entry: "مکمل اندراج",
+    search: "تلاش",
+    from: "سے",
+    to: "تک",
+    category: "قسم",
+    entries: "اندراجات",
+    top_logger: "سب سے زیادہ لاگ کرنے والا",
+    needs_attention: "توجہ درکار",
+    days_missed: "چھوٹے دن",
+  },
 };
 
-const I18nContext = createContext<I18nValue | null>(null);
-
-function resolveLang(languageSetting: string): Lang {
-  if (languageSetting !== "auto") return languageSetting as Lang;
-
-  // Browser/device language -> our supported set
-  const lower = (typeof navigator !== "undefined" ? navigator.language : "en").toLowerCase();
-  if (lower.startsWith("zh")) return lower.includes("hant") ? "zh-Hant" : "zh-Hans";
-  if (lower.startsWith("hi")) return "hi";
-  if (lower.startsWith("bn")) return "bn";
-  if (lower.startsWith("pa")) return "pa";
-  if (lower.startsWith("ta")) return "ta";
-  if (lower.startsWith("ur")) return "ur";
+function resolveLang(code?: string): LanguageCode {
+  if (code === "zh" || code?.startsWith("zh")) return "zh";
+  if (code === "hi" || code?.startsWith("hi")) return "hi";
+  if (code === "ur" || code?.startsWith("ur")) return "ur";
   return "en";
 }
 
-function compile(dict: Dict) {
-  return (key: string, vars?: Record<string, string | number>) => {
-    let s = dict[key] ?? key;
-    if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, String(v));
-    return s;
-  };
-}
+type I18nContextValue = {
+  lang: LanguageCode;
+  t: (key: string) => string;
+};
+
+const I18nContext = React.createContext<I18nContextValue | null>(null);
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const { settings } = useSettings();
-  const lang = resolveLang(settings.language);
+  // ✅ read directly from SettingsProvider (no nested 'settings')
+  const { language } = useSettings();
+  const lang = resolveLang(language);
   const dict = STRINGS[lang] ?? STRINGS.en;
 
-  const value = useMemo(() => ({ lang, t: compile(dict) }), [lang, dict]);
+  const t = React.useCallback((key: string) => dict[key] ?? key, [dict]);
+  const value = React.useMemo<I18nContextValue>(() => ({ lang, t }), [lang, t]);
+
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 
-export function useI18n() {
-  const ctx = useContext(I18nContext);
+export function useI18n(): I18nContextValue {
+  const ctx = React.useContext(I18nContext);
   if (!ctx) throw new Error("useI18n must be used within I18nProvider");
   return ctx;
 }

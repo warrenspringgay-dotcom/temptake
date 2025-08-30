@@ -1,99 +1,95 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import * as React from "react";
 
-/** App-wide, user-facing settings only */
+/** Languages you plan to support */
+export type Language = "en" | "zh" | "hi" | "ur";
+
+/** Temperature units */
 export type TempUnit = "C" | "F";
-export type Theme = "system" | "light" | "dark";
-export type TimeFormat = "24h" | "12h";
-/** Language codes we’ll support in-app; "auto" follows device/browser */
-export type Language =
-  | "auto"
-  | "en"
-  | "zh-Hans"   // Simplified Chinese
-  | "zh-Hant"   // Traditional Chinese
-  | "hi"        // Hindi
-  | "bn"        // Bengali
-  | "pa"        // Punjabi
-  | "ta"        // Tamil
-  | "ur";       // Urdu
 
+/** All app-wide settings kept in context */
 export type Settings = {
-  tempUnit: TempUnit;
-  theme: Theme;
-  timeFormat: TimeFormat;
+  /** Display + branding (not necessarily editable in the Settings page) */
+  brandName: string;
+  brandAccent: string; // hex or CSS color
+  logoUrl: string;     // path or absolute URL
+
+  /** Functional settings */
+  unit: TempUnit;
   language: Language;
-  /** If true, users must be in Team to log (disables guest entries) */
-  requireTeamToLog: boolean;
-  /** Default months for quick/inspection reports (e.g., 3) */
-  defaultReportMonths: 1 | 2 | 3 | 6 | 12;
+
+  /** Auth / access shape you asked for */
+  allowGuestEntries: boolean;
+  requireLoginForEntries: boolean;
 };
 
-type SettingsContextValue = {
-  settings: Settings;
+export type SettingsContextValue = Settings & {
   update: (patch: Partial<Settings>) => void;
-  reset: () => void;
 };
 
-const DEFAULTS: Settings = {
-  tempUnit: "C",
-  theme: "system",
-  timeFormat: "24h",
-  language: "auto",
-  requireTeamToLog: false,
-  defaultReportMonths: 3,
+const SettingsContext = React.createContext<SettingsContextValue | null>(null);
+
+/** Default values shown before any persistence / user changes */
+const defaultSettings: Settings = {
+  brandName: "TempTake",
+  brandAccent: "#F59E0B",
+  logoUrl: "/temptake-192.png",
+
+  unit: "C",
+  language: "en",
+
+  allowGuestEntries: true,
+  requireLoginForEntries: false,
 };
 
-const STORAGE_KEY = "tt_settings_v2"; // bumped to v2 after removing brand fields
-const SettingsContext = createContext<SettingsContextValue | null>(null);
+const STORAGE_KEY = "temptake.settings.v1";
 
+/** Persist lightweight settings in localStorage (client-side only) */
+function loadFromStorage(): Partial<Settings> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Partial<Settings>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveToStorage(s: Settings) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  } catch {
+    // ignore
+  }
+}
+
+/** Provider */
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-  const [settings, setSettings] = useState<Settings>(DEFAULTS);
-  const [ready, setReady] = useState(false);
+  const [state, setState] = React.useState<Settings>(() => {
+    const fromLS = loadFromStorage();
+    return { ...defaultSettings, ...(fromLS ?? {}) };
+  });
 
-  // Load once
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<Settings>;
-        setSettings({ ...DEFAULTS, ...parsed });
-      } else {
-        // migrate old keys if present (best-effort)
-        const oldRaw = localStorage.getItem("tt_settings_v1");
-        if (oldRaw) {
-          const old = JSON.parse(oldRaw) as Record<string, unknown>;
-          const migrated: Partial<Settings> = {};
-          if (old?.tempUnit === "F") migrated.tempUnit = "F";
-          if (old?.theme === "light" || old?.theme === "dark") migrated.theme = old.theme as Theme;
-          setSettings({ ...DEFAULTS, ...migrated });
-        }
-      }
-    } catch {}
-    setReady(true);
+  const update = React.useCallback((patch: Partial<Settings>) => {
+    setState((prev) => {
+      const next = { ...prev, ...patch };
+      saveToStorage(next);
+      return next;
+    });
   }, []);
 
-  // Persist + reflect theme on document
-  useEffect(() => {
-    if (!ready) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-    document.documentElement.dataset.theme = settings.theme;
-  }, [settings, ready]);
-
-  const value = useMemo<SettingsContextValue>(
-    () => ({
-      settings,
-      update: (patch) => setSettings((prev) => ({ ...prev, ...patch })),
-      reset: () => setSettings(DEFAULTS),
-    }),
-    [settings]
-  );
+  const value = React.useMemo<SettingsContextValue>(() => ({ ...state, update }), [state, update]);
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }
 
+/** Hook */
 export function useSettings(): SettingsContextValue {
-  const ctx = useContext(SettingsContext);
+  const ctx = React.useContext(SettingsContext);
   if (!ctx) throw new Error("useSettings must be used within SettingsProvider");
   return ctx;
 }
