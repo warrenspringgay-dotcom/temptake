@@ -1,11 +1,8 @@
 // src/app/login/page.tsx
-import type { Metadata } from "next";
 import LoginClient from "./LoginClient";
 
-export const metadata: Metadata = {
-  title: "Sign in – TempTake",
-};
+export const dynamic = "force-dynamic";
 
-export default function LoginPage() {
+export default function Page() {
   return <LoginClient />;
 }
