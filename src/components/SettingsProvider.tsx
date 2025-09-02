@@ -1,95 +1,107 @@
+// src/components/SettingsProvider.tsx
 "use client";
 
-import * as React from "react";
+import React from "react";
 
-/** Languages you plan to support */
-export type Language = "en" | "zh" | "hi" | "ur";
-
-/** Temperature units */
+export type Language = "en" | "zh" | "hi";
 export type TempUnit = "C" | "F";
 
-/** All app-wide settings kept in context */
 export type Settings = {
-  /** Display + branding (not necessarily editable in the Settings page) */
-  brandName: string;
-  brandAccent: string; // hex or CSS color
-  logoUrl: string;     // path or absolute URL
-
-  /** Functional settings */
-  unit: TempUnit;
   language: Language;
-
-  /** Auth / access shape you asked for */
+  unit: TempUnit;
   allowGuestEntries: boolean;
   requireLoginForEntries: boolean;
+  // brand shown in UI (kept to avoid breaking existing components)
+  brandName: string;
+  brandAccent: string;
+  logoUrl: string;
 };
 
-export type SettingsContextValue = Settings & {
-  update: (patch: Partial<Settings>) => void;
-};
-
-const SettingsContext = React.createContext<SettingsContextValue | null>(null);
-
-/** Default values shown before any persistence / user changes */
-const defaultSettings: Settings = {
+const DEFAULTS: Settings = {
+  language: "en",
+  unit: "C",
+  allowGuestEntries: true,
+  requireLoginForEntries: false,
   brandName: "TempTake",
   brandAccent: "#F59E0B",
   logoUrl: "/temptake-192.png",
-
-  unit: "C",
-  language: "en",
-
-  allowGuestEntries: true,
-  requireLoginForEntries: false,
 };
 
-const STORAGE_KEY = "temptake.settings.v1";
+export type SettingsContextValue = {
+  // whole object (used by Settings page)
+  settings: Settings;
+  // convenience “flattened” access (used across app)
+  language: Language;
+  unit: TempUnit;
+  allowGuestEntries: boolean;
+  requireLoginForEntries: boolean;
+  brandName: string;
+  brandAccent: string;
+  logoUrl: string;
 
-/** Persist lightweight settings in localStorage (client-side only) */
-function loadFromStorage(): Partial<Settings> | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? (parsed as Partial<Settings>) : null;
-  } catch {
-    return null;
-  }
-}
+  update: (patch: Partial<Settings>) => void;
+};
 
-function saveToStorage(s: Settings) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-  } catch {
-    // ignore
-  }
-}
+const SettingsContext = React.createContext<SettingsContextValue | undefined>(
+  undefined
+);
 
-/** Provider */
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = React.useState<Settings>(() => {
-    const fromLS = loadFromStorage();
-    return { ...defaultSettings, ...(fromLS ?? {}) };
-  });
+  // persist to localStorage on the client; hydrate with defaults first
+  const [settings, setSettings] = React.useState<Settings>(DEFAULTS);
 
-  const update = React.useCallback((patch: Partial<Settings>) => {
-    setState((prev) => {
-      const next = { ...prev, ...patch };
-      saveToStorage(next);
-      return next;
-    });
+  // hydrate once on mount
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem("tt.settings");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setSettings({ ...DEFAULTS, ...parsed });
+      }
+    } catch {
+      /* ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const value = React.useMemo<SettingsContextValue>(() => ({ ...state, update }), [state, update]);
+  // persist on change
+  React.useEffect(() => {
+    try {
+      localStorage.setItem("tt.settings", JSON.stringify(settings));
+    } catch {
+      /* ignore */
+    }
+  }, [settings]);
 
-  return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
+  const update = React.useCallback((patch: Partial<Settings>) => {
+    setSettings((s) => ({ ...s, ...patch }));
+  }, []);
+
+  const value: SettingsContextValue = React.useMemo(
+    () => ({
+      settings,
+      language: settings.language,
+      unit: settings.unit,
+      allowGuestEntries: settings.allowGuestEntries,
+      requireLoginForEntries: settings.requireLoginForEntries,
+      brandName: settings.brandName,
+      brandAccent: settings.brandAccent,
+      logoUrl: settings.logoUrl,
+      update,
+    }),
+    [settings, update]
+  );
+
+  return (
+    <SettingsContext.Provider value={value}>
+      {children}
+    </SettingsContext.Provider>
+  );
 }
 
-/** Hook */
 export function useSettings(): SettingsContextValue {
   const ctx = React.useContext(SettingsContext);
-  if (!ctx) throw new Error("useSettings must be used within SettingsProvider");
+  if (!ctx)
+    throw new Error("useSettings must be used within SettingsProvider");
   return ctx;
 }

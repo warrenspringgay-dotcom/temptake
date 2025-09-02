@@ -2,12 +2,12 @@
 "use client";
 
 import React from "react";
+import { useSettings } from "@/components/SettingsProvider";
 
-/** Supported languages */
-export type LanguageCode = "en" | "zh" | "ur" | "hi";
+type Lang = "en" | "zh" | "hi";
+type Dict = Record<string, string>;
 
-/** Simple string dictionaries (expand as you like) */
-const STRINGS: Record<LanguageCode, Record<string, string>> = {
+const STRINGS: Record<Lang, Dict> = {
   en: {
     logs: "Logs",
     allergens: "Allergens",
@@ -15,6 +15,8 @@ const STRINGS: Record<LanguageCode, Record<string, string>> = {
     team: "Team",
     reports: "Reports",
     settings: "Settings",
+    signIn: "Sign in",
+    signOut: "Sign out",
   },
   zh: {
     logs: "日志",
@@ -23,59 +25,54 @@ const STRINGS: Record<LanguageCode, Record<string, string>> = {
     team: "团队",
     reports: "报告",
     settings: "设置",
-  },
-  ur: {
-    logs: "لاگز",
-    allergens: "الرجنز",
-    suppliers: "سپلائرز",
-    team: "ٹیم",
-    reports: "رپورٹس",
-    settings: "سیٹنگز",
+    signIn: "登录",
+    signOut: "退出登录",
   },
   hi: {
     logs: "लॉग्स",
-    allergens: "एलर्जन्स",
-    suppliers: "आपूर्तिकर्ता",
+    allergens: "एलर्जेन",
+    suppliers: "सप्लायर्स",
     team: "टीम",
     reports: "रिपोर्ट्स",
     settings: "सेटिंग्स",
+    signIn: "साइन इन",
+    signOut: "साइन आउट",
   },
 };
 
-export type I18nContextValue = {
-  lang: LanguageCode;
+function resolveLang(l: string | undefined): Lang {
+  if (l === "zh" || l === "hi") return l;
+  return "en";
+}
+
+type I18nContextValue = {
+  lang: Lang;
   t: (key: string) => string;
 };
 
-/** Name the *value* differently to avoid type/namespace confusion */
-const I18nReactContext = React.createContext<I18nContextValue | null>(null);
+const I18nContext = React.createContext<I18nContextValue | undefined>(
+  undefined
+);
 
-/**
- * Provider. You can pass `lang`, otherwise it defaults to "en".
- * (If you want to bind it to Settings, pass lang from your SettingsProvider in app/providers.tsx.)
- */
-export function I18nProvider({
-  children,
-  lang = "en",
-}: {
-  children: React.ReactNode;
-  lang?: LanguageCode;
-}) {
+export function I18nProvider({ children }: { children: React.ReactNode }) {
+  const { language } = useSettings(); // always defined now
+  const lang = resolveLang(language);
   const dict = STRINGS[lang] ?? STRINGS.en;
 
-  const t = React.useCallback((k: string) => dict[k] ?? STRINGS.en[k] ?? k, [dict]);
+  const t = React.useCallback(
+    (key: string) => dict[key] ?? key,
+    [dict]
+  );
 
   const value = React.useMemo<I18nContextValue>(() => ({ lang, t }), [lang, t]);
 
   return (
-    <I18nReactContext.Provider value={value}>
-      {children}
-    </I18nReactContext.Provider>
+    <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
   );
 }
 
 export function useI18n(): I18nContextValue {
-  const ctx = React.useContext(I18nReactContext);
+  const ctx = React.useContext(I18nContext);
   if (!ctx) throw new Error("useI18n must be used within I18nProvider");
   return ctx;
 }

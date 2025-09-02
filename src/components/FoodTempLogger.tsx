@@ -1,11 +1,7 @@
-// src/components/FoodTempLogger.tsx
 "use client";
 
 import React from "react";
-import Image from "next/image";
-import NavTabs from "@/components/NavTabs";
-import { useSettings } from "@/components/SettingsProvider";
-
+import { cn } from "@/lib/cn";
 import {
   listTempLogs,
   upsertTempLog,
@@ -15,502 +11,371 @@ import {
   type TempLogRow,
   type TempLogInput,
 } from "@/app/actions/db";
+import { useSettings } from "@/components/SettingsProvider";
 
-/* ------------------------------ small helpers ------------------------------ */
-const fmtDate = (d: Date | string) =>
-  (typeof d === "string" ? d : d.toISOString()).slice(0, 10);
+/* ----------------------------- helpers/types ----------------------------- */
 
-function passForTarget(target: string | null, temp: number | null, unit: "C" | "F"): boolean | null {
-  if (temp == null) return null;
-  const t = (target ?? "").toLowerCase();
-  const c = unit === "F" ? (temp - 32) * (5 / 9) : temp;
-  if (t.includes("fridge")) return c <= 5;
-  if (t.includes("freezer")) return c <= -18;
-  if (t.includes("cook")) return c >= 75;
-  if (t.includes("hot")) return c >= 63;
-  return null;
+type Target = { id: string; name: string; min: number; max: number };
+
+function formatDate(d: Date) {
+  return d.toISOString().slice(0, 10);
 }
-
-/* ---------------------------------- UI bits -------------------------------- */
-function Card({
-  title,
-  value,
-  sub,
-}: {
-  title: string;
-  value: React.ReactNode;
-  sub?: React.ReactNode;
-}) {
+function toC(unit: "C" | "F", value: number) {
+  return unit === "C" ? value : (value - 32) * (5 / 9);
+}
+function badge(pass: boolean) {
   return (
-    <div className="rounded-lg border bg-white p-4 shadow-sm">
-      <div className="text-xs uppercase tracking-wide text-gray-500">{title}</div>
-      <div className="mt-2 text-2xl font-semibold">{value}</div>
-      {sub ? <div className="mt-1 text-xs text-gray-500">{sub}</div> : null}
-    </div>
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold",
+        pass ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+      )}
+    >
+      {pass ? "Pass" : "Fail"}
+    </span>
   );
 }
-
-function Table({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="overflow-x-auto rounded-lg border bg-white">
-      <table className="min-w-[800px] w-full text-sm">{children}</table>
-    </div>
-  );
-}
-
-function Th({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <th className={`bg-gray-50 px-3 py-2 text-left text-xs font-semibold text-gray-600 ${className ?? ""}`}>
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  className,
-  colSpan,
-  title,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  colSpan?: number;
-  title?: string;
-}) {
-  return (
-    <td className={`px-3 py-2 align-top ${className ?? ""}`} colSpan={colSpan} title={title}>
-      {children}
-    </td>
-  );
+function dayKey(isoDateTime: string) {
+  return isoDateTime.slice(0, 10);
 }
 
 /* ------------------------------ main component ------------------------------ */
+
 export default function FoodTempLogger() {
+  // only take what we use
   const { unit } = useSettings(); // "C" | "F"
 
   /* data */
   const [logs, setLogs] = React.useState<TempLogRow[]>([]);
-  const [loading, setLoading] = React.useState(false);
+  const [staffOptions, setStaffOptions] = React.useState<string[]>([]);
+  const [targets, setTargets] = React.useState<Target[]>([]);
 
-  /* filters */
-  const [from, setFrom] = React.useState<string>(fmtDate(new Date(Date.now() - 29 * 86400000)));
-  const [to, setTo] = React.useState<string>(fmtDate(new Date()));
-  const [query, setQuery] = React.useState("");
-  const [category, setCategory] = React.useState("All");
+  /* UI state */
+  const [quickOpen, setQuickOpen] = React.useState<boolean>(false);
+  const [search, setSearch] = React.useState<string>("");
+  const [rangeDays, setRangeDays] = React.useState<number>(30);
 
-  /* quick entry panel */
-  const [openQuick, setOpenQuick] = React.useState(false);
-  const [targets, setTargets] = React.useState<string[]>([]);
-  const [staffInitials, setStaffInitials] = React.useState<string[]>([]);
-  const [qForm, setQForm] = React.useState<TempLogInput>({
-    recorded_at: fmtDate(new Date()),
-    target: "",
-    location: "",
-    staff_initials: "",
-    item: "",
-    unit,
-    temperature: null,
-    pass: null,
-    notes: "",
-  });
+  /* quick-entry form */
+  const [qStaff, setQStaff] = React.useState<string>("");
+  const [qLocation, setQLocation] = React.useState<string>("");
+  const [qItem, setQItem] = React.useState<string>("");
+  const [qTarget, setQTarget] = React.useState<string>("");
+  const [qTemp, setQTemp] = React.useState<string>("");
 
-  /* derived KPIs */
-  const filtered = React.useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const inRange = logs.filter(
-      (r) =>
-        (!from || r.recorded_at >= from) &&
-        (!to || r.recorded_at <= to)
-    );
-    const withCat =
-      category === "All"
-        ? inRange
-        : inRange.filter((r) => (r.target ?? "").toLowerCase().includes(category.toLowerCase()));
-    if (!q) return withCat;
-    return withCat.filter((r) =>
-      [r.item, r.location, r.target, r.staff_initials, r.notes]
-        .filter(Boolean)
-        .some((v) => (v as string).toLowerCase().includes(q))
-    );
-  }, [logs, from, to, query, category]);
-
-  const topLogger = React.useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const r of filtered) counts.set(r.staff_initials ?? "—", (counts.get(r.staff_initials ?? "—") ?? 0) + 1);
-    let best = "—";
-    let bestN = 0;
-    counts.forEach((n, k) => {
-      if (n > bestN) {
-        best = k;
-        bestN = n;
-      }
-    });
-    return { name: best, count: bestN };
-  }, [filtered]);
-
-  const needsAttention = React.useMemo(
-    () => filtered.filter((r) => r.pass === false).length,
-    [filtered]
-  );
-
-  const daysMissed = React.useMemo(() => {
-    const start = new Date(from + "T00:00:00");
-    const end = new Date(to + "T00:00:00");
-    const have = new Set<string>();
-    for (const r of filtered) have.add(r.recorded_at);
-    let d = 0;
-    for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
-      const k = fmtDate(new Date(t));
-      if (!have.has(k)) d++;
-    }
-    return d;
-  }, [filtered, from, to]);
-
-  /* load data + lookups */
+  /* fetch */
   React.useEffect(() => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(to.getDate() - rangeDays + 1);
+
     (async () => {
-      setLoading(true);
-      try {
-        const [rows, initials, availableTargets] = await Promise.all([
-          listTempLogs({ from, to }),
-          listStaffInitials(),
-          listTargets(),
-        ]);
-        setLogs(rows);
-        setStaffInitials(initials);
-        setTargets(availableTargets);
-      } finally {
-        setLoading(false);
-      }
+      const [rows, staff, tgs] = await Promise.all([
+        listTempLogs({ from: formatDate(from), to: formatDate(to) }),
+        listStaffInitials(),
+        listTargets(),
+      ]);
+      setLogs(rows);
+      setStaffOptions(staff);
+      setTargets(tgs);
+      if (!qTarget && tgs.length) setQTarget(tgs[0].id);
     })();
-  }, [from, to]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeDays]);
 
-  /* quick form: recompute pass automatically */
-  React.useEffect(() => {
-    const computed = passForTarget(qForm.target ?? null, qForm.temperature ?? null, unit);
-    setQForm((f) => ({ ...f, unit, pass: computed }));
-  }, [qForm.target, qForm.temperature, unit]);
+  /* computed KPI */
+  const kpis = React.useMemo(() => {
+    if (!logs.length) {
+      return {
+        topLogger: "-",
+        needsAttention: 0,
+        missedDays: 0,
+      };
+    }
+    const counts: Record<string, number> = {};
+    logs.forEach((l) => {
+      counts[l.staff] = (counts[l.staff] ?? 0) + 1;
+    });
+    const topLogger = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "-";
+    const needsAttention = logs.filter((l) => !l.pass).length;
 
+    const seen = new Set(logs.map((l) => dayKey(l.created_at)));
+    const today = new Date();
+    const start = new Date();
+    start.setDate(today.getDate() - rangeDays + 1);
+
+    let missed = 0;
+    for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+      const k = formatDate(d);
+      if (!seen.has(k)) missed++;
+    }
+    return { topLogger, needsAttention, missedDays: missed };
+  }, [logs, rangeDays]);
+
+  /* create entry */
   async function submitQuick(e: React.FormEvent) {
     e.preventDefault();
-    const saved = await upsertTempLog(qForm);
-    setLogs((prev) => [saved, ...prev]);
-    setQForm({
-      recorded_at: fmtDate(new Date()),
-      target: qForm.target ?? "",
-      location: "",
-      staff_initials: qForm.staff_initials ?? "",
-      item: "",
-      unit,
-      temperature: null,
-      pass: null,
-      notes: "",
-    });
-    setOpenQuick(false);
+    if (!qStaff || !qItem || !qTarget || !qTemp) return;
+
+    const target = targets.find((t) => t.id === qTarget);
+    const tempC = toC(unit, parseFloat(qTemp));
+    const pass = target ? tempC >= target.min && tempC <= target.max : !Number.isNaN(tempC);
+
+    const payload: TempLogInput = {
+      staff: qStaff,
+      location: qLocation.trim(),
+      item: qItem.trim(),
+      target: target ? target.name : "Unspecified",
+      temp_c: Number(tempC.toFixed(1)),
+      notes: null,
+    };
+
+    const { id } = await upsertTempLog(payload);
+    const created: TempLogRow = {
+      id,
+      created_at: new Date().toISOString(),
+      pass,
+      ...payload,
+    };
+    setLogs((prev) => [created, ...prev]);
+
+    setQItem("");
+    setQTemp("");
   }
 
-  async function remove(id: string) {
+  async function handleDelete(id: string) {
     await deleteTempLog(id);
-    setLogs((prev) => prev.filter((r) => r.id !== id));
+    setLogs((prev) => prev.filter((l) => l.id !== id));
   }
 
-  /* categories for the filter (derived from targets) */
-  const categories = React.useMemo<string[]>(
-    () => ["All", ...new Set((logs.map((r) => r.target ?? "").filter(Boolean)))],
-    [logs]
-  );
+  const filtered = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return logs;
+    return logs.filter(
+      (l) =>
+        l.item.toLowerCase().includes(q) ||
+        l.location.toLowerCase().includes(q) ||
+        l.staff.toLowerCase().includes(q) ||
+        l.target.toLowerCase().includes(q)
+    );
+  }, [logs, search]);
 
-  /* entries/day (filtered) for chart */
-  const entriesPerDay = React.useMemo(() => {
+  const chart = React.useMemo(() => {
     const counts = new Map<string, number>();
-    for (const r of filtered) counts.set(r.recorded_at, (counts.get(r.recorded_at) ?? 0) + 1);
-    return [...counts.entries()]
-      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-      .map(([day, n]) => ({ day, n }));
-  }, [filtered]);
+    logs.forEach((l) => {
+      const k = dayKey(l.created_at);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    });
 
-  /* --------------------------------- render --------------------------------- */
+    const days: { iso: string; day: string; count: number }[] = [];
+    const today = new Date();
+    const start = new Date();
+    start.setDate(today.getDate() - rangeDays + 1);
+
+    for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+      const iso = formatDate(d);
+      const day = iso.slice(5);
+      days.push({ iso, day, count: counts.get(iso) ?? 0 });
+    }
+    const max = Math.max(1, ...days.map((d) => d.count));
+    return { days, max };
+  }, [logs, rangeDays]);
+
   return (
     <div className="min-h-screen w-full bg-gray-50">
-      <NavTabs />
-
       <main className="mx-auto max-w-6xl p-4 space-y-6">
-        {/* Top actions row: Quick entry + Full entry */}
-        <div className="flex items-center gap-2">
-          <details
-            className="group rounded-md border bg-white"
-            open={openQuick}
-            onToggle={(e) => setOpenQuick((e.target as HTMLDetailsElement).open)}
-          >
-            <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-sm font-medium">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded border">
-                {/* little arrow on the left */}
-                <span className="group-open:hidden">▸</span>
-                <span className="hidden group-open:inline">▾</span>
-              </span>
-              Quick entry
-            </summary>
+        {/* KPI row */}
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <KpiCard label="Top logger" value={kpis.topLogger} />
+          <KpiCard label="Needs attention" value={String(kpis.needsAttention)} tone={kpis.needsAttention ? "danger" : "ok"} />
+          <KpiCard label="Missed days" value={String(kpis.missedDays)} tone={kpis.missedDays ? "warn" : "ok"} right={<RangePicker value={rangeDays} onChange={(d) => setRangeDays(d)} />} />
+        </section>
 
-            <form onSubmit={submitQuick} className="grid grid-cols-1 gap-3 border-t p-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div>
-                <label className="block text-sm mb-1">Recorded date</label>
-                <input
-                  type="date"
-                  value={qForm.recorded_at}
-                  onChange={(e) => setQForm({ ...qForm, recorded_at: e.target.value })}
-                  className="w-full rounded border px-2 py-1"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm mb-1">Initials</label>
-                <input
-                  list="initials"
-                  value={qForm.staff_initials ?? ""}
-                  onChange={(e) => setQForm({ ...qForm, staff_initials: e.target.value })}
-                  className="w-full rounded border px-2 py-1"
-                  placeholder="e.g. WS"
-                  required
-                />
-                <datalist id="initials">
-                  {staffInitials.map((s) => (
-                    <option key={s} value={s} />
-                  ))}
-                </datalist>
-              </div>
-
-              <div>
-                <label className="block text-sm mb-1">Target</label>
-                <input
-                  list="targets"
-                  value={qForm.target ?? ""}
-                  onChange={(e) => setQForm({ ...qForm, target: e.target.value })}
-                  className="w-full rounded border px-2 py-1"
-                  placeholder="Fridge / Freezer / Cook / Hot hold"
-                />
-                <datalist id="targets">
-                  {targets.map((t) => (
-                    <option key={t} value={t} />
-                  ))}
-                </datalist>
-              </div>
-
-              <div>
-                <label className="block text-sm mb-1">Item</label>
-                <input
-                  value={qForm.item ?? ""}
-                  onChange={(e) => setQForm({ ...qForm, item: e.target.value })}
-                  className="w-full rounded border px-2 py-1"
-                  placeholder="Optional item/food"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm mb-1">Location</label>
-                <input
-                  value={qForm.location ?? ""}
-                  onChange={(e) => setQForm({ ...qForm, location: e.target.value })}
-                  className="w-full rounded border px-2 py-1"
-                  placeholder="Kitchen / Service etc."
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm mb-1">
-                  Temperature ({unit === "F" ? "°F" : "°C"})
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={qForm.temperature ?? ""}
-                  onChange={(e) =>
-                    setQForm({ ...qForm, temperature: e.target.value === "" ? null : Number(e.target.value) })
-                  }
-                  className="w-full rounded border px-2 py-1"
-                  required
-                />
-              </div>
-
-              <div className="sm:col-span-2 lg:col-span-3">
-                <label className="block text-sm mb-1">Notes</label>
-                <input
-                  value={qForm.notes ?? ""}
-                  onChange={(e) => setQForm({ ...qForm, notes: e.target.value })}
-                  className="w-full rounded border px-2 py-1"
-                  placeholder="Optional notes"
-                />
-              </div>
-
-              <div className="sm:col-span-2 lg:col-span-3 flex items-center justify-between">
-                <div className="text-sm">
-                  Auto-status:&nbsp;
-                  {qForm.pass == null ? (
-                    <span className="text-gray-500">—</span>
-                  ) : qForm.pass ? (
-                    <span className="rounded bg-green-100 px-2 py-0.5 text-green-700">PASS</span>
-                  ) : (
-                    <span className="rounded bg-red-100 px-2 py-0.5 text-red-700">FAIL</span>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setOpenQuick(false)}
-                    className="rounded border px-3 py-1 text-sm"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="rounded bg-black px-3 py-1 text-sm text-white"
-                  >
-                    Save entry
-                  </button>
-                </div>
-              </div>
-            </form>
-          </details>
-
-          {/* Full entry button (link to your full form route if you have one) */}
-          <a
-            href="#full-entry"
-            className="rounded-md bg-black px-3 py-2 text-sm font-medium text-white"
-          >
-            Full entry
+        {/* Actions */}
+        <section className="flex items-center justify-between">
+          <button className="inline-flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900" onClick={() => setQuickOpen((v) => !v)} aria-expanded={quickOpen}>
+            <Chevron open={quickOpen} />
+            Quick entry
+          </button>
+          <a href="/full-entry" className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold shadow hover:bg-gray-50">
+            Full entry form
           </a>
-        </div>
+        </section>
 
-        {/* KPI cards */}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Card title="Top logger" value={`${topLogger.name}`} sub={`${topLogger.count} in current range`} />
-          <Card title="Needs attention" value={needsAttention} sub="failed checks" />
-          <Card title="Days missed" value={daysMissed} sub="no entries on those days" />
-        </div>
+        {/* Quick Entry Drawer */}
+        {quickOpen && (
+          <form onSubmit={submitQuick} className="rounded-xl border bg-white p-4 shadow-sm">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-6">
+              <div className="sm:col-span-1">
+                <label className="block text-xs font-semibold text-gray-600">Staff</label>
+                <select value={qStaff} onChange={(e) => setQStaff(e.target.value)} className="mt-1 w-full rounded-md border px-2 py-1 text-sm" required>
+                  <option value="">Select</option>
+                  {staffOptions.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-        {/* Filters */}
-        <div className="grid grid-cols-1 items-end gap-3 rounded-lg border bg-white p-3 sm:grid-cols-[1fr,1fr,1fr,2fr]">
-          <div>
-            <label className="block text-sm mb-1">From</label>
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-full rounded border px-2 py-1" />
-          </div>
-          <div>
-            <label className="block text-sm mb-1">To</label>
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-full rounded border px-2 py-1" />
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Category</label>
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full rounded border px-2 py-1">
-              {categories.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Search</label>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="w-full rounded border px-2 py-1"
-              placeholder="item / location / initials"
-            />
-          </div>
-        </div>
+              <div className="sm:col-span-1">
+                <label className="block text-xs font-semibold text-gray-600">Location</label>
+                <input value={qLocation} onChange={(e) => setQLocation(e.target.value)} className="mt-1 w-full rounded-md border px-2 py-1 text-sm" placeholder="Fridge 1" />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-gray-600">Item</label>
+                <input value={qItem} onChange={(e) => setQItem(e.target.value)} className="mt-1 w-full rounded-md border px-2 py-1 text-sm" placeholder="Chicken curry" required />
+              </div>
+
+              <div className="sm:col-span-1">
+                <label className="block text-xs font-semibold text-gray-600">Target</label>
+                <select value={qTarget} onChange={(e) => setQTarget(e.target.value)} className="mt-1 w-full rounded-md border px-2 py-1 text-sm">
+                  {targets.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.min}–{t.max}°C)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="sm:col-span-1">
+                <label className="block text-xs font-semibold text-gray-600">Temperature (°{unit})</label>
+                <input inputMode="decimal" value={qTemp} onChange={(e) => setQTemp(e.target.value)} className="mt-1 w-full rounded-md border px-2 py-1 text-sm" placeholder={`e.g. ${unit === "C" ? "5.0" : "41.0"}`} required />
+              </div>
+            </div>
+
+            <div className="mt-3 flex justify-end">
+              <button type="submit" className="rounded-md bg-black px-4 py-2 text-sm font-semibold text-white hover:opacity-90">
+                Save quick entry
+              </button>
+            </div>
+          </form>
+        )}
 
         {/* Table */}
-        <section>
-          <div className="mb-2 text-sm font-medium">Entries</div>
-          <Table>
-            <thead>
+        <section className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-gray-800">Entries</h2>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search entries…" className="w-56 rounded-md border px-3 py-1.5 text-sm" />
+        </section>
+
+        <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-xs uppercase text-gray-600">
               <tr>
                 <Th>Date</Th>
-                <Th>Initials</Th>
-                <Th>Target</Th>
-                <Th>Item</Th>
+                <Th>Staff</Th>
                 <Th>Location</Th>
-                <Th className="text-right">Temp ({unit === "F" ? "°F" : "°C"})</Th>
+                <Th>Item</Th>
+                <Th>Target</Th>
+                <Th className="text-right">Temp (°C)</Th>
                 <Th>Status</Th>
-                <Th>Notes</Th>
                 <Th className="text-right">Actions</Th>
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {filtered.length === 0 && (
                 <tr>
-                  <Td colSpan={9}>Loading…</Td>
+                  <td colSpan={8} className="p-6 text-center text-gray-500">No entries</td>
                 </tr>
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <Td colSpan={9}>No entries in this view.</Td>
-                </tr>
-              ) : (
-                filtered.map((r) => (
-                  <tr key={r.id} className="border-t">
-                    <Td>{r.recorded_at}</Td>
-                    <Td>{r.staff_initials ?? "—"}</Td>
-                    <Td>{r.target ?? "—"}</Td>
-                    <Td>{r.item ?? "—"}</Td>
-                    <Td>{r.location ?? "—"}</Td>
-                    <Td className="text-right">{r.temperature ?? "—"}</Td>
-                    <Td>
-                      {r.pass == null ? (
-                        <span className="rounded border px-2 py-0.5 text-xs text-gray-600">—</span>
-                      ) : r.pass ? (
-                        <span className="rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">PASS</span>
-                      ) : (
-                        <span className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-700">FAIL</span>
-                      )}
-                    </Td>
-                    <Td className="max-w-[240px] truncate" title={r.notes ?? ""}>
-                      {r.notes ?? "—"}
-                    </Td>
-                    <Td className="text-right">
-                      <button
-                        onClick={() => remove(r.id)}
-                        className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
-                        title="Delete"
-                      >
-                        Delete
-                      </button>
-                    </Td>
-                  </tr>
-                ))
               )}
+              {filtered.map((l) => (
+                <tr key={l.id} className="border-t">
+                  <Td>{new Date(l.created_at).toLocaleString()}</Td>
+                  <Td>{l.staff}</Td>
+                  <Td>{l.location}</Td>
+                  <Td>{l.item}</Td>
+                  <Td>{l.target}</Td>
+                  <Td className="text-right">{l.temp_c.toFixed(1)}</Td>
+                  <Td>{badge(l.pass)}</Td>
+                  <Td className="text-right">
+                    <button onClick={() => handleDelete(l.id)} className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50" aria-label="Delete entry">
+                      Delete
+                    </button>
+                  </Td>
+                </tr>
+              ))}
             </tbody>
-          </Table>
-        </section>
+          </table>
+        </div>
 
-        {/* Chart placeholder (entries/day) at the bottom */}
-        <section className="rounded-lg border bg-white p-4">
-          <div className="mb-2 text-sm font-medium">Entries per day (filtered)</div>
-          {entriesPerDay.length === 0 ? (
-            <div className="text-sm text-gray-500">—</div>
-          ) : (
-            <div className="relative h-40 w-full">
-              <div className="flex h-full items-end gap-1">
-                {entriesPerDay.map(({ day, n }) => (
-                  <div key={day} className="flex flex-col items-center gap-1">
-                    <div
-                      className="w-4 rounded-t bg-gray-800"
-                      style={{ height: `${Math.min(100, n * 12)}%` }}
-                      title={`${day}: ${n}`}
-                    />
-                    <div className="text-[10px] text-gray-500">{day.slice(5)}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        {/* Chart */}
+        <section className="rounded-xl border bg-white p-4 shadow-sm">
+          <h3 className="mb-3 text-sm font-semibold text-gray-800">Entries per day (last {rangeDays} days)</h3>
+          <BarChart data={chart.days} max={chart.max} />
         </section>
       </main>
+    </div>
+  );
+}
 
-      {/* Optional corner brand (kept for parity with your earlier screenshot) */}
-      <div className="pointer-events-none fixed left-3 top-3 z-20 flex items-center gap-2 opacity-80">
-        <Image src={"/temptake-192.png"} alt={"TempTake"} width={20} height={20} />
-        <span className="text-sm font-semibold">TempTake</span>
+/* -------------------------------- subcomponents -------------------------------- */
+
+function KpiCard({ label, value, tone = "neutral", right }: { label: string; value: string; tone?: "neutral" | "ok" | "warn" | "danger"; right?: React.ReactNode; }) {
+  const ring = tone === "ok" ? "ring-green-200" : tone === "warn" ? "ring-amber-200" : tone === "danger" ? "ring-red-200" : "ring-gray-200";
+  return (
+    <div className={cn("flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm ring-1", ring)}>
+      <div>
+        <div className="text-xs text-gray-500">{label}</div>
+        <div className="text-2xl font-semibold text-gray-900">{value}</div>
       </div>
+      {right}
+    </div>
+  );
+}
+
+function RangePicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <select value={value} onChange={(e) => onChange(Number(e.target.value))} className="rounded-md border px-2 py-1 text-xs" aria-label="Range" title="Range">
+      {[7, 14, 30, 60, 90].map((d) => (
+        <option key={d} value={d}>{d}d</option>
+      ))}
+    </select>
+  );
+}
+
+function Th({ children, className }: React.PropsWithChildren<{ className?: string }>) {
+  return <th className={cn("px-3 py-2 text-left", className)}>{children}</th>;
+}
+function Td({ children, className }: React.PropsWithChildren<{ className?: string }>) {
+  return <td className={cn("px-3 py-2", className)}>{children}</td>;
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg className={cn("h-4 w-4 transition-transform", open ? "rotate-90" : "")} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path fillRule="evenodd" d="M6.293 4.293a1 1 0 011.414 0l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414-1.414L10.586 10 6.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+/* tiny inline bar chart (no external libs) */
+function BarChart({ data, max }: { data: Array<{ iso: string; day: string; count: number }>; max: number; }) {
+  const W = Math.max(320, data.length * 16);
+  const H = 140;
+  const pad = 20;
+  const bw = Math.max(4, (W - pad * 2) / data.length - 4);
+
+  return (
+    <div className="overflow-x-auto">
+      <svg width={W} height={H} role="img" aria-label="Entries per day">
+        <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad} stroke="#e5e7eb" />
+        <line x1={pad} y1={pad} x2={pad} y2={H - pad} stroke="#e5e7eb" />
+        {data.map((d, i) => {
+          const x = pad + i * (bw + 4) + 2;
+          const h = Math.round(((H - pad * 2) * d.count) / max);
+          const y = H - pad - h;
+          return (
+            <g key={d.iso}>
+              <rect x={x} y={y} width={bw} height={h} rx={3} className="fill-gray-900/80" />
+              {i % Math.ceil(data.length / 10 || 1) === 0 && (
+                <text x={x + bw / 2} y={H - 5} fontSize="9" textAnchor="middle" fill="#6b7280">
+                  {d.day}
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }

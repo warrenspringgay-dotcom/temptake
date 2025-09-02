@@ -1,60 +1,47 @@
-import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
+// src/middleware.ts
+import { NextResponse, type NextRequest } from "next/server";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const PUBLIC_PATHS = new Set<string>([
+  "/",
+  "/login",
+  "/sign-in",
+  "/api/auth/callback",
+  "/_next", // assets
+  "/images",
+  "/favicon.ico",
+  "/robots.txt",
+  "/sitemap.xml",
+]);
+
+function isPublicPath(pathname: string) {
+  for (const p of PUBLIC_PATHS) {
+    if (pathname === p || pathname.startsWith(p + "/")) return true;
+  }
+  return false;
+}
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Only guard /admin/*
-  if (!pathname.startsWith("/admin/")) return NextResponse.next();
+  // Allow public paths
+  if (isPublicPath(pathname)) return NextResponse.next();
 
-  const res = NextResponse.next();
+  // Rely on the Supabase auth cookie; if absent, redirect to /login
+  const hasAuthCookie =
+    req.cookies.has("sb-access-token") || req.cookies.has("sb-refresh-token");
 
-  // NOTE: In middleware, @supabase/ssr expects cookies.getAll/setAll
-  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        // Map Next's cookies to the shape Supabase expects
-        return req.cookies.getAll().map(({ name, value }) => ({ name, value }));
-      },
-      setAll(cookies) {
-        // Write all cookies to the response
-        cookies.forEach(({ name, value, options }) => {
-          res.cookies.set({ name, value, ...options });
-        });
-      },
-    },
-  });
-
-  // Auth check
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
+  if (!hasAuthCookie) {
     const url = req.nextUrl.clone();
-    url.pathname = "/sign-in";
-    url.searchParams.set("redirectedFrom", pathname);
+    url.pathname = "/login";
+    url.searchParams.set("redirect", pathname);
     return NextResponse.redirect(url);
   }
 
-  // Role check (manager+ required)
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  const role = (profile?.role as "staff" | "manager" | "admin" | undefined) ?? "staff";
-  if (role !== "manager" && role !== "admin") {
-    const url = req.nextUrl.clone();
-    url.pathname = "/";
-    url.searchParams.set("auth", "forbidden");
-    return NextResponse.redirect(url);
-  }
-
-  return res;
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/admin/:path*"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|images|api/public).*)",
+  ],
 };
