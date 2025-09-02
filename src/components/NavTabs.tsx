@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { signOutAction } from "@/app/actions/auth";
@@ -28,15 +28,21 @@ export default function NavTabs({
   logoUrl = "/temptake-192.png",
 }: NavTabsProps) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const [open, setOpen] = useState(false);        // mobile nav
   const [userOpen, setUserOpen] = useState(false); // user dropdown
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [redirectParam, setRedirectParam] = useState<string>("/");
 
   const navRef = useRef<HTMLDivElement | null>(null);
   const userRef = useRef<HTMLDivElement | null>(null);
 
-  // Active link helper
+  // Compute current path+query on client (avoids useSearchParams + Suspense requirement)
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setRedirectParam(window.location.pathname + window.location.search);
+    }
+  }, []);
+
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
 
@@ -58,7 +64,6 @@ export default function NavTabs({
       if (!mounted) return;
       setUserEmail(data.user?.email ?? null);
     });
-    // also listen to auth changes so menu stays in sync after sign-in/out
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserEmail(session?.user?.email ?? null);
     });
@@ -67,8 +72,6 @@ export default function NavTabs({
       sub.subscription.unsubscribe();
     };
   }, []);
-
-  const redirectParam = searchParams.get("redirect") || pathname || "/";
 
   return (
     <nav className="sticky top-0 z-50 bg-white border-b border-gray-200">
