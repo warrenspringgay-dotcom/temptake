@@ -28,15 +28,14 @@ export default function NavTabs({
   logoUrl = "/temptake-192.png",
 }: NavTabsProps) {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);         // mobile nav
-  const [userOpen, setUserOpen] = useState(false); // user dropdown
+  const [open, setOpen] = useState(false);         // mobile sheet
+  const [userOpen, setUserOpen] = useState(false); // desktop user dropdown
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [redirectParam, setRedirectParam] = useState<string>("/");
 
   const navRef = useRef<HTMLDivElement | null>(null);
   const userRef = useRef<HTMLDivElement | null>(null);
 
-  // Compute current path+query on client (no useSearchParams => no Suspense requirement)
   useEffect(() => {
     if (typeof window !== "undefined") {
       setRedirectParam(window.location.pathname + window.location.search);
@@ -48,24 +47,23 @@ export default function NavTabs({
       ? pathname === "/"
       : pathname === href || pathname.startsWith(href + "/");
 
-  // Close menus on outside click
+  // Close overlays when clicking outside (desktop only)
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       const target = e.target as Node;
-      if (navRef.current && !navRef.current.contains(target)) setOpen(false);
-      if (userRef.current && !userRef.current.contains(target)) setUserOpen(false);
+      if (navRef.current && !navRef.current.contains(target)) setUserOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  // Close menus whenever the route changes (prevents stuck overlay on mobile)
+  // Close mobile sheet whenever the route changes (prevents stuck overlays)
   useEffect(() => {
     setOpen(false);
     setUserOpen(false);
   }, [pathname]);
 
-  // Keep user email in sync with Supabase auth
+  // Auth state (client-side just for showing email)
   useEffect(() => {
     let mounted = true;
     supabase.auth.getUser().then(({ data }) => {
@@ -83,35 +81,35 @@ export default function NavTabs({
 
   return (
     <nav className="sticky top-0 z-50 bg-white border-b border-gray-200">
-      <div ref={navRef} className="mx-auto max-w-6xl flex items-center justify-between px-4 py-2">
-        {/* Logo + brand */}
+      <div className="mx-auto max-w-6xl flex items-center justify-between px-4 py-2">
+        {/* Brand */}
         <Link href="/" className="flex items-center gap-2">
           <Image src={logoUrl} alt={`${brandName} logo`} width={28} height={28} />
           <span className="font-semibold text-slate-900">{brandName}</span>
         </Link>
 
-        {/* Desktop nav */}
+        {/* Desktop links */}
         <div className="hidden md:flex gap-1 sm:gap-2">
-          {tabs.map((tab) => {
-            const active = isActive(tab.href);
+          {tabs.map((t) => {
+            const active = isActive(t.href);
             return (
               <Link
-                key={tab.href}
-                href={tab.href}
+                key={t.href}
+                href={t.href}
                 className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
                   active
                     ? "text-blue-600 bg-blue-50"
                     : "text-slate-600 hover:text-slate-900 hover:bg-gray-50"
                 }`}
               >
-                {tab.label}
+                {t.label}
               </Link>
             );
           })}
         </div>
 
         {/* Desktop user menu */}
-        <div ref={userRef} className="hidden md:flex items-center gap-2">
+        <div ref={navRef} className="hidden md:flex items-center gap-2">
           {userEmail ? (
             <div className="relative">
               <button
@@ -120,7 +118,7 @@ export default function NavTabs({
                 aria-haspopup="menu"
                 aria-expanded={userOpen}
               >
-                <span className="inline-block h-6 w-6 rounded-full bg-gray-200 text-gray-700 grid place-items-center text-xs">
+                <span className="inline-grid place-items-center h-6 w-6 rounded-full bg-gray-200 text-gray-700 text-xs">
                   {userEmail.charAt(0).toUpperCase()}
                 </span>
                 <span className="max-w-[160px] truncate">{userEmail}</span>
@@ -136,12 +134,9 @@ export default function NavTabs({
               {userOpen && (
                 <div
                   role="menu"
-                  className="absolute right-0 mt-2 w-48 rounded-md border bg-white shadow-sm overflow-hidden"
+                  className="absolute right-0 mt-2 w-48 rounded-md border bg-white shadow-sm overflow-hidden z-[60]"
                 >
-                  <Link
-                    href="/settings"
-                    className="block px-3 py-2 text-sm text-slate-700 hover:bg-gray-50"
-                  >
+                  <Link href="/settings" className="block px-3 py-2 text-sm text-slate-700 hover:bg-gray-50">
                     Settings
                   </Link>
                   <form action={signOutAction}>
@@ -162,32 +157,49 @@ export default function NavTabs({
           )}
         </div>
 
-        {/* Mobile hamburger */}
+        {/* Mobile toggle */}
         <button
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => setOpen(true)}
           className="md:hidden inline-flex items-center justify-center p-2 rounded-md text-slate-600 hover:text-slate-900 hover:bg-gray-100"
-          aria-label="Toggle menu"
+          aria-label="Open menu"
           aria-expanded={open}
         >
-          <svg className="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-            {open ? (
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            ) : (
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            )}
+          <svg className="h-6 w-6" viewBox="0 0 24 24" stroke="currentColor" fill="none" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
       </div>
 
-      {/* Mobile dropdown (nav + user) */}
+      {/* ===== Mobile full-screen sheet ===== */}
       {open && (
-        <div className="md:hidden border-t border-gray-200 bg-white">
-          {/* user row */}
-          <div className="px-4 py-2 flex items-center justify-between">
+        <div
+          className="fixed inset-0 z-[100] bg-white/95 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          {/* Header row */}
+          <div className="flex items-center justify-between px-4 py-3 border-b">
+            <div className="flex items-center gap-2">
+              <Image src={logoUrl} alt={`${brandName} logo`} width={24} height={24} />
+              <span className="font-semibold text-slate-900">{brandName}</span>
+            </div>
+            <button
+              onClick={() => setOpen(false)}
+              className="inline-flex items-center justify-center p-2 rounded-md text-slate-600 hover:text-slate-900 hover:bg-gray-100"
+              aria-label="Close menu"
+            >
+              <svg className="h-6 w-6" viewBox="0 0 24 24" stroke="currentColor" fill="none">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* User row */}
+          <div className="px-4 py-3 border-b flex items-center justify-between">
             {userEmail ? (
               <>
                 <div className="flex items-center gap-2">
-                  <span className="inline-block h-7 w-7 rounded-full bg-gray-200 text-gray-700 grid place-items-center text-sm">
+                  <span className="inline-grid place-items-center h-7 w-7 rounded-full bg-gray-200 text-gray-700 text-sm">
                     {userEmail.charAt(0).toUpperCase()}
                   </span>
                   <span className="text-sm text-slate-700">{userEmail}</span>
@@ -208,19 +220,21 @@ export default function NavTabs({
             )}
           </div>
 
-          {/* links (no onClick; menu auto-closes via [pathname] effect) */}
-          <div className="border-t border-gray-200">
-            {tabs.map((tab) => {
-              const active = isActive(tab.href);
+          {/* Nav links */}
+          <div className="px-2 py-2">
+            {tabs.map((t) => {
+              const active = isActive(t.href);
               return (
                 <Link
-                  key={tab.href}
-                  href={tab.href}
-                  className={`block px-4 py-2 text-sm ${
-                    active ? "text-blue-600 bg-blue-50" : "text-slate-600 hover:text-slate-900 hover:bg-gray-50"
+                  key={t.href}
+                  href={t.href}
+                  className={`block rounded-lg px-3 py-3 text-base ${
+                    active
+                      ? "text-blue-700 bg-blue-50"
+                      : "text-slate-700 hover:bg-gray-100"
                   }`}
                 >
-                  {tab.label}
+                  {t.label}
                 </Link>
               );
             })}
