@@ -28,7 +28,7 @@ export default function NavTabs({
   logoUrl = "/temptake-192.png",
 }: NavTabsProps) {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);        // mobile nav
+  const [open, setOpen] = useState(false);         // mobile nav
   const [userOpen, setUserOpen] = useState(false); // user dropdown
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [redirectParam, setRedirectParam] = useState<string>("/");
@@ -36,7 +36,7 @@ export default function NavTabs({
   const navRef = useRef<HTMLDivElement | null>(null);
   const userRef = useRef<HTMLDivElement | null>(null);
 
-  // Compute current path+query on client (avoids useSearchParams + Suspense requirement)
+  // Compute current path+query on client (no useSearchParams => no Suspense requirement)
   useEffect(() => {
     if (typeof window !== "undefined") {
       setRedirectParam(window.location.pathname + window.location.search);
@@ -44,7 +44,9 @@ export default function NavTabs({
   }, []);
 
   const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
+    href === "/"
+      ? pathname === "/"
+      : pathname === href || pathname.startsWith(href + "/");
 
   // Close menus on outside click
   useEffect(() => {
@@ -57,7 +59,13 @@ export default function NavTabs({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  // Get current user (client-side) to show email/login buttons
+  // Close menus whenever the route changes (prevents stuck overlay on mobile)
+  useEffect(() => {
+    setOpen(false);
+    setUserOpen(false);
+  }, [pathname]);
+
+  // Keep user email in sync with Supabase auth
   useEffect(() => {
     let mounted = true;
     supabase.auth.getUser().then(({ data }) => {
@@ -116,7 +124,7 @@ export default function NavTabs({
                   {userEmail.charAt(0).toUpperCase()}
                 </span>
                 <span className="max-w-[160px] truncate">{userEmail}</span>
-                <svg className="h-4 w-4 opacity-60" viewBox="0 0 20 20" fill="currentColor">
+                <svg className="h-4 w-4 opacity-60" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                   <path
                     fillRule="evenodd"
                     d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.25a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z"
@@ -133,7 +141,6 @@ export default function NavTabs({
                   <Link
                     href="/settings"
                     className="block px-3 py-2 text-sm text-slate-700 hover:bg-gray-50"
-                    onClick={() => setUserOpen(false)}
                   >
                     Settings
                   </Link>
@@ -162,7 +169,7 @@ export default function NavTabs({
           aria-label="Toggle menu"
           aria-expanded={open}
         >
-          <svg className="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
             {open ? (
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             ) : (
@@ -195,14 +202,13 @@ export default function NavTabs({
               <Link
                 href={`/login?redirect=${encodeURIComponent(redirectParam)}`}
                 className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-gray-100"
-                onClick={() => setOpen(false)}
               >
                 Sign in
               </Link>
             )}
           </div>
 
-          {/* links */}
+          {/* links (no onClick; menu auto-closes via [pathname] effect) */}
           <div className="border-t border-gray-200">
             {tabs.map((tab) => {
               const active = isActive(tab.href);
@@ -213,7 +219,6 @@ export default function NavTabs({
                   className={`block px-4 py-2 text-sm ${
                     active ? "text-blue-600 bg-blue-50" : "text-slate-600 hover:text-slate-900 hover:bg-gray-50"
                   }`}
-                  onClick={() => setOpen(false)}
                 >
                   {tab.label}
                 </Link>
