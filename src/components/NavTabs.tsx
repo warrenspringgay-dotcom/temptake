@@ -25,11 +25,12 @@ const tabs = [
 export default function NavTabs({
   brandName = "TempTake",
   brandAccent = "blue",
-  logoUrl = "/temptake-192.png",
+  // ⬇️ point to your file in /public
+  logoUrl = "/icon.png",
 }: NavTabsProps) {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);         // mobile sheet
-  const [userOpen, setUserOpen] = useState(false); // desktop user dropdown
+  const [open, setOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [redirectParam, setRedirectParam] = useState<string>("/");
 
@@ -47,7 +48,6 @@ export default function NavTabs({
       ? pathname === "/"
       : pathname === href || pathname.startsWith(href + "/");
 
-  // Close overlays when clicking outside (desktop only)
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       const target = e.target as Node;
@@ -57,13 +57,11 @@ export default function NavTabs({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  // Close mobile sheet whenever the route changes (prevents stuck overlays)
   useEffect(() => {
     setOpen(false);
     setUserOpen(false);
   }, [pathname]);
 
-  // Auth state (client-side just for showing email)
   useEffect(() => {
     let mounted = true;
     supabase.auth.getUser().then(({ data }) => {
@@ -170,14 +168,9 @@ export default function NavTabs({
         </button>
       </div>
 
-      {/* ===== Mobile full-screen sheet ===== */}
+      {/* Mobile sheet */}
       {open && (
-        <div
-          className="fixed inset-0 z-[100] bg-white/95 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-        >
-          {/* Header row */}
+        <div className="fixed inset-0 z-[100] bg-white/95 backdrop-blur-sm" role="dialog" aria-modal="true">
           <div className="flex items-center justify-between px-4 py-3 border-b">
             <div className="flex items-center gap-2">
               <Image src={logoUrl} alt={`${brandName} logo`} width={24} height={24} />
@@ -194,7 +187,6 @@ export default function NavTabs({
             </button>
           </div>
 
-          {/* User row */}
           <div className="px-4 py-3 border-b flex items-center justify-between">
             {userEmail ? (
               <>
@@ -220,7 +212,6 @@ export default function NavTabs({
             )}
           </div>
 
-          {/* Nav links */}
           <div className="px-2 py-2">
             {tabs.map((t) => {
               const active = isActive(t.href);
@@ -229,9 +220,7 @@ export default function NavTabs({
                   key={t.href}
                   href={t.href}
                   className={`block rounded-lg px-3 py-3 text-base ${
-                    active
-                      ? "text-blue-700 bg-blue-50"
-                      : "text-slate-700 hover:bg-gray-100"
+                    active ? "text-blue-700 bg-blue-50" : "text-slate-700 hover:bg-gray-100"
                   }`}
                 >
                   {t.label}
