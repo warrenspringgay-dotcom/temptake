@@ -1,15 +1,9 @@
-// src/app/team/page.tsx
-import AuthGate from "@/components/AuthGate";
-import TeamManagerLocal from "@/components/TeamManagerLocal"; // or "@/components/TeamManager"
+import TeamManagerLocal from "@/components/TeamManagerLocal";
 
 export const metadata = {
-  title: "Team & Training – TempTake",
+  title: "Team – TempTake",
 };
 
 export default function TeamPage() {
-  return (
-    <AuthGate requireRole="manager">
-      <TeamManagerLocal />
-    </AuthGate>
-  );
+  return <TeamManagerLocal />;
 }

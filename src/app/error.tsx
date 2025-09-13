@@ -1,19 +1,13 @@
 "use client";
 
-export default function GlobalError({
-  error,
-  reset,
-}: {
-  error: Error & { digest?: string };
-  reset: () => void;
-}) {
+export default function Error({ error, reset }: { error: Error & { digest?: string }, reset: () => void }) {
   return (
-    <div style={{ padding: 24, fontFamily: "system-ui" }}>
-      <h2>Something went wrong</h2>
-      <pre style={{ whiteSpace: "pre-wrap" }}>{error?.message ?? "Unknown error"}</pre>
+    <div className="mx-auto w-full max-w-3xl rounded-xl border p-6 bg-card">
+      <h1 className="text-xl font-semibold mb-2">Something went wrong</h1>
+      <p className="text-sm text-muted-foreground mb-4">{error.message}</p>
       <button
         onClick={() => reset()}
-        style={{ marginTop: 12, padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}
+        className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm"
       >
         Try again
       </button>

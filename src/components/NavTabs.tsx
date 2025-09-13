@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { signOutAction } from "@/app/actions/auth";
 
+
 type NavTabsProps = {
   brandName?: string;
   brandAccent?: string;

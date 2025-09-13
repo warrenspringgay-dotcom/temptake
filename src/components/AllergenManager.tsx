@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { uid } from "@/lib/uid";
-import { PencilIcon, TrashIcon } from "./Icons";
+import { PencilIcon, TrashIcon } from "./ui/Icons";
 
 /* ---------- Types & Constants ---------- */
 type AllergenKey =
@@ -50,77 +50,97 @@ type ReviewInfo = {
 const LS_ROWS = "tt_allergens_rows_v3";
 const LS_REVIEW = "tt_allergens_review_v2";
 
-/* ---------- Helpers & Persistence ---------- */
+/* ---------- Helpers ---------- */
 const emptyFlags = (): Flags =>
   Object.fromEntries(ALLERGENS.map(a => [a.key, false])) as Flags;
 
-function loadRows(): MatrixRow[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(LS_ROWS);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as MatrixRow[];
-    return parsed.map(r => ({
-      ...r,
-      flags: { ...emptyFlags(), ...r.flags },
-      locked: r.locked ?? true,
-    }));
-  } catch { return []; }
-}
-function saveRows(rows: MatrixRow[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(LS_ROWS, JSON.stringify(rows));
-}
-function loadReview(): ReviewInfo {
-  if (typeof window === "undefined") return { intervalDays: 30 };
-  try { return { intervalDays: 30, ...(JSON.parse(localStorage.getItem(LS_REVIEW) || "{}")) }; }
-  catch { return { intervalDays: 30 }; }
-}
-function saveReview(info: ReviewInfo) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(LS_REVIEW, JSON.stringify(info));
-}
-function overdue(info: ReviewInfo): boolean {
+const overdue = (info: ReviewInfo): boolean => {
   if (!info.lastReviewedOn) return true;
   const last = new Date(info.lastReviewedOn + "T00:00:00Z").getTime();
   const next = last + info.intervalDays * 86400000;
   return Date.now() > next;
-}
+};
 
 /* ---------- Component ---------- */
 export default function AllergenManager() {
-  const [review, setReview] = useState<ReviewInfo>(loadReview);
-  const [rows, setRows] = useState<MatrixRow[]>(() => {
-    const exist = loadRows();
-    if (exist.length) return exist;
-    // First-run demo seed
-    return [
-      { id: uid(), item: "White Bread",  category: "Side",    flags: { ...emptyFlags(), gluten: true },        notes: "", locked: true },
-      { id: uid(), item: "Prawn Cocktail", category: "Starter", flags: { ...emptyFlags(), crustaceans: true }, notes: "", locked: true },
-      { id: uid(), item: "Fruit Salad",  category: "Dessert", flags: { ...emptyFlags() },                      notes: "", locked: true },
-    ];
-  });
-  useEffect(() => saveRows(rows), [rows]);
-  useEffect(() => saveReview(review), [review]);
+  // Hydration guard: only read/write localStorage after mount
+  const [hydrated, setHydrated] = useState(false);
 
-  /* ===== Query (SAFE FOODS) – top fold-down ===== */
+  // Review + rows (start with safe, neutral defaults for SSR)
+  const [review, setReview] = useState<ReviewInfo>({ intervalDays: 30 });
+  const [rows, setRows] = useState<MatrixRow[]>([]);
+
+  // Query state (declare BEFORE using)
   const [qCat, setQCat] = useState<"All" | Category>("All");
   const [qFlags, setQFlags] = useState<Flags>(emptyFlags());
 
+  // Load from localStorage on mount
+  useEffect(() => {
+    setHydrated(true);
+
+    try {
+      const rawRows = localStorage.getItem(LS_ROWS);
+      if (rawRows) {
+        const parsed = JSON.parse(rawRows) as MatrixRow[];
+        setRows(
+          parsed.map(r => ({
+            ...r,
+            flags: { ...emptyFlags(), ...r.flags },
+            locked: r.locked ?? true,
+          }))
+        );
+      } else {
+        // Seed demo data on first run
+        setRows([
+          { id: uid(), item: "White Bread",     category: "Side",    flags: { ...emptyFlags(), gluten: true },        notes: "", locked: true },
+          { id: uid(), item: "Prawn Cocktail",  category: "Starter", flags: { ...emptyFlags(), crustaceans: true },   notes: "", locked: true },
+          { id: uid(), item: "Fruit Salad",     category: "Dessert", flags: { ...emptyFlags() },                       notes: "", locked: true },
+        ]);
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const rawReview = localStorage.getItem(LS_REVIEW);
+      if (rawReview) {
+        const parsed = JSON.parse(rawReview) as Partial<ReviewInfo>;
+        setReview({ intervalDays: 30, ...parsed });
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Persist after hydration
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(LS_ROWS, JSON.stringify(rows));
+    } catch {}
+  }, [rows, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(LS_REVIEW, JSON.stringify(review));
+    } catch {}
+  }, [review, hydrated]);
+
+  /* ===== Query (SAFE FOODS) ===== */
   const selectedAllergenKeys = useMemo(
     () => (ALLERGENS.map(a => a.key).filter(k => qFlags[k]) as AllergenKey[]),
     [qFlags]
   );
 
-  // SAFE foods = items that DO NOT contain any of the selected allergens.
+  // Only compute after hydration to keep SSR/CSR markup identical
   const safeFoods = useMemo(() => {
-    if (selectedAllergenKeys.length === 0) return [];
+    if (!hydrated || selectedAllergenKeys.length === 0) return [];
     return rows.filter(r => {
       if (qCat !== "All" && (r.category ?? "") !== qCat) return false;
-      // must be safe for ALL selected allergens => every selected is false on the row
       return selectedAllergenKeys.every(k => r.flags[k] === false);
     });
-  }, [rows, qCat, selectedAllergenKeys]);
+  }, [hydrated, rows, qCat, selectedAllergenKeys]);
 
   /* ===== Add/Edit modal ===== */
   type Draft = Omit<MatrixRow, "id" | "locked"> & { id?: string; locked?: boolean };
@@ -149,28 +169,46 @@ export default function AllergenManager() {
     setModalOpen(false);
   };
 
+  const reviewPanelTone = hydrated
+    ? (overdue(review) ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50")
+    : "border-gray-200 bg-white"; // neutral until hydrated
+
   return (
-    <div className="p-4">
+    <div className="px-4 py-6">
       {/* Review panel */}
-      <div className={`mb-4 rounded-lg border px-4 py-3 ${overdue(review) ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`}>
+      <div className={`mb-4 rounded-xl border px-4 py-3 ${reviewPanelTone}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5">
             <div className="font-medium">Allergen register review</div>
             <div className="text-xs text-gray-600">
-              Last reviewed: {review.lastReviewedOn ? <span className="font-medium">{review.lastReviewedOn}</span> : <span className="italic">never</span>}
+              Last reviewed:{" "}
+              {review.lastReviewedOn ? (
+                <span className="font-medium">{review.lastReviewedOn}</span>
+              ) : (
+                <span className="italic">never</span>
+              )}
               {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} · Interval (days): {review.intervalDays}
             </div>
           </div>
           <div className="flex items-center gap-2">
             <input
-              type="number" min={7}
-              className="w-24 rounded-md border border-gray-300 px-2 py-1 text-sm"
+              type="number"
+              min={7}
+              className="w-24 rounded-xl border border-gray-300 px-2 py-1 text-sm"
               value={review.intervalDays}
-              onChange={(e) => setReview(r => ({ ...r, intervalDays: Math.max(1, Number(e.target.value || "0")) }))}
+              onChange={(e) =>
+                setReview((r) => ({ ...r, intervalDays: Math.max(1, Number(e.target.value || "0")) }))
+              }
             />
             <button
-              className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
-              onClick={() => setReview({ ...review, lastReviewedOn: new Date().toISOString().slice(0, 10), lastReviewedBy: "Manager" })}
+              className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+              onClick={() =>
+                setReview({
+                  ...review,
+                  lastReviewedOn: new Date().toISOString().slice(0, 10),
+                  lastReviewedBy: "Manager",
+                })
+              }
             >
               Mark reviewed today
             </button>
@@ -178,14 +216,12 @@ export default function AllergenManager() {
         </div>
       </div>
 
-      
-
       {/* QUERY (fold-down) – SAFE FOODS */}
-      <details className="mb-4 rounded-lg border border-gray-200 bg-white p-3">
+      <details className="mb-4 rounded-xl border border-gray-200 bg-white p-3">
         <summary className="cursor-pointer select-none font-medium">Allergen Query (safe foods)</summary>
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
           {/* Category selector */}
-          <div className="rounded-md border border-gray-200 p-3 bg-gray-50">
+          <div className="rounded-xl border border-gray-200 p-3 bg-gray-50">
             <div className="text-sm font-medium mb-2">Category</div>
             <select
               className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
@@ -193,10 +229,14 @@ export default function AllergenManager() {
               onChange={(e) => setQCat(e.target.value as "All" | Category)}
             >
               <option value="All">All categories</option>
-              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
             </select>
             <p className="mt-2 text-xs text-gray-600">
-              Only items **without** the selected allergens will appear below.
+              Only items <strong>without</strong> the selected allergens will appear below.
             </p>
           </div>
 
@@ -209,7 +249,7 @@ export default function AllergenManager() {
                   <input
                     type="checkbox"
                     checked={qFlags[a.key]}
-                    onChange={(e) => setQFlags(f => ({ ...f, [a.key]: e.target.checked }))}
+                    onChange={(e) => setQFlags((f) => ({ ...f, [a.key]: e.target.checked }))}
                   />
                   <span title={a.label}>
                     {a.icon}{" "}
@@ -225,19 +265,15 @@ export default function AllergenManager() {
               >
                 Clear selection
               </button>
-              <span className="text-xs text-gray-600">
-                Selected: {selectedAllergenKeys.length}
-              </span>
+              <span className="text-xs text-gray-600">Selected: {Object.values(qFlags).filter(Boolean).length}</span>
             </div>
           </div>
         </div>
 
-        {/* Safe results (only if something selected) */}
-        {selectedAllergenKeys.length > 0 && (
+        {/* Safe results */}
+        {hydrated && selectedAllergenKeys.length > 0 && (
           <div className="mt-4">
-            <div className="mb-2 text-sm font-semibold">
-              Safe foods ({safeFoods.length})
-            </div>
+            <div className="mb-2 text-sm font-semibold">Safe foods ({safeFoods.length})</div>
             <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
               <table className="min-w-[640px] w-full text-sm">
                 <thead className="bg-gray-50">
@@ -249,9 +285,13 @@ export default function AllergenManager() {
                 </thead>
                 <tbody>
                   {safeFoods.length === 0 && (
-                    <tr><td colSpan={3} className="px-3 py-6 text-center text-gray-500">No safe items for this selection.</td></tr>
+                    <tr>
+                      <td colSpan={3} className="px-3 py-6 text-center text-gray-500">
+                        No safe items for this selection.
+                      </td>
+                    </tr>
                   )}
-                  {safeFoods.map(r => (
+                  {safeFoods.map((r) => (
                     <tr key={r.id} className="border-t">
                       <td className="px-3 py-2">{r.item}</td>
                       <td className="px-3 py-2">{r.category ?? ""}</td>
@@ -264,13 +304,18 @@ export default function AllergenManager() {
           </div>
         )}
       </details>
-{/* Top actions: Add item alone */}
+
+      {/* Top actions */}
       <div className="mb-3">
-        <button className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800" onClick={openAdd}>
+        <button
+          className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+          onClick={openAdd}
+        >
           + Add item
         </button>
       </div>
-      {/* FULL MATRIX (always shown at bottom, unfiltered) */}
+
+      {/* FULL MATRIX */}
       <div className="mb-2 text-sm font-semibold">Allergen matrix</div>
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
         <table className="min-w-[940px] w-full text-sm">
@@ -280,7 +325,9 @@ export default function AllergenManager() {
               <th className="px-3 py-2 font-medium">Category</th>
               {ALLERGENS.map((a) => (
                 <th key={a.key} className="px-2 py-2 font-medium text-center whitespace-nowrap">
-                  <span title={a.label}>{a.icon} <span className="font-mono text-[11px] text-gray-500">{a.short}</span></span>
+                  <span title={a.label}>
+                    {a.icon} <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
+                  </span>
                 </th>
               ))}
               <th className="px-3 py-2 font-medium text-right">Actions</th>
@@ -288,7 +335,11 @@ export default function AllergenManager() {
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan={2 + ALLERGENS.length + 1} className="px-3 py-6 text-center text-gray-500">No items.</td></tr>
+              <tr>
+                <td colSpan={2 + ALLERGENS.length + 1} className="px-3 py-6 text-center text-gray-500">
+                  No items.
+                </td>
+              </tr>
             )}
             {rows.map((row) => (
               <tr key={row.id} className="border-t">
@@ -315,14 +366,14 @@ export default function AllergenManager() {
                       title="Edit"
                       onClick={() => openEdit(row)}
                     >
-                      <PencilIcon />
+                      ✏️
                     </button>
                     <button
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
+                      className="rounded-xl border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
                       title="Delete"
-                      onClick={() => setRows(rs => rs.filter(r => r.id !== row.id))}
+                      onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
                     >
-                      <TrashIcon />
+                      🗑️
                     </button>
                   </div>
                 </td>
@@ -333,7 +384,7 @@ export default function AllergenManager() {
       </div>
 
       {/* Legend */}
-      <details className="mt-3 rounded-lg border border-gray-200 bg-white p-3">
+      <details className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
         <summary className="cursor-pointer select-none font-medium">Allergen key</summary>
         <div className="mt-2 flex flex-wrap gap-3 text-sm">
           {ALLERGENS.map((a) => (
@@ -356,7 +407,7 @@ export default function AllergenManager() {
                 <label className="text-sm">
                   <div className="mb-1 text-gray-600">Item</div>
                   <input
-                    className="w-full rounded-md border border-gray-300 px-2 py-1.5"
+                    className="w-full rounded-xl border border-gray-300 px-2 py-1.5"
                     value={draft.item}
                     onChange={(e) => setDraft({ ...draft, item: e.target.value })}
                   />
@@ -364,11 +415,15 @@ export default function AllergenManager() {
                 <label className="text-sm">
                   <div className="mb-1 text-gray-600">Category</div>
                   <select
-                    className="w-full rounded-md border border-gray-300 px-2 py-1.5"
+                    className="w-full rounded-xl border border-gray-300 px-2 py-1.5"
                     value={draft.category ?? "Starter"}
                     onChange={(e) => setDraft({ ...draft, category: e.target.value as Category })}
                   >
-                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    {CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
                   </select>
                 </label>
               </div>
@@ -386,14 +441,14 @@ export default function AllergenManager() {
                         <button
                           type="button"
                           className={`px-2 py-1 text-xs ${val ? "bg-red-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-                          onClick={() => setDraft(d => ({ ...d!, flags: { ...d!.flags, [a.key]: true } }))}
+                          onClick={() => setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: true } }))}
                         >
                           Yes
                         </button>
                         <button
                           type="button"
                           className={`px-2 py-1 text-xs ${!val ? "bg-emerald-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-                          onClick={() => setDraft(d => ({ ...d!, flags: { ...d!.flags, [a.key]: false } }))}
+                          onClick={() => setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: false } }))}
                         >
                           No
                         </button>
@@ -406,7 +461,7 @@ export default function AllergenManager() {
               <label className="block text-sm">
                 <div className="mb-1 text-gray-600">Notes</div>
                 <textarea
-                  className="w-full rounded-md border border-gray-300 px-2 py-1.5"
+                  className="w-full rounded-xl border border-gray-300 px-2 py-1.5"
                   rows={3}
                   value={draft.notes ?? ""}
                   onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
@@ -420,10 +475,10 @@ export default function AllergenManager() {
                 Cancel
               </button>
               <button
-                className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+                className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
                 onClick={saveDraft}
               >
-                Save & lock
+                Save &amp; lock
               </button>
             </div>
           </div>
@@ -432,4 +487,3 @@ export default function AllergenManager() {
     </div>
   );
 }
-

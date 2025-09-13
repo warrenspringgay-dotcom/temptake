@@ -1,19 +1,33 @@
+/* src/app/globals.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* tiny helpers used across components */
-.input { @apply w-full rounded-md border border-gray-300 px-3 py-2 text-sm bg-white; }
-.select { @apply rounded-md border border-gray-300 px-3 py-2 text-sm bg-white; }
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 224 71.4% 4.1%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 71.4% 4.1%;
+    --muted: 220 14.3% 95.9%;
+    --muted-foreground: 220 8.9% 46.1%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    /* ... keep the rest of your design tokens */
+  }
 
-.toast {
-  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
-  background: #111827; color: #fff; padding: 10px 14px; border-radius: 9999px;
-  font-size: 12px; z-index: 60; box-shadow: 0 8px 24px rgba(0,0,0,.2);
-}
+  .dark {
+    --background: 224 71.4% 4.1%;
+    --foreground: 210 20% 98%;
+    --card: 224 71.4% 4.1%;
+    --card-foreground: 210 20% 98%;
+    --muted: 215 27.9% 16.9%;
+    --muted-foreground: 217.9 10.6% 64.9%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    /* ... */
+  }
 
-/* print tweaks */
-@media print {
-  header, .no-print { display: none !important; }
-  body { background: #fff; }
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; }
 }

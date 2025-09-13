@@ -1,536 +1,372 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
 import {
   listTempLogs,
   upsertTempLog,
   deleteTempLog,
   listStaffInitials,
-  listTargets,
   type TempLogRow,
   type TempLogInput,
-} from "@/app/actions/db";
-import { useSettings } from "@/components/SettingsProvider";
+} from "@/app/actions/tempLogs";
+import { LOCATION_PRESETS, TARGET_PRESETS } from "@/lib/temp-constants";
 
-/* ----------------------------- helpers/types ----------------------------- */
+type FormState = {
+  date: string;
+  staff_initials: string;
+  location: string;
+  item: string;
+  target_key: string;
+  temp_c: string;
+};
+type LocalTempRow = {
+  id: string;
+  date: string | null;
+  staff_initials: string | null;
+  location: string | null;
+  item: string | null;
+  target_key: string | null;
+  temp_c: number | null;
+  status: "pass" | "fail" | null;
+};
 
-type Target = { id: string; name: string; min: number; max: number };
+const LS_KEY = "tt_temp_logs";
+const uid = () => Math.random().toString(36).slice(2);
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
-function formatDate(d: Date) {
-  return d.toISOString().slice(0, 10);
+function lsGet<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
 }
-function toC(unit: "C" | "F", value: number) {
-  return unit === "C" ? value : (value - 32) * (5 / 9);
+function lsSet<T>(key: string, val: T) {
+  localStorage.setItem(key, JSON.stringify(val));
 }
-function badge(pass: boolean) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold",
-        pass ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-      )}
-    >
-      {pass ? "Pass" : "Fail"}
-    </span>
-  );
-}
-function dayKey(isoDateTime: string) {
-  return isoDateTime.slice(0, 10);
+async function safe<T>(fn: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await fn();
+  } catch {
+    return undefined;
+  }
 }
 
-/* ------------------------------ main component ------------------------------ */
+function inferStatus(
+  temp: number | null,
+  preset: (typeof TARGET_PRESETS)[number] | undefined
+): "pass" | "fail" | null {
+  if (temp == null || !preset) return null;
+  const { minC, maxC } = preset;
+  if (minC != null && temp < minC) return "fail";
+  if (maxC != null && temp > maxC) return "fail";
+  return "pass";
+}
 
 export default function FoodTempLogger() {
-  const { unit } = useSettings(); // "C" | "F"
+  const [rows, setRows] = useState<LocalTempRow[]>([]);
+  const [initials, setInitials] = useState<string[]>([]);
+  const [form, setForm] = useState<FormState>({
+    date: todayISO(),
+    staff_initials: "",
+    location: LOCATION_PRESETS[0] ?? "",
+    item: "",
+    target_key: TARGET_PRESETS[0]?.key ?? "ambient",
+    temp_c: "",
+  });
 
-  /* data */
-  const [logs, setLogs] = React.useState<TempLogRow[]>([]);
-  const [staffOptions, setStaffOptions] = React.useState<string[]>([]);
-  const [targets, setTargets] = React.useState<Target[]>([]);
+  const TARGET_MAP = useMemo(
+    () => new Map(TARGET_PRESETS.map((p) => [p.key, p] as const)),
+    []
+  );
 
-  /* UI state */
-  const [quickOpen, setQuickOpen] = React.useState<boolean>(false);
-  const [search, setSearch] = React.useState<string>("");
-  const [rangeDays, setRangeDays] = React.useState<number>(30);
-
-  /* quick-entry form */
-  const [qStaff, setQStaff] = React.useState<string>("");
-  const [qLocation, setQLocation] = React.useState<string>("");
-  const [qItem, setQItem] = React.useState<string>("");
-  const [qTarget, setQTarget] = React.useState<string>("");
-  const [qTemp, setQTemp] = React.useState<string>("");
-
-  /* fetch */
-  React.useEffect(() => {
-    const to = new Date();
-    const from = new Date();
-    from.setDate(to.getDate() - rangeDays + 1);
+  // Load local first; hydrate from server if available; collect initials from team/local.
+  useEffect(() => {
+    setRows(lsGet<LocalTempRow[]>(LS_KEY, []));
 
     (async () => {
-      const [rows, staff, tgs] = await Promise.all([
-        listTempLogs({ from: formatDate(from), to: formatDate(to) }),
-        listStaffInitials(),
-        listTargets(),
-      ]);
-      setLogs(rows);
-      setStaffOptions(staff);
-      setTargets(tgs);
-      if (!qTarget && tgs.length) setQTarget(tgs[0].id);
+      const serverInitials = await safe(() => listStaffInitials());
+      let localTeam: string[] = [];
+      try {
+        const raw = localStorage.getItem("tt_staff");
+        if (raw) {
+          const staff = JSON.parse(raw) as Array<{ initials?: string | null }>;
+          localTeam = staff
+            .map((s) => (s.initials ?? "").toString().trim().toUpperCase())
+            .filter(Boolean);
+        }
+      } catch {}
+      setInitials(
+        Array.from(
+          new Set([...(serverInitials ?? []).map((i) => String(i).toUpperCase()), ...localTeam])
+        ).sort()
+      );
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeDays]);
 
-  /* computed KPI */
-  const kpis = React.useMemo(() => {
-    if (!logs.length) {
-      return {
-        topLogger: "-",
-        needsAttention: 0,
-        missedDays: 0,
-      };
+    (async () => {
+      const serverRows = await safe(() => listTempLogs());
+      if (serverRows && serverRows.length) {
+        const mapped: LocalTempRow[] = serverRows.map((r) => ({
+          id: r.id,
+          date: r.date ?? null,
+          staff_initials: r.staff_initials ?? null,
+          location: r.location ?? null,
+          item: r.item ?? null,
+          target_key: r.target_key ?? null,
+          temp_c: r.temp_c ?? null,
+          status:
+            r.status ??
+            inferStatus(r.temp_c ?? null, r.target_key ? TARGET_MAP.get(r.target_key) : undefined),
+        }));
+        setRows(mapped);
+        lsSet(LS_KEY, mapped);
+      }
+    })();
+  }, [TARGET_MAP]);
+
+  // KPIs based on rows state
+  const kpis = useMemo(() => {
+    const today = todayISO();
+    const now = new Date(today + "T00:00:00Z").getTime();
+    const sevenDaysAgo = now - 6 * 24 * 60 * 60 * 1000; // include today => 7 days
+    let todayCount = 0;
+    let sevenDayCount = 0;
+    for (const r of rows) {
+      if (!r.date) continue;
+      if (r.date === today) todayCount++;
+      const d = new Date(r.date + "T00:00:00Z").getTime();
+      if (d >= sevenDaysAgo && d <= now) sevenDayCount++;
     }
+    return { today: todayCount, seven: sevenDayCount };
+  }, [rows]);
 
-    // top logger by count
-    const counts: Record<string, number> = {};
-    logs.forEach((l) => {
-      counts[l.staff] = (counts[l.staff] ?? 0) + 1;
-    });
-    const topLogger = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "-";
+  const canSave =
+    !!form.date &&
+    !!form.location &&
+    !!form.item &&
+    !!form.target_key &&
+    form.temp_c.trim().length > 0;
 
-    // needs attention = failed entries
-    const needsAttention = logs.filter((l) => !l.pass).length;
+  async function handleAddQuick() {
+    const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
+    const preset = TARGET_MAP.get(form.target_key);
+    const status = inferStatus(tempNum, preset);
 
-    // missed days = in period, days with zero logs
-    const seen = new Set(logs.map((l) => dayKey(l.created_at)));
-    const today = new Date();
-    const start = new Date();
-    start.setDate(today.getDate() - rangeDays + 1);
-
-    let missed = 0;
-    for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
-      const k = formatDate(d);
-      if (!seen.has(k)) missed++;
-    }
-
-    return { topLogger, needsAttention, missedDays: missed };
-  }, [logs, rangeDays]);
-
-  /* create entry */
-  async function submitQuick(e: React.FormEvent) {
-    e.preventDefault();
-    if (!qStaff || !qItem || !qTarget || !qTemp) return;
-
-    const target = targets.find((t) => t.id === qTarget);
-    const tempC = toC(unit, parseFloat(qTemp));
-
-    const pass =
-      target ? tempC >= target.min && tempC <= target.max : !Number.isNaN(tempC);
-
-    const payload: TempLogInput = {
-      staff: qStaff,
-      location: qLocation.trim(),
-      item: qItem.trim(),
-      target: target ? target.name : "Unspecified",
-      temp_c: Number(tempC.toFixed(1)),
-      notes: null,
+    const localRow: LocalTempRow = {
+      id: uid(),
+      date: form.date,
+      staff_initials: form.staff_initials || null,
+      location: form.location || null,
+      item: form.item || null,
+      target_key: form.target_key || null,
+      temp_c: tempNum,
+      status,
     };
 
-    const { id } = await upsertTempLog(payload);
-    const created: TempLogRow = {
-      id,
-      created_at: new Date().toISOString(),
-      pass,
-      ...payload,
-    };
-    setLogs((prev) => [created, ...prev]);
-
-    // reset lightweight
-    setQItem("");
-    setQTemp("");
-  }
-
-  async function handleDelete(id: string) {
-    await deleteTempLog(id);
-    setLogs((prev) => prev.filter((l) => l.id !== id));
-  }
-
-  /* filter for table */
-  const filtered = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return logs;
-    return logs.filter(
-      (l) =>
-        l.item.toLowerCase().includes(q) ||
-        l.location.toLowerCase().includes(q) ||
-        l.staff.toLowerCase().includes(q) ||
-        l.target.toLowerCase().includes(q)
-    );
-  }, [logs, search]);
-
-  /* data for bar chart (entries per day) */
-  const chart = React.useMemo(() => {
-    const counts = new Map<string, number>();
-    logs.forEach((l) => {
-      const k = dayKey(l.created_at); // YYYY-MM-DD
-      counts.set(k, (counts.get(k) ?? 0) + 1);
+    // local-first
+    setRows((prev) => {
+      const next = [localRow, ...prev];
+      lsSet(LS_KEY, next);
+      return next;
     });
 
-    const days: { iso: string; day: string; count: number }[] = [];
-    const today = new Date();
-    const start = new Date();
-    start.setDate(today.getDate() - rangeDays + 1);
+    // best-effort server
+    const payload: TempLogInput = { ...localRow };
+    await safe(() => upsertTempLog(payload));
 
-    for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
-      const iso = formatDate(d);           // unique key
-      const day = iso.slice(5);            // MM-DD label
-      days.push({ iso, day, count: counts.get(iso) ?? 0 });
+    setForm((f) => ({ ...f, item: "", temp_c: "" }));
+  }
+
+  async function remove(id: string) {
+    setRows((prev) => {
+      const next = prev.filter((r) => r.id !== id);
+      lsSet(LS_KEY, next);
+      return next;
+    });
+    await safe(() => deleteTempLog(id));
+  }
+
+  function onTempKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && canSave) {
+      e.preventDefault();
+      void handleAddQuick();
     }
-    const max = Math.max(1, ...days.map((d) => d.count));
-    return { days, max };
-  }, [logs, rangeDays]);
+  }
 
   return (
-    <div className="min-h-screen w-full bg-gray-50">
-      <main className="mx-auto max-w-6xl p-4 space-y-6">
-        {/* KPI row */}
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <KpiCard label="Top logger" value={kpis.topLogger} />
-          <KpiCard
-            label="Needs attention"
-            value={String(kpis.needsAttention)}
-            tone={kpis.needsAttention ? "danger" : "ok"}
-          />
-          <KpiCard
-            label="Missed days"
-            value={String(kpis.missedDays)}
-            tone={kpis.missedDays ? "warn" : "ok"}
-            right={
-              <RangePicker value={rangeDays} onChange={(d) => setRangeDays(d)} />
-            }
-          />
-        </section>
+    <div className="space-y-6">
+      {/* KPIs */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="text-xs text-slate-500">Logs today</div>
+          <div className="text-3xl font-semibold">{kpis.today}</div>
+        </div>
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="text-xs text-slate-500">Logs (7 days)</div>
+          <div className="text-3xl font-semibold">{kpis.seven}</div>
+        </div>
+      </div>
 
-        {/* Actions: quick entry + full entry */}
-        <section className="flex items-center justify-between">
-          <button
-            className="inline-flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
-            onClick={() => setQuickOpen((v) => !v)}
-            aria-expanded={quickOpen}
-          >
-            <Chevron open={quickOpen} />
-            Quick entry
-          </button>
+      {/* Quick entry */}
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="grid grid-cols-2 items-end gap-3 md:grid-cols-6">
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Staff (initials)</label>
+            <input
+              list="staff-initials"
+              value={form.staff_initials}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, staff_initials: e.target.value.trim().toUpperCase() }))
+              }
+              className="w-full rounded-xl border px-3 py-2"
+              placeholder="e.g., WS"
+            />
+            <datalist id="staff-initials">
+              {initials.map((ini) => (
+                <option key={ini} value={ini} />
+              ))}
+            </datalist>
+          </div>
 
-        {/* If you want a separate full-entry route, keep this link */}
-          <a
-            href="/full-entry"
-            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold shadow hover:bg-gray-50"
-          >
-            Full entry form
-          </a>
-        </section>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Location</label>
+            <select
+              value={form.location}
+              onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
+              className="w-full rounded-xl border px-3 py-2"
+            >
+              {LOCATION_PRESETS.map((loc) => (
+                <option key={loc} value={loc}>
+                  {loc}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        {/* Quick Entry Drawer */}
-        {quickOpen && (
-          <form
-            onSubmit={submitQuick}
-            className="rounded-xl border bg-white p-4 shadow-sm"
-          >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-6">
-              <div className="sm:col-span-1">
-                <label className="block text-xs font-semibold text-gray-600">
-                  Staff
-                </label>
-                <select
-                  value={qStaff}
-                  onChange={(e) => setQStaff(e.target.value)}
-                  className="mt-1 w-full rounded-md border px-2 py-1 text-sm"
-                  required
-                >
-                  <option value="">Select</option>
-                  {staffOptions.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-xs text-gray-500">Item</label>
+            <input
+              value={form.item}
+              onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
+              className="w-full rounded-xl border px-3 py-2"
+              placeholder="e.g., Chicken curry"
+            />
+          </div>
 
-              <div className="sm:col-span-1">
-                <label className="block text-xs font-semibold text-gray-600">
-                  Location
-                </label>
-                <input
-                  value={qLocation}
-                  onChange={(e) => setQLocation(e.target.value)}
-                  className="mt-1 w-full rounded-md border px-2 py-1 text-sm"
-                  placeholder="Fridge 1"
-                />
-              </div>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Target</label>
+            <select
+              value={form.target_key}
+              onChange={(e) => setForm((f) => ({ ...f, target_key: e.target.value }))}
+              className="w-full rounded-xl border px-3 py-2"
+            >
+              {TARGET_PRESETS.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            {/* Range text intentionally hidden for a cleaner UI */}
+          </div>
 
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-gray-600">
-                  Item
-                </label>
-                <input
-                  value={qItem}
-                  onChange={(e) => setQItem(e.target.value)}
-                  className="mt-1 w-full rounded-md border px-2 py-1 text-sm"
-                  placeholder="Chicken curry"
-                  required
-                />
-              </div>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Temperature (°C)</label>
+            <input
+              value={form.temp_c}
+              onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
+              onKeyDown={onTempKeyDown}
+              className="w-full rounded-xl border px-3 py-2"
+              inputMode="decimal"
+              placeholder="e.g., 5.0"
+            />
+          </div>
 
-              <div className="sm:col-span-1">
-                <label className="block text-xs font-semibold text-gray-600">
-                  Target
-                </label>
-                <select
-                  value={qTarget}
-                  onChange={(e) => setQTarget(e.target.value)}
-                  className="mt-1 w-full rounded-md border px-2 py-1 text-sm"
-                >
-                  {targets.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} ({t.min}–{t.max}°C)
-                    </option>
-                  ))}
-                </select>
-              </div>
+          <div className="md:col-span-6">
+            <button
+              onClick={handleAddQuick}
+              disabled={!canSave}
+              className={cn(
+                "rounded-2xl px-4 py-2 font-medium text-white",
+                canSave ? "bg-black hover:bg-gray-900" : "bg-gray-400"
+              )}
+            >
+              Save quick entry
+            </button>
+          </div>
+        </div>
+      </div>
 
-              <div className="sm:col-span-1">
-                <label className="block text-xs font-semibold text-gray-600">
-                  Temperature (°{unit})
-                </label>
-                <input
-                  inputMode="decimal"
-                  value={qTemp}
-                  onChange={(e) => setQTemp(e.target.value)}
-                  className="mt-1 w-full rounded-md border px-2 py-1 text-sm"
-                  placeholder={`e.g. ${unit === "C" ? "5.0" : "41.0"}`}
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="mt-3 flex justify-end">
-              <button
-                type="submit"
-                className="rounded-md bg-black px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
-              >
-                Save quick entry
-              </button>
-            </div>
-          </form>
-        )}
-
-        {/* Table controls */}
-        <section className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-gray-800">Entries</h2>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search entries…"
-            className="w-56 rounded-md border px-3 py-1.5 text-sm"
-          />
-        </section>
-
-        {/* Entries table */}
-        <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+      {/* Table */}
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-xs uppercase text-gray-600">
-              <tr>
-                <Th>Date</Th>
-                <Th>Staff</Th>
-                <Th>Location</Th>
-                <Th>Item</Th>
-                <Th>Target</Th>
-                <Th className="text-right">Temp (°C)</Th>
-                <Th>Status</Th>
-                <Th className="text-right">Actions</Th>
+            <thead>
+              <tr className="text-left text-gray-500">
+                <th className="py-2 pr-3">Date</th>
+                <th className="py-2 pr-3">Staff</th>
+                <th className="py-2 pr-3">Location</th>
+                <th className="py-2 pr-3">Item</th>
+                <th className="py-2 pr-3">Target</th>
+                <th className="py-2 pr-3">Temp (°C)</th>
+                <th className="py-2 pr-3">Status</th>
+                <th className="py-2 pr-3">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 && (
+              {rows.length ? (
+                rows.map((r) => {
+                  const p = r.target_key ? TARGET_MAP.get(r.target_key) : undefined;
+                  const status = r.status ?? inferStatus(r.temp_c, p);
+                  return (
+                    <tr key={r.id} className="border-t">
+                      <td className="py-2 pr-3">{r.date ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.staff_initials ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.location ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.item ?? "—"}</td>
+                      <td className="py-2 pr-3">{p ? p.label : "—"}</td>
+                      <td className="py-2 pr-3">{r.temp_c ?? "—"}</td>
+                      <td className="py-2 pr-3">
+                        {status ? (
+                          <span
+                            className={cn(
+                              "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
+                              status === "pass"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-red-100 text-red-800"
+                            )}
+                          >
+                            {status}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <button
+                          onClick={() => remove(r.id)}
+                          className="rounded-xl border px-2 py-1 hover:bg-gray-50"
+                          aria-label="Delete"
+                          title="Delete"
+                        >
+                          🗑️
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
                 <tr>
-                  <td colSpan={8} className="p-6 text-center text-gray-500">
+                  <td colSpan={8} className="py-6 text-center text-gray-500">
                     No entries
                   </td>
                 </tr>
               )}
-              {filtered.map((l) => (
-                <tr key={l.id} className="border-t">
-                  <Td>{new Date(l.created_at).toLocaleString()}</Td>
-                  <Td>{l.staff}</Td>
-                  <Td>{l.location}</Td>
-                  <Td>{l.item}</Td>
-                  <Td>{l.target}</Td>
-                  <Td className="text-right">{l.temp_c.toFixed(1)}</Td>
-                  <Td>{badge(l.pass)}</Td>
-                  <Td className="text-right">
-                    <button
-                      onClick={() => handleDelete(l.id)}
-                      className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
-                      aria-label="Delete entry"
-                    >
-                      Delete
-                    </button>
-                  </Td>
-                </tr>
-              ))}
             </tbody>
           </table>
         </div>
-
-        {/* Chart at bottom */}
-        <section className="rounded-xl border bg-white p-4 shadow-sm">
-          <h3 className="mb-3 text-sm font-semibold text-gray-800">
-            Entries per day (last {rangeDays} days)
-          </h3>
-          <BarChart data={chart.days} max={chart.max} />
-        </section>
-      </main>
-    </div>
-  );
-}
-
-/* -------------------------------- subcomponents -------------------------------- */
-
-function KpiCard({
-  label,
-  value,
-  tone = "neutral",
-  right,
-}: {
-  label: string;
-  value: string;
-  tone?: "neutral" | "ok" | "warn" | "danger";
-  right?: React.ReactNode;
-}) {
-  const ring =
-    tone === "ok"
-      ? "ring-green-200"
-      : tone === "warn"
-      ? "ring-amber-200"
-      : tone === "danger"
-      ? "ring-red-200"
-      : "ring-gray-200";
-
-  return (
-    <div className={cn("flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm ring-1", ring)}>
-      <div>
-        <div className="text-xs text-gray-500">{label}</div>
-        <div className="text-2xl font-semibold text-gray-900">{value}</div>
       </div>
-      {right}
-    </div>
-  );
-}
-
-function RangePicker({
-  value,
-  onChange,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="rounded-md border px-2 py-1 text-xs"
-      aria-label="Range"
-      title="Range"
-    >
-      {[7, 14, 30, 60, 90].map((d) => (
-        <option key={d} value={d}>
-          {d}d
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function Th({
-  children,
-  className,
-}: React.PropsWithChildren<{ className?: string }>) {
-  return <th className={cn("px-3 py-2 text-left", className)}>{children}</th>;
-}
-function Td({
-  children,
-  className,
-}: React.PropsWithChildren<{ className?: string }>) {
-  return <td className={cn("px-3 py-2", className)}>{children}</td>;
-}
-
-function Chevron({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={cn("h-4 w-4 transition-transform", open ? "rotate-90" : "")}
-      viewBox="0 0 20 20"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <path
-        fillRule="evenodd"
-        d="M6.293 4.293a1 1 0 011.414 0l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414-1.414L10.586 10 6.293 5.707a1 1 0 010-1.414z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
-}
-
-/* tiny inline bar chart (no external libs) */
-function BarChart({
-  data,
-  max,
-}: {
-  data: Array<{ iso: string; day: string; count: number }>;
-  max: number;
-}) {
-  const W = Math.max(320, data.length * 16);
-  const H = 140;
-  const pad = 20;
-  const bw = Math.max(4, (W - pad * 2) / data.length - 4);
-
-  return (
-    <div className="overflow-x-auto">
-      <svg width={W} height={H} role="img" aria-label="Entries per day">
-        {/* axis */}
-        <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad} stroke="#e5e7eb" />
-        <line x1={pad} y1={pad} x2={pad} y2={H - pad} stroke="#e5e7eb" />
-
-        {data.map((d, i) => {
-          const x = pad + i * (bw + 4) + 2;
-          const h = Math.round(((H - pad * 2) * d.count) / max);
-          const y = H - pad - h;
-          return (
-            <g key={d.iso}>
-              <rect
-                x={x}
-                y={y}
-                width={bw}
-                height={h}
-                rx={3}
-                className="fill-gray-900/80"
-              />
-              {i % Math.ceil(data.length / 10 || 1) === 0 && (
-                <text
-                  x={x + bw / 2}
-                  y={H - 5}
-                  fontSize="9"
-                  textAnchor="middle"
-                  fill="#6b7280"
-                >
-                  {d.day}
-                </text>
-              )}
-            </g>
-          );
-        })}
-      </svg>
     </div>
   );
 }

@@ -1,18 +1,18 @@
+// src/components/ThemeClient.tsx
 "use client";
 
 import { useEffect } from "react";
-import { useSettings } from "@/lib/settings";
 
 export default function ThemeClient() {
-  const { settings } = useSettings();
   useEffect(() => {
-    const root = document.documentElement;
-    const lang = (settings.language || "en-GB").split(",")[0];
-    root.setAttribute("lang", lang);
+    // pick up saved theme/lang or defaults
+    const theme = (localStorage.getItem("theme") || "light").toLowerCase();
+    const lang = (localStorage.getItem("lang") || "en").toLowerCase();
 
-    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-    const effectiveDark = settings.theme === "dark" || (settings.theme === "system" && prefersDark);
-    root.classList.toggle("dark", !!effectiveDark);
-  }, [settings.theme, settings.language]);
+    // apply to <html>
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    document.documentElement.setAttribute("lang", lang);
+  }, []);
+
   return null;
 }

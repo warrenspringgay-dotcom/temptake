@@ -1,5 +1,4 @@
 // src/app/suppliers/page.tsx
-import AuthGate from "@/components/AuthGate";
 import SuppliersManager from "@/components/SuppliersManager";
 
 export const metadata = {
@@ -7,9 +6,5 @@ export const metadata = {
 };
 
 export default function SuppliersPage() {
-  return (
-    <AuthGate requireRole="manager">
-      <SuppliersManager />
-    </AuthGate>
-  );
+  return <SuppliersManager />;
 }
