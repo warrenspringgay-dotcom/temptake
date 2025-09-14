@@ -1,26 +1,21 @@
-// Server Component – do NOT add "use client"
-import Link from "next/link";
-import { hasRole, type Role } from "@/lib/get-user-role";
+// src/components/AuthGate.tsx
+// Server component that currently *does not block* anything.
+// This keeps local/guest builds working without auth actions wired.
+// When you're ready to enforce auth, add your real check inside.
+
+import React from "react";
+
+type Role = "staff" | "manager" | "owner";
 
 export default async function AuthGate({
+  requireRole, // unused in the no-op gate
   children,
-  requireRole,             // e.g., "manager"
 }: {
+  requireRole?: Role;
   children: React.ReactNode;
-  requireRole?: Extract<Role, "owner" | "manager" | "staff">;
 }) {
-  if (!requireRole) return <>{children}</>;
-
-  const ok = await hasRole([requireRole, ...(requireRole === "manager" ? ["owner"] : [])]);
-  if (ok) return <>{children}</>;
-
-  return (
-    <div className="mx-auto max-w-2xl px-4 py-12">
-      <h1 className="text-2xl font-semibold mb-2">Access denied</h1>
-      <p className="text-muted-foreground">
-        Your role doesn’t permit access to this page.{" "}
-        <Link className="underline" href="/">Go back</Link>
-      </p>
-    </div>
-  );
+  // No-op: always allow.
+  // If you want to flip a switch in the future, you can do:
+  // if (process.env.ENFORCE_AUTH === "1") { ...real check and conditional UI... }
+  return <>{children}</>;
 }

@@ -25,6 +25,12 @@ function deriveInitials(name?: string) {
   return (a + b || a).toUpperCase();
 }
 
+// convert empty strings to undefined (to satisfy `string | undefined`)
+const emptyToUndef = (v?: string | null) => {
+  const t = (v ?? "").trim();
+  return t ? t : undefined;
+};
+
 // Safe fetchers that never throw to keep the UI snappy
 async function listTeamSafe(): Promise<TeamMember[]> {
   try {
@@ -38,7 +44,11 @@ async function listTeamSafe(): Promise<TeamMember[]> {
 }
 async function upsertTeamSafe(payload: Partial<TeamMember>) {
   try {
-    await fetch("/api/team", { method: "POST", body: JSON.stringify(payload) });
+    await fetch("/api/team", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
   } catch {}
 }
 async function deleteTeamSafe(id: string) {
@@ -72,10 +82,10 @@ export default function TeamManager() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter(r =>
+    return rows.filter((r) =>
       [r.name, r.role, r.email, r.phone, r.notes]
         .filter(Boolean)
-        .some(v => String(v).toLowerCase().includes(q)),
+        .some((v) => String(v).toLowerCase().includes(q)),
     );
   }, [rows, query]);
 
@@ -87,10 +97,10 @@ export default function TeamManager() {
     const payload: Partial<TeamMember> = {
       id: form.id,
       name: form.name?.trim(),
-      role: form.role?.trim() || null,
-      email: form.email?.trim() || null,
-      phone: form.phone?.trim() || null,
-      notes: form.notes?.trim() || null,
+      role: emptyToUndef(form.role),
+      email: emptyToUndef(form.email),
+      phone: emptyToUndef(form.phone),
+      notes: emptyToUndef(form.notes),
       active: !!form.active,
       // Derive initials on the way in if you want to persist it too:
       initials: deriveInitials(form.name),

@@ -1,36 +1,43 @@
 // src/lib/supabase-server.ts
-import { cookies, type CookieOptions } from "next/headers";
+import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
 /**
- * Next 15-safe server client for RSC / Server Actions.
- * - Uses async cookies() calls
- * - Swallows cookie writes outside Server Actions/Route Handlers
+ * Server-side Supabase client that persists auth cookies using Next's cookies() API.
+ * We keep cookie options untyped to avoid depending on non-exported Next types.
  */
-export function supabaseServer() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+export function createSupabaseServerClient() {
+  const cookieStore = cookies();
 
-  return createServerClient(url, anon, {
-    cookies: {
-      // Next 15 makes cookies() async; call it at use time
-      getAll: async () => (await cookies()).getAll(),
-      setAll: async (cookiesToSet) => {
-        // Cookie writes only succeed in Server Actions / Route Handlers.
-        // We try, but swallow if we're in RSC.
-        try {
-          const store = await cookies();
-          for (const { name, value, options } of cookiesToSet) {
-            store.set({ name, value, ...(options as CookieOptions) });
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        // Pass-through setter; options intentionally untyped for compatibility.
+        set(name: string, value: string, options?: Record<string, unknown>) {
+          // @ts-expect-error options intentionally untyped
+          cookieStore.set(name, value, options);
+        },
+        remove(name: string, options?: Record<string, unknown>) {
+          if (options && Object.keys(options).length > 0) {
+            // @ts-expect-error options intentionally untyped
+            cookieStore.set(name, "", { ...options, maxAge: 0 });
+          } else {
+            cookieStore.delete(name);
           }
-        } catch {
-          // no-op in disallowed contexts
-        }
+        },
       },
-    },
-  });
+    }
+  );
 }
 
-// Back-compat aliases (some files may still import these)
-export const createSupabaseServerClient = supabaseServer;
-export const getServerSupabase = supabaseServer;
+/**
+ * Back-compat alias so existing code `import { supabaseServer } from "@/lib/supabase-server"` keeps working.
+ */
+export function supabaseServer() {
+  return createSupabaseServerClient();
+}

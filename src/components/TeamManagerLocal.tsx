@@ -86,6 +86,30 @@ export default function TeamManagerLocal() {
   const [staff, setStaff] = useLocalState<Staff[]>("tt_staff", []);
   const [logs] = useLocalState<LocalLog[]>("tt_logs", []);
 
+  // Heal legacy entries missing IDs / training IDs to ensure stable React keys
+  useEffect(() => {
+    let changed = false;
+    const healed = (staff ?? []).map((s) => {
+      let sChanged = false;
+      let id = s.id;
+      if (!id) {
+        id = uid();
+        sChanged = true;
+      }
+      const trainings: Training[] = (s.trainings ?? []).map((t) => {
+        if (!t.id) {
+          changed = true;
+          return { ...t, id: uid() };
+        }
+        return t;
+      });
+      if (sChanged) changed = true;
+      return { ...s, id, trainings };
+    });
+    if (changed) setStaff(healed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once on mount
+
   const allTrainings = useMemo(
     () => staff.flatMap((s) => s.trainings.map((t) => ({ s, t }))),
     [staff]
@@ -134,7 +158,7 @@ export default function TeamManagerLocal() {
         ? { ...exists, ...draft, trainings: draft.trainings ?? exists.trainings }
         : {
             id: uid(),
-            initials: draft.initials.toUpperCase(),
+            initials: (draft.initials || "").toUpperCase(),
             name: draft.name,
             jobTitle: draft.jobTitle ?? "",
             phone: draft.phone ?? "",
@@ -143,10 +167,7 @@ export default function TeamManagerLocal() {
             active: draft.active,
             trainings: draft.trainings ?? [],
           };
-      const list = exists ? prev.map((s) => (s.id === payload.id ? payload : s)) : [
-        payload,
-        ...prev,
-      ];
+      const list = exists ? prev.map((s) => (s.id === payload.id ? payload : s)) : [payload, ...prev];
       return list.sort((a, b) => a.name.localeCompare(b.name));
     });
   }
@@ -213,6 +234,8 @@ export default function TeamManagerLocal() {
           ) : (
             <ul className="divide-y divide-gray-200">
               {staff.map((s) => {
+                // Robust key: prefer id; fallback to a composite (initials+name)
+                const staffKey = s.id || `staff:${s.initials}:${s.name}`;
                 let worst: ExpiryStatus = "ok";
                 for (const t of s.trainings) {
                   const st = getExpiryStatus(t.expires_on, 60);
@@ -223,7 +246,7 @@ export default function TeamManagerLocal() {
                   if (st === "warning") worst = "warning";
                 }
                 return (
-                  <li key={s.id} className="p-4">
+                  <li key={staffKey} className="p-4">
                     <details>
                       <summary className="flex cursor-pointer items-center justify-between">
                         <div className="min-w-0">
@@ -253,7 +276,7 @@ export default function TeamManagerLocal() {
                           <div>{s.email || "—"}</div>
                         </div>
                         <div className="text-right">
-                          <Button variant onClick={() => setStaffModal({ open: true, edit: s })}>
+                          <Button variant="outline" onClick={() => setStaffModal({ open: true, edit: s })}>
                             ✏️
                           </Button>
                           <button
@@ -262,7 +285,7 @@ export default function TeamManagerLocal() {
                               if (confirm("Delete this staff member?")) removeStaff(s.id);
                             }}
                           >
-                            🗑️
+                            Delete
                           </button>
                         </div>
                       </div>
@@ -289,8 +312,10 @@ export default function TeamManagerLocal() {
                             {s.trainings.length ? (
                               s.trainings.map((t) => {
                                 const st = getExpiryStatus(t.expires_on, 60);
+                                // Robust key: prefer training id; fallback to type+dates
+                                const tKey = t.id || `t:${t.type}:${t.awarded_on}:${t.expires_on}`;
                                 return (
-                                  <tr key={t.id} className="border-t border-gray-200">
+                                  <tr key={tKey} className="border-t border-gray-200">
                                     <td className="py-2 pr-3">{t.type}</td>
                                     <td className="py-2 pr-3">{t.awarded_on}</td>
                                     <td className="py-2 pr-3">{t.expires_on}</td>
@@ -315,13 +340,13 @@ export default function TeamManagerLocal() {
                                         className="text-sm text-slate-800 underline"
                                         onClick={() => setTrainingModal({ open: true, staffId: s.id, edit: t })}
                                       >
-                                        ✏️
+                                        Edit
                                       </button>
                                       <button
                                         className="ml-3 text-sm text-red-600 underline"
                                         onClick={() => removeTraining(s.id, t.id)}
                                       >
-                                        🗑️
+                                        Delete
                                       </button>
                                     </td>
                                   </tr>

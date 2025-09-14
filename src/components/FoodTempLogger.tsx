@@ -7,19 +7,21 @@ import {
   upsertTempLog,
   deleteTempLog,
   listStaffInitials,
-  type TempLogRow,
   type TempLogInput,
 } from "@/app/actions/tempLogs";
 import { LOCATION_PRESETS, TARGET_PRESETS } from "@/lib/temp-constants";
+
+type TargetPreset = (typeof TARGET_PRESETS)[number];
 
 type FormState = {
   date: string;
   staff_initials: string;
   location: string;
   item: string;
-  target_key: string;
-  temp_c: string;
+  target_key: string; // keep string for input control
+  temp_c: string; // keep as string for input control
 };
+
 type LocalTempRow = {
   id: string;
   date: string | null;
@@ -56,7 +58,7 @@ async function safe<T>(fn: () => Promise<T>): Promise<T | undefined> {
 
 function inferStatus(
   temp: number | null,
-  preset: (typeof TARGET_PRESETS)[number] | undefined
+  preset: TargetPreset | undefined
 ): "pass" | "fail" | null {
   if (temp == null || !preset) return null;
   const { minC, maxC } = preset;
@@ -77,8 +79,9 @@ export default function FoodTempLogger() {
     temp_c: "",
   });
 
-  const TARGET_MAP = useMemo(
-    () => new Map(TARGET_PRESETS.map((p) => [p.key, p] as const)),
+  // IMPORTANT: type the map as Map<string, TargetPreset> so any string key is accepted safely.
+  const TARGET_MAP = useMemo<Map<string, TargetPreset>>(
+    () => new Map(TARGET_PRESETS.map((p) => [p.key as string, p])),
     []
   );
 
@@ -108,18 +111,20 @@ export default function FoodTempLogger() {
     (async () => {
       const serverRows = await safe(() => listTempLogs());
       if (serverRows && serverRows.length) {
-        const mapped: LocalTempRow[] = serverRows.map((r) => ({
-          id: r.id,
-          date: r.date ?? null,
-          staff_initials: r.staff_initials ?? null,
-          location: r.location ?? null,
-          item: r.item ?? null,
-          target_key: r.target_key ?? null,
-          temp_c: r.temp_c ?? null,
-          status:
-            r.status ??
-            inferStatus(r.temp_c ?? null, r.target_key ? TARGET_MAP.get(r.target_key) : undefined),
-        }));
+        const mapped: LocalTempRow[] = serverRows.map((r) => {
+          const key = (r.target_key ?? undefined) as string | undefined;
+          const preset = key ? TARGET_MAP.get(key) : undefined;
+          return {
+            id: r.id,
+            date: r.date ?? null,
+            staff_initials: r.staff_initials ?? null,
+            location: r.location ?? null,
+            item: r.item ?? null,
+            target_key: r.target_key ?? null,
+            temp_c: r.temp_c ?? null,
+            status: r.status ?? inferStatus(r.temp_c ?? null, preset),
+          };
+        });
         setRows(mapped);
         lsSet(LS_KEY, mapped);
       }
@@ -127,7 +132,7 @@ export default function FoodTempLogger() {
   }, [TARGET_MAP]);
 
   // KPIs based on rows state
-  const kpis = useMemo(() => {
+  const kpis = React.useMemo(() => {
     const today = todayISO();
     const now = new Date(today + "T00:00:00Z").getTime();
     const sevenDaysAgo = now - 6 * 24 * 60 * 60 * 1000; // include today => 7 days
@@ -151,7 +156,7 @@ export default function FoodTempLogger() {
 
   async function handleAddQuick() {
     const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
-    const preset = TARGET_MAP.get(form.target_key);
+    const preset = TARGET_MAP.get(form.target_key); // form.target_key is a string: OK
     const status = inferStatus(tempNum, preset);
 
     const localRow: LocalTempRow = {
@@ -317,15 +322,16 @@ export default function FoodTempLogger() {
             <tbody>
               {rows.length ? (
                 rows.map((r) => {
-                  const p = r.target_key ? TARGET_MAP.get(r.target_key) : undefined;
-                  const status = r.status ?? inferStatus(r.temp_c, p);
+                  const key = (r.target_key ?? undefined) as string | undefined;
+                  const preset = key ? TARGET_MAP.get(key) : undefined;
+                  const status = r.status ?? inferStatus(r.temp_c, preset);
                   return (
                     <tr key={r.id} className="border-t">
                       <td className="py-2 pr-3">{r.date ?? "—"}</td>
                       <td className="py-2 pr-3">{r.staff_initials ?? "—"}</td>
                       <td className="py-2 pr-3">{r.location ?? "—"}</td>
                       <td className="py-2 pr-3">{r.item ?? "—"}</td>
-                      <td className="py-2 pr-3">{p ? p.label : "—"}</td>
+                      <td className="py-2 pr-3">{preset ? preset.label : "—"}</td>
                       <td className="py-2 pr-3">{r.temp_c ?? "—"}</td>
                       <td className="py-2 pr-3">
                         {status ? (
