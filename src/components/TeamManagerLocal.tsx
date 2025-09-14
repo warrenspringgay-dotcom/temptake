@@ -285,7 +285,7 @@ export default function TeamManagerLocal() {
                               if (confirm("Delete this staff member?")) removeStaff(s.id);
                             }}
                           >
-                            Delete
+                            🗑️
                           </button>
                         </div>
                       </div>
@@ -340,13 +340,13 @@ export default function TeamManagerLocal() {
                                         className="text-sm text-slate-800 underline"
                                         onClick={() => setTrainingModal({ open: true, staffId: s.id, edit: t })}
                                       >
-                                        Edit
+                                        ✏️
                                       </button>
                                       <button
                                         className="ml-3 text-sm text-red-600 underline"
                                         onClick={() => removeTraining(s.id, t.id)}
                                       >
-                                        Delete
+                                        🗑️
                                       </button>
                                     </td>
                                   </tr>
