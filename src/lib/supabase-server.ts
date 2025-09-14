@@ -3,11 +3,11 @@ import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
 /**
- * Server-side Supabase client that persists auth cookies using Next's cookies() API.
- * We keep cookie options untyped to avoid depending on non-exported Next types.
+ * Create a server-side Supabase client that persists auth cookies using Next 15's cookies() API.
+ * NOTE: cookies() is async in Server Actions, so this factory is async.
  */
-export function createSupabaseServerClient() {
-  const cookieStore = cookies();
+export async function createSupabaseServerClient() {
+  const cookieStore = await cookies();
 
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -17,15 +17,14 @@ export function createSupabaseServerClient() {
         get(name: string) {
           return cookieStore.get(name)?.value;
         },
-        // Pass-through setter; options intentionally untyped for compatibility.
+        // Options intentionally untyped for broad Next compatibility.
+        // We avoid importing Next's cookie types (not exported) and cast at the callsite.
         set(name: string, value: string, options?: Record<string, unknown>) {
-          // @ts-expect-error options intentionally untyped
-          cookieStore.set(name, value, options);
+          (cookieStore as any).set(name, value, options as any);
         },
         remove(name: string, options?: Record<string, unknown>) {
           if (options && Object.keys(options).length > 0) {
-            // @ts-expect-error options intentionally untyped
-            cookieStore.set(name, "", { ...options, maxAge: 0 });
+            (cookieStore as any).set(name, "", { ...(options as any), maxAge: 0 });
           } else {
             cookieStore.delete(name);
           }
@@ -35,9 +34,6 @@ export function createSupabaseServerClient() {
   );
 }
 
-/**
- * Back-compat alias so existing code `import { supabaseServer } from "@/lib/supabase-server"` keeps working.
- */
-export function supabaseServer() {
-  return createSupabaseServerClient();
-}
+/** Back-compat aliases so existing imports continue to work. */
+export const supabaseServer = createSupabaseServerClient;
+export const getServerSupabase = createSupabaseServerClient;
