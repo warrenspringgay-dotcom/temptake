@@ -1,94 +1,83 @@
+// src/app/actions/auth.ts
 "use server";
 
 import { redirect } from "next/navigation";
-import { getServerSupabase } from "@/lib/supabase-server";
+import { supabaseServer } from "@/lib/supabase-server";
 
-export type Role = "owner" | "manager" | "staff";
-type SessionResult = {
-  user: { id: string; email: string | null } | null;
-  role: Role | null;
-};
+export type AuthResult =
+  | { ok: true }
+  | { ok: false; message: string };
 
-/** Read the current session (safe for Server Components) */
-export async function getSession(): Promise<SessionResult> {
-  const supabase = await getServerSupabase();
-  const { data } = await supabase.auth.getUser();
-  const user = data.user ?? null;
+type SessionUser = { id: string; email: string | null };
 
-  const role = await getRole(); // reads from metadata if present
-  return {
-    user: user ? { id: user.id, email: user.email ?? null } : null,
-    role,
-  };
+/** Basic session snapshot for server components */
+export async function getSession(): Promise<{ user: SessionUser | null; role: "owner" | "manager" | "staff" | null; orgId: string | null; }> {
+  const supabase = await supabaseServer();
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { user: null, role: null, orgId: null };
+
+  // Get profile/org/role. Adjust table/columns to yours.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("org_id, role")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const role = (profile?.role as "owner" | "manager" | "staff" | null) ?? null;
+  const orgId = (profile?.org_id as string | null) ?? null;
+
+  return { user: { id: user.id, email: user.email ?? null }, role, orgId };
 }
 
-/** Derive an app role from user metadata (customize as you like) */
-export async function getRole(): Promise<Role | null> {
-  const supabase = await getServerSupabase();
-  const { data } = await supabase.auth.getUser();
-  const user = data.user;
-  if (!user) return null;
-
-  // Common patterns:
-  // 1) user.user_metadata.role
-  // 2) app_metadata.claims.role
-  const metaRole =
-    (user.user_metadata?.role as Role | undefined) ??
-    (user.app_metadata?.role as Role | undefined);
-
-  // Clamp to one of our known roles
-  return metaRole === "owner" || metaRole === "manager" || metaRole === "staff"
-    ? metaRole
-    : "staff"; // default to "staff" if you want
+/** Role helper: owner > manager > staff */
+export async function hasRole(allowed: Array<"owner" | "manager" | "staff">): Promise<boolean> {
+  const { role } = await getSession();
+  if (!role) return false;
+  if (allowed.includes("owner") && role === "owner") return true;
+  if (allowed.includes("manager") && (role === "manager" || role === "owner")) return true;
+  if (allowed.includes("staff")) return true; // everyone has staff or above if logged in
+  return false;
 }
 
-/** Require a session or bounce to /login (optionally with ?redirect=) */
-export async function requireSession(redirectTo?: string) {
-  const supabase = await getServerSupabase();
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) {
-    redirect(`/login${redirectTo ? `?redirect=${encodeURIComponent(redirectTo)}` : ""}`);
+/** Get org id or null (never throws) */
+export async function getOrgIdSafe(): Promise<string | null> {
+  const { orgId } = await getSession();
+  return orgId ?? null;
+}
+
+/** Require a session */
+export async function requireSession() {
+  const { user } = await getSession();
+  if (!user) redirect(`/login?redirect=${encodeURIComponent("/")}`);
+  return user!;
+}
+
+/** Require org id (used by org-scoped data) */
+export async function requireOrgId(): Promise<string> {
+  const orgId = await getOrgIdSafe();
+  if (!orgId) {
+    // If your RLS grants access without org, you can loosen this.
+    throw new Error("No organization for current user.");
   }
+  return orgId;
 }
 
-/** Simple role guard: allow if user has ANY of the roles */
-export async function hasRole(allowed: Role[] = ["staff"]) {
-  const role = await getRole();
-  return role ? allowed.includes(role) : false;
-}
-
-/** Email/password sign-in via a <form> (Server Action) */
-export async function signInAction(formData: FormData) {
+/** Sign in with email/password */
+export async function signInAction(formData: FormData): Promise<AuthResult> {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
+  if (!email || !password) return { ok: false, message: "Email and password required." };
 
-  const supabase = await getServerSupabase();
+  const supabase = await supabaseServer();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
-
-  if (error) {
-    // You can return an object if your client expects it, or redirect with a flash param.
-    return { ok: false as const, message: error.message };
-  }
-  return { ok: true as const };
+  if (error) return { ok: false, message: error.message };
+  return { ok: true };
 }
 
-/** Optional: sign-up (email/password) */
-export async function signUpAction(formData: FormData) {
-  const email = String(formData.get("email") ?? "").trim();
-  const password = String(formData.get("password") ?? "");
-
-  const supabase = await getServerSupabase();
-  const { error } = await supabase.auth.signUp({ email, password });
-  if (error) {
-    return { ok: false as const, message: error.message };
-  }
-  return { ok: true as const };
-}
-
-/** Sign out for <form action={...}> – must resolve to void to satisfy types */
-export async function signOutAction(): Promise<void> {
-  const supabase = await getServerSupabase();
+/** Sign out */
+export async function signOutAction() {
+  const supabase = await supabaseServer();
   await supabase.auth.signOut();
-  // Either redirect (throws) or just return void and let the page refresh with a client router action.
-  // redirect("/login");
+  redirect("/login");
 }
