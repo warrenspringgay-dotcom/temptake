@@ -1,9 +1,11 @@
-import TeamManagerLocal from "@/components/TeamManagerLocal";
+// src/app/team/page.tsx
+import AuthGate from "@/components/AuthGate";
+import TeamManagerLocal from "@/components/TeamManagerLocal"; // your current local/benchmarked UI
 
-export const metadata = {
-  title: "Team – TempTake",
-};
-
-export default function TeamPage() {
-  return <TeamManagerLocal />;
+export default async function TeamPage() {
+  return (
+    <AuthGate requireRole="staff">
+      <TeamManagerLocal />
+    </AuthGate>
+  );
 }

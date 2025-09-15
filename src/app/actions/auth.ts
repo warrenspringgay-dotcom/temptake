@@ -1,98 +1,94 @@
-// src/app/actions/auth.ts
 "use server";
 
 import { redirect } from "next/navigation";
-import { supabaseServer } from "@/lib/supabase-server";
+import { getServerSupabase } from "@/lib/supabase-server";
 
-export type Role = "staff" | "manager" | "owner";
+export type Role = "owner" | "manager" | "staff";
+type SessionResult = {
+  user: { id: string; email: string | null } | null;
+  role: Role | null;
+};
 
-export type AuthResult =
-  | { ok: true }
-  | { ok: false; message: string };
+/** Read the current session (safe for Server Components) */
+export async function getSession(): Promise<SessionResult> {
+  const supabase = await getServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  const user = data.user ?? null;
 
-/**
- * Sign in with email/password (expects a single FormData from a client form).
- * Form fields: email, password
- */
-export async function signInAction(formData: FormData): Promise<AuthResult> {
-  const email = String(formData.get("email") ?? "").trim();
-  const password = String(formData.get("password") ?? "");
-
-  if (!email || !password) {
-    return { ok: false, message: "Email and password are required." };
-  }
-
-  const supabase = await supabaseServer();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-
-  if (error) return { ok: false, message: error.message };
-
-  // Optionally redirect after login:
-  // redirect("/dashboard");
-  return { ok: true };
-}
-
-/**
- * Sign up with email/password (expects a single FormData from a client form).
- * Form fields: email, password, name (optional)
- */
-export async function signUpAction(formData: FormData): Promise<AuthResult> {
-  const email = String(formData.get("email") ?? "").trim();
-  const password = String(formData.get("password") ?? "");
-  const name = String(formData.get("name") ?? "").trim() || null;
-
-  if (!email || !password) {
-    return { ok: false, message: "Email and password are required." };
-  }
-
-  const supabase = await supabaseServer();
-  const { error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      data: name ? { name } : undefined,
-      emailRedirectTo: process.env.NEXT_PUBLIC_SITE_URL
-        ? `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`
-        : undefined,
-    },
-  });
-
-  if (error) return { ok: false, message: error.message };
-
-  // redirect("/dashboard"); // optional
-  return { ok: true };
-}
-
-/**
- * Server action for <form action={signOutAction}>.
- * Must return void | Promise<void>.
- */
-export async function signOutAction(): Promise<void> {
-  const supabase = await supabaseServer();
-  await supabase.auth.signOut();
-  // Optionally redirect after sign-out:
-  // redirect("/login");
-}
-
-/**
- * Minimal session getter usable by server components.
- * Expand this to include org/role lookup if/when you store it.
- */
-export async function getSession() {
-  const supabase = await supabaseServer();
-  const { data, error } = await supabase.auth.getSession();
+  const role = await getRole(); // reads from metadata if present
   return {
-    user: data?.session?.user ?? null,
-    role: null as Role | null, // TODO: load from DB/JWT when available
-    error: error ?? null,
+    user: user ? { id: user.id, email: user.email ?? null } : null,
+    role,
   };
 }
 
-/**
- * Placeholder role check so imports won’t break while auth/roles are being wired.
- * Replace with a real org/role policy when your schema is ready.
- */
-export async function hasRole(_roles: Role[] = []) {
-  // TODO: lookup user/org roles
-  return true;
+/** Derive an app role from user metadata (customize as you like) */
+export async function getRole(): Promise<Role | null> {
+  const supabase = await getServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  const user = data.user;
+  if (!user) return null;
+
+  // Common patterns:
+  // 1) user.user_metadata.role
+  // 2) app_metadata.claims.role
+  const metaRole =
+    (user.user_metadata?.role as Role | undefined) ??
+    (user.app_metadata?.role as Role | undefined);
+
+  // Clamp to one of our known roles
+  return metaRole === "owner" || metaRole === "manager" || metaRole === "staff"
+    ? metaRole
+    : "staff"; // default to "staff" if you want
+}
+
+/** Require a session or bounce to /login (optionally with ?redirect=) */
+export async function requireSession(redirectTo?: string) {
+  const supabase = await getServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) {
+    redirect(`/login${redirectTo ? `?redirect=${encodeURIComponent(redirectTo)}` : ""}`);
+  }
+}
+
+/** Simple role guard: allow if user has ANY of the roles */
+export async function hasRole(allowed: Role[] = ["staff"]) {
+  const role = await getRole();
+  return role ? allowed.includes(role) : false;
+}
+
+/** Email/password sign-in via a <form> (Server Action) */
+export async function signInAction(formData: FormData) {
+  const email = String(formData.get("email") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
+
+  const supabase = await getServerSupabase();
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (error) {
+    // You can return an object if your client expects it, or redirect with a flash param.
+    return { ok: false as const, message: error.message };
+  }
+  return { ok: true as const };
+}
+
+/** Optional: sign-up (email/password) */
+export async function signUpAction(formData: FormData) {
+  const email = String(formData.get("email") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
+
+  const supabase = await getServerSupabase();
+  const { error } = await supabase.auth.signUp({ email, password });
+  if (error) {
+    return { ok: false as const, message: error.message };
+  }
+  return { ok: true as const };
+}
+
+/** Sign out for <form action={...}> – must resolve to void to satisfy types */
+export async function signOutAction(): Promise<void> {
+  const supabase = await getServerSupabase();
+  await supabase.auth.signOut();
+  // Either redirect (throws) or just return void and let the page refresh with a client router action.
+  // redirect("/login");
 }

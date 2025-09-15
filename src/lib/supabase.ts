@@ -1,6 +1,4 @@
-// src/lib/supabase.ts
-"use client";
-
+// Client-side Supabase (for use in Client Components)
 import { createBrowserClient } from "@supabase/ssr";
 
 export const supabase = createBrowserClient(

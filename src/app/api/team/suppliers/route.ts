@@ -1,98 +1,126 @@
-// src/app/api/suppliers/route.ts
+// src/app/api/team/suppliers/route.ts
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { db, requireUserId, getOrgIdSafe } from "@/app/actions/db";
 
-// Map incoming/outgoing shapes to keep the UI simple.
+/** Keep the shape aligned with your UI/actions */
 type SupplierRow = {
-  id: string;
-  org_id: string | null;
-  name: string | null;
-  email: string | null;
-  phone: string | null;
-  notes: string | null;
-  types_json: string[] | null;     // stored in DB
+  id?: string;
+  name: string;
+  contact_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  item_type?: string | null;
+  notes?: string | null;
+  org_id?: string | null;
+  user_id?: string | null;
+  created_at?: string;
 };
 
-function toClient(r: SupplierRow) {
-  return {
-    id: r.id,
-    name: r.name ?? "",
-    email: r.email ?? "",
-    phone: r.phone ?? "",
-    notes: r.notes ?? "",
-    types: Array.isArray(r.types_json) ? r.types_json : [],
-  };
+function emptyToNull(v?: string | null) {
+  if (v === undefined) return null;
+  const t = String(v).trim();
+  return t.length ? t : null;
 }
 
+/** GET /api/team/suppliers  -> list suppliers (scoped to org or user) */
 export async function GET() {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("suppliers")
-    .select("id,org_id,name,email,phone,notes,types_json")
-    .order("name", { ascending: true });
+  try {
+    const supabase = await db();
+    const userId = await requireUserId();
+    const orgId = await getOrgIdSafe();
 
-  if (error) {
-    console.error("[suppliers:list] ", error);
-    return NextResponse.json([], { status: 200 }); // keep UI resilient
+    let q = supabase.from("suppliers").select("*").order("name", { ascending: true });
+
+    if (orgId) {
+      q = q.eq("org_id", orgId);
+    } else {
+      q = q.eq("user_id", userId);
+    }
+
+    const { data, error } = await q;
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json((data ?? []) as SupplierRow[]);
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Failed to list suppliers" }, { status: 500 });
   }
-
-  return NextResponse.json((data ?? []).map(toClient));
 }
 
+/** POST /api/team/suppliers  -> upsert supplier
+ * body: { id?, name, contact_name?, phone?, email?, item_type?, notes? }
+ */
 export async function POST(req: Request) {
-  const supabase = await createSupabaseServerClient();
+  try {
+    const supabase = await db();
+    const userId = await requireUserId();
+    const orgId = await getOrgIdSafe();
 
-  // who’s calling?
-  const { data: { user } } = await supabase.auth.getUser();
+    const body = (await req.json()) as Partial<SupplierRow>;
+    const name = (body.name ?? "").toString().trim();
+    if (!name) {
+      return NextResponse.json({ error: "Name is required" }, { status: 400 });
+    }
 
-  // attempt to find org for this user (fallback to user id if your schema uses that)
-  let org_id: string | null = null;
-  if (user?.id) {
-    const prof = await supabase
-      .from("profiles")
-      .select("org_id")
-      .eq("id", user.id)
-      .maybeSingle();
+    const row = {
+      id: body.id || undefined,
+      name,
+      contact_name: emptyToNull(body.contact_name),
+      phone: emptyToNull(body.phone),
+      email: emptyToNull(body.email),
+      item_type: emptyToNull(body.item_type),
+      notes: emptyToNull(body.notes),
+      org_id: orgId ?? null,
+      user_id: userId,
+    };
 
-    if (!prof.error) org_id = (prof.data as any)?.org_id ?? null;
-    if (!org_id) org_id = user.id; // fallback if your column is user-owned
+    const { data, error } = await supabase
+      .from("suppliers")
+      .upsert(row, { onConflict: "id" })
+      .select("*")
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true, supplier: data as SupplierRow });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Failed to save supplier" }, { status: 500 });
   }
-
-  const body = await req.json().catch(() => ({}));
-  const payload = {
-    id: body.id || undefined,        // let DB generate when not provided
-    org_id,                          // NOT NULL in your DB – set from profile/user
-    name: body.name ?? null,
-    email: body.email ?? null,
-    phone: body.phone ?? null,
-    notes: body.notes ?? null,
-    types_json: Array.isArray(body.types) ? body.types : [],
-  };
-
-  const { error } = await supabase
-    .from("suppliers")
-    .upsert(payload, { onConflict: "id" })
-    .select("id")
-    .single();
-
-  if (error) {
-    console.error("[suppliers:upsert] ", error);
-    return NextResponse.json({ ok: false, error }, { status: 500 });
-  }
-
-  return NextResponse.json({ ok: true });
 }
 
+/** DELETE /api/team/suppliers?id=UUID  -> delete supplier */
 export async function DELETE(req: Request) {
-  const supabase = await createSupabaseServerClient();
-  const { searchParams } = new URL(req.url);
-  const id = searchParams.get("id");
-  if (!id) return NextResponse.json({ ok: false }, { status: 400 });
+  try {
+    const supabase = await db();
+    const userId = await requireUserId();
+    const orgId = await getOrgIdSafe();
 
-  const { error } = await supabase.from("suppliers").delete().eq("id", id);
-  if (error) {
-    console.error("[suppliers:delete] ", error);
-    return NextResponse.json({ ok: false, error }, { status: 500 });
+    const url = new URL(req.url);
+    const id = url.searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ error: "Missing id" }, { status: 400 });
+    }
+
+    let q = supabase.from("suppliers").delete().eq("id", id);
+    if (orgId) {
+      q = q.eq("org_id", orgId);
+    } else {
+      q = q.eq("user_id", userId);
+    }
+
+    const { error } = await q;
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Failed to delete supplier" }, { status: 500 });
   }
-  return NextResponse.json({ ok: true });
 }
+
+// Optional: if you want to ensure this route is always dynamic
+export const dynamic = "force-dynamic";

@@ -1,135 +1,125 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { db, requireUserId, getOrgIdSafe } from "@/app/actions/db";
 
+/** Public shape used by the UI */
 export type Supplier = {
   id?: string;
-  name?: string | null;
-  email?: string | null;
+  name: string;
+
+  contact_name?: string | null;
   phone?: string | null;
+  email?: string | null;
+
+  /** Optional classification (e.g. "Dairy", "Produce", etc.) */
+  item_type?: string | null;
+
   notes?: string | null;
-  // optional: keep if you show tags in the UI; we just pass them through
-  types?: string[] | null;
+
+  // metadata that may exist in the DB
+  org_id?: string | null;
+  created_at?: string;
 };
 
-/** Get current user + their org_id from profiles. */
-async function getOrgId() {
-  const supabase = await createSupabaseServerClient();
+/** Payload accepted by upsert */
+export type SupplierInput = {
+  id?: string;
+  name: string;
+  contact_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  item_type?: string | null;
+  notes?: string | null;
+};
 
-  const {
-    data: { user },
-    error: authErr,
-  } = await supabase.auth.getUser();
-  if (authErr || !user) throw new Error("Not signed in.");
+/** Some components still import SupplierRow — export an alias for compatibility */
+export type SupplierRow = Supplier;
 
-  const { data: prof, error: profErr } = await supabase
-    .from("profiles")
-    .select("org_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (profErr) throw profErr;
-  if (!prof?.org_id) throw new Error("No org_id on profile.");
-  return { supabase, userId: user.id, orgId: prof.org_id as string };
+/** Sanitize empty strings to null for nullable columns */
+function emptyToNull(v?: string | null) {
+  if (v === undefined) return null;
+  const t = String(v).trim();
+  return t.length ? t : null;
 }
 
-/** List suppliers scoped to current org. */
+/** List suppliers for the current org (falls back to user scope if you don’t use orgs). */
 export async function listSuppliers(): Promise<Supplier[]> {
-  const { supabase, orgId } = await getOrgId();
+  const supabase = await db();
+  const userId = await requireUserId();
+  const orgId = await getOrgIdSafe();
 
-  // Minimal fields that are guaranteed to exist.
-  const { data, error } = await supabase
-    .from("suppliers")
-    .select("id, name, email, phone, notes") // add more columns if you have them
-    .eq("org_id", orgId)
-    .order("name", { ascending: true });
+  // Adjust table/columns if your schema differs.
+  // Expected table columns: id, org_id, user_id, name, contact_name, phone, email, item_type, notes, created_at
+  let q = supabase.from("suppliers").select("*").order("name", { ascending: true });
 
+  if (orgId) {
+    q = q.eq("org_id", orgId);
+  } else {
+    // If you don't use orgs, filter by the current user so different users don't see each other's data
+    q = q.eq("user_id", userId);
+  }
+
+  const { data, error } = await q;
   if (error) {
-    console.error("[suppliers:list] ", error);
+    // Return empty array on error so the UI remains stable
+    // You can also console.error in dev:
+    // console.error("listSuppliers error:", error);
     return [];
   }
 
-  // If you later add a junction (suppliers_types), you can fetch and join here.
-  return (data ?? []);
+  return (data ?? []) as Supplier[];
 }
 
-/** Create/update a supplier (scoped to org). */
-export async function upsertSupplier(input: Supplier): Promise<void> {
-  const { supabase, orgId } = await getOrgId();
+/** Create or update a supplier */
+export async function upsertSupplier(input: SupplierInput): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await db();
+  const userId = await requireUserId();
+  const orgId = await getOrgIdSafe();
 
-  const payload = {
-    id: input.id,
-    org_id: orgId,                  // ← IMPORTANT: set org_id
-    name: input.name ?? null,
-    email: input.email ?? null,
-    phone: input.phone ?? null,
-    notes: input.notes ?? null,
+  const row = {
+    id: input.id || undefined,
+    name: input.name.trim(),
+    contact_name: emptyToNull(input.contact_name),
+    phone: emptyToNull(input.phone),
+    email: emptyToNull(input.email),
+    item_type: emptyToNull(input.item_type),
+    notes: emptyToNull(input.notes),
+    org_id: orgId ?? null,
+    user_id: userId,
   };
 
-  // Upsert the supplier row
-  const { data: upserted, error } = await supabase
-    .from("suppliers")
-    .upsert(payload, { onConflict: "id" })
-    .select("id")
-    .single();
+  const { error } = await supabase.from("suppliers").upsert(row, { onConflict: "id" }).select("id").single();
 
   if (error) {
-    console.error("[suppliers:upsert] ", error);
-    throw error;
+    return { ok: false, error: error.message };
   }
 
-  // Optionally handle types in a junction table if/when it exists.
-  // This block is fully defensive: it silently skips when the table or FK doesn’t exist.
-  if (Array.isArray(input.types) && upserted?.id) {
-    try {
-      // delete existing
-      const del = await supabase
-        .from("suppliers_types")
-        .delete()
-        .eq("supplier_id", upserted.id);
-      if ((del as any).error) throw (del as any).error;
-
-      // insert new
-      if (input.types.length) {
-        const rows = input.types.map((t) => ({
-          supplier_id: upserted.id,
-          org_id: orgId,
-          type: t,
-        }));
-        const ins = await supabase.from("suppliers_types").insert(rows);
-        if ((ins as any).error) throw (ins as any).error;
-      }
-    } catch (e) {
-      // Table not there yet / no relationship – ignore gracefully
-      console.warn("[suppliers:upsert types skipped]", e);
-    }
-  }
-
+  // Refresh the /suppliers page and any component segments that depend on it
   revalidatePath("/suppliers");
+  return { ok: true };
 }
 
-/** Delete supplier (scoped to org). */
-export async function deleteSupplier(id: string): Promise<void> {
-  const { supabase, orgId } = await getOrgId();
+/** Delete a supplier by id */
+export async function deleteSupplier(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await db();
+  const userId = await requireUserId();
+  const orgId = await getOrgIdSafe();
 
-  // Best effort delete types first if the table exists.
-  try {
-    await supabase.from("suppliers_types").delete().eq("supplier_id", id).eq("org_id", orgId);
-  } catch {
-    /* ignore if table missing */
+  // Scope the delete to org/user to avoid leaking across tenants
+  let q = supabase.from("suppliers").delete().eq("id", id);
+
+  if (orgId) {
+    q = q.eq("org_id", orgId);
+  } else {
+    q = q.eq("user_id", userId);
   }
 
-  const { error } = await supabase
-    .from("suppliers")
-    .delete()
-    .eq("id", id)
-    .eq("org_id", orgId);
-
+  const { error } = await q;
   if (error) {
-    console.error("[suppliers:delete] ", error);
-    throw error;
+    return { ok: false, error: error.message };
   }
 
   revalidatePath("/suppliers");
+  return { ok: true };
 }

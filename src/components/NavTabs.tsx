@@ -1,4 +1,3 @@
-// src/components/NavTabs.tsx
 "use client";
 
 import Link from "next/link";
@@ -7,7 +6,6 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { signOutAction } from "@/app/actions/auth";
-
 
 type NavTabsProps = {
   brandName?: string;
@@ -26,23 +24,18 @@ const tabs = [
 export default function NavTabs({
   brandName = "TempTake",
   brandAccent = "blue",
-  // ⬇️ point to your file in /public
   logoUrl = "/icon.png",
 }: NavTabsProps) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [redirectParam, setRedirectParam] = useState<string>("/");
 
   const navRef = useRef<HTMLDivElement | null>(null);
-  const userRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setRedirectParam(window.location.pathname + window.location.search);
-    }
-  }, []);
+  // NEW: wait until mounted before rendering *any* auth UI
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const isActive = (href: string) =>
     href === "/"
@@ -64,16 +57,16 @@ export default function NavTabs({
   }, [pathname]);
 
   useEffect(() => {
-    let mounted = true;
+    let alive = true;
     supabase.auth.getUser().then(({ data }) => {
-      if (!mounted) return;
+      if (!alive) return;
       setUserEmail(data.user?.email ?? null);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       setUserEmail(session?.user?.email ?? null);
     });
     return () => {
-      mounted = false;
+      alive = false;
       sub.subscription.unsubscribe();
     };
   }, []);
@@ -109,7 +102,8 @@ export default function NavTabs({
 
         {/* Desktop user menu */}
         <div ref={navRef} className="hidden md:flex items-center gap-2">
-          {userEmail ? (
+          {/* NEW: only render auth UI after mount, and only if logged in */}
+          {mounted && userEmail && (
             <div className="relative">
               <button
                 onClick={() => setUserOpen((v) => !v)}
@@ -131,10 +125,7 @@ export default function NavTabs({
               </button>
 
               {userOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 mt-2 w-48 rounded-md border bg-white shadow-sm overflow-hidden z-[60]"
-                >
+                <div role="menu" className="absolute right-0 mt-2 w-48 rounded-md border bg-white shadow-sm overflow-hidden z-[60]">
                   <Link href="/settings" className="block px-3 py-2 text-sm text-slate-700 hover:bg-gray-50">
                     Settings
                   </Link>
@@ -146,13 +137,6 @@ export default function NavTabs({
                 </div>
               )}
             </div>
-          ) : (
-            <Link
-              href={`/login?redirect=${encodeURIComponent(redirectParam)}`}
-              className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-gray-100"
-            >
-              Sign in
-            </Link>
           )}
         </div>
 
@@ -188,30 +172,22 @@ export default function NavTabs({
             </button>
           </div>
 
-          <div className="px-4 py-3 border-b flex items-center justify-between">
-            {userEmail ? (
-              <>
-                <div className="flex items-center gap-2">
-                  <span className="inline-grid place-items-center h-7 w-7 rounded-full bg-gray-200 text-gray-700 text-sm">
-                    {userEmail.charAt(0).toUpperCase()}
-                  </span>
-                  <span className="text-sm text-slate-700">{userEmail}</span>
-                </div>
-                <form action={signOutAction}>
-                  <button className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-gray-100">
-                    Sign out
-                  </button>
-                </form>
-              </>
-            ) : (
-              <Link
-                href={`/login?redirect=${encodeURIComponent(redirectParam)}`}
-                className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-gray-100"
-              >
-                Sign in
-              </Link>
-            )}
-          </div>
+          {/* NEW: show user section only after mount and if logged in */}
+          {mounted && userEmail && (
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="inline-grid place-items-center h-7 w-7 rounded-full bg-gray-200 text-gray-700 text-sm">
+                  {userEmail.charAt(0).toUpperCase()}
+                </span>
+                <span className="text-sm text-slate-700">{userEmail}</span>
+              </div>
+              <form action={signOutAction}>
+                <button className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-gray-100">
+                  Sign out
+                </button>
+              </form>
+            </div>
+          )}
 
           <div className="px-2 py-2">
             {tabs.map((t) => {

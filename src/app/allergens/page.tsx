@@ -1,9 +1,11 @@
+// src/app/allergens/page.tsx
+import AuthGate from "@/components/AuthGate";
 import AllergenManager from "@/components/AllergenManager";
 
-export default function AllergensPage() {
+export default async function AllergensPage() {
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-6">
+    <AuthGate requireRole="staff">
       <AllergenManager />
-    </main>
+    </AuthGate>
   );
 }

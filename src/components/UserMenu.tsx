@@ -1,43 +1,26 @@
-// src/components/UserMenu.tsx  (SERVER COMPONENT - no auth dependency)
+// src/components/UserMenu.tsx (SERVER COMPONENT)
 import Link from "next/link";
+import { getSession, signOutAction } from "@/app/actions/auth";
 
 export default async function UserMenu() {
-  // No-op session: render a lightweight header menu.
-  // When you wire real auth, fetch session/role here and branch accordingly.
-  const user = null as { name?: string | null } | null;
-  const displayName = user?.name?.trim() || "Guest";
+  const { user } = await getSession();
+
+  if (!user) {
+    return (
+      <Link href="/login" className="text-sm font-medium hover:underline">
+        Sign in
+      </Link>
+    );
+  }
 
   return (
     <div className="flex items-center gap-3">
-      <div className="hidden text-sm text-slate-600 sm:block">Hello, {displayName}</div>
-
-      {/* Avatar-ish circle with initials (G for Guest) */}
-      <div
-        className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-sm font-medium text-white"
-        title={displayName}
-        aria-label="User"
-      >
-        {(displayName[0] || "G").toUpperCase()}
-      </div>
-
-      {/* Auth actions — placeholder links (safe even without auth wired) */}
-      <div className="relative">
-        <div className="flex items-center gap-2">
-          <Link
-            href="/login"
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
-          >
-            Sign in
-          </Link>
-          {/* When auth is live, show a real sign-out action instead */}
-          <Link
-            href="/account"
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
-          >
-            Account
-          </Link>
-        </div>
-      </div>
+      <span className="text-sm text-gray-600">{user.email}</span>
+      <form action={signOutAction}>
+        <button className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm hover:bg-gray-50">
+          Sign out
+        </button>
+      </form>
     </div>
   );
 }

@@ -1,12 +1,9 @@
-// src/lib/supabase-server.ts
+// Server-side Supabase client (uses Next cookies)
 import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-/**
- * Create a server-side Supabase client that persists auth cookies using Next 15's cookies() API.
- * NOTE: cookies() is async in Server Actions, so this factory is async.
- */
-export async function createSupabaseServerClient() {
+export async function getServerSupabase() {
+  // In Next 15, cookies() is async in some runtimes – await it to avoid the warning
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -17,23 +14,13 @@ export async function createSupabaseServerClient() {
         get(name: string) {
           return cookieStore.get(name)?.value;
         },
-        // Options intentionally untyped for broad Next compatibility.
-        // We avoid importing Next's cookie types (not exported) and cast at the callsite.
-        set(name: string, value: string, options?: Record<string, unknown>) {
-          (cookieStore as any).set(name, value, options as any);
+        set(name: string, value: string, options?: CookieOptions) {
+          cookieStore.set({ name, value, ...options });
         },
-        remove(name: string, options?: Record<string, unknown>) {
-          if (options && Object.keys(options).length > 0) {
-            (cookieStore as any).set(name, "", { ...(options as any), maxAge: 0 });
-          } else {
-            cookieStore.delete(name);
-          }
+        remove(name: string, options?: CookieOptions) {
+          cookieStore.set({ name, value: "", ...options, expires: new Date(0) });
         },
       },
     }
   );
 }
-
-/** Back-compat aliases so existing imports continue to work. */
-export const supabaseServer = createSupabaseServerClient;
-export const getServerSupabase = createSupabaseServerClient;

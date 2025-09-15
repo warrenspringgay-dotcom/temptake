@@ -1,21 +1,35 @@
-// src/components/AuthGate.tsx
-// Server component that currently *does not block* anything.
-// This keeps local/guest builds working without auth actions wired.
-// When you're ready to enforce auth, add your real check inside.
+// src/components/AuthGate.tsx (SERVER COMPONENT)
+import { redirect } from "next/navigation";
+import { getSession, hasRole } from "@/app/actions/auth";
 
-import React from "react";
-
-type Role = "staff" | "manager" | "owner";
-
-export default async function AuthGate({
-  requireRole, // unused in the no-op gate
-  children,
-}: {
-  requireRole?: Role;
+type Props = {
   children: React.ReactNode;
-}) {
-  // No-op: always allow.
-  // If you want to flip a switch in the future, you can do:
-  // if (process.env.ENFORCE_AUTH === "1") { ...real check and conditional UI... }
+  /** Optional: restrict by role. "manager" automatically allows "owner" too. */
+  requireRole?: "staff" | "manager" | "owner";
+};
+
+/**
+ * Server-only gate. Put this at the top of protected pages:
+ * 
+ * export default async function Page() {
+ *   return (
+ *     <AuthGate requireRole="staff">
+ *       ...page...
+ *     </AuthGate>
+ *   )
+ * }
+ */
+export default async function AuthGate({ children, requireRole }: Props) {
+  const { user } = await getSession();
+  if (!user) redirect("/login");
+
+  if (!requireRole) return <>{children}</>;
+
+  const ok =
+    requireRole === "manager"
+      ? await hasRole(["manager", "owner"])
+      : await hasRole([requireRole]);
+
+  if (!ok) redirect("/"); // or a 403 page
   return <>{children}</>;
 }

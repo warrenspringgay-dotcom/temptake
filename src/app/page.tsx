@@ -1,15 +1,11 @@
 // src/app/page.tsx
-import React from "react";
+import AuthGate from "@/components/AuthGate";
 import FoodTempLogger from "@/components/FoodTempLogger";
 
-export const dynamic = "force-static";
-
-export default function HomePage() {
+export default async function DashboardPage() {
   return (
-    <main className="mx-auto max-w-6xl p-4 space-y-6">
-      <h1 className="text-xl font-semibold">Dashboard</h1>
-      {/* FoodTempLogger renders the KPI cards + quick entry + table */}
+    <AuthGate requireRole="staff">
       <FoodTempLogger />
-    </main>
+    </AuthGate>
   );
 }

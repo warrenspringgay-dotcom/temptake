@@ -2,45 +2,61 @@
 "use client";
 
 import { useActionState, useRef } from "react";
-import { signInAction, signUpAction } from "@/app/actions/auth";
+import { signInAction } from "@/app/actions/auth";
 
-export default function LoginClient({ redirectTo = "/" }: { redirectTo?: string }) {
-  const signInRef = useRef<HTMLFormElement>(null);
-  const signUpRef = useRef<HTMLFormElement>(null);
+type State = { ok: boolean; message?: string } | null;
 
-  const [signInState, signInDispatch] = useActionState(async (_: any, form: FormData) => {
-    if (!form.get("redirect")) form.set("redirect", redirectTo);
-    return await signInAction(form);
-  }, null);
+export default function LoginClient() {
+  const formRef = useRef<HTMLFormElement>(null);
 
-  const [signUpState, signUpDispatch] = useActionState(async (_: any, form: FormData) => {
-    if (!form.get("redirect")) form.set("redirect", redirectTo);
-    return await signUpAction(form);
-  }, null);
+  const [state, action, pending] = useActionState<State, FormData>(
+    async (_prev, formData) => {
+      const res = await signInAction(formData);
+      if (res.ok) {
+        // full reload to pick up new server session
+        window.location.href = "/";
+        return { ok: true };
+      }
+      return { ok: false, message: res.message };
+    },
+    null
+  );
 
   return (
-    <div className="mx-auto max-w-sm space-y-6">
-      <form ref={signInRef} action={signInDispatch} className="space-y-3">
-        <input type="hidden" name="redirect" value={redirectTo} />
-        <label className="block text-sm">Email</label>
-        <input name="email" type="email" className="w-full border p-2 rounded" required />
-        <label className="block text-sm mt-2">Password</label>
-        <input name="password" type="password" className="w-full border p-2 rounded" required />
-        <button className="w-full mt-3 rounded bg-black text-white py-2">Sign in</button>
-        {signInState?.ok === false && <p className="text-red-500 text-sm">{signInState.message}</p>}
-      </form>
+    <form ref={formRef} action={action} className="space-y-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div>
+        <label className="mb-1 block text-sm text-gray-600">Email</label>
+        <input
+          name="email"
+          type="email"
+          required
+          className="h-10 w-full rounded-lg border border-gray-300 px-3"
+          placeholder="you@example.com"
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-sm text-gray-600">Password</label>
+        <input
+          name="password"
+          type="password"
+          required
+          className="h-10 w-full rounded-lg border border-gray-300 px-3"
+          placeholder="••••••••"
+        />
+      </div>
 
-      <hr className="my-4" />
+      {state?.message && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          {state.message}
+        </div>
+      )}
 
-      <form ref={signUpRef} action={signUpDispatch} className="space-y-3">
-        <input type="hidden" name="redirect" value={redirectTo} />
-        <label className="block text-sm">Email</label>
-        <input name="email" type="email" className="w-full border p-2 rounded" required />
-        <label className="block text-sm mt-2">Password</label>
-        <input name="password" type="password" className="w-full border p-2 rounded" required />
-        <button className="w-full mt-3 rounded bg-gray-700 text-white py-2">Create account</button>
-        {signUpState?.ok === false && <p className="text-red-500 text-sm">{signUpState.message}</p>}
-      </form>
-    </div>
+      <button
+        disabled={pending}
+        className={`h-10 w-full rounded-xl text-white ${pending ? "bg-gray-400" : "bg-black hover:bg-gray-900"}`}
+      >
+        {pending ? "Signing in…" : "Sign in"}
+      </button>
+    </form>
   );
 }
