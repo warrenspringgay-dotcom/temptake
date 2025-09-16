@@ -1,11 +1,10 @@
 // src/app/page.tsx
-import AuthGate from "@/components/AuthGate";
-import FoodTempLogger from "@/components/FoodTempLogger";
+import { redirect } from "next/navigation";
+import { getSession } from "@/lib/auth-helpers";
+import Dashboard from "@/components/FoodTempLogger"; // or your dashboard component
 
-export default async function DashboardPage() {
-  return (
-    <AuthGate requireRole="staff">
-      <FoodTempLogger />
-    </AuthGate>
-  );
+export default async function Page() {
+  const { user } = await getSession();
+  if (!user) redirect("/login?redirect=/");
+  return <Dashboard />;
 }

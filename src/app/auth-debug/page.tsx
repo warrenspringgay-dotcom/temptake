@@ -1,10 +1,15 @@
-import { getRole } from "@/app/actions/auth";
+// src/app/auth-debug/page.tsx
+import { getSession } from "@/lib/auth-helpers";
 
 export default async function AuthDebug() {
-  const role = await getRole();
+  const { user } = await getSession();
+
   return (
-    <pre className="p-4 text-sm">
-      {JSON.stringify({ role }, null, 2)}
-    </pre>
+    <div className="max-w-xl mx-auto p-4">
+      <h1 className="text-lg font-semibold mb-3">Auth Debug</h1>
+      <pre className="rounded-lg border border-gray-200 bg-white p-3 text-sm overflow-auto">
+        {JSON.stringify({ user }, null, 2)}
+      </pre>
+    </div>
   );
 }

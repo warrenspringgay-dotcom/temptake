@@ -1,11 +1,12 @@
 // src/app/allergens/page.tsx
-import AuthGate from "@/components/AuthGate";
 import AllergenManager from "@/components/AllergenManager";
 
-export default async function AllergensPage() {
+export const metadata = { title: "Allergens · TempTake" };
+
+export default function Page() {
   return (
-    <AuthGate requireRole="staff">
+    <div className="mx-auto max-w-6xl px-4 py-6">
       <AllergenManager />
-    </AuthGate>
+    </div>
   );
 }
