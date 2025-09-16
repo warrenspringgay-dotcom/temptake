@@ -3,7 +3,7 @@
 
 import { getServerSupabase } from "@/lib/supabase-server";
 
-/** Cookie-aware Supabase client for Server Components / Server Actions */
+/** Cookie-aware Supabase client for Server Actions */
 export async function getSupabase() {
   return await getServerSupabase();
 }
@@ -33,13 +33,18 @@ export async function uploadPublicFile(
   try {
     const supabase = await getServerSupabase();
 
-    // No special narrowing needed: all allowed types are accepted by supabase-js.
-    const body: File | Blob | ArrayBuffer | Uint8Array = file;
+    let body: File | Blob | ArrayBuffer | Uint8Array;
+    if (file instanceof Blob || file instanceof File) {
+      body = file;
+    } else if (file instanceof ArrayBuffer || file instanceof Uint8Array) {
+      body = file;
+    } else {
+      body = file as any;
+    }
 
     const { data, error } = await supabase.storage
       .from(bucket)
       .upload(path, body, { contentType, upsert: true });
-
     if (error) return { ok: false, error: error.message };
 
     const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path);

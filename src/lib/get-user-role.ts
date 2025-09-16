@@ -1,24 +1,38 @@
-// Server-only helper
+// src/lib/get-user-role.ts
 import { getServerSupabase } from "@/lib/supabase-server";
 
-export type Role = "owner" | "manager" | "staff" | null;
+export type Role = "staff" | "manager" | "owner";
 
-export async function getUserRole(): Promise<Role> {
+/**
+ * Resolve the current user's role.
+ * It checks (in order):
+ *  1) user.metadata.role (app_metadata or user_metadata)
+ *  2) public.user_roles table (columns: user_id UUID, role text)
+ *  3) defaults to "staff"
+ */
+export async function getRole(): Promise<Role> {
   const supabase = await getServerSupabase();
-  const { data: userRes } = await supabase.auth.getUser();
-  if (!userRes?.user) return null;
+  const { data: { user } } = await supabase.auth.getUser();
 
-  // Calls the SECURITY DEFINER function (bypasses RLS safely)
-  const { data, error } = await supabase.rpc("get_current_role");
-  if (error) {
-    console.error("[roles] lookup error:", error);
-    return null;
+  if (!user) return "staff";
+
+  const metaRole =
+    (user.app_metadata as any)?.role ||
+    (user.user_metadata as any)?.role;
+  if (metaRole === "owner" || metaRole === "manager" || metaRole === "staff") {
+    return metaRole;
   }
-  return (data as Role) ?? null;
-}
 
-/** Convenience: check if user has at least one required role */
-export async function hasRole(required: Array<Exclude<Role, null>>): Promise<boolean> {
-  const role = await getUserRole();
-  return !!role && required.includes(role);
+  const { data: row } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  const tableRole = row?.role;
+  if (tableRole === "owner" || tableRole === "manager" || tableRole === "staff") {
+    return tableRole;
+  }
+
+  return "staff";
 }

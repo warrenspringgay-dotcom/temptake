@@ -4,80 +4,111 @@
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase-server";
 
-export type AuthResult =
-  | { ok: true }
-  | { ok: false; message: string };
+/** Minimal shape we return to the UI */
+export type SessionShape = {
+  user: { id: string; email: string | null } | null;
+  role: "owner" | "manager" | "staff" | null;
+};
 
-type SessionUser = { id: string; email: string | null };
-
-/** Basic session snapshot for server components */
-export async function getSession(): Promise<{ user: SessionUser | null; role: "owner" | "manager" | "staff" | null; orgId: string | null; }> {
-  const supabase = await supabaseServer();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { user: null, role: null, orgId: null };
-
-  // Get profile/org/role. Adjust table/columns to yours.
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("org_id, role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  const role = (profile?.role as "owner" | "manager" | "staff" | null) ?? null;
-  const orgId = (profile?.org_id as string | null) ?? null;
-
-  return { user: { id: user.id, email: user.email ?? null }, role, orgId };
-}
-
-/** Role helper: owner > manager > staff */
-export async function hasRole(allowed: Array<"owner" | "manager" | "staff">): Promise<boolean> {
-  const { role } = await getSession();
-  if (!role) return false;
-  if (allowed.includes("owner") && role === "owner") return true;
-  if (allowed.includes("manager") && (role === "manager" || role === "owner")) return true;
-  if (allowed.includes("staff")) return true; // everyone has staff or above if logged in
-  return false;
-}
-
-/** Get org id or null (never throws) */
-export async function getOrgIdSafe(): Promise<string | null> {
-  const { orgId } = await getSession();
-  return orgId ?? null;
-}
-
-/** Require a session */
-export async function requireSession() {
-  const { user } = await getSession();
-  if (!user) redirect(`/login?redirect=${encodeURIComponent("/")}`);
-  return user!;
-}
-
-/** Require org id (used by org-scoped data) */
-export async function requireOrgId(): Promise<string> {
-  const orgId = await getOrgIdSafe();
-  if (!orgId) {
-    // If your RLS grants access without org, you can loosen this.
-    throw new Error("No organization for current user.");
-  }
-  return orgId;
-}
-
-/** Sign in with email/password */
-export async function signInAction(formData: FormData): Promise<AuthResult> {
+/** Sign in with email/password (called from <form action={signInAction}>) */
+export async function signInAction(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
-  if (!email || !password) return { ok: false, message: "Email and password required." };
 
   const supabase = await supabaseServer();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) return { ok: false, message: error.message };
-  return { ok: true };
+  if (error) {
+    return { ok: false as const, message: error.message };
+  }
+  return { ok: true as const };
 }
 
-/** Sign out */
-export async function signOutAction() {
+/** Sign out (must match the Next form action signature -> returns void) */
+export async function signOutAction(_formData?: FormData): Promise<void> {
   const supabase = await supabaseServer();
   await supabase.auth.signOut();
-  redirect("/login");
+  // Don’t redirect automatically; NavTabs just needs the action to complete.
+}
+
+/** Get current user + role in one go (safe for RSC) */
+export async function getSession(): Promise<SessionShape> {
+  const supabase = await supabaseServer();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  // Default role null until we find one
+  let role: SessionShape["role"] = null;
+
+  if (user) {
+    // Try to read role from a 'profiles' table if present
+    // profiles: id (uuid, PK) | role (text) | org_id (uuid) ...
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const r = (prof?.role ?? "").toLowerCase();
+    if (r === "owner" || r === "manager" || r === "staff") role = r as SessionShape["role"];
+  }
+
+  return {
+    user: user ? { id: user.id, email: user.email ?? null } : null,
+    role,
+  };
+}
+
+/** Convenience: just the role */
+export async function getRole(): Promise<SessionShape["role"]> {
+  const { role } = await getSession();
+  return role;
+}
+
+/** Simple role check */
+export async function hasRole(allowed: Array<NonNullable<SessionShape["role"]>>): Promise<boolean> {
+  const role = await getRole();
+  return !!role && allowed.includes(role);
+}
+
+/** Get the user's org_id (null if none). If you *require* an org, use requireOrgId instead. */
+export async function getOrgId(): Promise<string | null> {
+  const supabase = await supabaseServer();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data } = await supabase
+    .from("profiles")
+    .select("org_id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  return (data?.org_id as string | null) ?? null;
+}
+
+/** Require a logged-in user, else redirect to /login */
+export async function requireUser() {
+  const supabase = await supabaseServer();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  return user;
+}
+
+/** Require an org_id, redirect to /login if no session; throw if no org_id */
+export async function requireOrgId(): Promise<string> {
+  const user = await requireUser();
+  const supabase = await supabaseServer();
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("org_id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load org: ${error.message}`);
+  }
+  const orgId = data?.org_id as string | null;
+  if (!orgId) {
+    throw new Error("No organisation associated with this user.");
+  }
+  return orgId;
 }

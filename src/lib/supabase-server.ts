@@ -1,32 +1,42 @@
 // src/lib/supabase-server.ts
-import { cookies } from "next/headers";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { cookies } from "next/headers";
 
-type Database = any; // If you generated types, replace with your Database type.
+/**
+ * Create a cookie-aware Supabase client for **server** code (RSC, Server Actions, Route Handlers).
+ * NOTE: In Next 15+, cookies() is async on the server, so this function is async too.
+ */
+export async function supabaseServer() {
+  const cookieStore = await cookies(); // <- important for Next 15
 
-export async function supabaseServer(): Promise<SupabaseClient<Database>> {
-  const cookieStore = await cookies();
-
-  // NOTE: In Next 15, cookies() must be awaited before using.
-  const get = (name: string) => cookieStore.get(name)?.value;
-
-  const set = (name: string, value: string, options?: CookieOptions) => {
-    // options typed by @supabase/ssr; pass through directly
-    cookieStore.set({ name, value, ...options });
-  };
-
-  return createServerClient<Database>(
+  const client = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get,
-        set,
-        remove: (name: string, options?: CookieOptions) => {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options?: CookieOptions) {
+          // options is typed by @supabase/ssr; pass directly
+          cookieStore.set({ name, value, ...options });
+        },
+        remove(name: string, options?: CookieOptions) {
           cookieStore.set({ name, value: "", ...options, maxAge: 0 });
         },
       },
     }
   );
+
+  return client;
+}
+
+/* ───────── Backwards-compat shims so older imports keep compiling ───────── */
+
+// Some files used to import these names — keep them available:
+export async function getServerSupabase() {
+  return supabaseServer();
+}
+export async function createSupabaseServerClient() {
+  return supabaseServer();
 }
