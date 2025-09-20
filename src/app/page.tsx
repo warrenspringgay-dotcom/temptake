@@ -1,10 +1,10 @@
 // src/app/page.tsx
-import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth-helpers";
-import Dashboard from "@/components/FoodTempLogger"; // or your dashboard component
+import FoodTempLoggerServer from "@/components/FoodTempLoggerServer";
 
-export default async function Page() {
-  const { user } = await getSession();
-  if (!user) redirect("/login?redirect=/");
-  return <Dashboard />;
+export default function Page() {
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-6">
+      <FoodTempLoggerServer />
+    </div>
+  );
 }

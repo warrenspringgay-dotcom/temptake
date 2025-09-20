@@ -3,7 +3,7 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
-import { requireOrgId } from "@/app/actions/auth";
+import { getOrgId } from "@/lib/org-helpers";
 
 export type Supplier = {
   id?: string;
@@ -30,7 +30,7 @@ export type SupplierInput = {
 };
 
 export async function listSuppliers(): Promise<Supplier[]> {
-  const orgId = await requireOrgId();
+  const orgId = await getOrgId();
   const supabase = await supabaseServer();
 
   const { data, error } = await supabase
@@ -44,7 +44,7 @@ export async function listSuppliers(): Promise<Supplier[]> {
 }
 
 export async function upsertSupplier(input: SupplierInput) {
-  const orgId = await requireOrgId();
+  const orgId = await getOrgId();
   const supabase = await supabaseServer();
 
   const payload: Supplier = {
@@ -66,7 +66,7 @@ export async function upsertSupplier(input: SupplierInput) {
 }
 
 export async function deleteSupplier(id: string) {
-  const orgId = await requireOrgId();
+  const orgId = await getOrgId();
   const supabase = await supabaseServer();
 
   const { error } = await supabase

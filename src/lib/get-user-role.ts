@@ -1,5 +1,5 @@
 // src/lib/get-user-role.ts
-import { getServerSupabase } from "@/lib/supabase-server";
+import { ServerSupabase } from "@/lib/supabase-server";
 
 export type Role = "staff" | "manager" | "owner";
 
@@ -11,7 +11,7 @@ export type Role = "staff" | "manager" | "owner";
  *  3) defaults to "staff"
  */
 export async function getRole(): Promise<Role> {
-  const supabase = await getServerSupabase();
+  const supabase = await ServerSupabase();
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) return "staff";

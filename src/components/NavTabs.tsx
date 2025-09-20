@@ -1,3 +1,4 @@
+// src/components/NavTabs.tsx
 "use client";
 
 import Link from "next/link";
@@ -5,7 +6,7 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { signOutAction } from "@/app/actions/auth";
+// import { signOutAction } from "@/app/actions/auth"; // <- optional: keep if you want server action signout
 
 type NavTabsProps = {
   brandName?: string;
@@ -33,14 +34,8 @@ export default function NavTabs({
 
   const navRef = useRef<HTMLDivElement | null>(null);
 
-  // NEW: wait until mounted before rendering *any* auth UI
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
   const isActive = (href: string) =>
-    href === "/"
-      ? pathname === "/"
-      : pathname === href || pathname.startsWith(href + "/");
+    href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -57,19 +52,24 @@ export default function NavTabs({
   }, [pathname]);
 
   useEffect(() => {
-    let alive = true;
+    let mounted = true;
     supabase.auth.getUser().then(({ data }) => {
-      if (!alive) return;
+      if (!mounted) return;
       setUserEmail(data.user?.email ?? null);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserEmail(session?.user?.email ?? null);
     });
     return () => {
-      alive = false;
+      mounted = false;
       sub.subscription.unsubscribe();
     };
   }, []);
+
+  async function signOutClient() {
+    await supabase.auth.signOut();
+    // If you prefer server action sign-out, call <form action={signOutAction}> instead of this client method.
+  }
 
   return (
     <nav className="sticky top-0 z-50 bg-white border-b border-gray-200">
@@ -100,10 +100,9 @@ export default function NavTabs({
           })}
         </div>
 
-        {/* Desktop user menu */}
+        {/* Desktop user menu (hidden if logged out — no sign-in button) */}
         <div ref={navRef} className="hidden md:flex items-center gap-2">
-          {/* NEW: only render auth UI after mount, and only if logged in */}
-          {mounted && userEmail && (
+          {userEmail && (
             <div className="relative">
               <button
                 onClick={() => setUserOpen((v) => !v)}
@@ -125,15 +124,19 @@ export default function NavTabs({
               </button>
 
               {userOpen && (
-                <div role="menu" className="absolute right-0 mt-2 w-48 rounded-md border bg-white shadow-sm overflow-hidden z-[60]">
+                <div
+                  role="menu"
+                  className="absolute right-0 mt-2 w-48 rounded-md border bg-white shadow-sm overflow-hidden z-[60]"
+                >
                   <Link href="/settings" className="block px-3 py-2 text-sm text-slate-700 hover:bg-gray-50">
                     Settings
                   </Link>
-                  <form action={signOutAction}>
-                    <button className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-gray-50">
-                      Sign out
-                    </button>
-                  </form>
+                  <button
+                    onClick={signOutClient}
+                    className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-gray-50"
+                  >
+                    Sign out
+                  </button>
                 </div>
               )}
             </div>
@@ -172,8 +175,8 @@ export default function NavTabs({
             </button>
           </div>
 
-          {/* NEW: show user section only after mount and if logged in */}
-          {mounted && userEmail && (
+          {/* Mobile header auth row — hidden if logged out */}
+          {userEmail && (
             <div className="px-4 py-3 border-b flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="inline-grid place-items-center h-7 w-7 rounded-full bg-gray-200 text-gray-700 text-sm">
@@ -181,11 +184,9 @@ export default function NavTabs({
                 </span>
                 <span className="text-sm text-slate-700">{userEmail}</span>
               </div>
-              <form action={signOutAction}>
-                <button className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-gray-100">
-                  Sign out
-                </button>
-              </form>
+              <button onClick={signOutClient} className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-gray-100">
+                Sign out
+              </button>
             </div>
           )}
 

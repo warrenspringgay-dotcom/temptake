@@ -1,116 +1,42 @@
 // src/app/actions/tempLogs.ts
-"use server";
-
-/**
- * Server actions for temperature logs.
- * In guest mode (no auth / no Supabase client), these calls become safe no-ops
- * so the UI can still function using localStorage.
- */
-
 export type TempLogInput = {
-  date: string | null;
-  staff_initials: string | null;
-  location: string | null;
-  item: string | null;
-  target_key: string | null;
-  temp_c: number | null;
-  status: "pass" | "fail" | null;
+  id?: string;
+  date?: string | null;
+  staff_initials?: string | null;
+  location?: string | null;
+  item?: string | null;
+  target_key?: string | null;
+  temp_c?: number | null;
 };
 
-export type TempLogRow = {
-  id: string;
-  date: string | null;
-  staff_initials: string | null;
-  location: string | null;
-  item: string | null;
-  target_key: string | null;
-  temp_c: number | null;
-  status: "pass" | "fail" | null;
-};
-
-// If you have a Supabase server client, import it here.
-// Keep this import even if you haven't created the helper yet; the try/catch handles it.
-let createClient: (() => any) | undefined;
-try {
-  // Adjust the path to your actual helper if different:
-  // e.g. import { createClient as _create } from "@/utils/supabase/server";
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const mod = require("@/utils/supabase/server");
-  createClient = mod.createClient;
-} catch {
-  createClient = undefined;
+export async function listTempLogs() {
+  const res = await fetch("/api/temp-logs", { cache: "no-store" });
+  if (!res.ok) throw new Error(await res.text());
+  const json = await res.json();
+  return json.data as Array<any>;
 }
 
-async function getOrgIdSafe(): Promise<{ supabase: any | null; orgId: string | null }> {
-  try {
-    const supabase = typeof createClient === "function" ? createClient() : null;
-    const getUser = supabase?.auth?.getUser;
-    if (!getUser) return { supabase: null, orgId: null };
-
-    const { data, error } = await getUser();
-    if (error || !data?.user) return { supabase, orgId: null };
-
-    const orgId = (data.user.user_metadata as any)?.org_id ?? null;
-    return { supabase, orgId };
-  } catch {
-    return { supabase: null, orgId: null };
-  }
+export async function upsertTempLog(input: TempLogInput) {
+  const res = await fetch("/api/temp-logs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await res.text());
 }
 
-/** Return staff initials if available; otherwise empty list (guest mode). */
+export async function deleteTempLog(id: string) {
+  const res = await fetch(`/api/temp-logs?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+/** Optional: quick initials from recent logs */
 export async function listStaffInitials(): Promise<string[]> {
-  const { supabase, orgId } = await getOrgIdSafe();
-  if (!supabase || !orgId) {
-    // Guest mode: let the client merge local TeamManagerLocal initials.
-    return [];
+  const logs = await listTempLogs();
+  const set = new Set<string>();
+  for (const r of logs) {
+    const v = (r.staff_initials ?? "").toString().trim().toUpperCase();
+    if (v) set.add(v);
   }
-  // Example query – adjust table/columns to your schema.
-  const { data, error } = await supabase
-    .from("team_members")
-    .select("initials")
-    .eq("org_id", orgId)
-    .eq("active", true);
-
-  if (error || !data) return [];
-  return (data as Array<{ initials: string | null }>).map((r) => (r.initials ?? "").toUpperCase()).filter(Boolean);
-}
-
-/** List logs for the current org. Guest mode returns an empty list (client uses localStorage). */
-export async function listTempLogs(): Promise<TempLogRow[]> {
-  const { supabase, orgId } = await getOrgIdSafe();
-  if (!supabase || !orgId) return [];
-
-  const { data, error } = await supabase
-    .from("temp_logs")
-    .select("id,date,staff_initials,location,item,target_key,temp_c,status")
-    .eq("org_id", orgId)
-    .order("date", { ascending: false })
-    .limit(500);
-
-  if (error || !data) return [];
-  return data as TempLogRow[];
-}
-
-/** Upsert a log. Guest mode: no-op (client already saved locally). */
-export async function upsertTempLog(input: TempLogInput): Promise<{ id: string | null }> {
-  const { supabase, orgId } = await getOrgIdSafe();
-  if (!supabase || !orgId) return { id: null };
-
-  const payload = { ...input, org_id: orgId };
-  const { data, error } = await supabase
-    .from("temp_logs")
-    .insert(payload)
-    .select("id")
-    .single();
-
-  if (error || !data) return { id: null };
-  return { id: data.id as string };
-}
-
-/** Delete a log by id. Guest mode: no-op. */
-export async function deleteTempLog(id: string): Promise<void> {
-  const { supabase, orgId } = await getOrgIdSafe();
-  if (!supabase || !orgId) return;
-
-  await supabase.from("temp_logs").delete().eq("id", id).eq("org_id", orgId);
+  return Array.from(set);
 }

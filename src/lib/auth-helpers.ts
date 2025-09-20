@@ -1,16 +1,20 @@
 // src/lib/auth-helpers.ts
 import { supabaseServer } from "@/lib/supabase-server";
 
-export type Session = {
-  user: { id: string; email: string | null } | null;
-};
+export type SessionUser = { id: string; email: string | null };
 
-export async function getSession(): Promise<Session> {
-  const supabase = await supabaseServer(); // ← await the client
+/** Back-compat shim for pages that import `getSession()` */
+export async function getSession(): Promise<{ user: SessionUser | null }> {
+  const supabase = await supabaseServer();
   const { data } = await supabase.auth.getUser();
 
-  if (data.user) {
-    return { user: { id: data.user.id, email: data.user.email ?? null } };
+  if (!data?.user) {
+    return { user: null };
   }
-  return { user: null };
+  return {
+    user: {
+      id: data.user.id,
+      email: data.user.email ?? null,
+    },
+  };
 }

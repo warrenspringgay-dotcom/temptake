@@ -3,7 +3,8 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
-import { requireOrgId } from "@/app/actions/auth";
+import { getOrgId } from "@/lib/org-helpers";
+
 
 export type TeamMemberRow = {
   id: string;
@@ -32,7 +33,7 @@ export type TeamMemberInput = {
 };
 
 export async function listTeamMembersAction(): Promise<TeamMemberRow[]> {
-  const orgId = await requireOrgId();
+  const orgId = await getOrgId();
   const supabase = await supabaseServer();
 
   const { data, error } = await supabase
@@ -46,7 +47,7 @@ export async function listTeamMembersAction(): Promise<TeamMemberRow[]> {
 }
 
 export async function upsertTeamMemberAction(input: TeamMemberInput): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
-  const orgId = await requireOrgId();
+  const orgId = await getOrgId();
   const supabase = await supabaseServer();
 
   const payload = {
@@ -74,7 +75,7 @@ export async function upsertTeamMemberAction(input: TeamMemberInput): Promise<{ 
 }
 
 export async function deleteTeamMemberAction(id: string) {
-  const orgId = await requireOrgId();
+  const orgId = await getOrgId();
   const supabase = await supabaseServer();
 
   const { error } = await supabase

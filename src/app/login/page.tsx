@@ -1,23 +1,16 @@
 // src/app/login/page.tsx
 import LoginClient from "./LoginClient";
 
-type RawSearchParams = {
-  redirect?: string | string[]; // Next can give string or string[]
-};
+type SP = Record<string, string | string[] | undefined>;
 
-export default async function LoginPage({
+export default async function Page({
   searchParams,
 }: {
-  // In Next 15, this is a Promise
-  searchParams: Promise<RawSearchParams>;
+  searchParams?: Promise<SP>;
 }) {
-  const params = await searchParams;
+  const sp = (await searchParams) ?? {};
   const redirect =
-    typeof params.redirect === "string"
-      ? params.redirect
-      : Array.isArray(params.redirect)
-      ? params.redirect[0]
-      : "/";
+    typeof sp.redirect === "string" && sp.redirect ? sp.redirect : "/";
 
-  return <LoginClient redirectTo={redirect ?? "/"} />;
+  return <LoginClient redirectTo={redirect} />;
 }

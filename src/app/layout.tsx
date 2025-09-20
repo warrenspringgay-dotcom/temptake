@@ -30,7 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <NavTabs />
               </div>
 
-              <NavUser />
+              
             </div>
           </header>
 
