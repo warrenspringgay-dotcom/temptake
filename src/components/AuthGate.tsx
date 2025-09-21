@@ -4,32 +4,18 @@ import { getSession, hasRole } from "@/app/actions/auth";
 
 type Props = {
   children: React.ReactNode;
-  /** Optional: restrict by role. "manager" automatically allows "owner" too. */
-  requireRole?: "staff" | "manager" | "owner";
+  /** Optional: require a role; tweak hasRole() in actions/auth.ts to match your model */
+  requireRole?: string;
 };
 
-/**
- * Server-only gate. Put this at the top of protected pages:
- * 
- * export default async function Page() {
- *   return (
- *     <AuthGate requireRole="staff">
- *       ...page...
- *     </AuthGate>
- *   )
- * }
- */
 export default async function AuthGate({ children, requireRole }: Props) {
   const { user } = await getSession();
   if (!user) redirect("/login");
 
-  if (!requireRole) return <>{children}</>;
+  if (requireRole && !hasRole(user, requireRole)) {
+    // You can change this to redirect to an “/forbidden” page instead
+    redirect("/login");
+  }
 
-  const ok =
-    requireRole === "manager"
-      ? await hasRole(["manager", "owner"])
-      : await hasRole([requireRole]);
-
-  if (!ok) redirect("/"); // or a 403 page
   return <>{children}</>;
 }

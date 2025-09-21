@@ -1,38 +1,32 @@
 // src/lib/get-user-role.ts
-import { ServerSupabase } from "@/lib/supabase-server";
+import { supabaseServer } from "@/lib/supabase-server";
 
 export type Role = "staff" | "manager" | "owner";
 
 /**
- * Resolve the current user's role.
- * It checks (in order):
- *  1) user.metadata.role (app_metadata or user_metadata)
- *  2) public.user_roles table (columns: user_id UUID, role text)
- *  3) defaults to "staff"
+ * Reads the current user's role (or a specific userId if provided).
+ * Adjust the table/column names to match your schema.
  */
-export async function getRole(): Promise<Role> {
-  const supabase = await ServerSupabase();
-  const { data: { user } } = await supabase.auth.getUser();
+export async function getUserRole(userId?: string): Promise<Role | null> {
+  const supabase = await supabaseServer();
 
-  if (!user) return "staff";
+  // Resolve a user id if not supplied
+  const id =
+    userId ?? (await supabase.auth.getUser()).data.user?.id ?? null;
+  if (!id) return null;
 
-  const metaRole =
-    (user.app_metadata as any)?.role ||
-    (user.user_metadata as any)?.role;
-  if (metaRole === "owner" || metaRole === "manager" || metaRole === "staff") {
-    return metaRole;
-  }
-
-  const { data: row } = await supabase
-    .from("user_roles")
+  // Example: read from a user_roles table. Change as needed.
+  const { data, error } = await supabase
+    .from("user_roles")            // <- change to your table if different (e.g. "profiles")
     .select("role")
-    .eq("user_id", user.id)
+    .eq("user_id", id)
     .maybeSingle();
 
-  const tableRole = row?.role;
-  if (tableRole === "owner" || tableRole === "manager" || tableRole === "staff") {
-    return tableRole;
-  }
+  if (error || !data?.role) return null;
 
-  return "staff";
+  const role = String(data.role);
+  if (role === "owner" || role === "manager" || role === "staff") {
+    return role as Role;
+  }
+  return null;
 }

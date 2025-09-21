@@ -14,6 +14,7 @@ export async function someAction(...) {
 }
 …convert it to: */
 export async function someAction(/* args */) {
-  const supabase = await getSupabase();
+
+  const supabase = await supabaseServer();
   // ... your logic
 }
