@@ -1,90 +1,41 @@
-// src/app/actions/team.ts
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getOrgId } from "@/lib/org-helpers";
 
-
-export type TeamMemberRow = {
-  id: string;
-  org_id: string;
-  name: string;
-  role: string | null;
-  email: string | null;
-  phone: string | null;
-  notes: string | null;
-  initials: string | null;
-  active: boolean;
-  status: string | null;
-  created_at?: string;
-};
-
-export type TeamMemberInput = {
-  id?: string;
-  name: string;
-  role?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  notes?: string | null;
-  initials?: string | null;
-  active?: boolean;
-  status?: string | null;
-};
-
-export async function listTeamMembersAction(): Promise<TeamMemberRow[]> {
-  const orgId = await getOrgId();
+/** Distinct team initials (active members). Falls back to recent logs. */
+export async function getTeamInitials(): Promise<string[]> {
   const supabase = await supabaseServer();
+  const org_id = await getOrgId().catch(() => null);
+  if (!org_id) return [];
 
-  const { data, error } = await supabase
-    .from("team_members")
-    .select("*")
-    .eq("org_id", orgId)
-    .order("created_at", { ascending: false });
+  // Preferred: team table
+  const { data: team, error: teamErr } = await supabase
+    .from("team")
+    .select("initials")
+    .eq("org_id", org_id)
+    .eq("active", true);
 
-  if (error || !data) return [];
-  return data as TeamMemberRow[];
-}
+  let initials = (team ?? [])
+    .map((t) => (t?.initials ?? "").toString().trim().toUpperCase())
+    .filter(Boolean);
 
-export async function upsertTeamMemberAction(input: TeamMemberInput): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
-  const orgId = await getOrgId();
-  const supabase = await supabaseServer();
+  // Fallback: distinct initials from recent temp logs
+  if ((!initials || initials.length === 0) || teamErr) {
+    const { data: logs } = await supabase
+      .from("temp_logs")
+      .select("staff_initials")
+      .eq("org_id", org_id)
+      .order("created_at", { ascending: false })
+      .limit(300);
 
-  const payload = {
-    id: input.id ?? undefined,
-    org_id: orgId,
-    name: input.name.trim(),
-    role: (input.role ?? null) || null,
-    email: (input.email ?? null) || null,
-    phone: (input.phone ?? null) || null,
-    notes: (input.notes ?? null) || null,
-    initials: (input.initials ?? null) || null,
-    active: input.active ?? true,
-    status: (input.status ?? null) || null,
-  };
+    const set = new Set<string>();
+    for (const r of logs ?? []) {
+      const v = (r?.staff_initials ?? "").toString().trim().toUpperCase();
+      if (v) set.add(v);
+    }
+    initials = Array.from(set);
+  }
 
-  const { data, error } = await supabase
-    .from("team_members")
-    .upsert(payload)
-    .select("id")
-    .single();
-
-  if (error) return { ok: false, message: error.message };
-  revalidatePath("/team");
-  return { ok: true, id: data!.id as string };
-}
-
-export async function deleteTeamMemberAction(id: string) {
-  const orgId = await getOrgId();
-  const supabase = await supabaseServer();
-
-  const { error } = await supabase
-    .from("team_members")
-    .delete()
-    .eq("org_id", orgId)
-    .eq("id", id);
-
-  if (error) return { ok: false as const, message: error.message };
-  revalidatePath("/team");
-  return { ok: true as const };
+  return Array.from(new Set(initials)).sort();
 }

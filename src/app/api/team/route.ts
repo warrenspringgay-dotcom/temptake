@@ -1,22 +1,30 @@
-// Minimal placeholder API so the Team page never 404s.
-// Replace with Supabase later. Always returns a safe array.
-
+// src/app/api/team-initials/route.ts
 import { NextResponse } from "next/server";
+import { supabaseServer } from "@/lib/supabase-server";
+import { getOrgId } from "@/lib/org-helpers";
 
 export async function GET() {
-  return NextResponse.json({ items: [] }, { status: 200 });
-}
+  try {
+    const supabase = await supabaseServer();
+    const org_id = await getOrgId();
 
-// Optional – accept POSTs to avoid client errors when you wire the form
-export async function POST(req: Request) {
-  // ignore body for now; just echo back something shaped like a row
-  const body = await req.json().catch(() => ({}));
-  const row = {
-    id: crypto.randomUUID(),
-    full_name: body?.full_name ?? "",
-    email: body?.email ?? "",
-    role: body?.role ?? "member",
-    created_at: new Date().toISOString(),
-  };
-  return NextResponse.json({ ok: true, row }, { status: 200 });
+    // Adjust table/column names to your schema:
+    // expecting table "team_members" with columns: org_id, initials (or staff_initials)
+    const { data, error } = await supabase
+      .from("team_members")
+      .select("initials")
+      .eq("org_id", org_id);
+
+    if (error) throw error;
+
+    const set = new Set<string>();
+    for (const r of data ?? []) {
+      const v = (r.initials ?? "").toString().trim().toUpperCase();
+      if (v) set.add(v);
+    }
+
+    return NextResponse.json({ ok: true, data: Array.from(set).sort() }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, message: e?.message ?? "Unknown error" }, { status: 500 });
+  }
 }

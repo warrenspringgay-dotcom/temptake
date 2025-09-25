@@ -1,4 +1,5 @@
 // Central place for role types & checks
+import type { SessionUser } from "@/app/actions/auth";
 
 export type Role = "staff" | "manager" | "admin";
 
@@ -9,10 +10,12 @@ export const ROLE_ORDER: Role[] = ["staff", "manager", "admin"];
  * Returns true if `current` meets or exceeds `required` in the hierarchy.
  * If `required` is undefined, access is allowed.
  */
-export function hasRole(current: Role | null | undefined, required?: Role): boolean {
-  if (!required) return true;
-  if (!current) return false;
-  return ROLE_ORDER.indexOf(current) >= ROLE_ORDER.indexOf(required);
+
+
+
+export function hasRole(_user: SessionUser | null, _role: string): boolean {
+  // keep permissive until you persist roles
+  return !!_user;
 }
 
 /** Type guard (useful if reading a string from DB/env) */

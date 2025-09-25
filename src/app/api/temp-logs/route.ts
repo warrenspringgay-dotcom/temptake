@@ -1,83 +1,74 @@
 // src/app/api/temp-logs/route.ts
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
-import { getOrgId } from "@/lib/org-helpers"; // ✅ single source of truth
+import { getOrgId } from "@/lib/org-helpers";
 
-const isUuid = (v: unknown) =>
-  typeof v === "string" &&
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v || "");
-
-/** GET /api/temp-logs -> latest rows for the current org */
 export async function GET() {
   try {
     const supabase = await supabaseServer();
     const org_id = await getOrgId();
+    if (!org_id) return NextResponse.json({ data: [] });
 
     const { data, error } = await supabase
       .from("temp_logs")
       .select("id,date,created_at,staff_initials,location,item,target_key,temp_c,org_id")
       .eq("org_id", org_id)
       .order("created_at", { ascending: false })
-      .limit(500);
+      .limit(200);
 
     if (error) throw error;
-    return NextResponse.json({ ok: true, data: data ?? [] });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: String(err?.message ?? err) }, { status: 500 });
+    return NextResponse.json({ data: data ?? [] });
+  } catch (e: any) {
+    return new NextResponse(e?.message || "Failed to list temp logs", { status: 500 });
   }
 }
 
-/** POST /api/temp-logs -> insert/upsert one row */
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
     const supabase = await supabaseServer();
     const org_id = await getOrgId();
+    if (!org_id) return new NextResponse("No org", { status: 400 });
 
-    // Clean undefined / string "null"
-    const clean = (v: any) => (v === undefined || v === "null" ? null : v);
-
+    const body = await req.json();
     const row: any = {
       org_id,
-      date: clean(body.date),
-      staff_initials: clean(body.staff_initials),
-      location: clean(body.location),
-      item: clean(body.item),
-      target_key: clean(body.target_key),
+      date: body.date ?? null,
+      staff_initials: body.staff_initials ?? null,
+      location: body.location ?? null,
+      item: body.item ?? null,
+      target_key: body.target_key ?? null,
       temp_c: body.temp_c ?? null,
     };
-    if (isUuid(body.id)) row.id = body.id;
+    if (body.id) row.id = body.id;
 
-    const query = isUuid(row.id)
+    const q = row.id
       ? supabase.from("temp_logs").upsert(row, { onConflict: "id" }).select("id").single()
       : supabase.from("temp_logs").insert(row).select("id").single();
 
-    const { data, error } = await query;
+    const { error } = await q;
     if (error) throw error;
 
-    return NextResponse.json({ ok: true, id: data?.id ?? null });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: String(err?.message ?? err) }, { status: 400 });
+    return new NextResponse(null, { status: 204 });
+  } catch (e: any) {
+    return new NextResponse(e?.message || "Failed to upsert temp log", { status: 500 });
   }
 }
 
-/** DELETE /api/temp-logs?id=<uuid> -> delete one row for this org */
 export async function DELETE(req: Request) {
   try {
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
-    if (!id || !isUuid(id)) {
-      return NextResponse.json({ ok: false, error: "Valid id (uuid) required" }, { status: 400 });
-    }
-
     const supabase = await supabaseServer();
     const org_id = await getOrgId();
+    if (!org_id) return new NextResponse("No org", { status: 400 });
+
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+    if (!id) return new NextResponse("Missing id", { status: 400 });
 
     const { error } = await supabase.from("temp_logs").delete().eq("id", id).eq("org_id", org_id);
     if (error) throw error;
 
-    return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: String(err?.message ?? err) }, { status: 400 });
+    return new NextResponse(null, { status: 204 });
+  } catch (e: any) {
+    return new NextResponse(e?.message || "Failed to delete temp log", { status: 500 });
   }
 }

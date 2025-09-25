@@ -2,40 +2,39 @@
 "use server";
 
 import { supabaseServer } from "@/lib/supabase-server";
+import { getSession } from "@/app/actions/auth";
 
 /**
- * Returns the active org_id for the signed-in user.
- * Throws if no session or membership.
+ * Try to find the current user's org id. Returns null if not found/signed-in.
+ * - Looks in profiles(org_id) by user.id
+ * - Falls back to first orgs.id where the user is a member (if you later add a members table)
  */
-export async function getOrgId(): Promise<string> {
+export async function getOrgId(): Promise<string | null> {
+  const { user } = await getSession();
+  if (!user) return null;
+
   const supabase = await supabaseServer();
 
-  // Who am I?
-  const { data: userData, error: userErr } = await supabase.auth.getUser();
-  if (userErr) throw userErr;
-  const user = userData.user;
-  if (!user) throw new Error("No session");
-
-  // Find a membership
-  const { data: membership, error: memErr } = await supabase
-    .from("user_orgs")
+  // 1) profiles.org_id (most common)
+  const { data: profRows, error: profErr } = await supabase
+    .from("profiles")
     .select("org_id")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .eq("id", user.id)
+    .limit(1);
 
-  if (memErr) throw memErr;
-  if (!membership?.org_id) {
-    throw new Error("No organisation membership for current user");
+  if (!profErr) {
+    const orgId = profRows?.[0]?.org_id ?? null;
+    if (orgId) return orgId;
   }
 
-  return membership.org_id as string;
-}
+  // 2) (optional) fallback: if you have orgs_members with (user_id, org_id)
+  // const { data: memRows, error: memErr } = await supabase
+  //   .from("orgs_members")
+  //   .select("org_id")
+  //   .eq("user_id", user.id)
+  //   .limit(1);
+  // if (!memErr && memRows?.[0]?.org_id) return memRows[0].org_id;
 
-/** Same as getOrgId but with a friendlier message */
-export async function requireOrgId(): Promise<string> {
-  const orgId = await getOrgId();
-  if (!orgId) throw new Error("No organisation found for current user");
-  return orgId;
+  // No org found yet
+  return null;
 }

@@ -1,12 +1,10 @@
 // src/app/team/page.tsx
-import TeamManagerLocal from "@/components/TeamManagerLocal";
+import TeamManagerCloud from "@/components/TeamManagerCloud";
 
-export const metadata = { title: "Team · TempTake" };
+export const metadata = {
+  title: "Team – TempTake",
+};
 
-export default function Page() {
-  return (
-    <div className="mx-auto max-w-6xl px-4 py-6">
-      <TeamManagerLocal />
-    </div>
-  );
+export default function TeamPage() {
+  return <TeamManagerCloud />;
 }

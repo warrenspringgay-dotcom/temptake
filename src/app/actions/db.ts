@@ -1,101 +1,90 @@
 // src/app/actions/db.ts
 "use server";
 
-import { revalidatePath } from "next/cache";
-import { supabaseServer } from "@/lib/supabase-server"; // your existing helper
+import { supabaseServer } from "@/lib/supabase-server";
 import { getOrgId } from "@/lib/org-helpers";
 
-/** Narrow shape for inserting/updating from FoodTempLogger */
-export type TempLogInsert = {
-  id?: string | null;             // may be a non-UUID from local cache; we'll strip it
-  date?: string | null;           // "YYYY-MM-DD"
-  staff_initials?: string | null;
-  location?: string | null;
-  item?: string | null;
-  target_key?: string | null;     // optional in DB
-  temp_c?: number | null;
-};
-
-const isUuid = (v: unknown) =>
-  typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v || "");
-
-/** List latest temp logs for the current org (limit optional). */
-export async function listTempLogs(limit = 200) {
-  const supabase = await supabaseServer();
+/** Team initials from your Team table (assumes column 'initials') */
+export async function getTeamInitials(): Promise<string[]> {
+  const sb = await supabaseServer();
   const org_id = await getOrgId();
-
-  const { data, error } = await supabase
-    .from("temp_logs")
-    .select("id,date,created_at,staff_initials,location,item,target_key,temp_c,org_id")
+  const { data, error } = await sb
+    .from("team")              // <- your team table
+    .select("initials")
     .eq("org_id", org_id)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    .order("initials", { ascending: true });
 
   if (error) throw error;
-  return data ?? [];
+  return (data ?? [])
+    .map((r: any) => String(r.initials ?? "").toUpperCase())
+    .filter(Boolean);
 }
 
-/** Insert (or update if a *real* UUID id is provided). Always sets org_id. */
-export async function upsertTempLog(input: TempLogInsert) {
-  const supabase = await supabaseServer();
+/** Count temp logs in the last N days (assumes 'date' is a date string) */
+export async function countTempLogsLastNDays(n = 30): Promise<number> {
+  const sb = await supabaseServer();
   const org_id = await getOrgId();
 
-  // Build a clean row. If id is not a UUID, omit it and let DB generate one.
-  const row: Record<string, any> = {
-    org_id,
-    date: input.date ?? null,
-    staff_initials: input.staff_initials ?? null,
-    location: input.location ?? null,
-    item: input.item ?? null,
-    target_key: input.target_key ?? null,
-    temp_c: input.temp_c ?? null,
+  const sinceISO = new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+  const { count, error } = await sb
+    .from("temp_logs")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", org_id)
+    .gte("date", sinceISO); // if you only store created_at, switch to gte("created_at", new Date(...).toISOString())
+
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/** Optional: flags for training & allergen review KPIs.
+ *  Assumptions:
+ *   - team.training_expires (date) on 'team' rows
+ *   - allergens.review_due (date) on 'allergens' single-row or per-item table
+ */
+export async function getComplianceFlags() {
+  const sb = await supabaseServer();
+  const org_id = await getOrgId();
+
+  const today = new Date().toISOString().slice(0, 10);
+  const soonISO = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10); // next 14 days
+
+  // TRAINING
+  const { data: tExpired, error: tErr1 } = await sb
+    .from("team")
+    .select("id")
+    .eq("org_id", org_id)
+    .lt("training_expires", today);     // expired
+  if (tErr1) throw tErr1;
+
+  const { data: tSoon, error: tErr2 } = await sb
+    .from("team")
+    .select("id")
+    .eq("org_id", org_id)
+    .gte("training_expires", today)
+    .lte("training_expires", soonISO);  // expiring within 14 days
+  if (tErr2) throw tErr2;
+
+  // ALLERGEN REVIEW
+  // If you keep a single “review_due” on a settings row, change the query accordingly
+  const { data: aExpired, error: aErr1 } = await sb
+    .from("allergens")
+    .select("id")
+    .eq("org_id", org_id)
+    .lt("review_due", today);
+  if (aErr1) throw aErr1;
+
+  const { data: aSoon, error: aErr2 } = await sb
+    .from("allergens")
+    .select("id")
+    .eq("org_id", org_id)
+    .gte("review_due", today)
+    .lte("review_due", soonISO);
+  if (aErr2) throw aErr2;
+
+  return {
+    trainingExpired: (tExpired ?? []).length,
+    trainingExpiringSoon: (tSoon ?? []).length,
+    allergenExpired: (aExpired ?? []).length,
+    allergenExpiringSoon: (aSoon ?? []).length,
   };
-  if (isUuid(input.id)) row.id = input.id;
-
-  // Use upsert only when id is UUID; otherwise do a plain insert
-  const q = isUuid(row.id)
-    ? supabase.from("temp_logs").upsert(row, { onConflict: "id" }).select("id").single()
-    : supabase.from("temp_logs").insert(row).select("id").single();
-
-  const { error } = await q;
-  if (error) throw error;
-
-  revalidatePath("/");          // dashboard
-  revalidatePath("/reports");   // reports
-}
-
-/** Delete a log by id, scoped to current org. */
-export async function deleteTempLog(id: string) {
-  if (!isUuid(id)) return; // ignore local-only ids
-  const supabase = await supabaseServer();
-  const org_id = await getOrgId();
-
-  const { error } = await supabase.from("temp_logs").delete().eq("id", id).eq("org_id", org_id);
-  if (error) throw error;
-
-  revalidatePath("/");
-  revalidatePath("/reports");
-}
-
-/** Optional: staff initials quick list pulled from latest logs (org-scoped). */
-export async function listStaffInitials() {
-  const supabase = await supabaseServer();
-  const org_id = await getOrgId();
-
-  // Quick-and-safe: pick from latest 500 logs then de-dup in JS
-  const { data, error } = await supabase
-    .from("temp_logs")
-    .select("staff_initials")
-    .eq("org_id", org_id)
-    .order("created_at", { ascending: false })
-    .limit(500);
-
-  if (error) throw error;
-
-  const set = new Set<string>();
-  for (const r of data ?? []) {
-    const v = (r.staff_initials ?? "").toString().trim().toUpperCase();
-    if (v) set.add(v);
-  }
-  return Array.from(set);
 }

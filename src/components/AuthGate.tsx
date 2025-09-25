@@ -1,6 +1,9 @@
 // src/components/AuthGate.tsx (SERVER COMPONENT)
 import { redirect } from "next/navigation";
-import { getSession, hasRole } from "@/app/actions/auth";
+
+import { getSession } from "@/app/actions/auth";
+import { hasRole } from "@/lib/auth-roles";
+
 
 type Props = {
   children: React.ReactNode;

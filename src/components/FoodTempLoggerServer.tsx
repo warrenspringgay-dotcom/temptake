@@ -1,19 +1,18 @@
-// src/components/FoodTempLoggerServer.tsx
-import FoodTempLogger from "@/components/FoodTempLogger"; // the CLIENT component
-import { listTempLogs, listStaffInitials, upsertTempLog, deleteTempLog } from "@/app/actions/db";
+// Server wrapper: fetches rows + team initials, renders client logger
+import FoodTempLogger from "@/components/FoodTempLogger";
+import { listTempLogs } from "@/app/actions/tempLogs"; // fetch-based (not server actions)
+import { getTeamInitials } from "@/app/actions/team";
 
 export default async function FoodTempLoggerServer() {
   const [initialRows, initials] = await Promise.all([
-    listTempLogs(200),
-    listStaffInitials(),
+    listTempLogs(),
+    getTeamInitials(),
   ]);
 
   return (
     <FoodTempLogger
       initialRows={initialRows}
       initials={initials}
-      onUpsert={upsertTempLog}
-      onDelete={deleteTempLog}
     />
   );
 }

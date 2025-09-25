@@ -1,23 +1,34 @@
-// no change needed to imports except make sure you import the new signature:
-import { signOutAction } from "@/app/actions/auth";
+// src/components/UserMenu.tsx
+"use client";
+import { useEffect, useState } from "react";
 
-export default function UserMenu({ user }: { user: { email: string } }) {
+export default function UserMenu() {
+  const [email, setEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      // light client fetch of /api/me if you have it, or just hide for now
+      try {
+        const r = await fetch("/api/me").then((r) => (r.ok ? r.json() : null));
+        setEmail(r?.email ?? null);
+      } catch {}
+    })();
+  }, []);
+
   return (
     <div className="flex items-center gap-3">
-      <span className="text-sm text-gray-600">{user.email}</span>
-
-      {/* Either apply the action at the form level… */}
-      <form action={signOutAction}>
-        <button className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm hover:bg-gray-50">
-          Sign out
-        </button>
-      </form>
-
-      {/* …or at the button level:
-      <form>
-        <button formAction={signOutAction} className="…">Sign out</button>
-      </form>
-      */}
+      {email ? (
+        <>
+          <span className="text-sm text-gray-600">{email}</span>
+          <form action="/api/auth/signout" method="post">
+            <button className="rounded-md border px-3 py-1.5 text-sm">Sign out</button>
+          </form>
+        </>
+      ) : (
+        <a className="text-sm underline" href="/login?redirect=/">
+          Sign in
+        </a>
+      )}
     </div>
   );
 }

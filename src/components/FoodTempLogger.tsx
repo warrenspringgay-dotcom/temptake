@@ -1,216 +1,298 @@
 // src/components/FoodTempLogger.tsx
-'use client';
+"use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { TARGET_PRESETS } from "@/lib/temp-constants";
-
-type Row = {
-  id?: string | null;
-  created_at?: string | null;
-  date?: string | null;
-  staff_initials?: string | null;
-  location?: string | null;
-  item?: string | null;
-  target_key?: string | null;
-  temp_c?: number | null;
-  org_id?: string | null;
-};
+import React, { useEffect, useMemo, useState } from "react";
+import { cn } from "@/lib/cn";
+import {
+  listTempLogs,
+  upsertTempLog,
+  deleteTempLog,
+  listStaffInitials,
+  type TempLogRow,
+  type TempLogInput,
+} from "@/app/actions/tempLogs";
+import { LOCATION_PRESETS, TARGET_PRESETS, TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
 
 type Props = {
-  initialRows: Row[];
-  initials: string[];
-  onUpsert: (input: Row) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
+  brandName?: string;
+  brandAccent?: string;
+  logoUrl?: string;
+  /** If provided, the logger will use these instead of fetching. */
+  initials?: string[];
+  /** Called after a successful add/delete so the Dashboard can refresh KPIs. */
+  onChange?: () => void;
 };
 
-const LOCATIONS = ["Kitchen", "Prep room", "Walk-in", "Delivery", "Other"];
+type FormState = {
+  date: string;
+  staff_initials: string;
+  location: string;
+  item: string;
+  target_key: string; // key into TARGET_PRESETS
+  temp_c: string;     // keep as string for input control
+};
 
-export default function FoodTempLogger({
-  initialRows,
-  initials,
-  onUpsert,
-  onDelete,
-}: Props) {
-  const [rows, setRows] = useState<Row[]>(initialRows ?? []);
-  const [isPending, startTransition] = useTransition();
+function inferStatus(temp: number | null, preset: TargetPreset | undefined): "pass" | "fail" | null {
+  if (temp == null || !preset) return null;
+  const { minC, maxC } = preset;
+  if (minC != null && temp < minC) return "fail";
+  if (maxC != null && temp > maxC) return "fail";
+  return "pass";
+}
 
-  const presetOptions = useMemo(
-    () =>
-      TARGET_PRESETS.map((p) => ({
-        value: String(p.key),
-        label: p.label, // ← label only (no actual temperatures)
-      })),
-    []
-  );
-
-  // Simple inline “add a log” state
-  const [draft, setDraft] = useState<Row>({
+export default function FoodTempLogger({ initials: initialsProp, onChange }: Props) {
+  const [rows, setRows] = useState<TempLogRow[]>([]);
+  const [initials, setInitials] = useState<string[]>(initialsProp ?? []);
+  const [form, setForm] = useState<FormState>({
     date: new Date().toISOString().slice(0, 10),
     staff_initials: "",
-    location: LOCATIONS[0],
+    location: LOCATION_PRESETS[0] ?? "",
     item: "",
-    target_key: presetOptions[0]?.value ?? null,
-    temp_c: null,
+    target_key: TARGET_PRESETS[0]?.key ?? "ambient",
+    temp_c: "",
   });
 
-  const addOrUpdate = () => {
-    startTransition(async () => {
-      await onUpsert(draft);
-      // Optimistic update; prepend
-      setRows((prev) => [
-        {
-          id: crypto.randomUUID(),
-          created_at: new Date().toISOString(),
-          ...draft,
-        },
-        ...prev,
-      ]);
-      // reset
-      setDraft((d) => ({ ...d, item: "", temp_c: null }));
-    });
-  };
+  // load table + initials (only fetch initials if parent didn't provide them)
+  useEffect(() => {
+    (async () => {
+      try {
+        const [r, i] = await Promise.all([
+          listTempLogs(),
+          initialsProp ? Promise.resolve(initialsProp) : listStaffInitials(),
+        ]);
+        setRows(r ?? []);
+        setInitials((i ?? []).filter(Boolean));
+      } catch (e) {
+        console.error("Logger failed to fetch cloud data:", e);
+      }
+    })();
+  }, [initialsProp]);
 
-  const remove = (id?: string | null) => {
-    if (!id) return;
-    startTransition(async () => {
-      await onDelete(id);
-      setRows((prev) => prev.filter((r) => r.id !== id));
-    });
-  };
+  const selectedPreset = TARGET_BY_KEY[form.target_key];
+
+  const canSave =
+    !!form.date &&
+    !!form.location &&
+    !!form.item &&
+    !!form.target_key &&
+    form.temp_c.trim().length > 0;
+
+  async function handleAddQuick() {
+    const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
+    const status = inferStatus(tempNum, selectedPreset);
+
+    const input: TempLogInput = {
+      date: form.date,
+      staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
+      location: form.location || null,
+      item: form.item || null,
+      target_key: form.target_key || null,
+      temp_c: tempNum,
+      status,
+    };
+
+    await upsertTempLog(input);
+    const next = await listTempLogs();
+    setRows(next ?? []);
+    onChange?.(); // let Dashboard refresh KPIs
+
+    // keep most selections; clear item/temp for speed
+    setForm((f) => ({ ...f, item: "", temp_c: "" }));
+  }
+
+  async function remove(id: string) {
+    await deleteTempLog(id);
+    setRows((prev) => prev.filter((r) => r.id !== id));
+    onChange?.();
+  }
+
+  // Enter on temperature should submit
+  function onTempKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && canSave) {
+      e.preventDefault();
+      handleAddQuick();
+    }
+  }
 
   return (
-    <div className="space-y-4">
-      {/* Add row */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="grid gap-3 md:grid-cols-6">
-          <input
-            className="rounded-xl border border-gray-300 px-3 py-2"
-            type="date"
-            value={draft.date ?? ""}
-            onChange={(e) => setDraft({ ...draft, date: e.target.value })}
-          />
-          <input
-            className="rounded-xl border border-gray-300 px-3 py-2"
-            placeholder="Initials"
-            list="initials"
-            value={draft.staff_initials ?? ""}
-            onChange={(e) =>
-              setDraft({ ...draft, staff_initials: e.target.value.toUpperCase() })
-            }
-          />
-          <datalist id="initials">
-            {initials?.map((i) => (
-              <option key={i} value={i} />
-            ))}
-          </datalist>
+    <div className="space-y-6">
+      {/* Quick entry */}
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 items-end">
+          {/* Date */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Date</label>
+            <input
+              type="date"
+              value={form.date}
+              onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+              className="w-full rounded-xl border px-3 py-2"
+            />
+          </div>
 
-          <select
-            className="rounded-xl border border-gray-300 px-3 py-2"
-            value={draft.location ?? ""}
-            onChange={(e) => setDraft({ ...draft, location: e.target.value })}
-          >
-            {LOCATIONS.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
+          {/* Staff (free text with suggestions) */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Initials</label>
+            <input
+              list="staff-initials"
+              value={form.staff_initials}
+              onChange={(e) => setForm((f) => ({ ...f, staff_initials: e.target.value }))}
+              placeholder="e.g., AA"
+              className="w-full rounded-xl border px-3 py-2 uppercase"
+            />
+            <datalist id="staff-initials">
+              {initials.map((ini) => (
+                <option key={ini} value={ini} />
+              ))}
+            </datalist>
+          </div>
 
-          <input
-            className="rounded-xl border border-gray-300 px-3 py-2"
-            placeholder="Item (e.g. Chicken curry)"
-            value={draft.item ?? ""}
-            onChange={(e) => setDraft({ ...draft, item: e.target.value })}
-          />
+          {/* Location (free text with suggestions) */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Location</label>
+            <input
+              list="location-list"
+              value={form.location}
+              onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
+              className="w-full rounded-xl border px-3 py-2"
+              placeholder="Kitchen / Fridge 1 / Freezer 2 …"
+            />
+            <datalist id="location-list">
+              {LOCATION_PRESETS.map((loc) => (
+                <option key={loc} value={loc} />
+              ))}
+            </datalist>
+          </div>
 
-          <select
-            className="rounded-xl border border-gray-300 px-3 py-2"
-            value={draft.target_key ?? ""}
-            onChange={(e) => setDraft({ ...draft, target_key: e.target.value })}
-          >
-            {presetOptions.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+          {/* Item */}
+          <div className="lg:col-span-2">
+            <label className="block text-xs text-gray-500 mb-1">Item</label>
+            <input
+              value={form.item}
+              onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
+              className="w-full rounded-xl border px-3 py-2"
+              placeholder="e.g., Chicken curry"
+            />
+          </div>
 
-          <input
-            className="rounded-xl border border-gray-300 px-3 py-2 md:col-span-2"
-            type="number"
-            step="0.1"
-            placeholder="Temp °C"
-            value={draft.temp_c ?? ""}
-            onChange={(e) =>
-              setDraft({
-                ...draft,
-                temp_c: e.target.value === "" ? null : Number(e.target.value),
-              })
-            }
-          />
+          {/* Target */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Target</label>
+            <select
+              value={form.target_key}
+              onChange={(e) => setForm((f) => ({ ...f, target_key: e.target.value }))}
+              className="w-full rounded-xl border px-3 py-2"
+            >
+              {TARGET_PRESETS.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.label}
+                  {p.minC != null || p.maxC != null
+                    ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
+                    : ""}
+                </option>
+              ))}
+            </select>
+            {/* NOTE: range helper text intentionally removed per request */}
+          </div>
 
-          <button
-            onClick={addOrUpdate}
-            disabled={isPending}
-            className="rounded-xl bg-black px-4 py-2 text-white disabled:opacity-60 md:col-span-1"
-          >
-            {isPending ? "Saving…" : "Add log"}
-          </button>
+          {/* Temperature */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Temp (°C)</label>
+            <input
+              value={form.temp_c}
+              onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
+              onKeyDown={onTempKeyDown}
+              className="w-full rounded-xl border px-3 py-2"
+              inputMode="decimal"
+              placeholder="e.g., 5.0"
+            />
+          </div>
+
+          <div className="lg:col-span-6">
+            <button
+              onClick={handleAddQuick}
+              disabled={!canSave}
+              className={cn(
+                "rounded-2xl px-4 py-2 font-medium text-white",
+                canSave ? "bg-black hover:bg-gray-900" : "bg-gray-400"
+              )}
+            >
+              Save quick entry
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Table */}
-      <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-left">
-              <tr>
-                <th className="px-4 py-3">When</th>
-                <th className="px-4 py-3">Initials</th>
-                <th className="px-4 py-3">Location</th>
-                <th className="px-4 py-3">Item</th>
-                <th className="px-4 py-3">Target</th>
-                <th className="px-4 py-3">Temp °C</th>
-                <th className="px-4 py-3"></th>
+            <thead>
+              <tr className="text-left text-gray-500">
+                <th className="py-2 pr-3">Date</th>
+                <th className="py-2 pr-3">Staff</th>
+                <th className="py-2 pr-3">Location</th>
+                <th className="py-2 pr-3">Item</th>
+                <th className="py-2 pr-3">Target</th>
+                <th className="py-2 pr-3">Temp (°C)</th>
+                <th className="py-2 pr-3">Status</th>
+                <th className="py-2 pr-3">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
-                const presetLabel =
-                  presetOptions.find((p) => p.value === String(r.target_key))?.label ?? "—";
-                const when = r.date
-                  ? r.date
-                  : r.created_at
-                  ? new Date(r.created_at).toLocaleString()
-                  : "—";
-                return (
-                  <tr key={r.id ?? Math.random()} className="border-t">
-                    <td className="px-4 py-2">{when}</td>
-                    <td className="px-4 py-2">{r.staff_initials ?? "—"}</td>
-                    <td className="px-4 py-2">{r.location ?? "—"}</td>
-                    <td className="px-4 py-2">{r.item ?? "—"}</td>
-                    <td className="px-4 py-2">{presetLabel}</td>
-                    <td className="px-4 py-2">
-                      {r.temp_c == null ? "—" : Number(r.temp_c).toFixed(1)}
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      {r.id ? (
+              {rows.length ? (
+                rows.map((r) => {
+                  const p = r.target_key ? TARGET_BY_KEY[r.target_key] : undefined;
+                  const st = r.status ?? inferStatus(r.temp_c, p);
+                  return (
+                    <tr key={r.id} className="border-t">
+                      <td className="py-2 pr-3">{r.date ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.staff_initials ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.location ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.item ?? "—"}</td>
+                      <td className="py-2 pr-3">
+                        {p
+                          ? `${p.label}${
+                              p.minC != null || p.maxC != null
+                                ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
+                                : ""
+                            }`
+                          : "—"}
+                      </td>
+                      <td className="py-2 pr-3">{r.temp_c ?? "—"}</td>
+                      <td className="py-2 pr-3">
+                        {st ? (
+                          <span
+                            className={cn(
+                              "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
+                              st === "pass"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-red-100 text-red-800"
+                            )}
+                          >
+                            {st}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="py-2 pr-3">
                         <button
-                          onClick={() => remove(r.id!)}
-                          className="rounded-lg border border-gray-300 px-3 py-1 hover:bg-gray-50"
-                          disabled={isPending}
+                          onClick={() => remove(r.id)}
+                          className="rounded-xl border px-2 py-1 hover:bg-gray-50"
+                          aria-label="Delete"
+                          title="Delete"
                         >
-                          Delete
+                          🗑️
                         </button>
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-              {rows.length === 0 && (
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
                 <tr>
-                  <td className="px-4 py-6 text-center text-gray-500" colSpan={7}>
-                    No temperature logs yet.
+                  <td colSpan={8} className="py-6 text-center text-gray-500">
+                    No entries
                   </td>
                 </tr>
               )}

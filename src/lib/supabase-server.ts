@@ -2,23 +2,27 @@
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-/** Cookie-aware Supabase client for Server Components/Actions (Next 15) */
 export async function supabaseServer() {
-  const cookieStore = await cookies(); // <-- IMPORTANT in Next 15
-  return createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    cookies: {
-      get(name: string) {
-        return cookieStore.get(name)?.value;
+  const cookieStore = await cookies(); // Next 15: dynamic API must be awaited
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: any) {
+          // server cookie jar is mutable in RSC
+          cookieStore.set({ name, value, ...options });
+        },
+        remove(name: string, options: any) {
+          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+        },
       },
-      set(name: string, value: string, options?: any) {
-        cookieStore.set({ name, value, ...options });
-      },
-      remove(name: string, options?: any) {
-        cookieStore.set({ name, value: "", ...options });
-      },
-    },
-  });
+    }
+  );
+
+  return supabase;
 }

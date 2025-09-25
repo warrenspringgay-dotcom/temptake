@@ -1,119 +1,114 @@
-// src/components/DashboardKpis.tsx
-"use client";
+/* Server component – renders 5 square KPIs with no duplicates:
+   - Last log (most recent)
+   - Top team logger (last 30d)
+   - Total logs
+   - Training expiring (≤14d)   -> green/red pill
+   - Allergen review (≤14d)      -> green/red pill
+*/
+import { supabaseServer } from "@/lib/supabase-server";
+import { getOrgId } from "@/lib/org-helpers";
+import { countTrainingExpiring14d, countAllergenReviewExpiring14d } from "@/app/actions/kpis";
 
-import React, { useEffect, useMemo, useState } from "react";
-
-type LocalTempRow = {
+type TempRow = {
   id: string;
   date: string | null;
+  created_at: string | null;
   staff_initials: string | null;
-  location: string | null;
-  item: string | null;
-  target_key: string | null;
-  temp_c: number | null;
   status: "pass" | "fail" | null;
 };
 
-type DashboardKpis = {
-  todayCount: number;
-  weekCount: number;
-  failsCount: number;
-  topLogger: string | null;
-};
-
-const LS_KEY = "tt_temp_logs";
-
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function lsGet<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function Card({ children }: { children: React.ReactNode }) {
+function Card({ title, value, sub }: { title: string; value: React.ReactNode; sub?: React.ReactNode }) {
   return (
     <div className="rounded-2xl border bg-white p-4 shadow-sm">
-      {children}
+      <div className="text-xs text-gray-500">{title}</div>
+      <div className="mt-1 text-2xl font-semibold">{value}</div>
+      {sub ? <div className="mt-1 text-xs text-gray-500">{sub}</div> : null}
     </div>
   );
 }
 
-export default function DashboardKpis({ className = "" }: { className?: string }) {
-  const [rows, setRows] = useState<LocalTempRow[]>([]);
+function Pill({ ok, label }: { ok: boolean; label: string }) {
+  const base = "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium";
+  return ok
+    ? <span className={`${base} bg-green-100 text-green-700`}>{label}</span>
+    : <span className={`${base} bg-red-100 text-red-700`}>{label}</span>;
+}
 
-  // Bootstrap from localStorage and keep in sync if other tabs update
-  useEffect(() => {
-    setRows(lsGet<LocalTempRow[]>(LS_KEY, []));
-    function onStorage(e: StorageEvent) {
-      if (e.key === LS_KEY) {
-        setRows(lsGet<LocalTempRow[]>(LS_KEY, []));
-      }
+export default async function DashboardKpisServer() {
+  const supabase = await supabaseServer();
+  const org_id = await getOrgId();
+
+  const { data: rowsRaw, error } = await supabase
+    .from("temp_logs")
+    .select("id,date,created_at,staff_initials,status")
+    .eq("org_id", org_id)
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (error) {
+    return (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <Card title="Last log" value="—" />
+        <Card title="Top team logger (30d)" value="—" />
+        <Card title="Total logs" value="—" />
+        <Card title="Training expiring (≤14d)" value={<Pill ok={true} label="OK" />} />
+        <Card title="Allergen review (≤14d)" value={<Pill ok={true} label="OK" />} />
+      </div>
+    );
+  }
+
+  const rows: TempRow[] = rowsRaw ?? [];
+  const totalLogs = rows.length;
+
+  // Last log
+  const latest = rows[0];
+  const lastLogIso = latest?.date ?? latest?.created_at ?? null;
+  const lastLogDisplay = lastLogIso
+    ? (lastLogIso.length === 10 ? lastLogIso : new Date(lastLogIso).toLocaleString())
+    : "—";
+
+  // 30d stats
+  const now = new Date();
+  const cutoff = new Date(now);
+  cutoff.setDate(now.getDate() - 30);
+
+  let last30Count = 0;
+  const byInitials = new Map<string, number>();
+
+  for (const r of rows) {
+    const dStr = r.date ?? r.created_at;
+    if (!dStr) continue;
+    const d = dStr.length === 10 ? new Date(dStr + "T00:00:00") : new Date(dStr);
+    if (isNaN(d.getTime())) continue;
+    if (d >= cutoff) {
+      last30Count++;
+      const ini = (r.staff_initials ?? "").toUpperCase().trim();
+      if (ini) byInitials.set(ini, (byInitials.get(ini) ?? 0) + 1);
     }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }
 
-  const kpis: DashboardKpis = useMemo(() => {
-    const today = todayISO();
-    const end = new Date(today + "T00:00:00Z").getTime();
-    const start = end - 6 * 24 * 60 * 60 * 1000; // inclusive window (7 days)
-
-    let todayCount = 0;
-    let weekCount = 0;
-    let failsCount = 0;
-    const byInitials: Record<string, number> = {};
-
-    for (const r of rows) {
-      if (!r.date) continue;
-      if (r.date === today) todayCount++;
-
-      const t = new Date(r.date + "T00:00:00Z").getTime();
-      if (t >= start && t <= end) weekCount++;
-
-      if (r.status === "fail") failsCount++;
-
-      const ini = (r.staff_initials ?? "").toUpperCase();
-      if (ini) byInitials[ini] = (byInitials[ini] ?? 0) + 1;
+  let topLogger: string | null = null;
+  let topCount = 0;
+  for (const [ini, count] of byInitials) {
+    if (count > topCount) {
+      topCount = count;
+      topLogger = ini;
     }
+  }
+  const topLoggerDisplay = topLogger ? `${topLogger} (${topCount})` : "—";
 
-    let topLogger: string | null = null;
-    let max = -1;
-    for (const [ini, count] of Object.entries(byInitials)) {
-      if (count > max) {
-        max = count;
-        topLogger = ini;
-      }
-    }
-
-    return { todayCount, weekCount, failsCount, topLogger };
-  }, [rows]);
+  const [trainingExp, allergenExp] = await Promise.all([
+    countTrainingExpiring14d(),
+    countAllergenReviewExpiring14d(),
+  ]);
 
   return (
-    <div className={`grid grid-cols-1 gap-3 sm:grid-cols-4 ${className}`}>
-      <Card>
-        <div className="text-xs text-gray-500">Logs today</div>
-        <div className="text-3xl font-semibold">{kpis.todayCount}</div>
-      </Card>
-      <Card>
-        <div className="text-xs text-gray-500">Logs (7 days)</div>
-        <div className="text-3xl font-semibold">{kpis.weekCount}</div>
-      </Card>
-      <Card>
-        <div className="text-xs text-gray-500">Fails</div>
-        <div className="text-3xl font-semibold">{kpis.failsCount}</div>
-      </Card>
-      <Card>
-        <div className="text-xs text-gray-500">Top logger</div>
-        <div className="text-3xl font-semibold">
-          {kpis.topLogger ? kpis.topLogger : "—"}
-        </div>
-      </Card>
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <Card title="Last log" value={lastLogDisplay} sub={last30Count ? `Last 30d: ${last30Count}` : undefined} />
+      <Card title="Top team logger (30d)" value={topLoggerDisplay} />
+      <Card title="Total logs" value={totalLogs} />
+      <Card title="Training expiring (≤14d)" value={<Pill ok={trainingExp === 0} label={trainingExp === 0 ? "OK" : "Attention"} />} />
+      <Card title="Allergen review (≤14d)" value={<Pill ok={allergenExp === 0} label={allergenExp === 0 ? "OK" : "Attention"} />} />
     </div>
   );
 }

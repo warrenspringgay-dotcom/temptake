@@ -1,77 +1,82 @@
-"use client";
+// src/components/KPICards.tsx
+import { supabaseServer } from "@/lib/supabase-server";
+import { getOrgId } from "@/lib/org-helpers";
 
-import * as React from "react";
-
-export type Kpis = {
-  todayCount: number;
-  weekCount: number;
-  failsCount: number;
-  topLogger?: string | null;
+type Kpis = {
+  total7d: number;
+  avgTemp7d: number | null;
+  lastLogAt: string | null;
 };
 
-type Props = {
-  initial: Partial<Kpis> | undefined;
-  onRangeChange?: (days: number) => void;
-};
+async function loadKpis(): Promise<Kpis> {
+  const supabase = await supabaseServer();
+  const org_id = await getOrgId();
+  if (!org_id) return { total7d: 0, avgTemp7d: null, lastLogAt: null };
 
-export default function KpiCards({ initial, onRangeChange }: Props) {
-  const safe: Kpis = {
-    todayCount: initial?.todayCount ?? 0,
-    weekCount: initial?.weekCount ?? 0,
-    failsCount: initial?.failsCount ?? 0,
-    topLogger: initial?.topLogger ?? "—",
+  const since = new Date(Date.now() - 7 * 864e5).toISOString();
+
+  // total last 7 days
+  const { count: total7d } = await supabase
+    .from("temp_logs")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", org_id)
+    .gte("created_at", since);
+
+  // avg temp last 7 days (for rows that have temp)
+  const { data: avgRows, error: avgErr } = await supabase
+    .from("temp_logs")
+    .select("temp_c")
+    .eq("org_id", org_id)
+    .gte("created_at", since)
+    .not("temp_c", "is", null);
+
+  if (avgErr) throw avgErr;
+  const temps = (avgRows ?? []).map(r => Number(r.temp_c)).filter(n => Number.isFinite(n));
+  const avgTemp7d = temps.length ? +(temps.reduce((a, b) => a + b, 0) / temps.length).toFixed(1) : null;
+
+  // last log at
+  const { data: last } = await supabase
+    .from("temp_logs")
+    .select("created_at")
+    .eq("org_id", org_id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    total7d: total7d ?? 0,
+    avgTemp7d,
+    lastLogAt: last?.created_at ?? null,
   };
-  const [days, setDays] = React.useState(30);
-
-  return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-      <Card label="Logs today" value={safe.todayCount} />
-      <Card label={`Logs (${days}d)`} value={safe.weekCount} />
-      <Card label="Fails" value={safe.failsCount} valueClass={safe.failsCount ? "text-red-600" : "text-emerald-600"} />
-      <Card label="Top logger">
-        <div className="truncate">{safe.topLogger ?? "—"}</div>
-      </Card>
-
-      {/* Range control aligned to right on last card row */}
-      <div className="md:col-span-4 flex justify-end">
-        <select
-          className="rounded-xl border px-3 py-2 text-sm"
-          value={days}
-          onChange={(e) => {
-            const n = Number(e.target.value);
-            setDays(n);
-            onRangeChange?.(n);
-          }}
-          aria-label="KPI range"
-        >
-          <option value={7}>7d</option>
-          <option value={14}>14d</option>
-          <option value={30}>30d</option>
-          <option value={60}>60d</option>
-          <option value={90}>90d</option>
-        </select>
-      </div>
-    </div>
-  );
 }
 
-function Card({
-  label,
-  value,
-  valueClass,
-  children,
-}: {
-  label: string;
-  value?: React.ReactNode;
-  valueClass?: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-2xl border bg-white p-4 shadow-sm">
+export default async function KPICards() {
+  const { total7d, avgTemp7d, lastLogAt } = await loadKpis();
+
+  const Card = ({
+    label,
+    value,
+    sub,
+  }: { label: string; value: string; sub?: string }) => (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
       <div className="text-xs text-gray-500">{label}</div>
-      <div className={`mt-2 text-2xl font-semibold ${valueClass ?? ""}`}>
-        {value ?? children ?? "—"}
-      </div>
+      <div className="mt-1 text-2xl font-semibold tracking-tight">{value}</div>
+      {sub ? <div className="mt-1 text-xs text-gray-400">{sub}</div> : null}
+    </div>
+  );
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
+      <Card label="Logs (last 7 days)" value={String(total7d)} />
+      <Card
+        label="Avg temp (last 7 days)"
+        value={avgTemp7d == null ? "—" : `${avgTemp7d} °C`}
+      />
+      <Card
+        label="Last log"
+        value={lastLogAt ? new Date(lastLogAt).toLocaleString() : "—"}
+        sub={lastLogAt ? "Most recent entry time" : undefined}
+      />
     </div>
   );
 }
