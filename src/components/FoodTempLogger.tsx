@@ -1,38 +1,41 @@
 // src/components/FoodTempLogger.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { cn } from "@/lib/cn";
-import {
-  listTempLogs,
-  upsertTempLog,
-  deleteTempLog,
-  listStaffInitials,
-  type TempLogRow,
-  type TempLogInput,
-} from "@/app/actions/tempLogs";
+import React, { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import { LOCATION_PRESETS, TARGET_PRESETS, TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
+
+/** Canonical row shape used by UI & Dashboard */
+type CanonRow = {
+  id: string;
+  date: string | null;                 // normalized YYYY-MM-DD from db timestamp/text
+  staff_initials: string | null;       // may be null if schema has no initials
+  location: string | null;             // normalized (e.g., "area")
+  item: string | null;                 // normalized (e.g., "note")
+  target_key: string | null;
+  temp_c: number | null;
+  status: "pass" | "fail" | null;
+};
 
 type Props = {
   brandName?: string;
   brandAccent?: string;
   logoUrl?: string;
-  /** If provided, the logger will use these instead of fetching. */
-  initials?: string[];
-  /** Called after a successful add/delete so the Dashboard can refresh KPIs. */
-  onChange?: () => void;
+  initials?: string[];                 // passed from Dashboard (team_members)
+  onChange?: () => void;               // inform parent after add/delete
+  onRows?: (rows: CanonRow[]) => void; // inform parent whenever rows load/change
 };
 
-type FormState = {
-  date: string;
-  staff_initials: string;
-  location: string;
-  item: string;
-  target_key: string; // key into TARGET_PRESETS
-  temp_c: string;     // keep as string for input control
-};
+/* ───────── helpers ───────── */
 
-function inferStatus(temp: number | null, preset: TargetPreset | undefined): "pass" | "fail" | null {
+const PROBE_TABLES = ["food_temp_logs", "temp_logs", "temperature_logs"] as const;
+const LS_TABLE_KEY = "tt_logs_table_name";
+
+function cls(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function inferStatus(temp: number | null, preset?: TargetPreset): "pass" | "fail" | null {
   if (temp == null || !preset) return null;
   const { minC, maxC } = preset;
   if (minC != null && temp < minC) return "fail";
@@ -40,10 +43,150 @@ function inferStatus(temp: number | null, preset: TargetPreset | undefined): "pa
   return "pass";
 }
 
-export default function FoodTempLogger({ initials: initialsProp, onChange }: Props) {
-  const [rows, setRows] = useState<TempLogRow[]>([]);
+async function getUid(): Promise<string> {
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) throw new Error("You are signed out.");
+  return data.user.id;
+}
+
+/** Pick a table that exists and is readable for the current user under RLS. */
+async function detectLogsTableForUser(uid: string): Promise<string | null> {
+  const cached = localStorage.getItem(LS_TABLE_KEY);
+  if (cached) {
+    const { error } = await supabase.from(cached).select("*").eq("created_by", uid).limit(1);
+    if (!error) return cached;
+  }
+  for (const t of PROBE_TABLES) {
+    const { error } = await supabase.from(t).select("*").eq("created_by", uid).limit(1);
+    if (!error) {
+      localStorage.setItem(LS_TABLE_KEY, t);
+      return t;
+    }
+  }
+  return null;
+}
+
+/** Safely read a value from any of the candidate keys on a row */
+function pick<T = any>(row: any, candidates: string[], fallback: T | null = null): T | null {
+  for (const k of candidates) {
+    if (row && Object.prototype.hasOwnProperty.call(row, k) && row[k] != null) return row[k] as T;
+  }
+  return fallback;
+}
+
+/** Convert timestamp/text to YYYY-MM-DD (local) */
+function toISODate(val: any): string | null {
+  if (!val) return null;
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return null;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Normalize a raw DB row (any shape) into our canonical shape */
+function normalizeRow(row: any, tableName: string): CanonRow {
+  const temp = pick<number>(row, ["temp_c", "temperature", "temp"], null);
+
+  let date: string | null = null;
+  let location: string | null = null;
+  let item: string | null = null;
+  let initials: string | null = null;
+
+  if (tableName === "food_temp_logs") {
+    date = toISODate(row.at);           // your schema: "at" timestamptz
+    location = pick<string>(row, ["area"], null);
+    item = pick<string>(row, ["note"], null); // free-text item/desc
+    initials = null;                    // schema has no initials column
+  } else {
+    date = toISODate(pick<any>(row, ["date", "log_date", "created_at"], null));
+    location = pick<string>(row, ["location", "place", "area"], null);
+    item = pick<string>(row, ["item", "item_name", "food_item", "note"], null);
+    initials = pick<string>(row, ["staff_initials", "initials", "staff"], null);
+  }
+
+  const targetKey = pick<string>(row, ["target_key", "target", "target_range_key"], null);
+  let status = pick<"pass" | "fail">(row, ["status"], null);
+  if (!status) {
+    const preset = targetKey ? TARGET_BY_KEY[targetKey] : undefined;
+    status = inferStatus(temp, preset);
+  }
+
+  return {
+    id: String(pick(row, ["id"], "")) || crypto.randomUUID(),
+    date,
+    staff_initials: initials,
+    location,
+    item,
+    target_key: targetKey,
+    temp_c: typeof temp === "number" ? temp : temp != null ? Number(temp) : null,
+    status,
+  };
+}
+
+/** Sort rows by best available date-ish field (asc). */
+function sortRows(rows: CanonRow[]): CanonRow[] {
+  const toKey = (r: CanonRow) => (r.date ? r.date : "");
+  return [...rows].sort((a, b) => toKey(a).localeCompare(toKey(b)));
+}
+
+/** Build an INSERT payload matching the chosen table schema */
+function buildInsertPayload(
+  uid: string,
+  tableName: string,
+  form: {
+    date: string;          // YYYY-MM-DD
+    staff_initials: string;
+    location: string;
+    item: string;
+    target_key: string;
+    temp_c: string;
+  }
+) {
+  const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
+  const preset = TARGET_BY_KEY[form.target_key];
+  const status = inferStatus(tempNum, preset);
+
+  if (tableName === "food_temp_logs") {
+    return {
+      org_id: uid,                         // satisfy NOT NULL org_id
+      created_by: uid,
+      at: form.date,
+      area: form.location || null,
+      note: form.item || null,
+      target_key: form.target_key || null,
+      temp_c: tempNum,
+      status,
+    };
+  }
+
+  return {
+    created_by: uid,
+    date: form.date,
+    staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
+    location: form.location || null,
+    item: form.item || null,
+    target_key: form.target_key || null,
+    temp_c: tempNum,
+    status,
+  };
+}
+
+/* ───────── component ───────── */
+
+export default function FoodTempLogger({ initials: initialsProp, onChange, onRows, brandName, brandAccent, logoUrl }: Props) {
+  const [tableName, setTableName] = useState<string | null>(null);
+  const [rows, setRows] = useState<CanonRow[]>([]);
   const [initials, setInitials] = useState<string[]>(initialsProp ?? []);
-  const [form, setForm] = useState<FormState>({
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
     staff_initials: "",
     location: LOCATION_PRESETS[0] ?? "",
@@ -52,61 +195,98 @@ export default function FoodTempLogger({ initials: initialsProp, onChange }: Pro
     temp_c: "",
   });
 
-  // load table + initials (only fetch initials if parent didn't provide them)
+  const canSave =
+    !!form.date && !!form.location && !!form.item && !!form.target_key && form.temp_c.trim().length > 0;
+
+  // keep initials in sync with parent
   useEffect(() => {
-    (async () => {
-      try {
-        const [r, i] = await Promise.all([
-          listTempLogs(),
-          initialsProp ? Promise.resolve(initialsProp) : listStaffInitials(),
-        ]);
-        setRows(r ?? []);
-        setInitials((i ?? []).filter(Boolean));
-      } catch (e) {
-        console.error("Logger failed to fetch cloud data:", e);
-      }
-    })();
+    if (initialsProp) setInitials(initialsProp);
   }, [initialsProp]);
 
-  const selectedPreset = TARGET_BY_KEY[form.target_key];
+  // initial load ONCE (fixes blinking)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const uid = await getUid();
+        const t = await detectLogsTableForUser(uid);
+        if (!t) {
+          setErr("Could not access your logs table under RLS. Ensure the table exists, has a created_by column, and rows belong to your user.");
+          setRows([]);
+          return;
+        }
+        if (cancelled) return;
+        setTableName(t);
 
-  const canSave =
-    !!form.date &&
-    !!form.location &&
-    !!form.item &&
-    !!form.target_key &&
-    form.temp_c.trim().length > 0;
+        const { data, error } = await supabase.from(t).select("*").eq("created_by", uid);
+        if (error) throw error;
+
+        const loaded = sortRows((data ?? []).map((r) => normalizeRow(r, t)));
+        setRows(loaded);
+      } catch (e: any) {
+        console.error("Logger failed to fetch:", e?.raw || e);
+        setErr(e?.message || "Failed to fetch logs.");
+        setRows([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []); // ← IMPORTANT: empty deps; runs once
+
+  // Notify parent only when rows change (stable; no loop)
+  useEffect(() => {
+    onRows?.(rows);
+  }, [rows, onRows]);
+
+  async function refresh() {
+    if (!tableName) return;
+    const uid = await getUid();
+    const { data, error } = await supabase.from(tableName).select("*").eq("created_by", uid);
+    if (error) {
+      console.error("Refresh failed:", error);
+      return;
+    }
+    const loaded = sortRows((data ?? []).map((r) => normalizeRow(r, tableName)));
+    setRows(loaded);
+  }
 
   async function handleAddQuick() {
-    const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
-    const status = inferStatus(tempNum, selectedPreset);
+    if (!tableName) {
+      alert("Logs table not available.");
+      return;
+    }
+    const uid = await getUid();
+    const payload = buildInsertPayload(uid, tableName, form);
 
-    const input: TempLogInput = {
-      date: form.date,
-      staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
-      location: form.location || null,
-      item: form.item || null,
-      target_key: form.target_key || null,
-      temp_c: tempNum,
-      status,
-    };
-
-    await upsertTempLog(input);
-    const next = await listTempLogs();
-    setRows(next ?? []);
-    onChange?.(); // let Dashboard refresh KPIs
-
-    // keep most selections; clear item/temp for speed
-    setForm((f) => ({ ...f, item: "", temp_c: "" }));
+    const { error } = await supabase.from(tableName).insert(payload);
+    if (error) {
+      console.error("Insert failed:", error);
+      alert(`Save failed: ${error.message ?? "unknown error"}.`);
+      return;
+    }
+    await refresh();
+    onChange?.();
+    setForm((f) => ({ ...f, item: "", temp_c: "" })); // clear for next quick entry
   }
 
   async function remove(id: string) {
-    await deleteTempLog(id);
-    setRows((prev) => prev.filter((r) => r.id !== id));
+    if (!tableName) return;
+    const uid = await getUid();
+    const { error } = await supabase.from(tableName).delete().eq("id", id).eq("created_by", uid);
+    if (error) {
+      console.error("Delete failed:", error);
+      alert(`Delete failed: ${error.message ?? "unknown error"}`);
+      return;
+    }
+    await refresh();
     onChange?.();
   }
 
-  // Enter on temperature should submit
   function onTempKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && canSave) {
       e.preventDefault();
@@ -116,10 +296,22 @@ export default function FoodTempLogger({ initials: initialsProp, onChange }: Pro
 
   return (
     <div className="space-y-6">
+      {brandName || logoUrl ? (
+        <div className="flex items-center gap-2">
+          {logoUrl ? <img src={logoUrl} alt="" className="h-6 w-6" /> : null}
+          <span className="font-medium" style={brandAccent ? { color: brandAccent } : undefined}>
+            {brandName}
+          </span>
+        </div>
+      ) : null}
+
+      {err ? (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{err}</div>
+      ) : null}
+
       {/* Quick entry */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 items-end">
-          {/* Date */}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Date</label>
             <input
@@ -130,14 +322,13 @@ export default function FoodTempLogger({ initials: initialsProp, onChange }: Pro
             />
           </div>
 
-          {/* Staff (free text with suggestions) */}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Initials</label>
             <input
               list="staff-initials"
               value={form.staff_initials}
               onChange={(e) => setForm((f) => ({ ...f, staff_initials: e.target.value }))}
-              placeholder="e.g., AA"
+              placeholder="E.g., AA"
               className="w-full rounded-xl border px-3 py-2 uppercase"
             />
             <datalist id="staff-initials">
@@ -147,7 +338,6 @@ export default function FoodTempLogger({ initials: initialsProp, onChange }: Pro
             </datalist>
           </div>
 
-          {/* Location (free text with suggestions) */}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Location</label>
             <input
@@ -164,7 +354,6 @@ export default function FoodTempLogger({ initials: initialsProp, onChange }: Pro
             </datalist>
           </div>
 
-          {/* Item */}
           <div className="lg:col-span-2">
             <label className="block text-xs text-gray-500 mb-1">Item</label>
             <input
@@ -175,7 +364,6 @@ export default function FoodTempLogger({ initials: initialsProp, onChange }: Pro
             />
           </div>
 
-          {/* Target */}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Target</label>
             <select
@@ -186,16 +374,12 @@ export default function FoodTempLogger({ initials: initialsProp, onChange }: Pro
               {TARGET_PRESETS.map((p) => (
                 <option key={p.key} value={p.key}>
                   {p.label}
-                  {p.minC != null || p.maxC != null
-                    ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
-                    : ""}
+                  {p.minC != null || p.maxC != null ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)` : ""}
                 </option>
               ))}
             </select>
-            {/* NOTE: range helper text intentionally removed per request */}
           </div>
 
-          {/* Temperature */}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Temp (°C)</label>
             <input
@@ -212,7 +396,7 @@ export default function FoodTempLogger({ initials: initialsProp, onChange }: Pro
             <button
               onClick={handleAddQuick}
               disabled={!canSave}
-              className={cn(
+              className={cls(
                 "rounded-2xl px-4 py-2 font-medium text-white",
                 canSave ? "bg-black hover:bg-gray-900" : "bg-gray-400"
               )}
@@ -240,7 +424,13 @@ export default function FoodTempLogger({ initials: initialsProp, onChange }: Pro
               </tr>
             </thead>
             <tbody>
-              {rows.length ? (
+              {loading ? (
+                <tr>
+                  <td colSpan={8} className="py-6 text-center text-gray-500">
+                    Loading…
+                  </td>
+                </tr>
+              ) : rows.length ? (
                 rows.map((r) => {
                   const p = r.target_key ? TARGET_BY_KEY[r.target_key] : undefined;
                   const st = r.status ?? inferStatus(r.temp_c, p);
@@ -253,9 +443,7 @@ export default function FoodTempLogger({ initials: initialsProp, onChange }: Pro
                       <td className="py-2 pr-3">
                         {p
                           ? `${p.label}${
-                              p.minC != null || p.maxC != null
-                                ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
-                                : ""
+                              p.minC != null || p.maxC != null ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)` : ""
                             }`
                           : "—"}
                       </td>
@@ -263,11 +451,9 @@ export default function FoodTempLogger({ initials: initialsProp, onChange }: Pro
                       <td className="py-2 pr-3">
                         {st ? (
                           <span
-                            className={cn(
+                            className={cls(
                               "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                              st === "pass"
-                                ? "bg-emerald-100 text-emerald-800"
-                                : "bg-red-100 text-red-800"
+                              st === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
                             )}
                           >
                             {st}

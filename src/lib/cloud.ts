@@ -9,11 +9,7 @@ export async function currentUserId(): Promise<string | null> {
   return data.user?.id ?? null;
 }
 
-/**
- * TRAINING KPIs (cloud)
- * Returns counts of expired, due soon (≤60d), and total training rows
- * for the current user (RLS will scope rows).
- */
+/** TRAINING KPIs (cloud) */
 export async function fetchTrainingStats(): Promise<{
   expired: number;
   dueSoon: number;
@@ -33,7 +29,7 @@ export async function fetchTrainingStats(): Promise<{
 
   for (const row of data ?? []) {
     total++;
-    const exp = String(row.expires_on);
+    const exp = String((row as any).expires_on);
     if (exp < todayISO) {
       expired++;
     } else {
@@ -46,10 +42,7 @@ export async function fetchTrainingStats(): Promise<{
   return { expired, dueSoon, total };
 }
 
-/**
- * ALLERGEN REVIEW (cloud)
- * Get the single review row for this account (RLS will return 0–1 rows).
- */
+/** ALLERGEN REVIEW (cloud) — tolerant: returns null if table/policy missing */
 export async function getAllergenReview(): Promise<{
   id: string;
   created_by: string;
@@ -58,20 +51,19 @@ export async function getAllergenReview(): Promise<{
   interval_days: number;
   updated_at: string;
 } | null> {
-  const { data, error } = await supabase
-    .from("allergen_review")
-    .select("*")
-    .maybeSingle();
-
-  if (error && error.code !== "PGRST116") throw error; // ignore "no rows"
-  return data ?? null;
+  try {
+    const { data, error } = await supabase.from("allergen_review").select("*").maybeSingle();
+    if (error && error.code !== "PGRST116") throw error; // ignore "no rows"
+    return (data as any) ?? null;
+  } catch {
+    // If table doesn’t exist / RLS denies, just return null so the dashboard stays up.
+    return null;
+  }
 }
 
-/**
- * Update/create the allergen review row (used in AllergenManager).
- */
+/** Update/create the allergen review row */
 export async function setAllergenReview(opts: {
-  last: string;            // YYYY-MM-DD
+  last: string; // YYYY-MM-DD
   reviewer: string;
   interval_days: number;
 }) {
@@ -99,20 +91,13 @@ export async function setAllergenReview(opts: {
   return data;
 }
 
-/**
- * TEAM INITIALS (cloud)
- * Returns a unique, uppercased, sorted list of initials from team_members.
- */
+/** TEAM INITIALS (cloud) */
 export async function fetchCloudInitials(): Promise<string[]> {
-  const { data, error } = await supabase
-    .from("team_members")
-    .select("initials");
-
+  const { data, error } = await supabase.from("team_members").select("initials");
   if (error) throw error;
-
   const set = new Set<string>();
   for (const r of data ?? []) {
-    const v = (r as any).initials ? String((r as any).initials).toUpperCase() : "";
+    const v = r && (r as any).initials ? String((r as any).initials).toUpperCase() : "";
     if (v) set.add(v);
   }
   return Array.from(set).sort();

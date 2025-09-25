@@ -3,12 +3,9 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import Link from "next/link";
-import NavTabs from "@/components/NavTabs";
 import FoodTempLogger from "@/components/FoodTempLogger";
-import { supabase } from "@/lib/supabase";
 import { fetchTrainingStats, getAllergenReview, fetchCloudInitials } from "@/lib/cloud";
 
-/** Temp log row shape (client-side) */
 type TempLogRow = {
   id: string;
   date: string | null;
@@ -24,19 +21,8 @@ type ReviewMeta = { interval_days: number; last: string | null; reviewer?: strin
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-/** Client fetch for temp logs (avoid importing server actions into a client file) */
-async function fetchTempLogsClient(): Promise<TempLogRow[]> {
-  const { data, error } = await supabase
-    .from("temp_logs")
-    .select("id,date,staff_initials,location,item,target_key,temp_c,status")
-    .order("date", { ascending: true });
-
-  if (error) throw error;
-  return (data ?? []) as TempLogRow[];
-}
-
 export default function Page() {
-  // Temp logs (cloud)
+  // Logs come from the logger component
   const [rows, setRows] = useState<TempLogRow[]>([]);
   // Staff initials from cloud team_members
   const [initials, setInitials] = useState<string[]>([]);
@@ -53,18 +39,13 @@ export default function Page() {
     setLoading(true);
     setCloudError(null);
 
-    // Fetch independently so one failure doesn’t kill all
     const errors: string[] = [];
 
-    const [logsRes, initialsRes, trainRes, reviewRes] = await Promise.allSettled([
-      fetchTempLogsClient(),
+    const [initialsRes, trainRes, reviewRes] = await Promise.allSettled([
       fetchCloudInitials(),
       fetchTrainingStats(),
       getAllergenReview(),
     ]);
-
-    if (logsRes.status === "fulfilled") setRows(logsRes.value ?? []);
-    else errors.push("logs");
 
     if (initialsRes.status === "fulfilled")
       setInitials(Array.from(new Set((initialsRes.value ?? []).map((x) => (x || "").toUpperCase()))).sort());
@@ -74,6 +55,7 @@ export default function Page() {
     else errors.push("training");
 
     if (reviewRes.status === "fulfilled") setReview((reviewRes.value as any) ?? null);
+    // getAllergenReview() is tolerant, but if it still failed:
     else errors.push("allergen review");
 
     if (errors.length) setCloudError(`Could not load ${errors.join(", ")} from the cloud. Check Supabase policies and keys.`);
@@ -125,7 +107,6 @@ export default function Page() {
 
   return (
     <div className="min-h-screen w-full bg-gray-50">
-      <NavTabs />
       <main className="mx-auto max-w-6xl p-4 space-y-6">
         {cloudError && (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
@@ -182,6 +163,7 @@ export default function Page() {
           logoUrl="/temptake-192.png"
           initials={initials}
           onChange={refreshFromCloud}
+          onRows={(rows) => setRows(rows)}  // ✅ Dashboard listens to logger data
         />
       </main>
     </div>
