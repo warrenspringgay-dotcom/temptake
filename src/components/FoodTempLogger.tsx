@@ -5,28 +5,25 @@ import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { LOCATION_PRESETS, TARGET_PRESETS, TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
 
-/** Canonical row shape used by UI & Dashboard */
 type CanonRow = {
   id: string;
-  date: string | null;                 // normalized YYYY-MM-DD from db timestamp/text
-  staff_initials: string | null;       // may be null if schema has no initials
-  location: string | null;             // normalized (e.g., "area")
-  item: string | null;                 // normalized (e.g., "note")
+  date: string | null;
+  staff_initials: string | null;
+  location: string | null;
+  item: string | null;
   target_key: string | null;
   temp_c: number | null;
   status: "pass" | "fail" | null;
 };
 
 type Props = {
+  initials?: string[];
+  onChange?: () => void;
+  onRows?: (rows: CanonRow[]) => void;
   brandName?: string;
   brandAccent?: string;
   logoUrl?: string;
-  initials?: string[];                 // passed from Dashboard (team_members)
-  onChange?: () => void;               // inform parent after add/delete
-  onRows?: (rows: CanonRow[]) => void; // inform parent whenever rows load/change
 };
-
-/* ───────── helpers ───────── */
 
 const PROBE_TABLES = ["food_temp_logs", "temp_logs", "temperature_logs"] as const;
 const LS_TABLE_KEY = "tt_logs_table_name";
@@ -34,7 +31,6 @@ const LS_TABLE_KEY = "tt_logs_table_name";
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
-
 function inferStatus(temp: number | null, preset?: TargetPreset): "pass" | "fail" | null {
   if (temp == null || !preset) return null;
   const { minC, maxC } = preset;
@@ -42,14 +38,11 @@ function inferStatus(temp: number | null, preset?: TargetPreset): "pass" | "fail
   if (maxC != null && temp > maxC) return "fail";
   return "pass";
 }
-
 async function getUid(): Promise<string> {
   const { data } = await supabase.auth.getUser();
   if (!data.user) throw new Error("You are signed out.");
   return data.user.id;
 }
-
-/** Pick a table that exists and is readable for the current user under RLS. */
 async function detectLogsTableForUser(uid: string): Promise<string | null> {
   const cached = localStorage.getItem(LS_TABLE_KEY);
   if (cached) {
@@ -65,16 +58,12 @@ async function detectLogsTableForUser(uid: string): Promise<string | null> {
   }
   return null;
 }
-
-/** Safely read a value from any of the candidate keys on a row */
 function pick<T = any>(row: any, candidates: string[], fallback: T | null = null): T | null {
   for (const k of candidates) {
     if (row && Object.prototype.hasOwnProperty.call(row, k) && row[k] != null) return row[k] as T;
   }
   return fallback;
 }
-
-/** Convert timestamp/text to YYYY-MM-DD (local) */
 function toISODate(val: any): string | null {
   if (!val) return null;
   try {
@@ -88,8 +77,6 @@ function toISODate(val: any): string | null {
     return null;
   }
 }
-
-/** Normalize a raw DB row (any shape) into our canonical shape */
 function normalizeRow(row: any, tableName: string): CanonRow {
   const temp = pick<number>(row, ["temp_c", "temperature", "temp"], null);
 
@@ -99,10 +86,10 @@ function normalizeRow(row: any, tableName: string): CanonRow {
   let initials: string | null = null;
 
   if (tableName === "food_temp_logs") {
-    date = toISODate(row.at);           // your schema: "at" timestamptz
+    date = toISODate(row.at);
     location = pick<string>(row, ["area"], null);
-    item = pick<string>(row, ["note"], null); // free-text item/desc
-    initials = null;                    // schema has no initials column
+    item = pick<string>(row, ["note"], null);
+    initials = pick<string>(row, ["staff_initials", "initials"], null); // ← now supported
   } else {
     date = toISODate(pick<any>(row, ["date", "log_date", "created_at"], null));
     location = pick<string>(row, ["location", "place", "area"], null);
@@ -128,25 +115,14 @@ function normalizeRow(row: any, tableName: string): CanonRow {
     status,
   };
 }
-
-/** Sort rows by best available date-ish field (asc). */
 function sortRows(rows: CanonRow[]): CanonRow[] {
   const toKey = (r: CanonRow) => (r.date ? r.date : "");
   return [...rows].sort((a, b) => toKey(a).localeCompare(toKey(b)));
 }
-
-/** Build an INSERT payload matching the chosen table schema */
 function buildInsertPayload(
   uid: string,
   tableName: string,
-  form: {
-    date: string;          // YYYY-MM-DD
-    staff_initials: string;
-    location: string;
-    item: string;
-    target_key: string;
-    temp_c: string;
-  }
+  form: { date: string; staff_initials: string; location: string; item: string; target_key: string; temp_c: string }
 ) {
   const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
   const preset = TARGET_BY_KEY[form.target_key];
@@ -154,11 +130,12 @@ function buildInsertPayload(
 
   if (tableName === "food_temp_logs") {
     return {
-      org_id: uid,                         // satisfy NOT NULL org_id
+      org_id: uid, // using user id as org id for now
       created_by: uid,
       at: form.date,
       area: form.location || null,
       note: form.item || null,
+      staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null, // ← write initials
       target_key: form.target_key || null,
       temp_c: tempNum,
       status,
@@ -176,8 +153,6 @@ function buildInsertPayload(
     status,
   };
 }
-
-/* ───────── component ───────── */
 
 export default function FoodTempLogger({ initials: initialsProp, onChange, onRows, brandName, brandAccent, logoUrl }: Props) {
   const [tableName, setTableName] = useState<string | null>(null);
@@ -198,12 +173,11 @@ export default function FoodTempLogger({ initials: initialsProp, onChange, onRow
   const canSave =
     !!form.date && !!form.location && !!form.item && !!form.target_key && form.temp_c.trim().length > 0;
 
-  // keep initials in sync with parent
   useEffect(() => {
     if (initialsProp) setInitials(initialsProp);
   }, [initialsProp]);
 
-  // initial load ONCE (fixes blinking)
+  // initial load once
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -236,9 +210,9 @@ export default function FoodTempLogger({ initials: initialsProp, onChange, onRow
     return () => {
       cancelled = true;
     };
-  }, []); // ← IMPORTANT: empty deps; runs once
+  }, []);
 
-  // Notify parent only when rows change (stable; no loop)
+  // only notify parent when rows change
   useEffect(() => {
     onRows?.(rows);
   }, [rows, onRows]);
@@ -442,32 +416,26 @@ export default function FoodTempLogger({ initials: initialsProp, onChange, onRow
                       <td className="py-2 pr-3">{r.item ?? "—"}</td>
                       <td className="py-2 pr-3">
                         {p
-                          ? `${p.label}${
-                              p.minC != null || p.maxC != null ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)` : ""
-                            }`
+                          ? `${p.label}${p.minC != null || p.maxC != null ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)` : ""}`
                           : "—"}
                       </td>
                       <td className="py-2 pr-3">{r.temp_c ?? "—"}</td>
                       <td className="py-2 pr-3">
                         {st ? (
-                          <span
-                            className={cls(
-                              "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                              st === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
-                            )}
-                          >
+                          <span className={cls(
+                            "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
+                            st === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
+                          )}>
                             {st}
                           </span>
-                        ) : (
-                          "—"
-                        )}
+                        ) : "—"}
                       </td>
                       <td className="py-2 pr-3">
                         <button
                           onClick={() => remove(r.id)}
                           className="rounded-xl border px-2 py-1 hover:bg-gray-50"
-                          aria-label="Delete"
                           title="Delete"
+                          aria-label="Delete"
                         >
                           🗑️
                         </button>
