@@ -3,7 +3,12 @@
 
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { LOCATION_PRESETS, TARGET_PRESETS, TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
+import {
+  LOCATION_PRESETS,
+  TARGET_PRESETS,
+  TARGET_BY_KEY,
+  type TargetPreset,
+} from "@/lib/temp-constants";
 
 type CanonRow = {
   id: string;
@@ -31,18 +36,24 @@ const LS_TABLE_KEY = "tt_logs_table_name";
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
-function inferStatus(temp: number | null, preset?: TargetPreset): "pass" | "fail" | null {
+
+function inferStatus(
+  temp: number | null,
+  preset?: TargetPreset
+): "pass" | "fail" | null {
   if (temp == null || !preset) return null;
   const { minC, maxC } = preset;
   if (minC != null && temp < minC) return "fail";
   if (maxC != null && temp > maxC) return "fail";
   return "pass";
 }
+
 async function getUid(): Promise<string> {
   const { data } = await supabase.auth.getUser();
   if (!data.user) throw new Error("You are signed out.");
   return data.user.id;
 }
+
 async function detectLogsTableForUser(uid: string): Promise<string | null> {
   const cached = localStorage.getItem(LS_TABLE_KEY);
   if (cached) {
@@ -58,12 +69,16 @@ async function detectLogsTableForUser(uid: string): Promise<string | null> {
   }
   return null;
 }
+
 function pick<T = any>(row: any, candidates: string[], fallback: T | null = null): T | null {
   for (const k of candidates) {
-    if (row && Object.prototype.hasOwnProperty.call(row, k) && row[k] != null) return row[k] as T;
+    if (row && Object.prototype.hasOwnProperty.call(row, k) && row[k] != null) {
+      return row[k] as T;
+    }
   }
   return fallback;
 }
+
 function toISODate(val: any): string | null {
   if (!val) return null;
   try {
@@ -77,6 +92,12 @@ function toISODate(val: any): string | null {
     return null;
   }
 }
+
+function getPreset(key: string | null | undefined): TargetPreset | undefined {
+  if (!key) return undefined;
+  return (TARGET_BY_KEY as Record<string, TargetPreset>)[key];
+}
+
 function normalizeRow(row: any, tableName: string): CanonRow {
   const temp = pick<number>(row, ["temp_c", "temperature", "temp"], null);
 
@@ -89,7 +110,7 @@ function normalizeRow(row: any, tableName: string): CanonRow {
     date = toISODate(row.at);
     location = pick<string>(row, ["area"], null);
     item = pick<string>(row, ["note"], null);
-    initials = pick<string>(row, ["staff_initials", "initials"], null); // ← now supported
+    initials = pick<string>(row, ["staff_initials", "initials"], null);
   } else {
     date = toISODate(pick<any>(row, ["date", "log_date", "created_at"], null));
     location = pick<string>(row, ["location", "place", "area"], null);
@@ -100,7 +121,7 @@ function normalizeRow(row: any, tableName: string): CanonRow {
   const targetKey = pick<string>(row, ["target_key", "target", "target_range_key"], null);
   let status = pick<"pass" | "fail">(row, ["status"], null);
   if (!status) {
-    const preset = targetKey ? TARGET_BY_KEY[targetKey] : undefined;
+    const preset = getPreset(targetKey);
     status = inferStatus(temp, preset);
   }
 
@@ -115,17 +136,24 @@ function normalizeRow(row: any, tableName: string): CanonRow {
     status,
   };
 }
+
 function sortRows(rows: CanonRow[]): CanonRow[] {
   const toKey = (r: CanonRow) => (r.date ? r.date : "");
   return [...rows].sort((a, b) => toKey(a).localeCompare(toKey(b)));
 }
-function buildInsertPayload(
-  uid: string,
-  tableName: string,
-  form: { date: string; staff_initials: string; location: string; item: string; target_key: string; temp_c: string }
-) {
+
+type FormState = {
+  date: string;
+  staff_initials: string;
+  location: string;
+  item: string;
+  target_key: string;
+  temp_c: string;
+};
+
+function buildInsertPayload(uid: string, tableName: string, form: FormState) {
   const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
-  const preset = TARGET_BY_KEY[form.target_key];
+  const preset = getPreset(form.target_key);
   const status = inferStatus(tempNum, preset);
 
   if (tableName === "food_temp_logs") {
@@ -135,7 +163,7 @@ function buildInsertPayload(
       at: form.date,
       area: form.location || null,
       note: form.item || null,
-      staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null, // ← write initials
+      staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
       target_key: form.target_key || null,
       temp_c: tempNum,
       status,
@@ -154,19 +182,26 @@ function buildInsertPayload(
   };
 }
 
-export default function FoodTempLogger({ initials: initialsProp, onChange, onRows, brandName, brandAccent, logoUrl }: Props) {
+export default function FoodTempLogger({
+  initials: initialsProp,
+  onChange,
+  onRows,
+  brandName,
+  brandAccent,
+  logoUrl,
+}: Props) {
   const [tableName, setTableName] = useState<string | null>(null);
   const [rows, setRows] = useState<CanonRow[]>([]);
   const [initials, setInitials] = useState<string[]>(initialsProp ?? []);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<FormState>({
     date: new Date().toISOString().slice(0, 10),
     staff_initials: "",
-    location: LOCATION_PRESETS[0] ?? "",
+    location: "",          // widened to string
     item: "",
-    target_key: TARGET_PRESETS[0]?.key ?? "ambient",
+    target_key: "ambient", // widened to string
     temp_c: "",
   });
 
@@ -176,6 +211,16 @@ export default function FoodTempLogger({ initials: initialsProp, onChange, onRow
   useEffect(() => {
     if (initialsProp) setInitials(initialsProp);
   }, [initialsProp]);
+
+  // Prefill location/target from presets without narrowing literal types
+  useEffect(() => {
+    setForm((f) => ({
+      ...f,
+      location: f.location || String(LOCATION_PRESETS[0] ?? ""),
+      target_key: f.target_key || String(TARGET_PRESETS[0]?.key ?? "ambient"),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // initial load once
   useEffect(() => {
@@ -187,7 +232,9 @@ export default function FoodTempLogger({ initials: initialsProp, onChange, onRow
         const uid = await getUid();
         const t = await detectLogsTableForUser(uid);
         if (!t) {
-          setErr("Could not access your logs table under RLS. Ensure the table exists, has a created_by column, and rows belong to your user.");
+          setErr(
+            "Could not access your logs table under RLS. Ensure the table exists, has a created_by column, and rows belong to your user."
+          );
           setRows([]);
           return;
         }
@@ -212,7 +259,7 @@ export default function FoodTempLogger({ initials: initialsProp, onChange, onRow
     };
   }, []);
 
-  // only notify parent when rows change
+  // notify parent on rows change
   useEffect(() => {
     onRows?.(rows);
   }, [rows, onRows]);
@@ -245,7 +292,7 @@ export default function FoodTempLogger({ initials: initialsProp, onChange, onRow
     }
     await refresh();
     onChange?.();
-    setForm((f) => ({ ...f, item: "", temp_c: "" })); // clear for next quick entry
+    setForm((f) => ({ ...f, item: "", temp_c: "" }));
   }
 
   async function remove(id: string) {
@@ -280,7 +327,9 @@ export default function FoodTempLogger({ initials: initialsProp, onChange, onRow
       ) : null}
 
       {err ? (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{err}</div>
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          {err}
+        </div>
       ) : null}
 
       {/* Quick entry */}
@@ -406,7 +455,7 @@ export default function FoodTempLogger({ initials: initialsProp, onChange, onRow
                 </tr>
               ) : rows.length ? (
                 rows.map((r) => {
-                  const p = r.target_key ? TARGET_BY_KEY[r.target_key] : undefined;
+                  const p = getPreset(r.target_key);
                   const st = r.status ?? inferStatus(r.temp_c, p);
                   return (
                     <tr key={r.id} className="border-t">
@@ -416,19 +465,29 @@ export default function FoodTempLogger({ initials: initialsProp, onChange, onRow
                       <td className="py-2 pr-3">{r.item ?? "—"}</td>
                       <td className="py-2 pr-3">
                         {p
-                          ? `${p.label}${p.minC != null || p.maxC != null ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)` : ""}`
+                          ? `${p.label}${
+                              p.minC != null || p.maxC != null
+                                ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
+                                : ""
+                            }`
                           : "—"}
                       </td>
                       <td className="py-2 pr-3">{r.temp_c ?? "—"}</td>
                       <td className="py-2 pr-3">
                         {st ? (
-                          <span className={cls(
-                            "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                            st === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
-                          )}>
+                          <span
+                            className={cls(
+                              "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
+                              st === "pass"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-red-100 text-red-800"
+                            )}
+                          >
                             {st}
                           </span>
-                        ) : "—"}
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td className="py-2 pr-3">
                         <button

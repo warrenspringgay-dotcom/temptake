@@ -1,18 +1,28 @@
-// Server wrapper: fetches rows + team initials, renders client logger
+// src/components/FoodTempLoggerServer.tsx
+// Server component that preloads staff initials, then renders the client logger.
+
 import FoodTempLogger from "@/components/FoodTempLogger";
-import { listTempLogs } from "@/app/actions/tempLogs"; // fetch-based (not server actions)
-import { getTeamInitials } from "@/app/actions/team";
+import { createServerClient } from "@/lib/supabaseServer";
 
 export default async function FoodTempLoggerServer() {
-  const [initialRows, initials] = await Promise.all([
-    listTempLogs(),
-    getTeamInitials(),
-  ]);
+  const supabase = createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  return (
-    <FoodTempLogger
-      initialRows={initialRows}
-      initials={initials}
-    />
-  );
+  let initials: string[] = [];
+
+  if (user) {
+    const { data } = await supabase
+      .from("team_members")
+      .select("initials")
+      .eq("created_by", user.id);
+
+    initials = (data ?? [])
+      .map((r: any) => (r?.initials as string) || "")
+      .filter(Boolean)
+      .map((s) => s.toUpperCase());
+  }
+
+  return <FoodTempLogger initials={initials} />;
 }
