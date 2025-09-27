@@ -26,9 +26,10 @@ export default async function CustomReportPage() {
               key={r.id}
               className="rounded-lg border border-gray-200 p-3"
             >
-              <div className="text-xs text-gray-500">{new Date(r.at).toLocaleString()}</div>
-              <div className="font-medium">{r.title}</div>
-              {r.details && <div className="text-sm text-gray-600">{r.details}</div>}
+              <div className="text-xs text-gray-500">
+  {r.at ? new Date(r.at).toLocaleString() : "—"}
+</div>
+
             </li>
           ))}
         </ul>

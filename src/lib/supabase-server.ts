@@ -1,28 +1,14 @@
 // src/lib/supabase-server.ts
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+// Thin wrapper so files importing "@/lib/supabase-server" keep working.
+// Re-uses the helper from "@/lib/supabaseServer".
 
-export async function supabaseServer() {
-  const cookieStore = await cookies(); // Next 15: dynamic API must be awaited
+import { createServerClient } from "@/lib/supabaseServer";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options: any) {
-          // server cookie jar is mutable in RSC
-          cookieStore.set({ name, value, ...options });
-        },
-        remove(name: string, options: any) {
-          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
-        },
-      },
-    }
-  );
-
-  return supabase;
+/** Preferred: call this to get a server-side Supabase client */
+export function supabaseServer(): SupabaseClient {
+  return createServerClient();
 }
+
+// Also re-export in case some files import this name instead.
+export { createServerClient } from "@/lib/supabaseServer";
