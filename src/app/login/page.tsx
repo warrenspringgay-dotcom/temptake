@@ -1,43 +1,111 @@
 // src/app/login/page.tsx
-// Server Component (no "use client")
+"use client";
 
-import Link from "next/link";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
-type LoginPageProps = {
-  // Next.js 15 may pass this as a Promise during streaming
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
-};
+export default function LoginPage() {
+  const router = useRouter();
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-export const metadata = {
-  title: "Login – TempTake",
-};
-
-export default async function Page(props: LoginPageProps) {
-  const sp = props.searchParams ? await props.searchParams : {};
-  const message = (Array.isArray(sp?.message) ? sp.message[0] : sp?.message) ?? null;
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    try {
+      if (mode === "signin") {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+      }
+      router.refresh(); // re-render server components (nav + home)
+      router.push("/"); // go to dashboard
+    } catch (e: any) {
+      setErr(e?.message ?? "Authentication failed");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <main className="mx-auto max-w-md p-6">
-      <h1 className="mb-4 text-2xl font-semibold">Sign in</h1>
+    <main className="p-4">
+      <div className="mx-auto max-w-md rounded-2xl border bg-white p-6 shadow-sm">
+        <h1 className="text-xl font-semibold">
+          {mode === "signin" ? "Log in to TempTake" : "Create an account"}
+        </h1>
 
-      {message ? (
-        <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          {message}
-        </div>
-      ) : null}
+        {err ? (
+          <div className="mt-3 rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-800">
+            {err}
+          </div>
+        ) : null}
 
-      {/* Replace this with your real auth UI if you have one */}
-      <div className="rounded-xl border p-4">
-        <p className="text-sm text-gray-600">
-          This is a placeholder login page. If you use Supabase Auth UI or a custom form, render it here.
-        </p>
-        <div className="mt-4 flex gap-3">
-          <Link
-            href="/"
-            className="rounded-lg bg-black px-4 py-2 text-white hover:bg-gray-900"
+        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Email</label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-xl border px-3 py-2"
+              placeholder="you@company.com"
+              autoComplete="email"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Password</label>
+            <input
+              type="password"
+              required
+              minLength={6}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded-xl border px-3 py-2"
+              placeholder="••••••••"
+              autoComplete={mode === "signin" ? "current-password" : "new-password"}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={busy}
+            className="w-full rounded-xl bg-black px-4 py-2 font-medium text-white hover:bg-gray-900 disabled:opacity-60"
           >
-            Back to Dashboard
-          </Link>
+            {busy ? "Working…" : mode === "signin" ? "Log in" : "Sign up"}
+          </button>
+        </form>
+
+        <div className="mt-4 text-center text-sm">
+          {mode === "signin" ? (
+            <>
+              New here?{" "}
+              <button
+                className="text-blue-600 hover:underline"
+                onClick={() => setMode("signup")}
+              >
+                Create an account
+              </button>
+            </>
+          ) : (
+            <>
+              Already have an account?{" "}
+              <button
+                className="text-blue-600 hover:underline"
+                onClick={() => setMode("signin")}
+              >
+                Log in
+              </button>
+            </>
+          )}
         </div>
       </div>
     </main>

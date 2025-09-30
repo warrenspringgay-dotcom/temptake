@@ -3,10 +3,9 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
-// import { signOutAction } from "@/app/actions/auth"; // <- optional: keep if you want server action signout
 
 type NavTabsProps = {
   brandName?: string;
@@ -28,6 +27,8 @@ export default function NavTabs({
   logoUrl = "/icon.png",
 }: NavTabsProps) {
   const pathname = usePathname();
+  const router = useRouter();
+
   const [open, setOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -37,6 +38,7 @@ export default function NavTabs({
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
 
+  // close user menu when clicking outside
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       const target = e.target as Node;
@@ -46,29 +48,45 @@ export default function NavTabs({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
+  // close menus on route change
   useEffect(() => {
     setOpen(false);
     setUserOpen(false);
   }, [pathname]);
 
+  // keep session email in state
   useEffect(() => {
     let mounted = true;
+
     supabase.auth.getUser().then(({ data }) => {
       if (!mounted) return;
       setUserEmail(data.user?.email ?? null);
     });
+
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserEmail(session?.user?.email ?? null);
+      router.refresh(); // keep server-rendered bits (like nav) in sync
     });
+
     return () => {
       mounted = false;
-      sub.subscription.unsubscribe();
+      // guard for older client types
+      // @ts-expect-error older types
+      sub?.subscription?.unsubscribe?.();
+      // @ts-expect-error newer types
+      sub?.unsubscribe?.();
     };
-  }, []);
+  }, [router]);
 
   async function signOutClient() {
-    await supabase.auth.signOut();
-    // If you prefer server action sign-out, call <form action={signOutAction}> instead of this client method.
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      setUserOpen(false);
+      setOpen(false);
+      router.refresh();
+      router.push("/login");
+    }
   }
 
   return (
@@ -100,9 +118,9 @@ export default function NavTabs({
           })}
         </div>
 
-        {/* Desktop user menu (hidden if logged out — no sign-in button) */}
+        {/* Desktop auth area */}
         <div ref={navRef} className="hidden md:flex items-center gap-2">
-          {userEmail && (
+          {userEmail ? (
             <div className="relative">
               <button
                 onClick={() => setUserOpen((v) => !v)}
@@ -140,6 +158,13 @@ export default function NavTabs({
                 </div>
               )}
             </div>
+          ) : (
+            <Link
+              href="/login"
+              className="rounded-md border px-3 py-1.5 text-sm text-slate-700 hover:bg-gray-50"
+            >
+              Login
+            </Link>
           )}
         </div>
 
@@ -175,20 +200,33 @@ export default function NavTabs({
             </button>
           </div>
 
-          {/* Mobile header auth row — hidden if logged out */}
-          {userEmail && (
-            <div className="px-4 py-3 border-b flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="inline-grid place-items-center h-7 w-7 rounded-full bg-gray-200 text-gray-700 text-sm">
-                  {userEmail.charAt(0).toUpperCase()}
-                </span>
-                <span className="text-sm text-slate-700">{userEmail}</span>
-              </div>
-              <button onClick={signOutClient} className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-gray-100">
-                Sign out
-              </button>
-            </div>
-          )}
+          {/* Mobile header auth row */}
+          <div className="px-4 py-3 border-b flex items-center justify-between">
+            {userEmail ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <span className="inline-grid place-items-center h-7 w-7 rounded-full bg-gray-200 text-gray-700 text-sm">
+                    {userEmail.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="text-sm text-slate-700">{userEmail}</span>
+                </div>
+                <button
+                  onClick={signOutClient}
+                  className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-gray-100"
+                >
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <Link
+                href="/login"
+                onClick={() => setOpen(false)}
+                className="rounded-md border px-3 py-1.5 text-sm text-slate-700 hover:bg-gray-100"
+              >
+                Login
+              </Link>
+            )}
+          </div>
 
           <div className="px-2 py-2">
             {tabs.map((t) => {
@@ -197,6 +235,7 @@ export default function NavTabs({
                 <Link
                   key={t.href}
                   href={t.href}
+                  onClick={() => setOpen(false)}
                   className={`block rounded-lg px-3 py-3 text-base ${
                     active ? "text-blue-700 bg-blue-50" : "text-slate-700 hover:bg-gray-100"
                   }`}

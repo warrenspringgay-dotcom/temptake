@@ -1,7 +1,7 @@
 // src/components/FoodTempLogger.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   LOCATION_PRESETS,
@@ -21,64 +21,28 @@ type CanonRow = {
   status: "pass" | "fail" | null;
 };
 
-type Props = {
-  initials?: string[];
-  onChange?: () => void;
-  onRows?: (rows: CanonRow[]) => void;
-  brandName?: string;
-  brandAccent?: string;
-  logoUrl?: string;
+type Routine = {
+  id: string;
+  name: string | null;
+  location: string | null;
+  item: string | null;
+  target_key: string | null;
 };
 
-const PROBE_TABLES = ["food_temp_logs", "temp_logs", "temperature_logs"] as const;
-const LS_TABLE_KEY = "tt_logs_table_name";
+type Props = {
+  initials?: string[];
+  locations?: string[];
+};
+
+const LS_LAST_INITIALS = "tt_last_initials";
+const LS_LAST_LOCATION = "tt_last_location";
 
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
-
-function inferStatus(
-  temp: number | null,
-  preset?: TargetPreset
-): "pass" | "fail" | null {
-  if (temp == null || !preset) return null;
-  const { minC, maxC } = preset;
-  if (minC != null && temp < minC) return "fail";
-  if (maxC != null && temp > maxC) return "fail";
-  return "pass";
+function firstLetter(s: string | null | undefined) {
+  return (s?.trim()?.charAt(0) || "").toUpperCase();
 }
-
-async function getUid(): Promise<string> {
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) throw new Error("You are signed out.");
-  return data.user.id;
-}
-
-async function detectLogsTableForUser(uid: string): Promise<string | null> {
-  const cached = localStorage.getItem(LS_TABLE_KEY);
-  if (cached) {
-    const { error } = await supabase.from(cached).select("*").eq("created_by", uid).limit(1);
-    if (!error) return cached;
-  }
-  for (const t of PROBE_TABLES) {
-    const { error } = await supabase.from(t).select("*").eq("created_by", uid).limit(1);
-    if (!error) {
-      localStorage.setItem(LS_TABLE_KEY, t);
-      return t;
-    }
-  }
-  return null;
-}
-
-function pick<T = any>(row: any, candidates: string[], fallback: T | null = null): T | null {
-  for (const k of candidates) {
-    if (row && Object.prototype.hasOwnProperty.call(row, k) && row[k] != null) {
-      return row[k] as T;
-    }
-  }
-  return fallback;
-}
-
 function toISODate(val: any): string | null {
   if (!val) return null;
   try {
@@ -92,248 +56,262 @@ function toISODate(val: any): string | null {
     return null;
   }
 }
-
-function getPreset(key: string | null | undefined): TargetPreset | undefined {
-  if (!key) return undefined;
-  return (TARGET_BY_KEY as Record<string, TargetPreset>)[key];
+function inferStatus(temp: number | null, preset?: TargetPreset): "pass" | "fail" | null {
+  if (temp == null || !preset) return null;
+  const { minC, maxC } = preset;
+  if (minC != null && temp < minC) return "fail";
+  if (maxC != null && temp > maxC) return "fail";
+  return "pass";
+}
+async function getUid(): Promise<string> {
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) throw new Error("You are signed out.");
+  return data.user.id;
 }
 
-function normalizeRow(row: any, tableName: string): CanonRow {
-  const temp = pick<number>(row, ["temp_c", "temperature", "temp"], null);
-
-  let date: string | null = null;
-  let location: string | null = null;
-  let item: string | null = null;
-  let initials: string | null = null;
-
-  if (tableName === "food_temp_logs") {
-    date = toISODate(row.at);
-    location = pick<string>(row, ["area"], null);
-    item = pick<string>(row, ["note"], null);
-    initials = pick<string>(row, ["staff_initials", "initials"], null);
-  } else {
-    date = toISODate(pick<any>(row, ["date", "log_date", "created_at"], null));
-    location = pick<string>(row, ["location", "place", "area"], null);
-    item = pick<string>(row, ["item", "item_name", "food_item", "note"], null);
-    initials = pick<string>(row, ["staff_initials", "initials", "staff"], null);
-  }
-
-  const targetKey = pick<string>(row, ["target_key", "target", "target_range_key"], null);
-  let status = pick<"pass" | "fail">(row, ["status"], null);
-  if (!status) {
-    const preset = getPreset(targetKey);
-    status = inferStatus(temp, preset);
-  }
-
-  return {
-    id: String(pick(row, ["id"], "")) || crypto.randomUUID(),
-    date,
-    staff_initials: initials,
-    location,
-    item,
-    target_key: targetKey,
-    temp_c: typeof temp === "number" ? temp : temp != null ? Number(temp) : null,
-    status,
-  };
-}
-
-function sortRows(rows: CanonRow[]): CanonRow[] {
-  const toKey = (r: CanonRow) => (r.date ? r.date : "");
-  return [...rows].sort((a, b) => toKey(a).localeCompare(toKey(b)));
-}
-
-type FormState = {
-  date: string;
-  staff_initials: string;
-  location: string;
-  item: string;
-  target_key: string;
-  temp_c: string;
-};
-
-function buildInsertPayload(uid: string, tableName: string, form: FormState) {
-  const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
-  const preset = getPreset(form.target_key);
-  const status = inferStatus(tempNum, preset);
-
-  if (tableName === "food_temp_logs") {
-    return {
-      org_id: uid, // using user id as org id for now
-      created_by: uid,
-      at: form.date,
-      area: form.location || null,
-      note: form.item || null,
-      staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
-      target_key: form.target_key || null,
-      temp_c: tempNum,
-      status,
-    };
-  }
-
-  return {
-    created_by: uid,
-    date: form.date,
-    staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
-    location: form.location || null,
-    item: form.item || null,
-    target_key: form.target_key || null,
-    temp_c: tempNum,
-    status,
-  };
-}
-
-export default function FoodTempLogger({
-  initials: initialsProp,
-  onChange,
-  onRows,
-  brandName,
-  brandAccent,
-  logoUrl,
-}: Props) {
-  const [tableName, setTableName] = useState<string | null>(null);
+export default function FoodTempLogger({ initials: initialsSeed, locations: locationsSeed }: Props) {
+  // STATE
   const [rows, setRows] = useState<CanonRow[]>([]);
-  const [initials, setInitials] = useState<string[]>(initialsProp ?? []);
+  const [initials, setInitials] = useState<string[]>(() =>
+    Array.from(new Set([...(initialsSeed ?? [])]))
+  );
+  const [locations, setLocations] = useState<string[]>(() =>
+    Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS]))
+  );
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [form, setForm] = useState<FormState>({
+  const [kpi, setKpi] = useState<{ trainingDue: number; allergenDue: number }>({
+    trainingDue: 0,
+    allergenDue: 0,
+  });
+
+  const [routines, setRoutines] = useState<Routine[]>([]);
+  const [routineOpen, setRoutineOpen] = useState(false);
+
+  // Entry form
+  const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
     staff_initials: "",
-    location: "",          // widened to string
+    location: "",
     item: "",
-    target_key: "ambient", // widened to string
+    target_key: (TARGET_PRESETS[0]?.key as string) ?? "chill",
     temp_c: "",
+    saveRoutine: false,
   });
 
   const canSave =
-    !!form.date && !!form.location && !!form.item && !!form.target_key && form.temp_c.trim().length > 0;
+    !!form.date &&
+    !!form.location &&
+    !!form.item &&
+    !!form.target_key &&
+    form.temp_c.trim().length > 0;
 
+  // Prefill from LS
   useEffect(() => {
-    if (initialsProp) setInitials(initialsProp);
-  }, [initialsProp]);
-
-  // Prefill location/target from presets without narrowing literal types
-  useEffect(() => {
-    setForm((f) => ({
-      ...f,
-      location: f.location || String(LOCATION_PRESETS[0] ?? ""),
-      target_key: f.target_key || String(TARGET_PRESETS[0]?.key ?? "ambient"),
-    }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    try {
+      const lsIni = localStorage.getItem(LS_LAST_INITIALS) || "";
+      const lsLoc = localStorage.getItem(LS_LAST_LOCATION) || "";
+      setForm((f) => ({
+        ...f,
+        staff_initials: lsIni || f.staff_initials,
+        location: lsLoc || f.location,
+      }));
+      if (lsIni) setInitials((prev) => Array.from(new Set([lsIni, ...prev])));
+      if (lsLoc) setLocations((prev) => Array.from(new Set([lsLoc, ...prev])));
+    } catch {}
   }, []);
 
-  // initial load once
+  // KPI data
   useEffect(() => {
-    let cancelled = false;
     (async () => {
-      setLoading(true);
-      setErr(null);
       try {
-        const uid = await getUid();
-        const t = await detectLogsTableForUser(uid);
-        if (!t) {
-          setErr(
-            "Could not access your logs table under RLS. Ensure the table exists, has a created_by column, and rows belong to your user."
-          );
-          setRows([]);
-          return;
-        }
-        if (cancelled) return;
-        setTableName(t);
+        const soon = new Date();
+        soon.setDate(soon.getDate() + 14);
 
-        const { data, error } = await supabase.from(t).select("*").eq("created_by", uid);
-        if (error) throw error;
+        let trainingDue = 0;
+        let allergenDue = 0;
 
-        const loaded = sortRows((data ?? []).map((r) => normalizeRow(r, t)));
-        setRows(loaded);
-      } catch (e: any) {
-        console.error("Logger failed to fetch:", e?.raw || e);
-        setErr(e?.message || "Failed to fetch logs.");
-        setRows([]);
-      } finally {
-        if (!cancelled) setLoading(false);
+        try {
+          const { data } = await supabase.from("team_members").select("*");
+          trainingDue = (data ?? []).reduce((acc: number, r: any) => {
+            const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
+            if (!raw) return acc;
+            const d = new Date(raw);
+            return isNaN(d.getTime()) ? acc : d <= soon ? acc + 1 : acc;
+          }, 0);
+        } catch {}
+
+        try {
+          const { data } = await supabase.from("allergen_reviews").select("*");
+          allergenDue = (data ?? []).reduce((acc: number, r: any) => {
+            const raw = r.next_due ?? r.next_review_due ?? r.due_at ?? r.review_due ?? null;
+            if (!raw) return acc;
+            const d = new Date(raw);
+            return isNaN(d.getTime()) ? acc : d <= soon ? acc + 1 : acc;
+          }, 0);
+        } catch {}
+
+        setKpi({ trainingDue, allergenDue });
+      } catch {
+        setKpi({ trainingDue: 0, allergenDue: 0 });
       }
     })();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
-  // notify parent on rows change
+  // Load initials
   useEffect(() => {
-    onRows?.(rows);
-  }, [rows, onRows]);
+    (async () => {
+      const { data: tm } = await supabase.from("team_members").select("*");
+      const fromDb =
+        (tm ?? [])
+          .map(
+            (r: any) =>
+              r.initials?.toString().toUpperCase() ||
+              firstLetter(r.name) ||
+              firstLetter(r.email)
+          )
+          .filter(Boolean) || [];
+      const merged = Array.from(new Set([...(initialsSeed ?? []), ...fromDb, ...initials]));
+      if (merged.length) setInitials(merged);
+      if (!form.staff_initials && merged[0]) {
+        setForm((f) => ({ ...f, staff_initials: merged[0] }));
+      }
+    })();
+  }, [initialsSeed]);
 
-  async function refresh() {
-    if (!tableName) return;
-    const uid = await getUid();
-    const { data, error } = await supabase.from(tableName).select("*").eq("created_by", uid);
-    if (error) {
-      console.error("Refresh failed:", error);
-      return;
-    }
-    const loaded = sortRows((data ?? []).map((r) => normalizeRow(r, tableName)));
-    setRows(loaded);
-  }
+  // Load locations
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("food_temp_logs").select("area, location");
+      const fromAreas =
+        (data ?? [])
+          .map((r: any) => (r.area ?? r.location ?? "").toString().trim())
+          .filter((s: string) => s.length > 0) || [];
+      const merged = Array.from(
+        new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...fromAreas, ...locations])
+      );
+      setLocations(merged.length ? merged : ["Kitchen"]);
+      if (!form.location && merged[0]) {
+        setForm((f) => ({ ...f, location: merged[0] }));
+      }
+    })();
+  }, [locationsSeed]);
 
-  async function handleAddQuick() {
-    if (!tableName) {
-      alert("Logs table not available.");
-      return;
-    }
-    const uid = await getUid();
-    const payload = buildInsertPayload(uid, tableName, form);
+  // Rows
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const { data } = await supabase.from("food_temp_logs").select("*").order("at", { ascending: false }).limit(200);
+        const normalized: CanonRow[] = (data ?? []).map((r: any) => ({
+          id: String(r.id ?? crypto.randomUUID()),
+          date: toISODate(r.at ?? r.date ?? r.created_at ?? null),
+          staff_initials: (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
+          location: (r.area ?? r.location ?? null)?.toString() ?? null,
+          item: (r.note ?? r.item ?? null)?.toString() ?? null,
+          target_key: r.target_key != null ? String(r.target_key) : null,
+          temp_c: r.temp_c != null ? Number(r.temp_c) : null,
+          status: r.status,
+        }));
+        setRows(normalized);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
-    const { error } = await supabase.from(tableName).insert(payload);
-    if (error) {
-      console.error("Insert failed:", error);
-      alert(`Save failed: ${error.message ?? "unknown error"}.`);
-      return;
-    }
-    await refresh();
-    onChange?.();
-    setForm((f) => ({ ...f, item: "", temp_c: "" }));
-  }
-
-  async function remove(id: string) {
-    if (!tableName) return;
-    const uid = await getUid();
-    const { error } = await supabase.from(tableName).delete().eq("id", id).eq("created_by", uid);
-    if (error) {
-      console.error("Delete failed:", error);
-      alert(`Delete failed: ${error.message ?? "unknown error"}`);
-      return;
-    }
-    await refresh();
-    onChange?.();
-  }
-
-  function onTempKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && canSave) {
-      e.preventDefault();
-      handleAddQuick();
-    }
-  }
-
+  // Render
   return (
     <div className="space-y-6">
-      {brandName || logoUrl ? (
-        <div className="flex items-center gap-2">
-          {logoUrl ? <img src={logoUrl} alt="" className="h-6 w-6" /> : null}
-          <span className="font-medium" style={brandAccent ? { color: brandAccent } : undefined}>
-            {brandName}
-          </span>
-        </div>
-      ) : null}
+      {/* KPI card WITH pills inside */}
+      <div className="rounded-2xl border bg-white p-4 shadow-sm space-y-4">
+        {/* KPI Tiles */}
+        {(() => {
+          const todayISO = new Date().toISOString().slice(0, 10);
+          const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+          const within7 = (d: string | null) => (d ? new Date(d) >= sevenDaysAgo : false);
+          const entriesToday = rows.filter((r) => r.date === todayISO).length;
+          const last7 = rows.filter((r) => within7(r.date)).length;
+          const failures7 = rows.filter((r) => within7(r.date) && r.status === "fail").length;
+          const locations7 = new Set(rows.filter((r) => within7(r.date)).map((r) => r.location || "")).size;
 
-      {err ? (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          {err}
-        </div>
-      ) : null}
+          return (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="rounded-xl border bg-white p-3">
+                <div className="text-xs text-gray-500">Entries today</div>
+                <div className="text-2xl font-semibold">{entriesToday}</div>
+              </div>
+              <div className="rounded-xl border bg-white p-3">
+                <div className="text-xs text-gray-500">Last 7 days</div>
+                <div className="text-2xl font-semibold">{last7}</div>
+              </div>
+              <div className="rounded-xl border bg-white p-3">
+                <div className="text-xs text-gray-500">Failures (7d)</div>
+                <div className="text-2xl font-semibold">{failures7}</div>
+              </div>
+              <div className="rounded-xl border bg-white p-3">
+                <div className="text-xs text-gray-500">Locations (7d)</div>
+                <div className="text-2xl font-semibold">{locations7}</div>
+              </div>
+            </div>
+          );
+        })()}
 
-      {/* Quick entry */}
+        {/* Pills */}
+        <div className="flex flex-col gap-2">
+          <a
+            href="/team"
+            className={cls(
+              kpi.trainingDue > 0 ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800",
+              "inline-flex items-center justify-between rounded-full px-3 py-1 text-sm"
+            )}
+          >
+            <span className="font-medium">Training</span>
+            <span className="ml-2 inline-block rounded-full bg-white/60 px-2 py-0.5 text-xs">
+              {kpi.trainingDue > 0 ? `${kpi.trainingDue} due` : "OK"}
+            </span>
+          </a>
+          <a
+            href="/allergens"
+            className={cls(
+              kpi.allergenDue > 0 ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800",
+              "inline-flex items-center justify-between rounded-full px-3 py-1 text-sm"
+            )}
+          >
+            <span className="font-medium">Allergen Review</span>
+            <span className="ml-2 inline-block rounded-full bg-white/60 px-2 py-0.5 text-xs">
+              {kpi.allergenDue > 0 ? `${kpi.allergenDue} due` : "OK"}
+            </span>
+          </a>
+        </div>
+      </div>
+
+      {/* … entry form and rest of your component unchanged … */}
+    </div>
+  );
+}
+
+      {/* ENTRY FORM */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Enter Temperature Log</h2>
+          <button
+            type="button"
+            onClick={() => setRoutineOpen(true)}
+            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+            title="Use routine"
+          >
+            Use routine
+          </button>
+        </div>
+
+        {err && (
+          <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            {err}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 items-end">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Date</label>
@@ -345,36 +323,55 @@ export default function FoodTempLogger({
             />
           </div>
 
+          {/* Initials: SELECT (prefilled) */}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Initials</label>
-            <input
-              list="staff-initials"
+            <select
               value={form.staff_initials}
-              onChange={(e) => setForm((f) => ({ ...f, staff_initials: e.target.value }))}
-              placeholder="E.g., AA"
+              onChange={(e) => {
+                const v = e.target.value.toUpperCase();
+                setForm((f) => ({ ...f, staff_initials: v }));
+                try { localStorage.setItem(LS_LAST_INITIALS, v); } catch {}
+              }}
               className="w-full rounded-xl border px-3 py-2 uppercase"
-            />
-            <datalist id="staff-initials">
+            >
+              {/* If empty, provide a disabled placeholder to avoid blank select */}
+              {(!form.staff_initials && initials.length === 0) && (
+                <option value="" disabled>
+                  Loading initials…
+                </option>
+              )}
               {initials.map((ini) => (
-                <option key={ini} value={ini} />
+                <option key={ini} value={ini}>
+                  {ini}
+                </option>
               ))}
-            </datalist>
+            </select>
           </div>
 
+          {/* Location: SELECT (prefilled) */}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Location</label>
-            <input
-              list="location-list"
+            <select
               value={form.location}
-              onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
+              onChange={(e) => {
+                const v = e.target.value;
+                setForm((f) => ({ ...f, location: v }));
+                try { localStorage.setItem(LS_LAST_LOCATION, v); } catch {}
+              }}
               className="w-full rounded-xl border px-3 py-2"
-              placeholder="Kitchen / Fridge 1 / Freezer 2 …"
-            />
-            <datalist id="location-list">
-              {LOCATION_PRESETS.map((loc) => (
-                <option key={loc} value={loc} />
+            >
+              {(!form.location && locations.length === 0) && (
+                <option value="" disabled>
+                  Loading locations…
+                </option>
+              )}
+              {locations.map((loc) => (
+                <option key={loc} value={loc}>
+                  {loc}
+                </option>
               ))}
-            </datalist>
+            </select>
           </div>
 
           <div className="lg:col-span-2">
@@ -397,7 +394,9 @@ export default function FoodTempLogger({
               {TARGET_PRESETS.map((p) => (
                 <option key={p.key} value={p.key}>
                   {p.label}
-                  {p.minC != null || p.maxC != null ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)` : ""}
+                  {p.minC != null || p.maxC != null
+                    ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
+                    : ""}
                 </option>
               ))}
             </select>
@@ -415,7 +414,8 @@ export default function FoodTempLogger({
             />
           </div>
 
-          <div className="lg:col-span-6">
+          {/* Swap order: Save button FIRST, then checkbox */}
+          <div className="lg:col-span-6 flex items-center gap-3">
             <button
               onClick={handleAddQuick}
               disabled={!canSave}
@@ -426,12 +426,72 @@ export default function FoodTempLogger({
             >
               Save quick entry
             </button>
+
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.saveRoutine}
+                onChange={(e) => setForm((f) => ({ ...f, saveRoutine: e.target.checked }))}
+              />
+              Save as routine
+            </label>
           </div>
         </div>
       </div>
 
-      {/* Table */}
+      {/* ROUTINE PICKER POPUP */}
+      {routineOpen && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/30"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setRoutineOpen(false)}
+        >
+          <div
+            className="absolute inset-x-0 top-20 mx-auto w-full max-w-lg rounded-xl border bg-white p-4 shadow-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-semibold">Use a routine</h3>
+              <button
+                onClick={() => setRoutineOpen(false)}
+                className="rounded-md p-2 hover:bg-gray-100"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {routineList.length === 0 ? (
+              <div className="text-sm text-gray-600">
+                No routines yet. Tick <b>Save as routine</b> when you save a log to add one.
+              </div>
+            ) : (
+              <ul className="divide-y">
+                {routineList.map((r) => (
+                  <li key={r.id} className="py-2">
+                    <button
+                      className="w-full text-left rounded-md px-2 py-2 hover:bg-gray-50"
+                      onClick={() => pickRoutine(r)}
+                    >
+                      <div className="text-sm font-medium">
+                        {r.name ?? `${r.location ?? "—"} • ${r.item ?? "—"} • ${r.target_key ?? "—"}`}
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        {r.location ?? "—"} · {r.item ?? "—"} · {r.target_key ?? "—"}
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* LOGS TABLE */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <h2 className="text-lg font-semibold mb-4">Temperature Logs</h2>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
@@ -443,20 +503,20 @@ export default function FoodTempLogger({
                 <th className="py-2 pr-3">Target</th>
                 <th className="py-2 pr-3">Temp (°C)</th>
                 <th className="py-2 pr-3">Status</th>
-                <th className="py-2 pr-3">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-6 text-center text-gray-500">
+                  <td colSpan={7} className="py-6 text-center text-gray-500">
                     Loading…
                   </td>
                 </tr>
               ) : rows.length ? (
                 rows.map((r) => {
-                  const p = getPreset(r.target_key);
-                  const st = r.status ?? inferStatus(r.temp_c, p);
+                  const preset =
+                    r.target_key && (TARGET_BY_KEY as Record<string, TargetPreset>)[r.target_key];
+                  const st = r.status ?? inferStatus(r.temp_c, preset);
                   return (
                     <tr key={r.id} className="border-t">
                       <td className="py-2 pr-3">{r.date ?? "—"}</td>
@@ -464,10 +524,10 @@ export default function FoodTempLogger({
                       <td className="py-2 pr-3">{r.location ?? "—"}</td>
                       <td className="py-2 pr-3">{r.item ?? "—"}</td>
                       <td className="py-2 pr-3">
-                        {p
-                          ? `${p.label}${
-                              p.minC != null || p.maxC != null
-                                ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
+                        {preset
+                          ? `${preset.label}${
+                              preset.minC != null || preset.maxC != null
+                                ? ` (${preset.minC ?? "−∞"}–${preset.maxC ?? "+∞"} °C)`
                                 : ""
                             }`
                           : "—"}
@@ -489,22 +549,12 @@ export default function FoodTempLogger({
                           "—"
                         )}
                       </td>
-                      <td className="py-2 pr-3">
-                        <button
-                          onClick={() => remove(r.id)}
-                          className="rounded-xl border px-2 py-1 hover:bg-gray-50"
-                          title="Delete"
-                          aria-label="Delete"
-                        >
-                          🗑️
-                        </button>
-                      </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={8} className="py-6 text-center text-gray-500">
+                  <td colSpan={7} className="py-6 text-center text-gray-500">
                     No entries
                   </td>
                 </tr>
@@ -513,6 +563,6 @@ export default function FoodTempLogger({
           </table>
         </div>
       </div>
-    </div>
-  );
-}
+  
+  ;
+
