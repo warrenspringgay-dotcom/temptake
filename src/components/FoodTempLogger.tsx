@@ -69,7 +69,8 @@ async function getUid(): Promise<string> {
   return data.user.id;
 }
 
-// resolve org_id to satisfy NOT NULL
+
+
 async function getOrgId(uid: string): Promise<string | null> {
   try {
     const { data } = await supabase
@@ -80,7 +81,6 @@ async function getOrgId(uid: string): Promise<string | null> {
     if (data?.org_id) return String(data.org_id);
     if (data?.owner_id) return String(data.owner_id);
   } catch {}
-
   try {
     const { data } = await supabase.auth.getUser();
     const u = data.user;
@@ -90,7 +90,6 @@ async function getOrgId(uid: string): Promise<string | null> {
       null;
     if (metaOrg) return String(metaOrg);
   } catch {}
-
   return null;
 }
 
@@ -98,7 +97,6 @@ export default function FoodTempLogger({
   initials: initialsSeed,
   locations: locationsSeed,
 }: Props) {
-  // STATE
   const [rows, setRows] = useState<CanonRow[]>([]);
   const [initials, setInitials] = useState<string[]>(() =>
     Array.from(new Set([...(initialsSeed ?? [])]))
@@ -117,7 +115,6 @@ export default function FoodTempLogger({
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [routineOpen, setRoutineOpen] = useState(false);
 
-  // Entry form
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
     staff_initials: "",
@@ -135,7 +132,6 @@ export default function FoodTempLogger({
     !!form.target_key &&
     form.temp_c.trim().length > 0;
 
-  // Prefill from LS
   useEffect(() => {
     try {
       const lsIni = localStorage.getItem(LS_LAST_INITIALS) || "";
@@ -150,7 +146,6 @@ export default function FoodTempLogger({
     } catch {}
   }, []);
 
-  // KPI data
   useEffect(() => {
     (async () => {
       try {
@@ -189,7 +184,6 @@ export default function FoodTempLogger({
     })();
   }, []);
 
-  // Load initials
   useEffect(() => {
     (async () => {
       const { data: tm } = await supabase.from("team_members").select("*");
@@ -212,7 +206,6 @@ export default function FoodTempLogger({
     })();
   }, [initialsSeed]); // eslint-disable-line
 
-  // Load locations
   useEffect(() => {
     (async () => {
       const { data } = await supabase
@@ -237,7 +230,6 @@ export default function FoodTempLogger({
     })();
   }, [locationsSeed]); // eslint-disable-line
 
-  // Rows
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -392,25 +384,19 @@ export default function FoodTempLogger({
     loadRoutines();
   }, []);
 
-  // RENDER
   return (
     <div className="space-y-6">
-      {/* KPI card WITH tiles + smaller pills inside */}
+      {/* KPI card WITH tiles + SMALLER pills inside */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm space-y-4">
         {/* KPI Tiles */}
         {(() => {
           const todayISO = new Date().toISOString().slice(0, 10);
           const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-          const within7 = (d: string | null) =>
-            d ? new Date(d) >= sevenDaysAgo : false;
+          const within7 = (d: string | null) => (d ? new Date(d) >= sevenDaysAgo : false);
           const entriesToday = rows.filter((r) => r.date === todayISO).length;
           const last7 = rows.filter((r) => within7(r.date)).length;
-          const failures7 = rows.filter(
-            (r) => within7(r.date) && r.status === "fail"
-          ).length;
-          const locations7 = new Set(
-            rows.filter((r) => within7(r.date)).map((r) => r.location || "")
-          ).size;
+          const failures7 = rows.filter((r) => within7(r.date) && r.status === "fail").length;
+          const locations7 = new Set(rows.filter((r) => within7(r.date)).map((r) => r.location || "")).size;
 
           return (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -434,20 +420,19 @@ export default function FoodTempLogger({
           );
         })()}
 
-        {/* Review pills inside same card (smaller) */}
-        <div className="flex flex-col gap-1.5">
+        {/* Smaller review pills */}
+        <div className="flex flex-col gap-1">
           <a
             href="/team"
             className={cls(
-              kpi.trainingDue > 0
-                ? "bg-red-100 text-red-800"
-                : "bg-emerald-100 text-emerald-800",
-              "inline-flex items-center justify-between rounded-full px-2 py-0.5 text-xs"
+              kpi.trainingDue > 0 ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800",
+              // ↓ smaller text & tighter padding
+              "inline-flex items-center justify-between rounded-full px-1.5 py-[2px] text-[15x] leading-[1.1] max-w-fit"
             )}
             title="View team training"
           >
             <span className="font-medium">Training</span>
-            <span className="ml-2 inline-block rounded-full bg-white/60 px-1.5 py-px text-[10px]">
+            <span className="ml-2 inline-block rounded-full bg-white/60 px-1 py-[1px] text-[12 leading-none">
               {kpi.trainingDue > 0 ? `${kpi.trainingDue} due` : "OK"}
             </span>
           </a>
@@ -455,15 +440,14 @@ export default function FoodTempLogger({
           <a
             href="/allergens"
             className={cls(
-              kpi.allergenDue > 0
-                ? "bg-red-100 text-red-800"
-                : "bg-emerald-100 text-emerald-800",
-              "inline-flex items-center justify-between rounded-full px-2 py-0.5 text-xs"
+              kpi.allergenDue > 0 ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800",
+              // ↓ smaller text & tighter padding
+              "inline-flex items-center justify-between rounded-full px-1.5 py-[2px] text-[15x] leading-[1.1] max-w-fit"
             )}
             title="View allergen reviews"
           >
             <span className="font-medium">Allergen Review</span>
-            <span className="ml-2 inline-block rounded-full bg-white/60 px-1.5 py-px text-[10px]">
+            <span className="ml-2 inline-block rounded-full bg-white/60 px-1 py-[1px] text-[12] leading-none">
               {kpi.allergenDue > 0 ? `${kpi.allergenDue} due` : "OK"}
             </span>
           </a>
@@ -501,7 +485,6 @@ export default function FoodTempLogger({
             />
           </div>
 
-          {/* Initials: SELECT (prefilled) */}
           <div>
             <label className="mb-1 block text-xs text-gray-500">Initials</label>
             <select
@@ -509,26 +492,19 @@ export default function FoodTempLogger({
               onChange={(e) => {
                 const v = e.target.value.toUpperCase();
                 setForm((f) => ({ ...f, staff_initials: v }));
-                try {
-                  localStorage.setItem(LS_LAST_INITIALS, v);
-                } catch {}
+                try { localStorage.setItem(LS_LAST_INITIALS, v); } catch {}
               }}
               className="w-full rounded-xl border px-3 py-2 uppercase"
             >
               {!form.staff_initials && initials.length === 0 && (
-                <option value="" disabled>
-                  Loading initials…
-                </option>
+                <option value="" disabled>Loading initials…</option>
               )}
               {initials.map((ini) => (
-                <option key={ini} value={ini}>
-                  {ini}
-                </option>
+                <option key={ini} value={ini}>{ini}</option>
               ))}
             </select>
           </div>
 
-          {/* Location: SELECT (prefilled) */}
           <div>
             <label className="mb-1 block text-xs text-gray-500">Location</label>
             <select
@@ -536,21 +512,15 @@ export default function FoodTempLogger({
               onChange={(e) => {
                 const v = e.target.value;
                 setForm((f) => ({ ...f, location: v }));
-                try {
-                  localStorage.setItem(LS_LAST_LOCATION, v);
-                } catch {}
+                try { localStorage.setItem(LS_LAST_LOCATION, v); } catch {}
               }}
               className="w-full rounded-xl border px-3 py-2"
             >
               {!form.location && locations.length === 0 && (
-                <option value="" disabled>
-                  Loading locations…
-                </option>
+                <option value="" disabled>Loading locations…</option>
               )}
               {locations.map((loc) => (
-                <option key={loc} value={loc}>
-                  {loc}
-                </option>
+                <option key={loc} value={loc}>{loc}</option>
               ))}
             </select>
           </div>
@@ -559,9 +529,7 @@ export default function FoodTempLogger({
             <label className="mb-1 block text-xs text-gray-500">Item</label>
             <input
               value={form.item}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, item: e.target.value }))
-              }
+              onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
               className="w-full rounded-xl border px-3 py-2"
               placeholder="e.g., Chicken curry"
             />
@@ -571,9 +539,7 @@ export default function FoodTempLogger({
             <label className="mb-1 block text-xs text-gray-500">Target</label>
             <select
               value={form.target_key}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, target_key: e.target.value }))
-              }
+              onChange={(e) => setForm((f) => ({ ...f, target_key: e.target.value }))}
               className="w-full rounded-xl border px-3 py-2"
             >
               {TARGET_PRESETS.map((p) => (
@@ -588,14 +554,10 @@ export default function FoodTempLogger({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-gray-500">
-              Temp (°C)
-            </label>
+            <label className="mb-1 block text-xs text-gray-500">Temp (°C)</label>
             <input
               value={form.temp_c}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, temp_c: e.target.value }))
-              }
+              onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
               onKeyDown={onTempKeyDown}
               className="w-full rounded-xl border px-3 py-2"
               inputMode="decimal"
@@ -603,7 +565,6 @@ export default function FoodTempLogger({
             />
           </div>
 
-          {/* Save first, then checkbox */}
           <div className="lg:col-span-6 flex items-center gap-3">
             <button
               onClick={handleAddQuick}
@@ -620,9 +581,7 @@ export default function FoodTempLogger({
               <input
                 type="checkbox"
                 checked={form.saveRoutine}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, saveRoutine: e.target.checked }))
-                }
+                onChange={(e) => setForm((f) => ({ ...f, saveRoutine: e.target.checked }))}
               />
               Save as routine
             </label>
@@ -630,7 +589,6 @@ export default function FoodTempLogger({
         </div>
       </div>
 
-      {/* Routine picker */}
       {routineOpen && (
         <div
           className="fixed inset-0 z-[100] bg-black/30"
@@ -655,8 +613,7 @@ export default function FoodTempLogger({
 
             {routineList.length === 0 ? (
               <div className="text-sm text-gray-600">
-                No routines yet. Tick <b>Save as routine</b> when you save a log
-                to add one.
+                No routines yet. Tick <b>Save as routine</b> when you save a log to add one.
               </div>
             ) : (
               <ul className="divide-y">
@@ -667,14 +624,10 @@ export default function FoodTempLogger({
                       onClick={() => pickRoutine(r)}
                     >
                       <div className="text-sm font-medium">
-                        {r.name ??
-                          `${r.location ?? "—"} • ${r.item ?? "—"} • ${
-                            r.target_key ?? "—"
-                          }`}
+                        {r.name ?? `${r.location ?? "—"} • ${r.item ?? "—"} • ${r.target_key ?? "—"}`}
                       </div>
                       <div className="text-xs text-gray-600">
-                        {r.location ?? "—"} · {r.item ?? "—"} ·{" "}
-                        {r.target_key ?? "—"}
+                        {r.location ?? "—"} · {r.item ?? "—"} · {r.target_key ?? "—"}
                       </div>
                     </button>
                   </li>
@@ -685,7 +638,6 @@ export default function FoodTempLogger({
         </div>
       )}
 
-      {/* Logs table */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
         <h2 className="mb-4 text-lg font-semibold">Temperature Logs</h2>
         <div className="overflow-x-auto">
@@ -704,9 +656,7 @@ export default function FoodTempLogger({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
-                    Loading…
-                  </td>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">Loading…</td>
                 </tr>
               ) : rows.length ? (
                 rows.map((r) => {
@@ -724,9 +674,7 @@ export default function FoodTempLogger({
                         {preset
                           ? `${preset.label}${
                               preset.minC != null || preset.maxC != null
-                                ? ` (${preset.minC ?? "−∞"}–${
-                                    preset.maxC ?? "+∞"
-                                  } °C)`
+                                ? ` (${preset.minC ?? "−∞"}–${preset.maxC ?? "+∞"} °C)`
                                 : ""
                             }`
                           : "—"}
@@ -737,9 +685,7 @@ export default function FoodTempLogger({
                           <span
                             className={cls(
                               "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                              st === "pass"
-                                ? "bg-emerald-100 text-emerald-800"
-                                : "bg-red-100 text-red-800"
+                              st === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
                             )}
                           >
                             {st}
@@ -753,9 +699,7 @@ export default function FoodTempLogger({
                 })
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
-                    No entries
-                  </td>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">No entries</td>
                 </tr>
               )}
             </tbody>

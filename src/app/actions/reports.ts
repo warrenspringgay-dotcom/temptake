@@ -1,55 +1,51 @@
+// src/app/actions/reports.ts
 "use server";
 
 import { supabaseServer } from "@/lib/supabaseServer";
 
-export type AuditTempItem = {
+export type AuditTemp = {
   id: string;
   at: string | null;
+  staff_initials: string | null;
   area: string | null;
   note: string | null;
-  staff_initials: string | null;
   target_key: string | null;
   temp_c: number | null;
   status: "pass" | "fail" | null;
 };
 
-export async function getInstantAuditAll(): Promise<{
-  temps: AuditTempItem[];
-  teamDue: number;
-  suppliersCount: number;
-}> {
+export async function getInstantAuditAll() {
   const supabase = await supabaseServer();
 
-  // recent temperature logs (richer payload)
-  const { data: tempsData } = await supabase
+  // Temps (latest 10)
+  const { data: tempRows, error: tempsErr } = await supabase
     .from("food_temp_logs")
-    .select("id, at, area, note, staff_initials, target_key, temp_c, status")
+    .select("id, at, staff_initials, area, note, target_key, temp_c, status")
     .order("at", { ascending: false })
-    .limit(15);
+    .limit(10);
 
-  // team items due (same logic you already use elsewhere – best-effort)
-  const soon = new Date();
-  soon.setDate(soon.getDate() + 14);
+  if (tempsErr) throw new Error(`[/reports] getInstantAudit90d failed`);
 
-  let teamDue = 0;
-  try {
-    const { data: team } = await supabase.from("team_members").select("*");
-    teamDue =
-      (team ?? []).reduce((acc: number, r: any) => {
-        const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
-        if (!raw) return acc;
-        const d = new Date(raw);
-        return isNaN(d.getTime()) ? acc : d <= soon ? acc + 1 : acc;
-      }, 0) || 0;
-  } catch {}
+  // Team due in 14 days (training)
+  const soonISO = new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
+  const { data: teamRows } = await supabase
+    .from("team_members")
+    .select("id, training_expires_at, training_expiry, expires_at");
 
-  // suppliers count (simple)
+  const teamDue =
+    (teamRows ?? []).reduce((acc: number, r: any) => {
+      const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at;
+      if (!raw) return acc;
+      return new Date(raw).toISOString() <= soonISO ? acc + 1 : acc;
+    }, 0) ?? 0;
+
+  // Suppliers count
   const { count: suppliersCount = 0 } = await supabase
     .from("suppliers")
-    .select("*", { count: "exact", head: true });
+    .select("id", { count: "exact", head: true });
 
   return {
-    temps: (tempsData ?? []) as AuditTempItem[],
+    temps: (tempRows ?? []) as AuditTemp[],
     teamDue,
     suppliersCount,
   };
