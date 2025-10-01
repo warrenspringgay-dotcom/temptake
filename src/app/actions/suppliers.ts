@@ -1,93 +1,59 @@
 // src/app/actions/suppliers.ts
 "use server";
 
-import { createServerClient } from "@/lib/supabaseServer";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 export type Supplier = {
   id: string;
-  org_id: string;              // ✅ required
-  supplier_name: string;
+  name: string;
   contact_name: string | null;
-  contact_email: string | null;
   phone: string | null;
-  notes: string | null;
+  email: string | null;
+  categories: string[] | null;
+  is_active: boolean | null;
+  notes?: string | null;
   created_at?: string;
+  updated_at?: string;
 };
 
-export async function listSuppliers(): Promise<Supplier[]> {
-  const supabase = createServerClient();
+export async function listSuppliers(query?: string): Promise<Supplier[]> {
+  const supabase = await supabaseServer();
+  let q = supabase
+    .from("suppliers")
+    .select("id,name,contact_name,phone,email,categories,is_active,notes,created_at,updated_at")
+    .order("name", { ascending: true });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
+  if (query && query.trim()) {
+    q = q.ilike("name", `%${query.trim()}%`);
+  }
 
-  const orgId = user.id; // TODO: replace with real org_id lookup if you have orgs
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []) as Supplier[];
+}
 
+export async function upsertSupplier(
+  input: Partial<Supplier> & { name: string }
+): Promise<void> {
+  const supabase = await supabaseServer();
+  const { error } = await supabase.from("suppliers").upsert(input, { onConflict: "id" });
+  if (error) throw error;
+}
+
+export async function deleteSupplier(id: string): Promise<void> {
+  const supabase = await supabaseServer();
+  const { error } = await supabase.from("suppliers").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function getSupplier(id: string): Promise<Supplier | null> {
+  const supabase = await supabaseServer();
   const { data, error } = await supabase
     .from("suppliers")
-    .select("*")
-    .eq("org_id", orgId)
-    .order("supplier_name", { ascending: true });
-
-  if (error) throw new Error(error.message);
-  return (data as Supplier[]) ?? [];
-}
-
-export async function upsertSupplier(input: {
-  id: string;
-  supplier_name: string;
-  contact_name?: string | null;
-  contact_email?: string | null;
-  phone?: string | null;
-  notes?: string | null;
-}) {
-  const supabase = createServerClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
-
-  const orgId = user.id; // TODO: replace with real org_id lookup if you have orgs
-  if (!orgId) {
-    throw new Error("Missing org_id for supplier create/update");
-  }
-
-  const payload: Supplier = {
-    id: input.id,
-    org_id: orgId, // ✅ guaranteed string
-    supplier_name: input.supplier_name.trim(),
-    contact_name: input.contact_name ?? null,
-    contact_email: input.contact_email ?? null,
-    phone: input.phone ?? null,
-    notes: input.notes ?? null,
-  };
-
-  const { error } = await supabase.from("suppliers").upsert(payload);
-  if (error) throw new Error(error.message);
-
-  return payload;
-}
-
-export async function deleteSupplier(id: string) {
-  const supabase = createServerClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
-
-  const orgId = user.id; // TODO: replace with real org_id lookup if you have orgs
-  if (!orgId) {
-    throw new Error("Missing org_id for supplier delete");
-  }
-
-  const { error } = await supabase
-    .from("suppliers")
-    .delete()
+    .select("id,name,contact_name,phone,email,categories,is_active,notes,created_at,updated_at")
     .eq("id", id)
-    .eq("org_id", orgId);
+    .maybeSingle();
 
-  if (error) throw new Error(error.message);
+  if (error) throw error;
+  return (data as Supplier) ?? null;
 }
