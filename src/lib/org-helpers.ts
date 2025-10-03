@@ -13,7 +13,7 @@ export async function getOrgId(): Promise<string | null> {
   const { user } = await getSession();
   if (!user) return null;
 
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
 
   // 1) profiles.org_id (most common)
   const { data: profRows, error: profErr } = await supabase

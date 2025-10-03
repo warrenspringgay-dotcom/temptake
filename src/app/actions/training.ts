@@ -1,173 +1,75 @@
-// src/app/actions/training.ts
+// src/app/actions/trainings.ts
 "use server";
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerClient } from "@/lib/supabaseServer";
 
-function isMissingColumn(e: unknown) {
-  const code = (e as any)?.code;
-  return code === "42703" || code === "PGRST204";
-}
-
-async function getOrgId(): Promise<string> {
-  const supabase = await createClient();
-  const { data, error } = await supabase.auth.getUser();
-  if (error) throw error;
-
-  const user = data?.user ?? null;
-  if (!user) {
-    const fallback = process.env.DEFAULT_ORG_ID;
-    if (fallback) return fallback;
-    throw new Error("Not signed in and DEFAULT_ORG_ID not set");
-  }
-
-  const metaOrg = (user.user_metadata as any)?.org_id as string | undefined;
-  if (metaOrg) return metaOrg;
-
-  const { data: profile, error: pErr } = await supabase
-    .from("profiles")
-    .select("org_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (pErr) throw pErr;
-  if (profile?.org_id) return profile.org_id;
-
-  const fallback = process.env.DEFAULT_ORG_ID;
-  if (fallback) return fallback;
-
-  throw new Error("Missing org_id and DEFAULT_ORG_ID not set");
-}
-
-/** Prefer staff_training; fall back to trainings. */
-async function detectTrainingTable(supabase: any): Promise<"staff_training" | "trainings"> {
-  try {
-    const { error } = await supabase.from("staff_training").select("id").limit(1);
-    if (!error) return "staff_training";
-  } catch {}
-  return "trainings";
-}
-
-/** ======= Training Types ======= */
-
-export async function listTrainingTypes() {
-  const supabase = await createClient();
-  const orgId = await getOrgId();
-
-  try {
-    const { data, error } = await supabase
-      .from("training_types")
-      .select("id, name, validity_days")
-      .eq("org_id", orgId)
-      .order("name", { ascending: true });
-
-    if (error) throw error;
-    return data ?? [];
-  } catch (e) {
-    if (!isMissingColumn(e)) throw e;
-    return []; // table not present → allow free text
-  }
-}
-
-export async function upsertTrainingType(input: { id?: string; name: string; validity_days?: number | null }) {
-  const supabase = await createClient();
-  const orgId = await getOrgId();
-
-  try {
-    const { data, error } = await supabase
-      .from("training_types")
-      .upsert(
-        { id: input.id, org_id: orgId, name: input.name, validity_days: input.validity_days ?? null },
-        { onConflict: "id" }
-      )
-      .select("id, name, validity_days")
-      .single();
-    if (error) throw error;
-    return data;
-  } catch (e) {
-    if (!isMissingColumn(e)) throw e;
-    throw new Error("training_types table not available");
-  }
-}
-
-/** ======= Training Records ======= */
-
-export type TrainingRecordInput = {
+export type TrainingInput = {
   id?: string;
-  member_id: string;
-  type_id?: string | null;
-  type_name?: string | null;
-  awarded_on?: string | null;   // YYYY-MM-DD
-  expires_on?: string | null;   // may be null
-  status?: string | null;       // "OK" | "Due" | "Expired"
+  staffId?: string | null;
+  staffInitials?: string | null;
+  type: string;
+  awarded_on: string;
+  expires_on?: string | null;
   certificate_url?: string | null;
   notes?: string | null;
-  active?: boolean | null;
 };
 
-export async function listMemberTraining(memberId: string) {
-  const supabase = await createClient();
-  const orgId = await getOrgId();
-  const table = await detectTrainingTable(supabase);
-
-  try {
-    const { data, error } = await supabase
-      .from(table)
-      .select("id, member_id, type_id, type_name, awarded_on, expires_on, status, certificate_url, notes, active, created_at")
-      .eq("org_id", orgId)
-      .eq("member_id", memberId)
-      .order("awarded_on", { ascending: false });
-    if (error) throw error;
-    return data ?? [];
-  } catch (e) {
-    if (!isMissingColumn(e)) throw e;
-    const { data, error } = await supabase
-      .from(table)
-      .select("*")
-      .eq("org_id", orgId)
-      .eq("member_id", memberId);
-    if (error) throw error;
-    return data ?? [];
-  }
+function addDaysISO(baseISO: string, days: number) {
+  const d = new Date(baseISO);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
-export async function upsertTraining(rec: TrainingRecordInput) {
-  const supabase = await createClient();
-  const orgId = await getOrgId();
-  const table = await detectTrainingTable(supabase);
+async function ensureStaffExists(supabase: any, opts: { staffId?: string | null; staffInitials?: string | null; }) {
+  const { staffId, staffInitials } = opts;
 
-  const payload: any = { ...rec, org_id: orgId };
-
-  // Prefer explicit column select
-  try {
-    const { data, error } = await supabase
-      .from(table)
-      .upsert(payload, { onConflict: "id" })
-      .select("id, member_id, type_id, type_name, awarded_on, expires_on, status, certificate_url, notes, active, created_at")
-      .single();
-    if (error) throw error;
-    return data;
-  } catch (e) {
-    if (!isMissingColumn(e)) throw e;
+  if (staffId) {
+    const { data, error } = await supabase.from("staff").select("id").eq("id", staffId).maybeSingle();
+    if (error) throw new Error(`Failed to verify staff: ${error.message}`);
+    if (!data?.id) throw new Error("Selected staff not found.");
+    return data.id;
   }
 
-  // Fallback wildcard
+  const ini = staffInitials?.trim().toUpperCase() ?? "";
+  if (!ini) throw new Error("No staff selected: provide staffId or staffInitials.");
+
+  const { data, error } = await supabase.from("staff").select("id").eq("initials", ini).maybeSingle();
+  if (error) throw new Error(`Failed to lookup staff by initials: ${error.message}`);
+  if (data?.id) return data.id;
+
+  const { data: created, error: createErr } = await supabase.from("staff").insert({ initials: ini }).select("id").single();
+  if (createErr) throw new Error(`Failed to create staff: ${createErr.message}`);
+  if (!created?.id) throw new Error("Failed to create staff (no id returned).");
+  return created.id;
+}
+
+export async function saveTrainingServer(input: TrainingInput) {
+  const supabase = await createServerClient();
+
+  const staff_id = await ensureStaffExists(supabase, {
+    staffId: input.staffId,
+    staffInitials: input.staffInitials,
+  });
+
+  const expires_on =
+    input.expires_on && input.expires_on.trim() ? input.expires_on : addDaysISO(input.awarded_on, 365);
+
+  const payload = {
+    id: input.id,
+    staff_id,
+    type: input.type,
+    awarded_on: input.awarded_on,
+    expires_on,
+    certificate_url: input.certificate_url ?? null,
+    notes: input.notes ?? null,
+  };
+
   const { data, error } = await supabase
-    .from(table)
+    .from("trainings")
     .upsert(payload, { onConflict: "id" })
-    .select("*")
+    .select("id")
     .single();
-  if (error) throw error;
-  return data;
-}
 
-export async function deleteTraining(id: string) {
-  const supabase = await createClient();
-  const orgId = await getOrgId();
-  const table = await detectTrainingTable(supabase);
-
-  const { error } = await supabase
-    .from(table)
-    .delete()
-    .eq("id", id)
-    .eq("org_id", orgId);
-  if (error) throw error;
+  if (error) throw new Error(`[trainings.upsert] ${error.message}`);
+  return { id: data.id as string };
 }

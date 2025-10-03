@@ -1,7 +1,7 @@
 // src/app/actions/suppliers.ts
 "use server";
 
-import { supabaseServer } from "@/lib/supabaseServer";
+import { createServerClient } from "@/lib/supabaseServer";
 
 export type Supplier = {
   id: string;
@@ -17,7 +17,7 @@ export type Supplier = {
 };
 
 export async function listSuppliers(query?: string): Promise<Supplier[]> {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
   let q = supabase
     .from("suppliers")
     .select("id,name,contact_name,phone,email,categories,is_active,notes,created_at,updated_at")
@@ -35,19 +35,19 @@ export async function listSuppliers(query?: string): Promise<Supplier[]> {
 export async function upsertSupplier(
   input: Partial<Supplier> & { name: string }
 ): Promise<void> {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
   const { error } = await supabase.from("suppliers").upsert(input, { onConflict: "id" });
   if (error) throw error;
 }
 
 export async function deleteSupplier(id: string): Promise<void> {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
   const { error } = await supabase.from("suppliers").delete().eq("id", id);
   if (error) throw error;
 }
 
 export async function getSupplier(id: string): Promise<Supplier | null> {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
   const { data, error } = await supabase
     .from("suppliers")
     .select("id,name,contact_name,phone,email,categories,is_active,notes,created_at,updated_at")

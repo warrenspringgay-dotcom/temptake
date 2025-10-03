@@ -8,7 +8,7 @@ export type Role = "staff" | "manager" | "owner";
  * Adjust the table/column names to match your schema.
  */
 export async function getUserRole(userId?: string): Promise<Role | null> {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
 
   // Resolve a user id if not supplied
   const id =

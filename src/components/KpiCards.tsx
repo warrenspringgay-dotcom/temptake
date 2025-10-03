@@ -9,7 +9,7 @@ type Kpis = {
 };
 
 async function loadKpis(): Promise<Kpis> {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
   const org_id = await getOrgId();
   if (!org_id) return { total7d: 0, avgTemp7d: null, lastLogAt: null };
 

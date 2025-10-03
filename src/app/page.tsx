@@ -1,42 +1,47 @@
-// src/app/page.tsx
-import Link from "next/link";
+// src/app/page.tsx (Server Component)
+import { createServerClient } from "@/lib/supabaseServer";  // ⬅️ add this
 import FoodTempLoggerServer from "@/components/FoodTempLoggerServer";
-import { supabaseServer } from "@/lib/supabaseServer";
-
-export const metadata = { title: "Dashboard – TempTake" };
 
 export default async function Page() {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
+
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser(); // ⬅️ remove the extra "{"
 
-  // If signed out, show a simple “please log in” panel
-  if (!user) {
-    return (
-      <main className="p-4">
-        <div className="mx-auto max-w-xl rounded-2xl border bg-white p-6 shadow-sm">
-          <h1 className="text-xl font-semibold">Welcome to TempTake</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            You’re signed out. Please log in to start logging temperatures and viewing KPIs.
-          </p>
-          <div className="mt-4">
-            <Link
-              href="/login"
-              className="inline-block rounded-lg bg-black px-4 py-2 text-white hover:bg-gray-900"
-            >
-              Go to Login
-            </Link>
-          </div>
-        </div>
-      </main>
-    );
-  }
+  // Seed values for the client component (initials + locations)
+  const { data: tm } = await supabase
+    .from("team_members")
+    .select("initials,name,email");
 
-  // Signed in — render the dashboard logger
+  const initials = Array.from(
+    new Set(
+      (tm ?? [])
+        .map(
+          (r: any) =>
+            r.initials?.toString().toUpperCase() ||
+            (r.name || "").trim().charAt(0).toUpperCase() ||
+            (r.email || "").trim().charAt(0).toUpperCase()
+        )
+        .filter(Boolean)
+    )
+  );
+
+  const { data: locs } = await supabase
+    .from("food_temp_logs")
+    .select("area,location");
+
+  const locations = Array.from(
+    new Set(
+      (locs ?? [])
+        .map((r: any) => (r.area ?? r.location ?? "").toString().trim())
+        .filter(Boolean)
+    )
+  );
+
   return (
     <main className="p-4">
-      <FoodTempLoggerServer />
+      <FoodTempLoggerServer initials={initials} locations={locations} />
     </main>
   );
 }

@@ -2,7 +2,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { supabaseServer } from "@/lib/supabase-server";
+import { createServerClient } from "@/lib/supabaseServer";
 import { getOrgId } from "@/lib/org";
 
 export type NewFoodTemp = {
@@ -15,7 +15,7 @@ export type NewFoodTemp = {
 };
 
 export async function logFoodTemp(payload: NewFoodTemp) {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
   const orgId = await getOrgId();
 
   const { error } = await supabase.from("food_temps").insert({

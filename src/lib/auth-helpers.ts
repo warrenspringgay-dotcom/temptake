@@ -5,7 +5,7 @@ export type SessionUser = { id: string; email: string | null };
 
 /** Back-compat shim for pages that import `getSession()` */
 export async function getSession(): Promise<{ user: SessionUser | null }> {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
   const { data } = await supabase.auth.getUser();
 
   if (!data?.user) {

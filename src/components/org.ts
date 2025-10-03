@@ -2,7 +2,7 @@
 import { supabaseServer } from "@/lib/supabase-server";
 
 export async function getActiveOrgId(): Promise<string | null> {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 

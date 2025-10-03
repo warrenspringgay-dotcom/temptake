@@ -1,11 +1,11 @@
 "use server";
 
-import { supabaseServer } from "@/lib/supabase-server";
+import { createServerClient } from "@/lib/supabaseServer";
 import { getOrgId } from "@/lib/org-helpers";
 
 /** Distinct team initials (active members). Falls back to recent logs. */
 export async function getTeamInitials(): Promise<string[]> {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
   const org_id = await getOrgId().catch(() => null);
   if (!org_id) return [];
 

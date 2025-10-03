@@ -1,60 +1,47 @@
 // src/components/FoodTempLoggerServer.tsx
-// Server component (no "use client")
+// Server Component: fetches seeds (initials/locations) and renders the client logger.
+
+import { createServerClient } from "@/lib/supabaseServer";
 import FoodTempLogger from "./FoodTempLogger";
-import { supabaseServer } from "@/lib/supabaseServer";
 
-type TeamRow = {
-  initials?: string | null;
-  name?: string | null;
-  email?: string | null;
-  [k: string]: any;
-};
-
-export const dynamic = "force-dynamic";
+function firstLetter(s?: string | null) {
+  return (s ?? "").trim().charAt(0).toUpperCase();
+}
 
 export default async function FoodTempLoggerServer() {
-  const sb = await supabaseServer();
+  const supabase = await createServerClient();
 
-  // Get the current user id (if signed in)
-  const { data: userData } = await sb.auth.getUser();
-  const uid = userData.user?.id ?? null;
+  // Seed initials from team_members (fallback to name/email first letter)
+  const { data: tm } = await supabase
+    .from("team_members")
+    .select("initials,name,email");
 
-  // Build initials list in a schema-agnostic way
-  let initials: string[] = [];
-  if (uid) {
-    // try several common owner columns so it works with your `uid` column too
-    const ownerCols = ["created_by", "user_id", "uid", "owner_id", "org_id"] as const;
+  const initials = Array.from(
+    new Set(
+      (tm ?? [])
+        .map(
+          (r: any) =>
+            (r.initials && String(r.initials).toUpperCase()) ||
+            firstLetter(r.name) ||
+            firstLetter(r.email)
+        )
+        .filter(Boolean)
+    )
+  );
 
-    let team: TeamRow[] = [];
-    for (const col of ownerCols) {
-      const { data, error } = await sb.from("team_members").select("*").eq(col, uid);
-      if (!error) {
-        team = data ?? [];
-        if (team.length) break;
-      }
-    }
-    // last resort: no filter (useful in dev)
-    if (!team.length) {
-      const { data } = await sb.from("team_members").select("*");
-      team = data ?? [];
-    }
+  // Seed locations from existing logs (area or location)
+  const { data: locs } = await supabase
+    .from("food_temp_logs")
+    .select("area,location");
 
-    const list = Array.from(
-      new Set(
-        (team || [])
-          .map((r) => {
-            if (r.initials) return String(r.initials).toUpperCase();
-            if (r.name) return String(r.name)[0]?.toUpperCase();
-            if (r.email) return String(r.email)[0]?.toUpperCase();
-            return null;
-          })
-          .filter((x): x is string => Boolean(x))
-      )
-    );
+  const locations = Array.from(
+    new Set(
+      (locs ?? [])
+        .map((r: any) => String(r.area ?? r.location ?? "").trim())
+        .filter(Boolean)
+    )
+  );
 
-    initials = list;
-  }
-
-  // Render the client component with the initials we found
-  return <FoodTempLogger initials={initials} />;
+  // Render the client component with seeds
+  return <FoodTempLogger initials={initials} locations={locations} />;
 }

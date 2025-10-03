@@ -5,7 +5,7 @@ import { getOrgId } from "@/lib/org-helpers";
 
 export async function GET() {
   try {
-    const supabase = await supabaseServer();
+    const supabase = await createServerClient();
     const org_id = await getOrgId();
     if (!org_id) return NextResponse.json({ data: [] });
 
@@ -25,7 +25,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const supabase = await supabaseServer();
+    const supabase = await createServerClient();
     const org_id = await getOrgId();
     if (!org_id) return new NextResponse("No org", { status: 400 });
 
@@ -56,7 +56,7 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
-    const supabase = await supabaseServer();
+    const supabase = await createServerClient();
     const org_id = await getOrgId();
     if (!org_id) return new NextResponse("No org", { status: 400 });
 

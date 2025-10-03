@@ -8,7 +8,7 @@ import { supabaseServer } from "./supabase-server";
  *   - else first one
  */
 export async function getOrgId(): Promise<string> {
-  const supabase = await supabaseServer();
+  const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not signed in");
 

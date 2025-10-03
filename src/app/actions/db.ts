@@ -1,12 +1,13 @@
 // src/app/actions/db.ts
 "use server";
 
-import { supabaseServer } from "@/lib/supabase-server";
+import { createServerClient } from "@/lib/supabaseServer";
+
 import { getOrgId } from "@/lib/org-helpers";
 
 /** Team initials from your Team table (assumes column 'initials') */
 export async function getTeamInitials(): Promise<string[]> {
-  const sb = await supabaseServer();
+  const sb = await createServerClient();
   const org_id = await getOrgId();
   const { data, error } = await sb
     .from("team")              // <- your team table
@@ -22,7 +23,7 @@ export async function getTeamInitials(): Promise<string[]> {
 
 /** Count temp logs in the last N days (assumes 'date' is a date string) */
 export async function countTempLogsLastNDays(n = 30): Promise<number> {
-  const sb = await supabaseServer();
+  const sb = await createServerClient();
   const org_id = await getOrgId();
 
   const sinceISO = new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
@@ -42,7 +43,7 @@ export async function countTempLogsLastNDays(n = 30): Promise<number> {
  *   - allergens.review_due (date) on 'allergens' single-row or per-item table
  */
 export async function getComplianceFlags() {
-  const sb = await supabaseServer();
+  const sb = await createServerClient();
   const org_id = await getOrgId();
 
   const today = new Date().toISOString().slice(0, 10);

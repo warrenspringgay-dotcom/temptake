@@ -6,7 +6,7 @@ import { createServerClient } from "@/lib/supabaseServer";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /** Preferred: call this to get a server-side Supabase client */
-export function supabaseServer(): SupabaseClient {
+export function createServerClient(): SupabaseClient {
   return createServerClient();
 }
 
