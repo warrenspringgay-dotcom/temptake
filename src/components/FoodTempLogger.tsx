@@ -10,11 +10,9 @@ import {
   type TargetPreset,
 } from "@/lib/temp-constants";
 
-/* ----------------------------- Types & Utils ----------------------------- */
-
 type CanonRow = {
   id: string;
-  date: string | null;
+  date: string | null; // yyyy-mm-dd
   staff_initials: string | null;
   location: string | null;
   item: string | null;
@@ -25,33 +23,53 @@ type CanonRow = {
 
 type Routine = {
   id: string;
-  name: string | null;
-  location: string | null;
-  item: string | null;
-  target_key: string | null;
-  last_used_at?: string | null;
+  name: string;
+  last_used_at: string | null;
 };
 
-type Props = { initials?: string[]; locations?: string[] };
+type RoutineItem = {
+  id: string;
+  routine_id: string;
+  position: number;
+  location: string | null;
+  item: string | null;
+  target_key: string;
+};
+
+type Props = {
+  initials?: string[];
+  locations?: string[];
+};
 
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
 
-const cls = (...p: Array<string | false | undefined>) => p.filter(Boolean).join(" ");
-const firstLetter = (s?: string | null) => (s?.trim()?.charAt(0) || "").toUpperCase();
-function toISODate(v: any): string | null {
-  if (!v) return null;
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate(),
-  ).padStart(2, "0")}`;
+/* ---------------- helpers ---------------- */
+function cls(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
 }
-const ddmmyyyy = (iso?: string | null) => {
+function firstLetter(s: string | null | undefined) {
+  return (s?.trim()?.charAt(0) || "").toUpperCase();
+}
+function toISODate(val: any): string | null {
+  if (!val) return null;
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return null;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  } catch {
+    return null;
+  }
+}
+function formatDDMMYYYY(iso: string | null) {
   if (!iso) return "—";
   const [y, m, d] = iso.split("-");
-  return d && m && y ? `${d}/${m}/${y}` : iso;
-};
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}/${y}`;
+}
 function inferStatus(temp: number | null, preset?: TargetPreset): "pass" | "fail" | null {
   if (temp == null || !preset) return null;
   const { minC, maxC } = preset;
@@ -64,50 +82,28 @@ async function getUid(): Promise<string> {
   if (!data.user) throw new Error("You are signed out.");
   return data.user.id;
 }
-async function getOrgId(): Promise<string | null> {
-  try {
-    const { data: userRes } = await supabase.auth.getUser();
-    const uid = userRes.user?.id;
-    if (!uid) return null;
 
-    const { data: tm } = await supabase
-      .from("team_members")
-      .select("org_id, owner_id")
-      .eq("user_id", uid)
-      .maybeSingle();
-
-    if (tm?.org_id) return String(tm.org_id);
-    if (tm?.owner_id) return String(tm.owner_id);
-
-    const metaOrg =
-      (userRes.user?.user_metadata as any)?.org_id ??
-      (userRes.user?.app_metadata as any)?.org_id ??
-      null;
-
-    return metaOrg ? String(metaOrg) : null;
-  } catch {
-    return null;
-  }
-}
-
-/* ------------------------------- Component -------------------------------- */
-
+/* -------------- component --------------- */
 export default function FoodTempLogger({ initials: initialsSeed, locations: locationsSeed }: Props) {
+  // DATA
   const [rows, setRows] = useState<CanonRow[]>([]);
-  const [initials, setInitials] = useState<string[]>(() => Array.from(new Set([...(initialsSeed ?? [])])));
+  const [initials, setInitials] = useState<string[]>(() =>
+    Array.from(new Set([...(initialsSeed ?? [])]))
+  );
   const [locations, setLocations] = useState<string[]>(() =>
-    Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS])),
+    Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS]))
   );
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [kpi, setKpi] = useState({ trainingDue: 0, allergenDue: 0 });
+  // KPIs
+  const [kpi, setKpi] = useState<{ trainingDue: number; allergenDue: number }>({
+    trainingDue: 0,
+    allergenDue: 0,
+  });
 
-  const [routines, setRoutines] = useState<Routine[]>([]);
-  const [routinePickerOpen, setRoutinePickerOpen] = useState(false);
-  const [routineManagerOpen, setRoutineManagerOpen] = useState(false);
+  // ENTRY FORM
   const [formOpen, setFormOpen] = useState(true);
-
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
     staff_initials: "",
@@ -121,18 +117,35 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
   const canSave =
     !!form.date && !!form.location && !!form.item && !!form.target_key && form.temp_c.trim().length > 0;
 
-  /* ------------------------------ Bootstrap -------------------------------- */
+  // ROUTINES
+  const [routinePickerOpen, setRoutinePickerOpen] = useState(false);
+  const [routineBuilderOpen, setRoutineBuilderOpen] = useState(false);
+  const [routines, setRoutines] = useState<Routine[]>([]);
+  const [routineItems, setRoutineItems] = useState<Record<string, RoutineItem[]>>({});
+  // builder state
+  type BuilderItem = { location: string; item: string; target_key: string };
+  const [builderName, setBuilderName] = useState("");
+  const [builderItems, setBuilderItems] = useState<BuilderItem[]>([
+    { location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" },
+  ]);
+  const [savingRoutine, setSavingRoutine] = useState(false);
 
+  /* ---------- prime from localStorage ---------- */
   useEffect(() => {
     try {
       const lsIni = localStorage.getItem(LS_LAST_INITIALS) || "";
       const lsLoc = localStorage.getItem(LS_LAST_LOCATION) || "";
-      setForm((f) => ({ ...f, staff_initials: lsIni || f.staff_initials, location: lsLoc || f.location }));
+      setForm((f) => ({
+        ...f,
+        staff_initials: lsIni || f.staff_initials,
+        location: lsLoc || f.location,
+      }));
       if (lsIni) setInitials((prev) => Array.from(new Set([lsIni, ...prev])));
       if (lsLoc) setLocations((prev) => Array.from(new Set([lsLoc, ...prev])));
     } catch {}
   }, []);
 
+  /* ---------- KPI fetch (best-effort) ---------- */
   useEffect(() => {
     (async () => {
       try {
@@ -148,7 +161,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
             const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
             if (!raw) return acc;
             const d = new Date(raw);
-            return Number.isNaN(d.getTime()) ? acc : d <= soon ? acc + 1 : acc;
+            return isNaN(d.getTime()) ? acc : d <= soon ? acc + 1 : acc;
           }, 0);
         } catch {}
 
@@ -158,7 +171,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
             const raw = r.next_due ?? r.next_review_due ?? r.due_at ?? r.review_due ?? null;
             if (!raw) return acc;
             const d = new Date(raw);
-            return Number.isNaN(d.getTime()) ? acc : d <= soon ? acc + 1 : acc;
+            return isNaN(d.getTime()) ? acc : d <= soon ? acc + 1 : acc;
           }, 0);
         } catch {}
 
@@ -169,53 +182,92 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     })();
   }, []);
 
+  /* ---------- initials list ---------- */
   useEffect(() => {
     (async () => {
-      const { data: tm } = await supabase.from("team_members").select("*");
-      const fromDb =
-        (tm ?? [])
-          .map(
-            (r: any) =>
-              r.initials?.toString().toUpperCase() || firstLetter(r.name) || firstLetter(r.email),
-          )
-          .filter(Boolean) || [];
-      const merged = Array.from(new Set([...(initialsSeed ?? []), ...fromDb, ...initials]));
-      if (merged.length) setInitials(merged);
-      if (!form.staff_initials && merged[0]) setForm((f) => ({ ...f, staff_initials: merged[0] }));
+      try {
+        const { data: tm } = await supabase.from("team_members").select("*");
+        const fromDb =
+          (tm ?? [])
+            .map(
+              (r: any) =>
+                r.initials?.toString().toUpperCase() ||
+                firstLetter(r.name) ||
+                firstLetter(r.email)
+            )
+            .filter(Boolean) || [];
+        const merged = Array.from(new Set([...(initialsSeed ?? []), ...fromDb, ...initials]));
+        if (merged.length) setInitials(merged);
+        if (!form.staff_initials && merged[0]) {
+          setForm((f) => ({ ...f, staff_initials: merged[0] }));
+        }
+      } catch {
+        // ignore
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialsSeed]);
 
+  /* ---------- locations list ---------- */
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("food_temp_logs").select("area, location");
-      const fromAreas =
-        (data ?? [])
-          .map((r: any) => (r.area ?? r.location ?? "").toString().trim())
-          .filter((s: string) => s.length > 0) || [];
-      const merged = Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...fromAreas, ...locations]));
-      setLocations(merged.length ? merged : ["Kitchen"]);
-      if (!form.location && merged[0]) setForm((f) => ({ ...f, location: merged[0] }));
+      try {
+        const { data } = await supabase.from("food_temp_logs").select("area, location");
+        const fromAreas =
+          (data ?? [])
+            .map((r: any) => (r.area ?? r.location ?? "").toString().trim())
+            .filter((s: string) => s.length > 0) || [];
+        const merged = Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...fromAreas, ...locations]));
+        setLocations(merged.length ? merged : ["Kitchen"]);
+        if (!form.location && merged[0]) {
+          setForm((f) => ({ ...f, location: merged[0] }));
+        }
+      } catch {
+        const base = Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...locations]));
+        setLocations(base.length ? base : ["Kitchen"]);
+        if (!form.location) {
+          setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
+        }
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationsSeed]);
 
+  /* ---------- rows ---------- */
   useEffect(() => {
     (async () => {
       setLoading(true);
       setErr(null);
       try {
-        const { data } = await supabase.from("food_temp_logs").select("*").order("at", { ascending: false }).limit(200);
-        const normalized: CanonRow[] = (data ?? []).map((r: any) => ({
-          id: String(r.id ?? crypto.randomUUID()),
-          date: toISODate(r.at ?? r.date ?? r.created_at ?? null),
-          staff_initials: (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
-          location: (r.area ?? r.location ?? null)?.toString() ?? null,
-          item: (r.note ?? r.item ?? null)?.toString() ?? null,
-          target_key: r.target_key != null ? String(r.target_key) : null,
-          temp_c: r.temp_c != null ? Number(r.temp_c) : null,
-          status: r.status,
-        }));
+        const { data } = await supabase
+          .from("food_temp_logs")
+          .select("*")
+          .order("at", { ascending: false })
+          .limit(300);
+
+        const normalized: CanonRow[] = (data ?? []).map((r: any) => {
+          const temp =
+            typeof r.temp_c === "number"
+              ? r.temp_c
+              : r.temp_c != null
+              ? Number(r.temp_c)
+              : null;
+          const targetKey = r.target_key != null ? String(r.target_key) : null;
+          const preset = targetKey && (TARGET_BY_KEY as any)[targetKey]
+            ? (TARGET_BY_KEY as any)[targetKey]
+            : undefined;
+
+          return {
+            id: String(r.id ?? crypto.randomUUID()),
+            date: toISODate(r.at ?? r.date ?? r.created_at ?? null),
+            staff_initials: (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
+            location: (r.area ?? r.location ?? null)?.toString() ?? null,
+            item: (r.note ?? r.item ?? null)?.toString() ?? null,
+            target_key: targetKey,
+            temp_c: temp,
+            status: (r.status as any) ?? inferStatus(temp, preset),
+          };
+        });
         setRows(normalized);
       } catch (e: any) {
         setErr(e?.message || "Failed to fetch logs.");
@@ -227,7 +279,11 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
   }, []);
 
   async function refreshRows() {
-    const { data } = await supabase.from("food_temp_logs").select("*").order("at", { ascending: false }).limit(200);
+    const { data } = await supabase
+      .from("food_temp_logs")
+      .select("*")
+      .order("at", { ascending: false })
+      .limit(300);
     const normalized: CanonRow[] = (data ?? []).map((r: any) => ({
       id: String(r.id ?? crypto.randomUUID()),
       date: toISODate(r.at ?? r.date ?? r.created_at ?? null),
@@ -241,96 +297,86 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     setRows(normalized);
   }
 
-  /* ----------------------------- Routines --------------------------------- */
-
+  /* ---------- routines load/save (no `active` col) ---------- */
   async function loadRoutines() {
+    // grab routines
+    const { data: r } = await supabase
+      .from("temp_routines")
+      .select("id, name, last_used_at")
+      .order("updated_at", { ascending: false })
+      .limit(200);
+
+    const routinesList = (r ?? []).map((x: any) => ({
+      id: String(x.id),
+      name: String(x.name ?? "Untitled"),
+      last_used_at: x.last_used_at ?? null,
+    })) as Routine[];
+
+    // grab items for those routines
+    const ids = routinesList.map((rr) => rr.id);
+    let itemsByRoutine: Record<string, RoutineItem[]> = {};
+    if (ids.length) {
+      const { data: items } = await supabase
+        .from("temp_routine_items")
+        .select("id, routine_id, position, location, item, target_key")
+        .in("routine_id", ids)
+        .order("position", { ascending: true });
+
+      (items ?? []).forEach((it: any) => {
+        const rid = String(it.routine_id);
+        itemsByRoutine[rid] = itemsByRoutine[rid] || [];
+        itemsByRoutine[rid].push({
+          id: String(it.id),
+          routine_id: rid,
+          position: Number(it.position ?? 0),
+          location: it.location ?? null,
+          item: it.item ?? null,
+          target_key: String(it.target_key),
+        });
+      });
+    }
+
+    setRoutines(routinesList);
+    setRoutineItems(itemsByRoutine);
+  }
+
+  useEffect(() => {
+    loadRoutines().catch(() => {});
+  }, []);
+
+  /* ---------- saving one entry ---------- */
+  async function upsertRoutineIfChecked() {
+    if (!form.saveRoutine) return;
     const uid = await getUid();
-    const orgId = await getOrgId();
-    let q = supabase
+    const autoName = `${form.location || "Location"} • ${form.item || "Item"} • ${form.target_key}`;
+
+    // 1) upsert (or insert) a routine row — simplest: insert a new row each time
+    const { data: r, error: rErr } = await supabase
       .from("temp_routines")
-      .select("id, name, location, item, target_key, last_used_at")
-      .order("last_used_at", { ascending: false })
-      .limit(100)
-      .eq("created_by", uid);
+      .insert({
+        created_by: uid,
+        name: autoName,
+        last_used_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
 
-    // IMPORTANT: .is('org_id', null) when orgId is null
-    const { data, error } = orgId != null ? await q.eq("org_id", orgId) : await q.is("org_id", null);
+    if (rErr || !r?.id) return;
 
-    if (!error) setRoutines((data ?? []) as Routine[]);
-  }
-
-
-   // find-or-insert that handles null org_id and CHECKS ERRORS
-async function saveRoutine(def: {
-  name: string | null;
-  location: string | null;
-  item: string | null;
-  target_key: string | null;
-}) {
-  const uid = await getUid();
-  const orgId = await getOrgId();
-  const last_used_at = new Date().toISOString();
-
-  // Find existing (handle NULL org with .is)
-  let findQ = supabase
-    .from("temp_routines")
-    .select("id")
-    .eq("created_by", uid)
-    .eq("location", def.location)
-    .eq("item", def.item)
-    .eq("target_key", def.target_key);
-
-  const { data: existing, error: findErr } =
-    orgId != null ? await findQ.eq("org_id", orgId).maybeSingle()
-                  : await findQ.is("org_id", null).maybeSingle();
-
-  if (findErr) throw new Error(`routine lookup failed: ${findErr.message}`);
-
-  if (existing?.id) {
-    const { error } = await supabase
-      .from("temp_routines")
-      .update({ last_used_at, name: def.name })
-      .eq("id", existing.id);
-    if (error) throw new Error(`routine update failed: ${error.message}`);
-  } else {
-    const { error } = await supabase.from("temp_routines").insert({
-      created_by: uid,
-      org_id: orgId ?? null,
-      name: def.name,
-      location: def.location,
-      item: def.item,
-      target_key: def.target_key,
-      last_used_at,
+    // 2) insert one item for it
+    await supabase.from("temp_routine_items").insert({
+      routine_id: r.id,
+      position: 0,
+      location: form.location || null,
+      item: form.item || null,
+      target_key: form.target_key || "chill",
     });
-    if (error) throw new Error(`routine insert failed: ${error.message}`);
+
+    await loadRoutines();
   }
-}
-
-// load routines (handles org_id NULL and CHECKS ERRORS)
-async function loadRoutines() {
-  const uid = await getUid();
-  const orgId = await getOrgId();
-
-  let q = supabase
-    .from("temp_routines")
-    .select("id, name, location, item, target_key, last_used_at")
-    .eq("created_by", uid)
-    .order("last_used_at", { ascending: false })
-    .limit(100);
-
-  const { data, error } =
-    orgId != null ? await q.eq("org_id", orgId) : await q.is("org_id", null);
-
-  if (error) throw new Error(`routine load failed: ${error.message}`);
-  setRoutines((data ?? []) as Routine[]);
-}
-
-  /* -------------------------------- Save ---------------------------------- */
 
   async function handleAddQuick() {
     const uid = await getUid();
-    const orgId = (await getOrgId()) ?? uid;
-
     const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
     const preset =
       form.target_key && form.target_key in TARGET_BY_KEY
@@ -340,10 +386,9 @@ async function loadRoutines() {
 
     const payload = {
       created_by: uid,
-      org_id: orgId,
       at: form.date,
-      area: form.location?.trim() || null,
-      note: form.item?.trim() || null,
+      area: form.location || null,
+      note: form.item || null,
       staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
       target_key: form.target_key || null,
       temp_c: tempNum,
@@ -356,19 +401,7 @@ async function loadRoutines() {
       return;
     }
 
-    if (form.saveRoutine) {
-      try {
-        await saveRoutine({
-          name: `${form.location || "Location"} • ${form.item || "Item"} • ${form.target_key}`,
-          location: form.location?.trim() || null,
-          item: form.item?.trim() || null,
-          target_key: form.target_key || null,
-        });
-        await loadRoutines();
-      } catch (e: any) {
-        console.warn("Saving routine failed:", e?.message);
-      }
-    }
+    await upsertRoutineIfChecked();
 
     try {
       if (form.staff_initials) localStorage.setItem(LS_LAST_INITIALS, form.staff_initials);
@@ -386,64 +419,158 @@ async function loadRoutines() {
     }
   }
 
-  function pickRoutine(r: Routine) {
+  /* ---------- routine builder (multi-entry) ---------- */
+  function addBuilderRow() {
+    setBuilderItems((prev) => [
+      ...prev,
+      { location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" },
+    ]);
+  }
+  function removeBuilderRow(i: number) {
+    setBuilderItems((prev) => prev.filter((_, idx) => idx !== i));
+  }
+  function moveBuilderRow(i: number, dir: -1 | 1) {
+    setBuilderItems((prev) => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const copy = prev.slice();
+      const tmp = copy[i];
+      copy[i] = copy[j];
+      copy[j] = tmp;
+      return copy;
+    });
+  }
+  async function saveRoutineFromBuilder() {
+    if (!builderName.trim()) {
+      alert("Please give your routine a name.");
+      return;
+    }
+    if (builderItems.length === 0) {
+      alert("Add at least one entry to the routine.");
+      return;
+    }
+
+    setSavingRoutine(true);
+    try {
+      const uid = await getUid();
+
+      // 1) create routine row
+      const { data: r, error: rErr } = await supabase
+        .from("temp_routines")
+        .insert({
+          created_by: uid,
+          name: builderName.trim(),
+          last_used_at: null,
+        })
+        .select("id")
+        .single();
+
+      if (rErr || !r?.id) {
+        throw new Error(rErr?.message || "Failed to create routine");
+      }
+
+      // 2) insert items
+      const itemsPayload = builderItems.map((it, i) => ({
+        routine_id: r.id,
+        position: i,
+        location: it.location?.trim() || null,
+        item: it.item?.trim() || null,
+        target_key: it.target_key,
+      }));
+      const { error: iErr } = await supabase.from("temp_routine_items").insert(itemsPayload);
+      if (iErr) throw new Error(iErr.message);
+
+      setRoutineBuilderOpen(false);
+      setBuilderName("");
+      setBuilderItems([{ location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" }]);
+      await loadRoutines();
+      alert("Routine saved.");
+    } catch (e: any) {
+      alert(e?.message || "Failed to save routine");
+    } finally {
+      setSavingRoutine(false);
+    }
+  }
+
+  /* ---------- routine pick ---------- */
+  function openRoutinePicker() {
+    setRoutinePickerOpen(true);
+  }
+  function pickRoutineItem(it: RoutineItem) {
+    // prefill the entry form from the picked item
     setForm((f) => ({
       ...f,
-      location: r.location || f.location,
-      item: r.item || f.item,
-      target_key: (r.target_key as string) || f.target_key,
+      location: it.location ?? f.location,
+      item: it.item ?? f.item,
+      target_key: it.target_key ?? f.target_key,
     }));
     setRoutinePickerOpen(false);
   }
 
+  const routineList = useMemo(() => routines, [routines]);
+
+  /* ---------- grouped rows by date ---------- */
   const grouped = useMemo(() => {
-    const by: Record<string, CanonRow[]> = {};
+    const map = new Map<string, CanonRow[]>();
     for (const r of rows) {
-      const k = r.date ?? "—";
-      (by[k] ??= []).push(r);
+      const key = r.date ?? "—";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(r);
     }
-    return Object.entries(by);
+    return Array.from(map.entries())
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1)) // newest date first
+      .map(([date, list]) => ({ date, list }));
   }, [rows]);
 
-  /* --------------------------------- UI ----------------------------------- */
-
+  /* --------------- render --------------- */
   return (
     <div className="space-y-6">
-      {/* KPIs */}
+      {/* KPI card WITH tiles + small pills inside */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm space-y-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiCard
-            label="Entries today"
-            value={rows.filter((r) => r.date === new Date().toISOString().slice(0, 10)).length}
-          />
-          <KpiCard
-            label="Last 7 days"
-            value={rows.filter((r) => (r.date ? new Date(r.date) >= new Date(Date.now() - 7 * 864e5) : false)).length}
-          />
-          <KpiCard
-            label="Failures (7d)"
-            value={
-              rows.filter(
-                (r) => (r.date ? new Date(r.date) >= new Date(Date.now() - 7 * 864e5) : false) && r.status === "fail",
-              ).length
-            }
-          />
-          <KpiCard
-            label="Locations (7d)"
-            value={new Set(rows.filter((r) => r.date && new Date(r.date) >= new Date(Date.now() - 7 * 864e5)).map((r) => r.location || "")).size}
-          />
-        </div>
+        {/* KPI Tiles */}
+        {(() => {
+          const todayISO = new Date().toISOString().slice(0, 10);
+          const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+          const within7 = (d: string | null) => (d ? new Date(d) >= sevenDaysAgo : false);
+          const entriesToday = rows.filter((r) => r.date === todayISO).length;
+          const last7 = rows.filter((r) => within7(r.date)).length;
+          const failures7 = rows.filter((r) => within7(r.date) && r.status === "fail").length;
+          const locations7 = new Set(rows.filter((r) => within7(r.date)).map((r) => r.location || "")).size;
 
+          return (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border bg-white p-3">
+                <div className="text-xs text-gray-500">Entries today</div>
+                <div className="text-2xl font-semibold">{entriesToday}</div>
+              </div>
+              <div className="rounded-xl border bg-white p-3">
+                <div className="text-xs text-gray-500">Last 7 days</div>
+                <div className="text-2xl font-semibold">{last7}</div>
+              </div>
+              <div className="rounded-xl border bg-white p-3">
+                <div className="text-xs text-gray-500">Failures (7d)</div>
+                <div className="text-2xl font-semibold">{failures7}</div>
+              </div>
+              <div className="rounded-xl border bg-white p-3">
+                <div className="text-xs text-gray-500">Locations (7d)</div>
+                <div className="text-2xl font-semibold">{locations7}</div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Smaller review pills */}
         <div className="flex flex-col gap-1">
           <a
             href="/team"
             className={cls(
               kpi.trainingDue > 0 ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800",
-              "inline-flex items-center justify-between rounded-full px-1.5 py-[2px] text-[13px] leading-[1.1] max-w-fit",
+              "inline-flex items-center justify-between rounded-full px-2 py-[3px] text-xs max-w-fit"
             )}
+            title="View team training"
           >
             <span className="font-medium">Training</span>
-            <span className="ml-2 inline-block rounded-full bg-white/60 px-1 py-[1px] text-[12px] leading-none">
+            <span className="ml-2 inline-block rounded-full bg-white/60 px-1.5 py-[1px] text-[11px] leading-none">
               {kpi.trainingDue > 0 ? `${kpi.trainingDue} due` : "OK"}
             </span>
           </a>
@@ -451,38 +578,56 @@ async function loadRoutines() {
             href="/allergens"
             className={cls(
               kpi.allergenDue > 0 ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800",
-              "inline-flex items-center justify-between rounded-full px-1.5 py-[2px] text-[13px] leading-[1.1] max-w-fit",
+              "inline-flex items-center justify-between rounded-full px-2 py-[3px] text-xs max-w-fit"
             )}
+            title="View allergen reviews"
           >
             <span className="font-medium">Allergen Review</span>
-            <span className="ml-2 inline-block rounded-full bg-white/60 px-1 py-[1px] text-[12px] leading-none">
+            <span className="ml-2 inline-block rounded-full bg-white/60 px-1.5 py-[1px] text-[11px] leading-none">
               {kpi.allergenDue > 0 ? `${kpi.allergenDue} due` : "OK"}
             </span>
           </a>
         </div>
       </div>
 
-      {/* Form block */}
-      <div className="rounded-2xl border bg-white shadow-sm">
-        <div className="flex items-center justify-between px-4 py-3">
-          <span className="text-lg font-semibold">Enter Temperature Log</span>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setRoutinePickerOpen(true)} className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
+      {/* ENTRY FORM (collapsible) */}
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold">Enter Temperature Log</h2>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={openRoutinePicker}
+              className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+              title="Use routine"
+            >
               Use routine
             </button>
-            <button onClick={() => setRoutineManagerOpen(true)} className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
-              Manage routines
+            <button
+              type="button"
+              onClick={() => setRoutineBuilderOpen(true)}
+              className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+              title="New routine"
+            >
+              New routine
             </button>
-            <button onClick={() => setFormOpen((s) => !s)} className="rounded-md border px-2 py-1 text-xs">
-              {formOpen ? "Hide ▲" : "Show ▼"}
+            <button
+              type="button"
+              onClick={() => setFormOpen((v) => !v)}
+              className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+              title="Hide or show entry form"
+            >
+              {formOpen ? "Hide form" : "Show form"}
             </button>
           </div>
         </div>
 
         {formOpen && (
-          <div className="border-t p-4">
+          <>
             {err && (
-              <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{err}</div>
+              <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                {err}
+              </div>
             )}
 
             <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-6">
@@ -492,10 +637,11 @@ async function loadRoutines() {
                   type="date"
                   value={form.date}
                   onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
-                  className="w-full rounded-xl border px-3 py-2"
+                  className="h-10 w-full rounded-xl border px-3 py-2"
                 />
               </div>
 
+              {/* Initials */}
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Initials</label>
                 <select
@@ -507,9 +653,13 @@ async function loadRoutines() {
                       localStorage.setItem(LS_LAST_INITIALS, v);
                     } catch {}
                   }}
-                  className="w-full rounded-xl border px-3 py-2 uppercase"
+                  className="h-10 w-full rounded-xl border px-3 py-2 uppercase"
                 >
-                  {!form.staff_initials && initials.length === 0 && <option value="" disabled>Loading initials…</option>}
+                  {!form.staff_initials && initials.length === 0 && (
+                    <option value="" disabled>
+                      Loading initials…
+                    </option>
+                  )}
                   {initials.map((ini) => (
                     <option key={ini} value={ini}>
                       {ini}
@@ -518,6 +668,7 @@ async function loadRoutines() {
                 </select>
               </div>
 
+              {/* Location */}
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Location</label>
                 <select
@@ -529,9 +680,13 @@ async function loadRoutines() {
                       localStorage.setItem(LS_LAST_LOCATION, v);
                     } catch {}
                   }}
-                  className="w-full rounded-xl border px-3 py-2"
+                  className="h-10 w-full rounded-xl border px-3 py-2"
                 >
-                  {!form.location && locations.length === 0 && <option value="" disabled>Loading locations…</option>}
+                  {!form.location && locations.length === 0 && (
+                    <option value="" disabled>
+                      Loading locations…
+                    </option>
+                  )}
                   {locations.map((loc) => (
                     <option key={loc} value={loc}>
                       {loc}
@@ -545,7 +700,7 @@ async function loadRoutines() {
                 <input
                   value={form.item}
                   onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
-                  className="w-full rounded-xl border px-3 py-2"
+                  className="h-10 w-full rounded-xl border px-3 py-2"
                   placeholder="e.g., Chicken curry"
                 />
               </div>
@@ -555,12 +710,14 @@ async function loadRoutines() {
                 <select
                   value={form.target_key}
                   onChange={(e) => setForm((f) => ({ ...f, target_key: e.target.value }))}
-                  className="w-full rounded-xl border px-3 py-2"
+                  className="h-10 w-full rounded-xl border px-3 py-2"
                 >
                   {TARGET_PRESETS.map((p) => (
                     <option key={p.key} value={p.key}>
                       {p.label}
-                      {p.minC != null || p.maxC != null ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)` : ""}
+                      {p.minC != null || p.maxC != null
+                        ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
+                        : ""}
                     </option>
                   ))}
                 </select>
@@ -572,7 +729,7 @@ async function loadRoutines() {
                   value={form.temp_c}
                   onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
                   onKeyDown={onTempKeyDown}
-                  className="w-full rounded-xl border px-3 py-2"
+                  className="h-10 w-full rounded-xl border px-3 py-2"
                   inputMode="decimal"
                   placeholder="e.g., 5.0"
                 />
@@ -583,8 +740,8 @@ async function loadRoutines() {
                   onClick={handleAddQuick}
                   disabled={!canSave}
                   className={cls(
-                    "rounded-2xl px-4 py-2 font-medium text-white",
-                    canSave ? "bg-black hover:bg-gray-900" : "bg-gray-400",
+                    "rounded-2xl px-4 py-2 text-sm font-medium text-white",
+                    canSave ? "bg-black hover:bg-gray-900" : "bg-gray-400"
                   )}
                 >
                   Save quick entry
@@ -596,330 +753,319 @@ async function loadRoutines() {
                     checked={form.saveRoutine}
                     onChange={(e) => setForm((f) => ({ ...f, saveRoutine: e.target.checked }))}
                   />
-                  Save as routine
+                  Save as routine (single item)
                 </label>
               </div>
             </div>
-          </div>
+          </>
         )}
       </div>
 
-      {/* Routine picker */}
-      {routinePickerOpen && (
-        <Modal onClose={() => setRoutinePickerOpen(false)} title="Use a routine">
-          {routines.length === 0 ? (
-            <div className="text-sm text-gray-600">No routines yet. Click <b>Manage routines</b> to add some.</div>
-          ) : (
-            <ul className="divide-y">
-              {routines.map((r) => (
-                <li key={r.id} className="py-2">
-                  <button
-                    className="w-full rounded-md px-2 py-2 text-left hover:bg-gray-50"
-                    onClick={() => pickRoutine(r)}
-                  >
-                    <div className="text-sm font-medium">
-                      {r.name ?? `${r.location ?? "—"} • ${r.item ?? "—"} • ${r.target_key ?? "—"}`}
-                    </div>
-                    <div className="text-xs text-gray-600">
-                      {r.location ?? "—"} · {r.item ?? "—"} · {r.target_key ?? "—"}
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Modal>
-      )}
-
-      {/* Routine manager (scrollable) */}
-      {routineManagerOpen && (
-        <RoutineManager
-          onClose={() => setRoutineManagerOpen(false)}
-          onSaved={async () => {
-            await loadRoutines();
-            setRoutineManagerOpen(false);
-          }}
-        />
-      )}
-
-      {/* Logs grouped by date with dd/mm/yyyy header */}
+      {/* LOGS TABLE (grouped by date, dd/mm/yyyy) */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Temperature Logs</h2>
-          <button
-            type="button"
-            onClick={() => setRoutinePickerOpen(true)}
-            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+        <h2 className="mb-4 text-lg font-semibold">Temperature Logs</h2>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-500">
+                <th className="py-2 pr-3">Date</th>
+                <th className="py-2 pr-3">Staff</th>
+                <th className="py-2 pr-3">Location</th>
+                <th className="py-2 pr-3">Item</th>
+                <th className="py-2 pr-3">Target</th>
+                <th className="py-2 pr-3">Temp (°C)</th>
+                <th className="py-2 pr-3">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">Loading…</td>
+                </tr>
+              ) : grouped.length ? (
+                grouped.map((g) => (
+                  <React.Fragment key={g.date}>
+                    <tr className="border-t bg-gray-50/70">
+                      <td colSpan={7} className="py-2 px-2 text-xs font-medium text-gray-700">
+                        {formatDDMMYYYY(g.date)}
+                      </td>
+                    </tr>
+                    {g.list.map((r) => {
+                      const preset =
+                        r.target_key && (TARGET_BY_KEY as Record<string, TargetPreset>)[r.target_key];
+                      const st = r.status ?? inferStatus(r.temp_c, preset);
+                      return (
+                        <tr key={r.id} className="border-t">
+                          <td className="py-2 pr-3">{/* date grouped above */}</td>
+                          <td className="py-2 pr-3">{r.staff_initials ?? "—"}</td>
+                          <td className="py-2 pr-3">{r.location ?? "—"}</td>
+                          <td className="py-2 pr-3">{r.item ?? "—"}</td>
+                          <td className="py-2 pr-3">
+                            {preset
+                              ? `${preset.label}${
+                                  preset.minC != null || preset.maxC != null
+                                    ? ` (${preset.minC ?? "−∞"}–${preset.maxC ?? "+∞"} °C)`
+                                    : ""
+                                }`
+                              : "—"}
+                          </td>
+                          <td className="py-2 pr-3">{r.temp_c ?? "—"}</td>
+                          <td className="py-2 pr-3">
+                            {st ? (
+                              <span
+                                className={cls(
+                                  "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
+                                  st === "pass"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-red-100 text-red-800"
+                                )}
+                              >
+                                {st}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">No entries</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ROUTINE PICKER (loads saved routines; choose an item to prefill) */}
+      {routinePickerOpen && (
+        <div
+          className="fixed inset-0 z-[150] bg-black/30"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setRoutinePickerOpen(false)}
+        >
+          <div
+            className="absolute left-1/2 top-16 w-[min(900px,92vw)] -translate-x-1/2 rounded-xl border bg-white p-4 shadow-sm"
+            onClick={(e) => e.stopPropagation()}
           >
-            Use routine
-          </button>
-        </div>
-
-        {loading ? (
-          <div className="py-6 text-center text-gray-500">Loading…</div>
-        ) : grouped.length === 0 ? (
-          <div className="py-6 text-center text-gray-500">No entries</div>
-        ) : (
-          <div className="space-y-6">
-            {grouped.map(([date, entries]) => (
-              <div key={date} className="rounded-xl border">
-                <div className="sticky top-0 z-10 rounded-t-xl bg-gray-50 px-3 py-2 text-sm font-semibold">
-                  {ddmmyyyy(date)}
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-gray-500">
-                        <th className="py-2 pr-3">Staff</th>
-                        <th className="py-2 pr-3">Location</th>
-                        <th className="py-2 pr-3">Item</th>
-                        <th className="py-2 pr-3">Target</th>
-                        <th className="py-2 pr-3">Temp (°C)</th>
-                        <th className="py-2 pr-3">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {entries.map((r) => {
-                        const preset =
-                          r.target_key &&
-                          (TARGET_BY_KEY as Record<string, TargetPreset>)[r.target_key];
-                        const st = r.status ?? inferStatus(r.temp_c, preset);
-                        return (
-                          <tr key={r.id} className="border-t">
-                            <td className="py-2 pr-3">{r.staff_initials ?? "—"}</td>
-                            <td className="py-2 pr-3">{r.location ?? "—"}</td>
-                            <td className="py-2 pr-3">{r.item ?? "—"}</td>
-                            <td className="py-2 pr-3">
-                              {preset
-                                ? `${preset.label}${
-                                    preset.minC != null || preset.maxC != null
-                                      ? ` (${preset.minC ?? "−∞"}–${preset.maxC ?? "+∞"} °C)`
-                                      : ""
-                                  }`
-                                : "—"}
-                            </td>
-                            <td className="py-2 pr-3">{r.temp_c ?? "—"}</td>
-                            <td className="py-2 pr-3">
-                              {st ? (
-                                <span
-                                  className={cls(
-                                    "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                                    st === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800",
-                                  )}
-                                >
-                                  {st}
-                                </span>
-                              ) : (
-                                "—"
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* --------------------------------- Bits ---------------------------------- */
-
-function KpiCard({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="rounded-xl border bg-white p-3">
-      <div className="text-xs text-gray-500">{label}</div>
-      <div className="text-2xl font-semibold">{value}</div>
-    </div>
-  );
-}
-
-function Modal({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="fixed inset-0 z-[100] bg-black/30" onClick={onClose} role="dialog" aria-modal="true">
-      <div
-        className="absolute inset-x-0 top-10 mx-auto w-full max-w-2xl rounded-xl border bg-white shadow-sm"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
-          <h3 className="text-base font-semibold">{title}</h3>
-          <button onClick={onClose} className="rounded-md p-2 hover:bg-gray-100" aria-label="Close">
-            ✕
-          </button>
-        </div>
-        {/* scrollable body */}
-        <div className="max-h-[70vh] overflow-y-auto px-4 py-3">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-/* --------------------------- Routine Manager ----------------------------- */
-
-function RoutineManager({
-  onClose,
-  onSaved,
-}: {
-  onClose: () => void;
-  onSaved: () => Promise<void> | void;
-}) {
-  const [rows, setRows] = useState<
-    Array<{ id: string; location: string; item: string; target_key: string }>
-  >([{ id: crypto.randomUUID(), location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" }]);
-
-  const [saving, setSaving] = useState(false);
-
-  function addRow() {
-    setRows((r) => [...r, { id: crypto.randomUUID(), location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" }]);
-  }
-  function removeRow(id: string) {
-    setRows((r) => r.filter((x) => x.id !== id));
-  }
-  function update(id: string, patch: Partial<{ location: string; item: string; target_key: string }>) {
-    setRows((r) => r.map((x) => (x.id === id ? { ...x, ...patch } : x)));
-  }
-
-  async function saveAll() {
-    setSaving(true);
-    try {
-      const { data: u } = await supabase.auth.getUser();
-      if (!u?.user) throw new Error("You are signed out.");
-      const uid = u.user.id;
-
-      // resolve org
-      let orgId: string | null = null;
-      try {
-        const { data: tm } = await supabase
-          .from("team_members")
-          .select("org_id, owner_id")
-          .eq("user_id", uid)
-          .maybeSingle();
-        orgId = tm?.org_id ?? tm?.owner_id ?? null;
-      } catch {}
-
-      for (const r of rows) {
-        const name = `${r.location || "Location"} • ${r.item || "Item"} • ${r.target_key}`;
-        const last_used_at = new Date().toISOString();
-
-        // find that handles null org
-        let findQ = supabase
-          .from("temp_routines")
-          .select("id")
-          .eq("created_by", uid)
-          .eq("location", r.location || null)
-          .eq("item", r.item || null)
-          .eq("target_key", r.target_key || null);
-
-        const { data: existing } =
-          orgId != null ? await findQ.eq("org_id", orgId).maybeSingle() : await findQ.is("org_id", null).maybeSingle();
-
-        if (existing?.id) {
-          await supabase.from("temp_routines").update({ name, last_used_at }).eq("id", existing.id);
-        } else {
-          await supabase.from("temp_routines").insert({
-            created_by: uid,
-            org_id: orgId ?? null,
-            name,
-            location: r.location || null,
-            item: r.item || null,
-            target_key: r.target_key || null,
-            last_used_at,
-          });
-        }
-      }
-
-      await onSaved();
-    } catch (e) {
-      console.error(e);
-      alert("Failed to save routines.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Modal onClose={onClose} title="Manage routines">
-      <div className="space-y-3">
-        {rows.map((r) => (
-          <div key={r.id} className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Location</label>
-              <input
-                value={r.location}
-                onChange={(e) => update(r.id, { location: e.target.value })}
-                className="w-full rounded-xl border px-3 py-2"
-                placeholder="e.g., Kitchen"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs text-gray-500">Item</label>
-              <input
-                value={r.item}
-                onChange={(e) => update(r.id, { item: e.target.value })}
-                className="w-full rounded-xl border px-3 py-2"
-                placeholder="e.g., Chicken curry"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Target</label>
-              <select
-                value={r.target_key}
-                onChange={(e) => update(r.id, { target_key: e.target.value })}
-                className="w-full rounded-xl border px-3 py-2"
-              >
-                {TARGET_PRESETS.map((p) => (
-                  <option key={p.key} value={p.key}>
-                    {p.label}
-                    {p.minC != null || p.maxC != null ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="sm:col-span-4 -mt-1 flex justify-end">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-base font-semibold">Use a routine</h3>
               <button
-                type="button"
-                onClick={() => removeRow(r.id)}
-                className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
-                aria-label="Remove"
+                onClick={() => setRoutinePickerOpen(false)}
+                className="rounded-md p-2 hover:bg-gray-100"
+                aria-label="Close"
               >
-                Remove
+                ✕
+              </button>
+            </div>
+
+            {!routineList.length ? (
+              <div className="text-sm text-gray-600">
+                No routines yet. Use <b>New routine</b> to create one with multiple entries.
+              </div>
+            ) : (
+              <div className="max-h-[60vh] overflow-auto">
+                {routineList.map((r) => {
+                  const items = (routineItems[r.id] || []).slice().sort((a, b) => a.position - b.position);
+                  return (
+                    <div key={r.id} className="mb-4 rounded-lg border p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <div className="text-sm font-medium">{r.name}</div>
+                        <div className="text-xs text-gray-500">
+                          {r.last_used_at ? new Date(r.last_used_at).toLocaleString() : "—"}
+                        </div>
+                      </div>
+                      {items.length ? (
+                        <ul className="space-y-2">
+                          {items.map((it) => (
+                            <li key={it.id} className="flex items-center justify-between rounded-md border px-2 py-2">
+                              <div className="text-sm">
+                                <span className="font-medium">{it.location ?? "—"}</span>
+                                {" · "}
+                                <span>{it.item ?? "—"}</span>
+                                {" · "}
+                                <span className="text-gray-600">{it.target_key}</span>
+                              </div>
+                              <button
+                                className="rounded-xl border px-2 py-1 text-xs hover:bg-gray-50"
+                                onClick={() => pickRoutineItem(it)}
+                              >
+                                Prefill
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="text-xs text-gray-500">No entries yet.</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ROUTINE BUILDER (multi-entry; scroll-safe) */}
+      {routineBuilderOpen && (
+        <div
+          className="fixed inset-0 z-[180] bg-black/30"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setRoutineBuilderOpen(false)}
+        >
+          <div
+            className="absolute left-1/2 top-12 w-[min(920px,94vw)] -translate-x-1/2 overflow-hidden rounded-xl border bg-white shadow-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div className="text-base font-semibold">New routine</div>
+              <button
+                onClick={() => setRoutineBuilderOpen(false)}
+                className="rounded-md p-2 hover:bg-gray-100"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] overflow-auto px-4 py-4">
+              <div className="mb-4">
+                <label className="mb-1 block text-xs text-gray-500">Routine name</label>
+                <input
+                  className="w-full rounded-xl border px-3 py-2"
+                  placeholder="e.g., Morning fridges"
+                  value={builderName}
+                  onChange={(e) => setBuilderName(e.target.value)}
+                />
+              </div>
+
+              <div className="mb-2 text-sm font-medium">Entries</div>
+              <div className="space-y-3">
+                {builderItems.map((it, i) => (
+                  <div key={i} className="grid grid-cols-1 gap-3 rounded-xl border p-3 sm:grid-cols-12">
+                    <div className="sm:col-span-12 flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="rounded-xl border px-2 py-1 text-xs hover:bg-gray-50"
+                        onClick={() => moveBuilderRow(i, -1)}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-xl border px-2 py-1 text-xs hover:bg-gray-50"
+                        onClick={() => moveBuilderRow(i, 1)}
+                      >
+                        ↓
+                      </button>
+                      <div className="ml-2 text-xs text-gray-500">Row {i + 1}</div>
+                      <div className="ml-auto">
+                        <button
+                          type="button"
+                          className="rounded-xl border px-2 py-1 text-xs hover:bg-gray-50"
+                          onClick={() => removeBuilderRow(i)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="sm:col-span-4">
+                      <label className="mb-1 block text-xs text-gray-500">Location</label>
+                      <input
+                        className="w-full rounded-xl border px-3 py-2"
+                        value={it.location}
+                        placeholder="e.g., Fridge 1"
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setBuilderItems((prev) => {
+                            const copy = prev.slice();
+                            copy[i] = { ...copy[i], location: v };
+                            return copy;
+                          });
+                        }}
+                      />
+                    </div>
+                    <div className="sm:col-span-5">
+                      <label className="mb-1 block text-xs text-gray-500">Item</label>
+                      <input
+                        className="w-full rounded-xl border px-3 py-2"
+                        value={it.item}
+                        placeholder="e.g., Milk"
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setBuilderItems((prev) => {
+                            const copy = prev.slice();
+                            copy[i] = { ...copy[i], item: v };
+                            return copy;
+                          });
+                        }}
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <label className="mb-1 block text-xs text-gray-500">Target</label>
+                      <select
+                        className="w-full rounded-xl border px-3 py-2"
+                        value={it.target_key}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setBuilderItems((prev) => {
+                            const copy = prev.slice();
+                            copy[i] = { ...copy[i], target_key: v };
+                            return copy;
+                          });
+                        }}
+                      >
+                        {TARGET_PRESETS.map((p) => (
+                          <option key={p.key} value={p.key}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-3">
+                <button
+                  type="button"
+                  className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+                  onClick={addBuilderRow}
+                >
+                  + Add entry
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
+              <button
+                className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+                onClick={() => setRoutineBuilderOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                disabled={savingRoutine}
+                className={cls(
+                  "rounded-xl px-3 py-2 text-sm font-medium text-white",
+                  savingRoutine ? "bg-gray-400" : "bg-black hover:bg-gray-900"
+                )}
+                onClick={saveRoutineFromBuilder}
+              >
+                {savingRoutine ? "Saving…" : "Save routine"}
               </button>
             </div>
           </div>
-        ))}
-
-        <div className="sticky bottom-0 flex items-center justify-between border-t bg-white pt-3">
-          <button type="button" onClick={addRow} className="rounded-md border px-3 py-1.5 text-sm hover:bg-gray-50">
-            + Add another
-          </button>
-          <div className="flex gap-2">
-            <button type="button" onClick={onClose} className="rounded-md border px-3 py-1.5 text-sm hover:bg-gray-50">
-              Cancel
-            </button>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={saveAll}
-              className={cls("rounded-md px-4 py-1.5 text-sm text-white", saving ? "bg-gray-400" : "bg-black hover:bg-gray-900")}
-            >
-              {saving ? "Saving…" : "Save routines"}
-            </button>
-          </div>
         </div>
-      </div>
-    </Modal>
+      )}
+    </div>
   );
 }

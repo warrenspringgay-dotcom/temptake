@@ -1,14 +1,11 @@
-// src/app/routines/page.tsx
-import { Suspense } from "react";
-import RoutinesClient from "./routines-client";
-
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Temp Routines – TempTake" };
 
-export default function Page() {
+import RoutinesManager from "@/components/RoutinesManager";
+
+export default function RoutinesPage() {
   return (
-    <Suspense fallback={<div className="rounded-2xl border p-4">Loading routines…</div>}>
-      <RoutinesClient />
-    </Suspense>
+    <div className="mx-auto w-full max-w-5xl px-4 py-6">
+      <RoutinesManager />
+    </div>
   );
 }
