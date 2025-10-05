@@ -1,21 +1,29 @@
+// src/app/routines/routines-client.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { listRoutines, createRoutine, updateRoutine, deleteRoutine, type TempRoutine } from "@/app/actions/routines";
+import {
+  listRoutines,
+  createRoutine,
+  updateRoutine,
+  deleteRoutine,
+  type RoutineWithItems,
+  type RoutineItemInput,
+} from "@/app/actions/routines";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
 
 export default function RoutinesClient() {
-  const [rows, setRows] = useState<TempRoutine[]>([]);
+  const [rows, setRows] = useState<RoutineWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [item, setItem] = useState("");
-  const [target, setTarget] = useState(TARGET_PRESETS[0]?.key ?? "ambient");
+  const [target, setTarget] = useState<string>(TARGET_PRESETS[0]?.key ?? "chill");
 
   async function refresh() {
     setLoading(true);
     try {
-      const r = await listRoutines();
+      const r = await listRoutines(true); // ← always get items
       setRows(r);
     } catch (e: any) {
       alert(e.message ?? "Failed to load routines");
@@ -23,13 +31,20 @@ export default function RoutinesClient() {
       setLoading(false);
     }
   }
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+  }, []);
 
   async function add() {
     if (!name.trim()) return;
     try {
-      await createRoutine({ name, location, item, target_key: target });
-      setName(""); setLocation(""); setItem("");
+      const items: RoutineItemInput[] = [
+        { location, item, target_key: target, position: 0 },
+      ];
+      await createRoutine({ name, items });
+      setName("");
+      setLocation("");
+      setItem("");
       await refresh();
     } catch (e: any) {
       alert(e.message ?? "Failed to create routine");
@@ -57,29 +72,37 @@ export default function RoutinesClient() {
           <thead>
             <tr className="text-left text-gray-500">
               <th className="py-2 pr-3">Name</th>
-              <th className="py-2 pr-3">Location</th>
-              <th className="py-2 pr-3">Item</th>
-              <th className="py-2 pr-3">Target</th>
-              <th className="py-2 pr-3">Active</th>
+              <th className="py-2 pr-3">Items</th>
+              <th className="py-2 pr-3">Last used</th>
               <th className="py-2 pr-3">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} className="py-6 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={4} className="py-6 text-center text-gray-500">Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={6} className="py-6 text-center text-gray-500">No routines yet.</td></tr>
+              <tr><td colSpan={4} className="py-6 text-center text-gray-500">No routines yet.</td></tr>
             ) : rows.map(r => (
               <tr key={r.id} className="border-t">
                 <td className="py-2 pr-3">{r.name}</td>
-                <td className="py-2 pr-3">{r.location ?? "—"}</td>
-                <td className="py-2 pr-3">{r.item ?? "—"}</td>
-                <td className="py-2 pr-3">{r.target_key}</td>
                 <td className="py-2 pr-3">
-                  <input type="checkbox" checked={r.active} onChange={async (e)=>{ await updateRoutine(r.id, { active: e.target.checked }); refresh(); }} />
+                  {r.items?.length
+                    ? r.items.map(it => `${it.location ?? "—"} · ${it.item ?? "—"} · ${it.target_key}`).join(" | ")
+                    : "—"}
                 </td>
+                <td className="py-2 pr-3">{r.last_used_at ? new Date(r.last_used_at).toLocaleString() : "—"}</td>
                 <td className="py-2 pr-3">
-                  <button className="rounded-lg border px-2 py-1 hover:bg-gray-50" onClick={async ()=>{ if (confirm("Delete routine?")) { await deleteRoutine(r.id); refresh(); }}}>Delete</button>
+                  <button
+                    className="rounded-lg border px-2 py-1 hover:bg-gray-50"
+                    onClick={async () => {
+                      if (confirm("Delete routine?")) {
+                        await deleteRoutine(r.id);
+                        refresh();
+                      }
+                    }}
+                  >
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))}

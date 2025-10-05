@@ -10,6 +10,7 @@ import {
   type TargetPreset,
 } from "@/lib/temp-constants";
 
+/* ---------------- Types ---------------- */
 type CanonRow = {
   id: string;
   date: string | null; // yyyy-mm-dd
@@ -41,10 +42,10 @@ type Props = {
   locations?: string[];
 };
 
+/* ---------------- Consts/Helpers ---------------- */
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
 
-/* ---------------- helpers ---------------- */
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -83,7 +84,7 @@ async function getUid(): Promise<string> {
   return data.user.id;
 }
 
-/* -------------- component --------------- */
+/* ---------------- Component ---------------- */
 export default function FoodTempLogger({ initials: initialsSeed, locations: locationsSeed }: Props) {
   // DATA
   const [rows, setRows] = useState<CanonRow[]>([]);
@@ -102,7 +103,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     allergenDue: 0,
   });
 
-  // ENTRY FORM
+  // Entry form (compact like Team)
   const [formOpen, setFormOpen] = useState(true);
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -117,12 +118,11 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
   const canSave =
     !!form.date && !!form.location && !!form.item && !!form.target_key && form.temp_c.trim().length > 0;
 
-  // ROUTINES
+  // Routines (picker + builder “own modal page”)
   const [routinePickerOpen, setRoutinePickerOpen] = useState(false);
   const [routineBuilderOpen, setRoutineBuilderOpen] = useState(false);
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [routineItems, setRoutineItems] = useState<Record<string, RoutineItem[]>>({});
-  // builder state
   type BuilderItem = { location: string; item: string; target_key: string };
   const [builderName, setBuilderName] = useState("");
   const [builderItems, setBuilderItems] = useState<BuilderItem[]>([
@@ -130,7 +130,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
   ]);
   const [savingRoutine, setSavingRoutine] = useState(false);
 
-  /* ---------- prime from localStorage ---------- */
+  /* ---------- Local storage ---------- */
   useEffect(() => {
     try {
       const lsIni = localStorage.getItem(LS_LAST_INITIALS) || "";
@@ -145,7 +145,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     } catch {}
   }, []);
 
-  /* ---------- KPI fetch (best-effort) ---------- */
+  /* ---------- KPI (best-effort) ---------- */
   useEffect(() => {
     (async () => {
       try {
@@ -182,7 +182,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     })();
   }, []);
 
-  /* ---------- initials list ---------- */
+  /* ---------- Initials ---------- */
   useEffect(() => {
     (async () => {
       try {
@@ -201,14 +201,12 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
         if (!form.staff_initials && merged[0]) {
           setForm((f) => ({ ...f, staff_initials: merged[0] }));
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialsSeed]);
 
-  /* ---------- locations list ---------- */
+  /* ---------- Locations ---------- */
   useEffect(() => {
     (async () => {
       try {
@@ -217,7 +215,9 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
           (data ?? [])
             .map((r: any) => (r.area ?? r.location ?? "").toString().trim())
             .filter((s: string) => s.length > 0) || [];
-        const merged = Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...fromAreas, ...locations]));
+        const merged = Array.from(
+          new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...fromAreas, ...locations])
+        );
         setLocations(merged.length ? merged : ["Kitchen"]);
         if (!form.location && merged[0]) {
           setForm((f) => ({ ...f, location: merged[0] }));
@@ -233,7 +233,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationsSeed]);
 
-  /* ---------- rows ---------- */
+  /* ---------- Load rows ---------- */
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -252,9 +252,10 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
               : r.temp_c != null
               ? Number(r.temp_c)
               : null;
+
           const targetKey = r.target_key != null ? String(r.target_key) : null;
-          const preset = targetKey && (TARGET_BY_KEY as any)[targetKey]
-            ? (TARGET_BY_KEY as any)[targetKey]
+          const preset: TargetPreset | undefined = targetKey
+            ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[targetKey]
             : undefined;
 
           return {
@@ -284,35 +285,40 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
       .select("*")
       .order("at", { ascending: false })
       .limit(300);
-    const normalized: CanonRow[] = (data ?? []).map((r: any) => ({
-      id: String(r.id ?? crypto.randomUUID()),
-      date: toISODate(r.at ?? r.date ?? r.created_at ?? null),
-      staff_initials: (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
-      location: (r.area ?? r.location ?? null)?.toString() ?? null,
-      item: (r.note ?? r.item ?? null)?.toString() ?? null,
-      target_key: r.target_key != null ? String(r.target_key) : null,
-      temp_c: r.temp_c != null ? Number(r.temp_c) : null,
-      status: r.status,
-    }));
+    const normalized: CanonRow[] = (data ?? []).map((r: any) => {
+      const targetKey = r.target_key != null ? String(r.target_key) : null;
+      const preset: TargetPreset | undefined = targetKey
+        ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[targetKey]
+        : undefined;
+
+      return {
+        id: String(r.id ?? crypto.randomUUID()),
+        date: toISODate(r.at ?? r.date ?? r.created_at ?? null),
+        staff_initials: (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
+        location: (r.area ?? r.location ?? null)?.toString() ?? null,
+        item: (r.note ?? r.item ?? null)?.toString() ?? null,
+        target_key: targetKey,
+        temp_c: r.temp_c != null ? Number(r.temp_c) : null,
+        status: (r.status as any) ?? inferStatus(r.temp_c, preset),
+      };
+    });
     setRows(normalized);
   }
 
-  /* ---------- routines load/save (no `active` col) ---------- */
+  /* ---------- Routines load (no `active` col assumed) ---------- */
   async function loadRoutines() {
-    // grab routines
     const { data: r } = await supabase
       .from("temp_routines")
       .select("id, name, last_used_at")
       .order("updated_at", { ascending: false })
       .limit(200);
 
-    const routinesList = (r ?? []).map((x: any) => ({
+    const routinesList: Routine[] = (r ?? []).map((x: any) => ({
       id: String(x.id),
       name: String(x.name ?? "Untitled"),
       last_used_at: x.last_used_at ?? null,
-    })) as Routine[];
+    }));
 
-    // grab items for those routines
     const ids = routinesList.map((rr) => rr.id);
     let itemsByRoutine: Record<string, RoutineItem[]> = {};
     if (ids.length) {
@@ -339,18 +345,16 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     setRoutines(routinesList);
     setRoutineItems(itemsByRoutine);
   }
-
   useEffect(() => {
     loadRoutines().catch(() => {});
   }, []);
 
-  /* ---------- saving one entry ---------- */
+  /* ---------- Save one log ---------- */
   async function upsertRoutineIfChecked() {
     if (!form.saveRoutine) return;
     const uid = await getUid();
     const autoName = `${form.location || "Location"} • ${form.item || "Item"} • ${form.target_key}`;
 
-    // 1) upsert (or insert) a routine row — simplest: insert a new row each time
     const { data: r, error: rErr } = await supabase
       .from("temp_routines")
       .insert({
@@ -363,7 +367,6 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
 
     if (rErr || !r?.id) return;
 
-    // 2) insert one item for it
     await supabase.from("temp_routine_items").insert({
       routine_id: r.id,
       position: 0,
@@ -380,7 +383,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
     const preset =
       form.target_key && form.target_key in TARGET_BY_KEY
-        ? (TARGET_BY_KEY as Record<string, TargetPreset>)[form.target_key]
+        ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[form.target_key]
         : undefined;
     const status = inferStatus(tempNum, preset);
 
@@ -419,7 +422,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     }
   }
 
-  /* ---------- routine builder (multi-entry) ---------- */
+  /* ---------- Builder helpers ---------- */
   function addBuilderRow() {
     setBuilderItems((prev) => [
       ...prev,
@@ -454,7 +457,6 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     try {
       const uid = await getUid();
 
-      // 1) create routine row
       const { data: r, error: rErr } = await supabase
         .from("temp_routines")
         .insert({
@@ -469,7 +471,6 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
         throw new Error(rErr?.message || "Failed to create routine");
       }
 
-      // 2) insert items
       const itemsPayload = builderItems.map((it, i) => ({
         routine_id: r.id,
         position: i,
@@ -492,24 +493,29 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     }
   }
 
-  /* ---------- routine pick ---------- */
+  /* ---------- Picker helpers ---------- */
   function openRoutinePicker() {
     setRoutinePickerOpen(true);
   }
-  function pickRoutineItem(it: RoutineItem) {
-    // prefill the entry form from the picked item
+  async function pickRoutineItem(it: RoutineItem, routineId: string) {
+    // prefill entry form
     setForm((f) => ({
       ...f,
       location: it.location ?? f.location,
       item: it.item ?? f.item,
       target_key: it.target_key ?? f.target_key,
     }));
+    // bump routine last_used_at
+    try {
+      await supabase.from("temp_routines").update({ last_used_at: new Date().toISOString() }).eq("id", routineId);
+      await loadRoutines();
+    } catch {}
     setRoutinePickerOpen(false);
   }
 
   const routineList = useMemo(() => routines, [routines]);
 
-  /* ---------- grouped rows by date ---------- */
+  /* ---------- Grouped rows ---------- */
   const grouped = useMemo(() => {
     const map = new Map<string, CanonRow[]>();
     for (const r of rows) {
@@ -518,16 +524,15 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
       map.get(key)!.push(r);
     }
     return Array.from(map.entries())
-      .sort((a, b) => (a[0] < b[0] ? 1 : -1)) // newest date first
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
       .map(([date, list]) => ({ date, list }));
   }, [rows]);
 
-  /* --------------- render --------------- */
+  /* ---------------- Render ---------------- */
   return (
     <div className="space-y-6">
-      {/* KPI card WITH tiles + small pills inside */}
+      {/* KPI card with tiles & mini pills */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm space-y-4">
-        {/* KPI Tiles */}
         {(() => {
           const todayISO = new Date().toISOString().slice(0, 10);
           const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
@@ -559,7 +564,6 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
           );
         })()}
 
-        {/* Smaller review pills */}
         <div className="flex flex-col gap-1">
           <a
             href="/team"
@@ -590,14 +594,14 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
         </div>
       </div>
 
-      {/* ENTRY FORM (collapsible) */}
+      {/* ENTRY FORM (compact, rounded, with routine buttons) */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">Enter Temperature Log</h2>
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
-              onClick={openRoutinePicker}
+              onClick={() => setRoutinePickerOpen(true)}
               className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
               title="Use routine"
             >
@@ -630,18 +634,17 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
               </div>
             )}
 
-            <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-6">
+            <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-6">
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Date</label>
                 <input
                   type="date"
                   value={form.date}
                   onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
-                  className="h-10 w-full rounded-xl border px-3 py-2"
+                  className="h-9 w-full rounded-lg border border-gray-200 px-3 text-sm"
                 />
               </div>
 
-              {/* Initials */}
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Initials</label>
                 <select
@@ -653,7 +656,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                       localStorage.setItem(LS_LAST_INITIALS, v);
                     } catch {}
                   }}
-                  className="h-10 w-full rounded-xl border px-3 py-2 uppercase"
+                  className="h-9 w-full rounded-lg border border-gray-200 px-3 text-sm uppercase"
                 >
                   {!form.staff_initials && initials.length === 0 && (
                     <option value="" disabled>
@@ -668,7 +671,6 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                 </select>
               </div>
 
-              {/* Location */}
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Location</label>
                 <select
@@ -680,7 +682,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                       localStorage.setItem(LS_LAST_LOCATION, v);
                     } catch {}
                   }}
-                  className="h-10 w-full rounded-xl border px-3 py-2"
+                  className="h-9 w-full rounded-lg border border-gray-200 px-3 text-sm"
                 >
                   {!form.location && locations.length === 0 && (
                     <option value="" disabled>
@@ -700,7 +702,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                 <input
                   value={form.item}
                   onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
-                  className="h-10 w-full rounded-xl border px-3 py-2"
+                  className="h-9 w-full rounded-lg border border-gray-200 px-3 text-sm"
                   placeholder="e.g., Chicken curry"
                 />
               </div>
@@ -710,7 +712,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                 <select
                   value={form.target_key}
                   onChange={(e) => setForm((f) => ({ ...f, target_key: e.target.value }))}
-                  className="h-10 w-full rounded-xl border px-3 py-2"
+                  className="h-9 w-full rounded-lg border border-gray-200 px-3 text-sm"
                 >
                   {TARGET_PRESETS.map((p) => (
                     <option key={p.key} value={p.key}>
@@ -729,7 +731,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                   value={form.temp_c}
                   onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
                   onKeyDown={onTempKeyDown}
-                  className="h-10 w-full rounded-xl border px-3 py-2"
+                  className="h-9 w-full rounded-lg border border-gray-200 px-3 text-sm"
                   inputMode="decimal"
                   placeholder="e.g., 5.0"
                 />
@@ -740,7 +742,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                   onClick={handleAddQuick}
                   disabled={!canSave}
                   className={cls(
-                    "rounded-2xl px-4 py-2 text-sm font-medium text-white",
+                    "h-9 rounded-xl px-4 text-sm font-medium text-white",
                     canSave ? "bg-black hover:bg-gray-900" : "bg-gray-400"
                   )}
                 >
@@ -791,8 +793,9 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                       </td>
                     </tr>
                     {g.list.map((r) => {
-                      const preset =
-                        r.target_key && (TARGET_BY_KEY as Record<string, TargetPreset>)[r.target_key];
+                      const preset: TargetPreset | undefined = r.target_key
+                        ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[r.target_key]
+                        : undefined;
                       const st = r.status ?? inferStatus(r.temp_c, preset);
                       return (
                         <tr key={r.id} className="border-t">
@@ -841,7 +844,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
         </div>
       </div>
 
-      {/* ROUTINE PICKER (loads saved routines; choose an item to prefill) */}
+      {/* ROUTINE PICKER (modal) */}
       {routinePickerOpen && (
         <div
           className="fixed inset-0 z-[150] bg-black/30"
@@ -893,7 +896,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                               </div>
                               <button
                                 className="rounded-xl border px-2 py-1 text-xs hover:bg-gray-50"
-                                onClick={() => pickRoutineItem(it)}
+                                onClick={() => pickRoutineItem(it, r.id)}
                               >
                                 Prefill
                               </button>
@@ -912,7 +915,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
         </div>
       )}
 
-      {/* ROUTINE BUILDER (multi-entry; scroll-safe) */}
+      {/* ROUTINE BUILDER (its own modal "page") */}
       {routineBuilderOpen && (
         <div
           className="fixed inset-0 z-[180] bg-black/30"

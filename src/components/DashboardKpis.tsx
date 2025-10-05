@@ -1,132 +1,125 @@
 // src/components/DashboardKpis.tsx
-// Server Component (no "use client")
-
-import ComplianceKpis from "@/components/ComplianceKpis";
+// Server component
 import { createServerClient } from "@/lib/supabaseServer";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-/** Count rows in a table with a date column within [from, to], scoped to created_by = user.id */
-async function countDateRange(
-  supabase: ReturnType<typeof createServerClient>,
+async function countSince(
+  client: SupabaseClient,
   table: string,
   dateCol: string,
-  userId: string,
   fromISO: string,
-  toISO: string
+  userId: string
 ): Promise<number> {
-  const { count, error } = await supabase
+  const { count, error } = await client
     .from(table)
     .select("*", { count: "exact", head: true })
     .eq("created_by", userId)
-    .gte(dateCol, fromISO)
-    .lte(dateCol, toISO);
+    .gte(dateCol, fromISO);
 
-  if (error) throw error;
+  if (error) return 0;
   return count ?? 0;
 }
 
-/** Try a sequence of (table, dateCol) options; return first successful count */
-async function tryCountAny(
-  supabase: ReturnType<typeof createServerClient>,
-  userId: string,
+async function countSinceWithStatus(
+  client: SupabaseClient,
+  table: string,
+  dateCol: string,
   fromISO: string,
-  toISO: string,
-  candidates: Array<{ table: string; col: string }>
+  userId: string,
+  status: string
 ): Promise<number> {
-  for (const c of candidates) {
-    try {
-      return await countDateRange(supabase, c.table, c.col, userId, fromISO, toISO);
-    } catch {
-      // try next candidate
-    }
-  }
-  return 0;
+  const { count, error } = await client
+    .from(table)
+    .select("*", { count: "exact", head: true })
+    .eq("created_by", userId)
+    .eq("status", status)
+    .gte(dateCol, fromISO);
+
+  if (error) return 0;
+  return count ?? 0;
 }
 
-function isoDay(d: Date) {
-  return d.toISOString().slice(0, 10);
+async function distinctLocationsSince(
+  client: SupabaseClient,
+  table: string,
+  dateCol: string,
+  fromISO: string,
+  userId: string
+): Promise<number> {
+  // Fetch minimal columns and count distinct in memory (works across PostgREST versions)
+  const { data, error } = await client
+    .from(table)
+    .select("area, location")
+    .eq("created_by", userId)
+    .gte(dateCol, fromISO)
+    .limit(1000); // adjust if you expect more
+
+  if (error || !data) return 0;
+  const set = new Set<string>();
+  for (const r of data) {
+    const loc = (r as any).area ?? (r as any).location ?? "";
+    if (loc) set.add(String(loc));
+  }
+  return set.size;
 }
 
 export default async function DashboardKpis() {
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // If not logged in (shouldn’t happen on your dashboard), show zeros gracefully
+  // If not signed in, render zeros (or redirect—up to you)
   if (!user) {
     return (
-      <ComplianceKpis
-        trainingExpiringSoon={0}
-        allergenExpired={0}
-        allergenExpiringSoon={0}
-      />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {["Entries today", "Last 7 days", "Failures (7d)", "Locations (7d)"].map((label) => (
+          <div key={label} className="rounded-xl border bg-white p-3">
+            <div className="text-xs text-gray-500">{label}</div>
+            <div className="text-2xl font-semibold">0</div>
+          </div>
+        ))}
+      </div>
     );
   }
 
-  // Date window for “expiring soon (14d)”
   const today = new Date();
-  const in14 = new Date();
-  in14.setDate(today.getDate() + 14);
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+    .toISOString()
+    .slice(0, 10); // yyyy-mm-dd
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000)
+    .toISOString()
+    .slice(0, 10); // yyyy-mm-dd
 
-  const todayISO = isoDay(today); // YYYY-MM-DD
-  const in14ISO = isoDay(in14);
+  // Adjust table/column names if yours differ
+  const table = "food_temp_logs";
+  const dateCol = "at"; // change to your actual date column if needed
 
-  // 1) TRAINING expiring in 14 days
-  // We try common schemas:
-  //  - team_members.training_expires :: date
-  //  - trainings.expires_at          :: date/timestamptz
-  const trainingExpiringSoon = await tryCountAny(
-    supabase,
-    user.id,
-    todayISO,
-    in14ISO,
-    [
-      { table: "team_members", col: "training_expires" },
-      { table: "trainings", col: "expires_at" },
-    ]
-  );
-
-  // 2) ALLERGEN REVIEW (expired / expiring in 14d)
-  // Table: allergen_review (one row per org/user). Compute next_due = last_reviewed + interval_days.
-  let allergenExpired = 0;
-  let allergenExpiringSoon = 0;
-
-  try {
-    const { data: arows } = await supabase
-      .from("allergen_review")
-      .select("*")
-      .eq("created_by", user.id)
-      .limit(5);
-
-    const rows = (arows ?? []) as Array<{
-      last_reviewed: string | null;
-      interval_days: number | null;
-    }>;
-
-    for (const r of rows) {
-      const last = r.last_reviewed ? new Date(r.last_reviewed) : null;
-      const interval = r.interval_days ?? 0;
-
-      if (!last || interval <= 0) continue;
-
-      const nextDue = new Date(last);
-      nextDue.setDate(nextDue.getDate() + interval);
-
-      if (nextDue < today) {
-        allergenExpired += 1;
-      } else if (nextDue <= in14) {
-        allergenExpiringSoon += 1;
-      }
-    }
-  } catch {
-    // no table yet or not accessible → leave zeros
-  }
+  const [entriesToday, last7, failures7, locations7] = await Promise.all([
+    countSince(supabase, table, dateCol, startOfToday, user.id),
+    countSince(supabase, table, dateCol, sevenDaysAgo, user.id),
+    countSinceWithStatus(supabase, table, dateCol, sevenDaysAgo, user.id, "fail"),
+    distinctLocationsSince(supabase, table, dateCol, sevenDaysAgo, user.id),
+  ]);
 
   return (
-    <ComplianceKpis
-      trainingExpiringSoon={trainingExpiringSoon}
-      allergenExpired={allergenExpired}
-      allergenExpiringSoon={allergenExpiringSoon}
-    />
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="rounded-xl border bg-white p-3">
+        <div className="text-xs text-gray-500">Entries today</div>
+        <div className="text-2xl font-semibold">{entriesToday}</div>
+      </div>
+      <div className="rounded-xl border bg-white p-3">
+        <div className="text-xs text-gray-500">Last 7 days</div>
+        <div className="text-2xl font-semibold">{last7}</div>
+      </div>
+      <div className="rounded-xl border bg-white p-3">
+        <div className="text-xs text-gray-500">Failures (7d)</div>
+        <div className="text-2xl font-semibold">{failures7}</div>
+      </div>
+      <div className="rounded-xl border bg-white p-3">
+        <div className="text-xs text-gray-500">Locations (7d)</div>
+        <div className="text-2xl font-semibold">{locations7}</div>
+      </div>
+    </div>
   );
 }
