@@ -5,7 +5,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import BrandLogo from "@/components/BrandLogo";
+
 
 type Tab = {
   href: string;
@@ -53,7 +53,7 @@ export default function NavTabs() {
   return (
     <nav className="flex flex-wrap items-center justify-between border-b bg-white px-4 py-2 shadow-sm">
       <div className="flex items-center gap-3">
-        <BrandLogo className="mr-1" size={28} />
+      
         <span className="text-lg font-semibold">TempTake</span>
       </div>
 

@@ -1,28 +1,88 @@
 // src/lib/org.ts
-import { supabaseServer } from "./supabase-server";
+import { createServerClient } from "@/lib/supabaseServer";
 
-/** Resolve the active org for the current user.
- *  Strategy:
- *   - if only one membership in user_orgs, use it
- *   - else prefer membership with role IN ('owner','admin')
- *   - else first one
+/**
+ * Resolve the active org for the current signed-in user (server-side).
+ * Looks in user_orgs → team_members → user/app metadata.
  */
-export async function getOrgId(): Promise<string> {
+export async function getOrgId(): Promise<string | null> {
   const supabase = await createServerClient();
+
+  // current user
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not signed in");
+  if (!user) return null;
 
-  const { data: uos, error } = await supabase
-    .from("user_orgs")
-    .select("org_id, role")
-    .eq("user_id", user.id)
-    .limit(20);
+  // 1) user_orgs (preferred)
+  try {
+    const { data: uos } = await supabase
+      .from("user_orgs")
+      .select("org_id, role")
+      .eq("user_id", user.id)
+      .order("role", { ascending: true }); // owner/admin first if you use lexicographic roles
 
-  if (error) throw new Error(error.message);
-  if (!uos?.length) throw new Error("No org membership found");
+    if (uos && uos.length > 0) {
+      // pick an owner/admin if present, else first
+      const owner = uos.find((u: { role?: string | null }) =>
+        (u.role ?? "").toLowerCase() === "owner" ||
+        (u.role ?? "").toLowerCase() === "admin"
+      );
+      return String((owner ?? uos[0]).org_id);
+    }
+  } catch { /* ignore */ }
 
-  if (uos.length === 1) return uos[0].org_id;
+  // 2) team_members fallback
+  try {
+    const { data: tm } = await supabase
+      .from("team_members")
+      .select("org_id, owner_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
 
-  const owner = uos.find(u => u.role === "owner" || u.role === "admin");
-  return (owner ?? uos[0]).org_id;
+    if (tm?.org_id) return String(tm.org_id);
+    if (tm?.owner_id) return String(tm.owner_id);
+  } catch { /* ignore */ }
+
+  // 3) metadata fallback
+  const metaOrg =
+    (user.user_metadata as any)?.org_id ??
+    (user.app_metadata as any)?.org_id ??
+    null;
+
+  return metaOrg ? String(metaOrg) : null;
+}
+
+/**
+ * Resolve org id for a specific user id (when you already know it).
+ */
+export async function getOrgIdFor(userId: string): Promise<string | null> {
+  const supabase = await createServerClient();
+
+  try {
+    const { data: uos } = await supabase
+      .from("user_orgs")
+      .select("org_id, role")
+      .eq("user_id", userId);
+
+    if (uos && uos.length > 0) {
+      const owner = uos.find((u: { role?: string | null }) =>
+        (u.role ?? "").toLowerCase() === "owner" ||
+        (u.role ?? "").toLowerCase() === "admin"
+      );
+      return String((owner ?? uos[0]).org_id);
+    }
+  } catch {}
+
+  try {
+    const { data: tm } = await supabase
+      .from("team_members")
+      .select("org_id, owner_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (tm?.org_id) return String(tm.org_id);
+    if (tm?.owner_id) return String(tm.owner_id);
+  } catch {}
+
+  // if you need metadata lookup here, you’d need the user session; skipping
+  return null;
 }

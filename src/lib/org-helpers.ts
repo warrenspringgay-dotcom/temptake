@@ -1,7 +1,7 @@
 // src/lib/org-helpers.ts
 "use server";
 
-import { supabaseServer } from "@/lib/supabase-server";
+import { createServerClient } from "@/lib/supabaseServer";
 import { getSession } from "@/app/actions/auth";
 
 /**

@@ -1,5 +1,6 @@
 // src/app/auth-debug/page.tsx
 import { getSession } from "@/lib/auth-helpers";
+import { createServerClient } from "@/lib/supabaseServer";
 
 export default async function AuthDebug() {
   const { user } = await getSession();

@@ -1,41 +1,113 @@
+// src/app/actions/team.ts
 "use server";
 
 import { createServerClient } from "@/lib/supabaseServer";
-import { getOrgId } from "@/lib/org-helpers";
 
-/** Distinct team initials (active members). Falls back to recent logs. */
-export async function getTeamInitials(): Promise<string[]> {
+/** Minimal shapes we read from DB */
+type TeamMember = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  initials: string | null;
+};
+
+type TempLogRow = {
+  area?: string | null;
+  location?: string | null;
+  staff_initials?: string | null;
+};
+
+/** Uppercases first character safely */
+function firstLetter(s: string | null | undefined): string {
+  return (s?.trim().charAt(0) || "").toUpperCase();
+}
+
+/**
+ * Loads distinct staff initials & locations to prime dropdowns.
+ * Combines values from team_members and recent food_temp_logs.
+ */
+export async function getInitialsAndLocations(): Promise<{
+  initials: string[];
+  locations: string[];
+}> {
   const supabase = await createServerClient();
-  const org_id = await getOrgId().catch(() => null);
-  if (!org_id) return [];
 
-  // Preferred: team table
+  // 1) Team initials (preferred source)
   const { data: team, error: teamErr } = await supabase
-    .from("team")
-    .select("initials")
-    .eq("org_id", org_id)
-    .eq("active", true);
+    .from("team_members")
+    .select("id, name, email, initials")
+    .limit(500);
 
-  let initials = (team ?? [])
-    .map((t) => (t?.initials ?? "").toString().trim().toUpperCase())
+  if (teamErr) throw teamErr;
+
+  let initials: string[] = (team as TeamMember[] | null ?? [])
+    .map((t: TeamMember) => {
+      const fromField = t.initials?.toString().trim().toUpperCase() || "";
+      if (fromField) return fromField;
+      return firstLetter(t.name) || firstLetter(t.email);
+    })
+    .filter(Boolean) as string[];
+
+  // 2) Fallback/augment from recent temp logs
+  const sevenDaysAgoISO = new Date(Date.now() - 7 * 24 * 3600 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  const { data: logs, error: logErr } = await supabase
+    .from("food_temp_logs")
+    .select("area, location, staff_initials")
+    .gte("at", sevenDaysAgoISO)
+    .limit(1000);
+
+  if (logErr) throw logErr;
+
+  const extraInitials: string[] = (logs as TempLogRow[] | null ?? [])
+    .map((r: TempLogRow) =>
+      (r.staff_initials ?? "").toString().trim().toUpperCase()
+    )
     .filter(Boolean);
 
-  // Fallback: distinct initials from recent temp logs
-  if ((!initials || initials.length === 0) || teamErr) {
-    const { data: logs } = await supabase
-      .from("temp_logs")
-      .select("staff_initials")
-      .eq("org_id", org_id)
-      .order("created_at", { ascending: false })
-      .limit(300);
+  // Merge + de-dupe initials
+  initials = Array.from(new Set([...initials, ...extraInitials]));
 
-    const set = new Set<string>();
-    for (const r of logs ?? []) {
-      const v = (r?.staff_initials ?? "").toString().trim().toUpperCase();
-      if (v) set.add(v);
-    }
-    initials = Array.from(set);
-  }
+  // 3) Locations: combine explicit presets from logs (area/location)
+  const locations: string[] = Array.from(
+    new Set(
+      (logs as TempLogRow[] | null ?? [])
+        .map((r: TempLogRow) => r.area ?? r.location ?? "")
+        .map((s: unknown) => String(s ?? "").trim())
+        .filter((s: string): s is string => !!s && s.length > 0)
+    )
+  );
 
-  return Array.from(new Set(initials)).sort();
+  return { initials, locations };
+}
+
+/**
+ * Example helper that returns a minimal team list for UI tables.
+ */
+export async function listTeamBasic(): Promise<
+  Array<{ id: string; name: string; email: string; initials: string }>
+> {
+  const supabase = await createServerClient();
+
+  const { data, error } = await supabase
+    .from("team_members")
+    .select("id, name, email, initials")
+    .order("name", { ascending: true })
+    .limit(1000);
+
+  if (error) throw error;
+
+  const rows = (data as TeamMember[] | null ?? []).map((r) => ({
+    id: r.id,
+    name: r.name ?? "",
+    email: r.email ?? "",
+    initials:
+      r.initials?.toString().trim().toUpperCase() ||
+      firstLetter(r.name) ||
+      firstLetter(r.email),
+  }));
+
+  return rows;
 }

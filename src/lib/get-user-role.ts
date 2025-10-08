@@ -1,5 +1,5 @@
 // src/lib/get-user-role.ts
-import { supabaseServer } from "@/lib/supabase-server";
+import { createServerClient } from "@/lib/supabaseServer";
 
 export type Role = "staff" | "manager" | "owner";
 

@@ -1,5 +1,6 @@
 // src/lib/supabase-server.ts
-export { createServerClient } from "./supabaseServer";
+// Back-compat alias used by older imports. IMPORTANT: import first, then alias.
+import { createServerClient as _createServerClient } from "./supabaseServer";
 
-// Optional alias for old code that imported { supabaseServer }
-export const supabaseServer = createServerClient;
+export const createServerClient = _createServerClient; // re-export same name if you want
+export const supabaseServer = _createServerClient;     // legacy alias some files used

@@ -1,11 +1,6 @@
-export const dynamic = "force-dynamic";
-
+// src/app/routines/page.tsx
 import RoutinesManager from "@/components/RoutinesManager";
 
 export default function RoutinesPage() {
-  return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-6">
-      <RoutinesManager />
-    </div>
-  );
+  return <RoutinesManager />;
 }

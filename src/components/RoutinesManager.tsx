@@ -1,6 +1,8 @@
+// src/components/RoutinesManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   listRoutines,
   createRoutine,
@@ -11,194 +13,101 @@ import {
   type RoutineItemInput,
 } from "@/app/actions/routines";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
+import Chevron from "./ui/Chevron";
 
-type EditState =
-  | { mode: "new"; name: string; items: RoutineItemInput[] }
-  | { mode: "edit"; id: string; name: string; items: RoutineItemInput[] };
-
-function cls(...p: Array<string | false | undefined>) {
-  return p.filter(Boolean).join(" ");
-}
+type BuilderItem = { location: string; item: string; target_key: string };
 
 export default function RoutinesManager() {
   const [rows, setRows] = useState<RoutineWithItems[]>([]);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
 
-  const [modalOpen, setModalOpen] = useState(false);
-  const [edit, setEdit] = useState<EditState | null>(null);
-  const [saving, setSaving] = useState(false);
+  // modal state
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [items, setItems] = useState<BuilderItem[]>([
+    { location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" },
+  ]);
+  const current = useMemo(
+    () => rows.find((r) => r.id === openId) || null,
+    [rows, openId]
+  );
 
-  /* -------------------- data -------------------- */
   async function refresh() {
     setLoading(true);
-    setErr(null);
     try {
       const r = await listRoutines();
       setRows(r);
-    } catch (e: any) {
-      setErr(e?.message || "Failed to load routines");
     } finally {
       setLoading(false);
     }
   }
-  useEffect(() => {
-    refresh();
-  }, []);
+  useEffect(() => { refresh(); }, []);
 
-  /* -------------------- helpers -------------------- */
-  const targets = useMemo(
-    () => TARGET_PRESETS.map((p) => ({ value: p.key, label: p.label })),
-    []
-  );
-
-  function newBlankItem(): RoutineItemInput {
-    return { location: "", item: "", target_key: targets[0]?.value ?? "chill" };
-    // you can default the target to anything you like
+  function addRow() {
+    setItems((p) => [...p, { location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" }]);
+  }
+  function removeRow(i: number) {
+    setItems((p) => p.filter((_, idx) => idx !== i));
   }
 
-  function openNewModal() {
-    setEdit({ mode: "new", name: "", items: [newBlankItem()] });
-    setModalOpen(true);
+  async function openNew() {
+    setOpenId("NEW");
+    setName("");
+    setItems([{ location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" }]);
   }
-
-  function openEditModal(r: RoutineWithItems) {
-    setEdit({
-      mode: "edit",
-      id: r.id,
-      name: r.name,
-      items: r.items
+  function openEdit(r: RoutineWithItems) {
+    setOpenId(r.id);
+    setName(r.name);
+    setItems(
+      r.items
         .slice()
         .sort((a, b) => a.position - b.position)
-        .map((it) => ({
-          id: it.id,
-          position: it.position,
-          location: it.location ?? "",
-          item: it.item ?? "",
-          target_key: it.target_key,
-        })),
-    });
-    setModalOpen(true);
+        .map((it) => ({ location: it.location ?? "", item: it.item ?? "", target_key: it.target_key }))
+    );
   }
 
-  function addItemRow() {
-    if (!edit) return;
-    setEdit({
-      ...edit,
-      items: [...edit.items, newBlankItem()],
-    });
+  async function saveNew() {
+    if (!name.trim()) { alert("Name required."); return; }
+    const payload: RoutineItemInput[] = items.map((it, idx) => ({
+      position: idx,
+      location: it.location || null,
+      item: it.item || null,
+      target_key: it.target_key,
+    }));
+    const created = await createRoutine({ name: name.trim(), items: payload });
+    setOpenId(null);
+    await refresh();
   }
 
-  function removeItemRow(idx: number) {
-    if (!edit) return;
-    const next = edit.items.slice();
-    next.splice(idx, 1);
-    setEdit({ ...edit, items: next });
+  async function saveChanges() {
+    if (!current) return;
+    if (!name.trim()) { alert("Name required."); return; }
+    await updateRoutine(current.id, { name: name.trim() });
+    const payload: RoutineItemInput[] = items.map((it, idx) => ({
+      position: idx,
+      location: it.location || null,
+      item: it.item || null,
+      target_key: it.target_key,
+    }));
+    await replaceRoutineItems(current.id, payload);
+    setOpenId(null);
+    await refresh();
   }
 
-  function move(idx: number, dir: -1 | 1) {
-    if (!edit) return;
-    const next = edit.items.slice();
-    const j = idx + dir;
-    if (j < 0 || j >= next.length) return;
-    const tmp = next[idx];
-    next[idx] = next[j];
-    next[j] = tmp;
-    setEdit({ ...edit, items: next });
+  async function remove(id: string) {
+    if (!confirm("Delete this routine?")) return;
+    await deleteRoutine(id);
+    await refresh();
   }
 
-  async function duplicateRoutine(r: RoutineWithItems) {
-    setSaving(true);
-    try {
-      await createRoutine({
-        name: `${r.name} (copy)`,
-        items: r.items
-          .slice()
-          .sort((a, b) => a.position - b.position)
-          .map((it) => ({
-            position: it.position,
-            location: it.location,
-            item: it.item,
-            target_key: it.target_key,
-          })),
-      });
-      await refresh();
-    } catch (e: any) {
-      alert(e?.message || "Failed to duplicate routine");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function toggleActive(r: RoutineWithItems, checked: boolean) {
-    try {
-      await updateRoutine(r.id, { active: checked });
-      await refresh();
-    } catch (e: any) {
-      alert(e?.message || "Failed to update routine");
-    }
-  }
-
-  async function saveModal() {
-    if (!edit) return;
-    if (!edit.name.trim()) {
-      alert("Please give your routine a name.");
-      return;
-    }
-    if (edit.items.length === 0) {
-      alert("Add at least one entry to the routine.");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const items = edit.items.map((it, i) => ({
-        position: i,
-        location: (it.location ?? "").trim() || null,
-        item: (it.item ?? "").trim() || null,
-        target_key: it.target_key,
-      }));
-
-      if (edit.mode === "new") {
-        await createRoutine({
-          name: edit.name.trim(),
-          items,
-        });
-      } else {
-        // rename (if changed)
-        await updateRoutine(edit.id, { name: edit.name.trim() });
-        // replace items
-        await replaceRoutineItems(edit.id, items);
-      }
-
-      setModalOpen(false);
-      setEdit(null);
-      await refresh();
-    } catch (e: any) {
-      alert(e?.message || "Failed to save routine");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  /* -------------------- UI -------------------- */
   return (
     <div className="rounded-2xl border bg-white p-4 shadow-sm space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Routine manager</h1>
-        <button
-          className="rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900"
-          onClick={openNewModal}
-        >
-          New routine
+      <div className="flex items-center gap-2">
+        <h1 className="text-lg font-semibold">Routines</h1>
+        <button onClick={openNew} className="ml-auto rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50">
+          + New routine
         </button>
       </div>
-
-      {err ? (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900 text-sm">
-          {err}
-        </div>
-      ) : null}
 
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
@@ -207,237 +116,125 @@ export default function RoutinesManager() {
               <th className="py-2 pr-3">Name</th>
               <th className="py-2 pr-3">Entries</th>
               <th className="py-2 pr-3">Last used</th>
-              <th className="py-2 pr-3">Active</th>
               <th className="py-2 pr-3">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr>
-                <td colSpan={5} className="py-6 text-center text-gray-500">
-                  Loading…
-                </td>
-              </tr>
+              <tr><td colSpan={4} className="py-6 text-center text-gray-500">Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="py-6 text-center text-gray-500">
-                  No routines yet.
+              <tr><td colSpan={4} className="py-6 text-center text-gray-500">No routines yet.</td></tr>
+            ) : rows.map(r => (
+              <tr key={r.id} className="border-t">
+                <td className="py-2 pr-3">{r.name}</td>
+                <td className="py-2 pr-3">{r.items.length}</td>
+                <td className="py-2 pr-3 text-gray-500">{r.last_used_at ? new Date(r.last_used_at).toLocaleString() : "—"}</td>
+                <td className="py-2 pr-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Link href={`/routines/${r.id}/run`} className="rounded-xl border px-2 py-1 hover:bg-gray-50 text-xs">
+                      Use
+                    </Link>
+                    <button onClick={() => openEdit(r)} className="rounded-xl border px-2 py-1 hover:bg-gray-50 text-xs">
+                      Edit
+                    </button>
+                    <button onClick={() => remove(r.id)} className="rounded-xl border px-2 py-1 hover:bg-gray-50 text-xs">
+                      Delete
+                    </button>
+                  </div>
                 </td>
               </tr>
-            ) : (
-              rows.map((r) => (
-                <tr key={r.id} className="border-t">
-                  <td className="py-2 pr-3">{r.name}</td>
-                  <td className="py-2 pr-3">{r.items.length}</td>
-                  <td className="py-2 pr-3">
-                    {r.last_used_at ? new Date(r.last_used_at).toLocaleString() : "—"}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <input
-                      type="checkbox"
-                      checked={r.active}
-                      onChange={(e) => toggleActive(r, e.target.checked)}
-                    />
-                  </td>
-                  <td className="py-2 pr-3">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        className="rounded-xl border px-2 py-1 hover:bg-gray-50"
-                        onClick={() => openEditModal(r)}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        disabled={saving}
-                        className={cls(
-                          "rounded-xl border px-2 py-1",
-                          saving ? "opacity-50" : "hover:bg-gray-50"
-                        )}
-                        onClick={() => duplicateRoutine(r)}
-                      >
-                        Duplicate
-                      </button>
-                      <button
-                        className="rounded-xl border px-2 py-1 hover:bg-gray-50"
-                        onClick={async () => {
-                          if (!confirm(`Delete "${r.name}"?`)) return;
-                          await deleteRoutine(r.id);
-                          refresh();
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
+            ))}
           </tbody>
         </table>
       </div>
 
-      {/* Modal */}
-      {modalOpen && edit && (
-        <div
-          className="fixed inset-0 z-[200] bg-black/30"
-          onClick={() => setModalOpen(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="absolute left-1/2 top-16 w-[min(900px,92vw)] -translate-x-1/2 rounded-xl border bg-white shadow-sm"
-          >
+      {/* Editor modal */}
+      {openId && (
+        <div className="fixed inset-0 z-[120] bg-black/30" onClick={() => setOpenId(null)}>
+          <div className="absolute left-1/2 top-12 w-[min(920px,94vw)] -translate-x-1/2 overflow-hidden rounded-xl border bg-white shadow-sm" onClick={(e)=>e.stopPropagation()}>
             <div className="flex items-center justify-between border-b px-4 py-3">
               <div className="text-base font-semibold">
-                {edit.mode === "new" ? "New routine" : "Edit routine"}
+                {openId === "NEW" ? "New routine" : "Edit routine"}
               </div>
-              <button
-                className="rounded-md p-2 hover:bg-gray-100"
-                onClick={() => setModalOpen(false)}
-                aria-label="Close"
-              >
-                ✕
-              </button>
+              <button className="rounded-md p-2 hover:bg-gray-100" onClick={()=>setOpenId(null)}>✕</button>
             </div>
 
-            <div className="max-h-[70vh] overflow-auto px-4 py-4">
-              <div className="mb-4">
-                <label className="mb-1 block text-xs text-gray-500">
-                  Routine name
-                </label>
-                <input
-                  className="w-full rounded-xl border px-3 py-2"
-                  value={edit.name}
-                  onChange={(e) => setEdit({ ...edit, name: e.target.value })}
-                  placeholder="e.g., Morning fridges"
-                />
+            <div className="max-h-[70vh] overflow-auto px-4 py-4 space-y-4">
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">Name</label>
+                <input className="w-full rounded-xl border px-3 py-2" value={name} onChange={(e)=>setName(e.target.value)} />
               </div>
 
-              <div className="mb-2 text-sm font-medium">Entries</div>
-
-              <div className="space-y-3">
-                {edit.items.map((it, i) => (
-                  <div
-                    key={i}
-                    className="grid grid-cols-1 gap-3 rounded-xl border p-3 sm:grid-cols-12"
-                  >
-                    {/* Reorder controls */}
-                    <div className="flex items-center gap-2 sm:col-span-12">
-                      <button
-                        type="button"
-                        className="rounded-xl border px-2 py-1 text-xs hover:bg-gray-50"
-                        onClick={() => move(i, -1)}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-xl border px-2 py-1 text-xs hover:bg-gray-50"
-                        onClick={() => move(i, 1)}
-                      >
-                        ↓
-                      </button>
-                      <div className="text-xs text-gray-500 ml-2">Row {i + 1}</div>
-                      <div className="ml-auto">
-                        <button
-                          type="button"
-                          className="rounded-xl border px-2 py-1 text-xs hover:bg-gray-50"
-                          onClick={() => removeItemRow(i)}
-                        >
-                          Remove
-                        </button>
+              <Collapse title="Entries">
+                <div className="space-y-3">
+                  {items.map((it, i) => (
+                    <div key={i} className="grid grid-cols-1 gap-3 rounded-xl border p-3 sm:grid-cols-12">
+                      <div className="sm:col-span-4">
+                        <label className="mb-1 block text-xs text-gray-500">Location</label>
+                        <input className="w-full rounded-xl border px-3 py-2" value={it.location} onChange={(e)=>{
+                          const v = e.target.value;
+                          setItems(p => { const c = p.slice(); c[i] = { ...c[i], location: v }; return c; });
+                        }} />
+                      </div>
+                      <div className="sm:col-span-5">
+                        <label className="mb-1 block text-xs text-gray-500">Item</label>
+                        <input className="w-full rounded-xl border px-3 py-2" value={it.item} onChange={(e)=>{
+                          const v = e.target.value;
+                          setItems(p => { const c = p.slice(); c[i] = { ...c[i], item: v }; return c; });
+                        }} />
+                      </div>
+                      <div className="sm:col-span-3">
+                        <label className="mb-1 block text-xs text-gray-500">Target</label>
+                        <select className="w-full rounded-xl border px-3 py-2" value={it.target_key} onChange={(e)=>{
+                          const v = e.target.value;
+                          setItems(p => { const c = p.slice(); c[i] = { ...c[i], target_key: v }; return c; });
+                        }}>
+                          {TARGET_PRESETS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                        </select>
+                      </div>
+                      <div className="sm:col-span-12 flex justify-end">
+                        <button className="rounded-xl border px-2 py-1 text-xs hover:bg-gray-50" onClick={()=>removeRow(i)}>Remove</button>
                       </div>
                     </div>
-
-                    <div className="sm:col-span-4">
-                      <label className="mb-1 block text-xs text-gray-500">
-                        Location
-                      </label>
-                      <input
-                        className="w-full rounded-xl border px-3 py-2"
-                        placeholder="e.g., Kitchen"
-                        value={it.location ?? ""}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          const next = edit.items.slice();
-                          next[i] = { ...next[i], location: v };
-                          setEdit({ ...edit, items: next });
-                        }}
-                      />
-                    </div>
-
-                    <div className="sm:col-span-5">
-                      <label className="mb-1 block text-xs text-gray-500">
-                        Item
-                      </label>
-                      <input
-                        className="w-full rounded-xl border px-3 py-2"
-                        placeholder="e.g., Chicken curry"
-                        value={it.item ?? ""}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          const next = edit.items.slice();
-                          next[i] = { ...next[i], item: v };
-                          setEdit({ ...edit, items: next });
-                        }}
-                      />
-                    </div>
-
-                    <div className="sm:col-span-3">
-                      <label className="mb-1 block text-xs text-gray-500">
-                        Target
-                      </label>
-                      <select
-                        className="w-full rounded-xl border px-3 py-2"
-                        value={it.target_key}
-                        onChange={(e) => {
-                          const next = edit.items.slice();
-                          next[i] = { ...next[i], target_key: e.target.value };
-                          setEdit({ ...edit, items: next });
-                        }}
-                      >
-                        {targets.map((t) => (
-                          <option key={t.value} value={t.value}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={addItemRow}
-                  className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-                >
-                  + Add entry
-                </button>
-              </div>
+                  ))}
+                </div>
+                <div className="mt-2">
+                  <button className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50" onClick={addRow}>
+                    + Add entry
+                  </button>
+                </div>
+              </Collapse>
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
-              <button
-                className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-                onClick={() => setModalOpen(false)}
-              >
-                Cancel
-              </button>
-              <button
-                disabled={saving}
-                className={cls(
-                  "rounded-xl px-3 py-2 text-sm font-medium text-white",
-                  saving ? "bg-gray-400" : "bg-black hover:bg-gray-900"
-                )}
-                onClick={saveModal}
-              >
-                {saving ? "Saving…" : "Save routine"}
-              </button>
+              <button className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50" onClick={()=>setOpenId(null)}>Cancel</button>
+              {openId === "NEW" ? (
+                <button className="rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900" onClick={saveNew}>Save routine</button>
+              ) : (
+                <button className="rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900" onClick={saveChanges}>Save changes</button>
+              )}
             </div>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Tiny collapsible with chevron (like allergen page) */
+function Collapse({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="rounded-xl border">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between px-3 py-2"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="text-sm font-medium">{title}</span>
+        <Chevron open={open} />
+      </button>
+      {open && <div className="border-t p-3">{children}</div>}
     </div>
   );
 }
