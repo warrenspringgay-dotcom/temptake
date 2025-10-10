@@ -1,19 +1,22 @@
-// src/app/routines/[id]/run/page.tsx
 import { notFound } from "next/navigation";
-import { getRoutineWithItems } from "@/app/actions/routines";
-import RoutineRunner from "@/components/RoutineRunnerClient";
+import { getRoutineById } from "@/app/actions/routines";
+import RunRoutineClient from "./RunRoutineClient";
 
-export const dynamic = "force-dynamic";
-
-type RouteParams = { id: string };
-
-export default async function Page({
+// ✅ params is now a Promise – await it first.
+export default async function RunRoutinePage({
   params,
 }: {
-  params: Promise<RouteParams>; // <-- NOTE: Promise
+  params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;  // <-- await the params
-  const routine = await getRoutineWithItems(id);
+  const { id } = await params;
+
+  const routine = await getRoutineById(id).catch(() => null);
   if (!routine) return notFound();
-  return <RoutineRunner routine={routine} />;
+
+  return (
+    <div className="mx-auto my-6 w-[min(980px,94vw)] rounded-2xl border bg-white p-4 shadow-sm">
+      <h1 className="mb-4 text-lg font-semibold">Run routine: {routine.name}</h1>
+      <RunRoutineClient routine={routine} />
+    </div>
+  );
 }

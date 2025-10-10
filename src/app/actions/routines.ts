@@ -92,6 +92,76 @@ export async function listRoutinesWithItems(): Promise<RoutineWithItems[]> {
 export const listRoutines = listRoutinesWithItems;
 
 /* ---------- Create a routine (optionally with items) ---------- */
+// --- ADD: fetch a single routine with items (ordered) ---
+export async function getRoutineById(routineId: string) {
+  const { data: routine, error: rErr } = await supabase
+    .from("routines")
+    .select("id, name")
+    .eq("id", routineId)
+    .single();
+
+  if (rErr) throw rErr;
+
+  const { data: items, error: iErr } = await supabase
+    .from("routine_items")
+    .select("id, position, location, item, target_key")
+    .eq("routine_id", routineId)
+    .order("position", { ascending: true });
+
+  if (iErr) throw iErr;
+
+  return {
+    id: routine.id as string,
+    name: routine.name as string,
+    items: (items ?? []).map((it) => ({
+      id: String(it.id),
+      position: Number(it.position ?? 0),
+      location: it.location as string | null,
+      item: it.item as string | null,
+      target_key: it.target_key as string,
+    })),
+  };
+}
+
+// --- ADD: write many temp logs as one run ---
+type RunRowInput = {
+  location: string | null;
+  item: string | null;
+  target_key: string;
+  initials: string;
+  temp_c: number;
+};
+
+export async function recordRoutineRun(
+  routineId: string,
+  rows: RunRowInput[]
+) {
+  if (!rows.length) return;
+
+  const nowISO = new Date().toISOString();
+
+  const payload = rows.map((r) => ({
+    at: nowISO,
+    area: r.location,                 // ← your app uses "area" as location field
+    note: r.item,                     // ← human-readable item
+    temp_c: r.temp_c,
+    target_key: r.target_key,
+    status: null,                     // (optional) let DB compute or leave null
+    initials: r.initials,             // if your column is "staff_initials", feel free to duplicate
+    staff_initials: r.initials,
+    routine_id: routineId,
+  }));
+
+  const { error } = await supabase.from("food_temp_logs").insert(payload);
+  if (error) throw error;
+
+  // update last used (optional)
+  await supabase
+    .from("routines")
+    .update({ last_used_at: nowISO })
+    .eq("id", routineId);
+}
+
 
 export async function createRoutine(input: {
   name: string;

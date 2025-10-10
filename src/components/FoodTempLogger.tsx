@@ -1,4 +1,3 @@
-// src/components/FoodTempLogger.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -13,10 +12,10 @@ import {
 
 type CanonRow = {
   id: string;
-  date: string | null;            // yyyy-mm-dd
+  date: string | null;  // yyyy-mm-dd from 'at'
   staff_initials: string | null;
-  location: string | null;        // maps to DB column: area
-  item: string | null;            // maps to DB column: note
+  location: string | null; // from 'area'
+  item: string | null;     // from 'note'
   target_key: string | null;
   temp_c: number | null;
   status: "pass" | "fail" | null;
@@ -39,16 +38,12 @@ function firstLetter(s: string | null | undefined) {
 }
 function toISODate(val: any): string | null {
   if (!val) return null;
-  try {
-    const d = new Date(val);
-    if (isNaN(d.getTime())) return null;
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  } catch {
-    return null;
-  }
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 function formatDDMMYYYY(iso: string | null) {
   if (!iso) return "—";
@@ -179,15 +174,13 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
   useEffect(() => {
     (async () => {
       try {
-        // Only select 'area' (there is NO 'location' column)
+        // Only select 'area' (no 'location' column)
         const { data } = await supabase.from("food_temp_logs").select("area");
         const fromAreas =
           (data ?? [])
             .map((r: any) => (r.area ?? "").toString().trim())
             .filter((s: string) => s.length > 0) || [];
-        const merged = Array.from(
-          new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...fromAreas, ...locations])
-        );
+        const merged = Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...fromAreas, ...locations]));
         setLocations(merged.length ? merged : ["Kitchen"]);
         if (!form.location && merged[0]) {
           setForm((f) => ({ ...f, location: merged[0] }));
@@ -261,7 +254,6 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
       temp_c: r.temp_c != null ? Number(r.temp_c) : null,
       status: r.status,
     }));
-
     setRows(normalized);
   }
 
@@ -270,7 +262,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
 
     const payload = {
-      at: form.date, // 'YYYY-MM-DD' -> timestamptz
+      at: form.date, // 'YYYY-MM-DD' → timestamptz
       area: form.location || null,
       note: form.item || null,
       staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
@@ -287,20 +279,20 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
 
     try {
       if (form.staff_initials) localStorage.setItem(LS_LAST_INITIALS, form.staff_initials);
-      if (form.location) localStorage.setItem(LS_LAST_LOCATION, form.location);
+      if (form.location)       localStorage.setItem(LS_LAST_LOCATION,  form.location);
     } catch {}
 
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
     await refreshRows();
   }
 
-  /* ---------- handle Enter in Temp field ---------- */
-  function onTempKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+  // handle Enter key in the Temp (°C) field
+  const onTempKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
     if (e.key === "Enter" && canSave) {
       e.preventDefault();
       handleAddQuick();
     }
-  }
+  };
 
   /* ---------- grouped rows by date ---------- */
   const grouped = useMemo(() => {
@@ -327,9 +319,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
           const entriesToday = rows.filter((r) => r.date === todayISO).length;
           const last7 = rows.filter((r) => within7(r.date)).length;
           const failures7 = rows.filter((r) => within7(r.date) && r.status === "fail").length;
-          const locations7 = new Set(
-            rows.filter((r) => within7(r.date)).map((r) => r.location || "")
-          ).size;
+          const locations7 = new Set(rows.filter((r) => within7(r.date)).map((r) => r.location || "")).size;
 
           return (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -383,7 +373,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
         </div>
       </div>
 
-      {/* ENTRY FORM (collapsible) */}
+      {/* ENTRY FORM */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">Enter Temperature Log</h2>
@@ -433,9 +423,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                   onChange={(e) => {
                     const v = e.target.value.toUpperCase();
                     setForm((f) => ({ ...f, staff_initials: v }));
-                    try {
-                      localStorage.setItem(LS_LAST_INITIALS, v);
-                    } catch {}
+                    try { localStorage.setItem(LS_LAST_INITIALS, v); } catch {}
                   }}
                   className="h-10 w-full rounded-xl border px-3 py-2 uppercase"
                 >
@@ -460,9 +448,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                   onChange={(e) => {
                     const v = e.target.value;
                     setForm((f) => ({ ...f, location: v }));
-                    try {
-                      localStorage.setItem(LS_LAST_LOCATION, v);
-                    } catch {}
+                    try { localStorage.setItem(LS_LAST_LOCATION, v); } catch {}
                   }}
                   className="h-10 w-full rounded-xl border px-3 py-2"
                 >
@@ -536,7 +522,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
         )}
       </div>
 
-      {/* LOGS TABLE */}
+      {/* LOGS TABLE (grouped by date, dd/mm/yyyy) */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
         <h2 className="mb-4 text-lg font-semibold">Temperature Logs</h2>
         <div className="overflow-x-auto">
@@ -555,9 +541,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
-                    Loading…
-                  </td>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">Loading…</td>
                 </tr>
               ) : grouped.length ? (
                 grouped.map((g) => (
@@ -569,13 +553,11 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                     </tr>
                     {g.list.map((r) => {
                       const preset: TargetPreset | undefined =
-                        r.target_key
-                          ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[r.target_key]
-                          : undefined;
+                        r.target_key ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[r.target_key] : undefined;
                       const st: "pass" | "fail" | null = r.status ?? inferStatus(r.temp_c, preset);
                       return (
                         <tr key={r.id} className="border-t">
-                          <td className="py-2 pr-3">{/* grouped above */}</td>
+                          <td className="py-2 pr-3">{/* grouped date header */}</td>
                           <td className="py-2 pr-3">{r.staff_initials ?? "—"}</td>
                           <td className="py-2 pr-3">{r.location ?? "—"}</td>
                           <td className="py-2 pr-3">{r.item ?? "—"}</td>
@@ -612,9 +594,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
-                    No entries
-                  </td>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">No entries</td>
                 </tr>
               )}
             </tbody>

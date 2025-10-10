@@ -131,13 +131,13 @@ export default function SuppliersManager() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search…"
-              className="w-60 rounded-md border border-gray-300 px-3 py-2 text-sm"
+              className="rounded-2xl border border-gray-300 px-3 py-2 text-sm"
             />
             <Button onClick={() => setModal({ open: true, editing: null })}>+ Add supplier</Button>
           </div>
         </div>
 
-        <div className="rounded-xl border border-gray-200 bg-white">
+        <div className="rounded-2xl border border-gray-200 bg-white">
           <div className="border-b border-gray-200 px-4 py-3 text-sm font-medium">All suppliers</div>
           {filtered.length === 0 ? (
             <div className="p-6 text-center text-sm text-slate-500">No suppliers yet.</div>
@@ -169,7 +169,7 @@ export default function SuppliersManager() {
                       <td className="py-2 pr-3 text-right">
                         <button
                           onClick={() => setModal({ open: true, editing: s })}
-                          className="mr-2 rounded-md border px-2 py-1 text-sm hover:bg-gray-50"
+                          className="mr-2 rounded-2xl border px-2 py-1 text-sm hover:bg-gray-50"
                           title="Edit"
                           aria-label="Edit"
                         >
@@ -177,7 +177,7 @@ export default function SuppliersManager() {
                         </button>
                         <button
                           onClick={() => remove(s.id)}
-                          className="rounded-md border px-2 py-1 text-sm text-red-700 hover:bg-gray-50"
+                          className="rounded-2xl border px-2 py-1 text-sm text-red-700 hover:bg-gray-200"
                           title="Delete"
                           aria-label="Delete"
                         >

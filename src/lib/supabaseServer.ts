@@ -1,33 +1,35 @@
 // src/lib/supabaseServer.ts
-// Single source of truth for the server-side Supabase client.
-import { createServerClient as createSSRClient } from "@supabase/ssr";
-import { cookies, headers } from "next/headers";
+import { createServerClient as _createServerClient } from "@supabase/ssr";
+import type { CookieOptions } from "@supabase/ssr";
+import { cookies } from "next/headers";
 
-// Minimal, works in route handlers, server components, and server actions.
-export async function createServerClient() {
-  const cookieStore = await cookies();
-  const hdrs = await headers();
+/**
+ * Backwards-compatible export that your code imports as:
+ *   import { createServerClient } from "@/lib/supabaseServer";
+ */
+export function createServerClient() {
+  const cookieStore = cookies();
 
-  const supabase = createSSRClient(
+  const supabase = _createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get: (name: string) => cookieStore.get(name)?.value,
-        set: (name: string, value: string, options: any) => {
-          // next/headers cookies() supports set()
-          cookieStore.set(name, value, options);
+        get(name: string) {
+          return cookieStore.get(name)?.value;
         },
-        remove: (name: string, options: any) => {
-          cookieStore.set(name, "", { ...options, maxAge: 0 });
+        set(name: string, value: string, options?: CookieOptions) {
+          cookieStore.set({ name, value, ...options });
         },
-      },
-      headers: {
-        // pass through request headers when available (auth, etc.)
-        ...Object.fromEntries(hdrs),
+        remove(name: string, options?: CookieOptions) {
+          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+        },
       },
     }
   );
 
   return supabase;
 }
+
+// Optional: a clearly named helper if you prefer to call it elsewhere.
+export const getSupabaseServer = createServerClient;
