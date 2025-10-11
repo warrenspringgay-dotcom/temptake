@@ -4,25 +4,30 @@ import type { CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 /**
- * Backwards-compatible export that your code imports as:
- *   import { createServerClient } from "@/lib/supabaseServer";
+ * Creates a Supabase server client safely in Next.js 15+ (await cookies())
  */
-export function createServerClient() {
-  const cookieStore = cookies();
+export async function createServerClient() {
+  const cookieStore = await cookies(); // ✅ await required
 
   const supabase = _createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        get: (name: string) => cookieStore.get(name)?.value,
+        set: (name: string, value: string, options?: CookieOptions) => {
+          try {
+            cookieStore.set({ name, value, ...options });
+          } catch {
+            /* ignore */
+          }
         },
-        set(name: string, value: string, options?: CookieOptions) {
-          cookieStore.set({ name, value, ...options });
-        },
-        remove(name: string, options?: CookieOptions) {
-          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+        remove: (name: string, options?: CookieOptions) => {
+          try {
+            cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+          } catch {
+            /* ignore */
+          }
         },
       },
     }
@@ -30,6 +35,3 @@ export function createServerClient() {
 
   return supabase;
 }
-
-// Optional: a clearly named helper if you prefer to call it elsewhere.
-export const getSupabaseServer = createServerClient;

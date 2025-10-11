@@ -1,15 +1,28 @@
-// src/app/routines/routines-client.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
 import {
-  listRoutinesWithItems as listRoutines, // <-- now exported
+  listRoutines,
   createRoutine,
   updateRoutine,
   deleteRoutine,
-  type RoutineWithItems,
 } from "@/app/actions/routines";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
+
+type RoutineWithItems = {
+  id: string;
+  name: string;
+  last_used_at: string | null;
+  items: Array<{
+    id?: string;
+    position?: number;
+    location?: string | null;
+    item?: string | null;
+    target_key?: string | null;
+  }>;
+};
+
+
 
 export default function RoutinesClient() {
   const [rows, setRows] = useState<RoutineWithItems[]>([]);

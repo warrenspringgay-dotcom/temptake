@@ -76,7 +76,8 @@ export default function RunRoutineClient({ routine }: { routine: RoutineForRun }
         return;
       }
 
-      await recordRoutineRun(routine.id, rows);
+      await recordRoutineRun({ routineId: routine.id, entries: rows });
+
       router.push("/routines");
       router.refresh();
     } catch (err: any) {
@@ -140,7 +141,10 @@ export default function RunRoutineClient({ routine }: { routine: RoutineForRun }
                 </td>
                 <td className="py-2 pr-3">
                   <input
-                    ref={(el) => (tempRefs.current[idx] = el)}
+                    ref={(el) => {
+  tempRefs.current[idx] = el;
+}}
+
                     value={temps[idx]}
                     onChange={(e) => setTempAt(idx, e.target.value)}
                     onKeyDown={(e) => handleTempKeyDown(idx, e)}

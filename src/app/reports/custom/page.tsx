@@ -5,7 +5,6 @@ export const metadata = { title: "Custom Report – TempTake" };
 export const dynamic = "force-dynamic";
 
 export default async function CustomReportPage() {
-  // Example: no filters = latest 200
   const { items, counts } = await getCustomReport({ limit: 200 });
 
   return (

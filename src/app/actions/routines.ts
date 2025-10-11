@@ -1,102 +1,141 @@
-// src/app/actions/routines.ts
+// at top of file:
 "use server";
+import { createServerClient } from "@/lib/supabaseServer";
+import type { RoutineWithItems } from "@/types/routines"; // or inline your own type
 
 /**
- * Server actions for temperature "routines" made of many preset entries.
- * Tables expected:
- *  - public.temp_routines:      { id uuid pk, name text, created_by uuid, last_used_at timestamptz null, updated_at timestamptz ... }
- *  - public.temp_routine_items: { id uuid pk, routine_id uuid fk->temp_routines.id, position int, location text null, item text null, target_key text }
+ * Fetch routines and compute item counts without relying on a PostgREST relation.
+ * Works even if there is no FK from routine_items.routine_id -> temp_routines.id.
  */
-
-import { createServerClient } from "@/lib/supabase-server"; // ← if your project uses "@/lib/supabaseServer", swap the import
-
-/* ---------- Types ---------- */
-
-export type Routine = {
-  id: string;
-  name: string;
-  last_used_at: string | null;
-  updated_at?: string | null;
-};
-
-export type RoutineItem = {
-  id: string;
-  routine_id: string;
-  position: number;
-  location: string | null;
-  item: string | null;
-  target_key: string;
-};
-
-export type RoutineItemInput = {
-  position: number;
-  location?: string | null;
-  item?: string | null;
-  target_key: string;
-};
-
-export type RoutineWithItems = Routine & { items: RoutineItem[] };
-
-/* ---------- List routines with their items ---------- */
-
-export async function listRoutinesWithItems(): Promise<RoutineWithItems[]> {
+export async function listRoutines(): Promise<RoutineWithItems[]> {
   const supabase = await createServerClient();
 
-  // base routines
+  // 1) routines
   const { data: routines, error: rErr } = await supabase
     .from("temp_routines")
-    .select("id, name, last_used_at, updated_at")
-    .order("updated_at", { ascending: false })
-    .limit(200);
+    .select("id, name, last_used_at")
+    .order("name", { ascending: true });
 
-  if (rErr) throw rErr;
+  if (rErr) throw new Error(rErr.message);
 
-  const base: RoutineWithItems[] = (routines ?? []).map((r: any) => ({
-    id: String(r.id),
-    name: String(r.name ?? "Untitled"),
-    last_used_at: r.last_used_at ?? null,
-    updated_at: r.updated_at ?? null,
-    items: [],
-  }));
+  const ids = (routines ?? []).map((r: any) => r.id);
+  if (ids.length === 0) return [];
 
-  const ids = base.map((b) => b.id);
-  if (ids.length === 0) return base;
-
-  // items for those routines
-  const { data: items, error: iErr } = await supabase
+  // 2) fetch all items' routine_id for these routines, then count in JS
+  const { data: itemsRows, error: iErr } = await supabase
     .from("temp_routine_items")
-    .select("id, routine_id, position, location, item, target_key")
-    .in("routine_id", ids)
-    .order("position", { ascending: true });
+    .select("routine_id")
+    .in("routine_id", ids);
 
-  if (iErr) throw iErr;
+  if (iErr) throw new Error(iErr.message);
 
-  const byId = new Map(base.map((b) => [b.id, b]));
-  (items ?? []).forEach((it: any) => {
-    const bucket = byId.get(String(it.routine_id));
-    if (!bucket) return;
-    bucket.items.push({
-      id: String(it.id),
-      routine_id: String(it.routine_id),
-      position: Number(it.position ?? 0),
-      location: it.location ?? null,
-      item: it.item ?? null,
-      target_key: String(it.target_key),
-    });
+  const counts = new Map<string, number>();
+  for (const row of itemsRows ?? []) {
+    counts.set(row.routine_id, (counts.get(row.routine_id) ?? 0) + 1);
+  }
+
+  // 3) return routines with a fake items array of the correct length (for UI)
+  return (routines ?? []).map((r: any) => {
+    const n = counts.get(r.id) ?? 0;
+    return {
+      id: r.id,
+      name: r.name,
+      last_used_at: r.last_used_at ?? null,
+      // create an array of the right length so your UI can do r.items.length
+      items: Array.from({ length: n }, () => ({})),
+    } as RoutineWithItems;
   });
-
-  return base;
 }
 
-// Back-compat alias so older clients importing `listRoutines` keep working:
-export const listRoutines = listRoutinesWithItems;
+/**
+ * Create a new routine
+ */
+export async function createRoutine(params: {
+  name: string;
+  items: Array<{ position: number; location: string | null; item: string | null; target_key: string | null }>;
+}) {
+  const supabase = await createServerClient();
 
-/* ---------- Create a routine (optionally with items) ---------- */
-// --- ADD: fetch a single routine with items (ordered) ---
-export async function getRoutineById(routineId: string) {
+  const { data: routine, error } = await supabase
+    .from("temp_routines")
+    .insert({ name: params.name })
+    .select("id")
+    .single();
+
+  if (error) throw error;
+
+  if (params.items?.length) {
+    const rows = params.items.map(it => ({
+      routine_id: routine.id,
+      position: it.position,
+      location: it.location,
+      item: it.item,
+      target_key: it.target_key,
+    }));
+    const { error: itemsErr } = await supabase.from("routine_items").insert(rows);
+    if (itemsErr) throw itemsErr;
+  }
+
+  return routine.id as string;
+}
+
+/**
+ * Replace all items in a routine
+ */
+export async function replaceRoutineItems(
+  routineId: string,
+  items: Array<{ position: number; location: string | null; item: string | null; target_key: string | null }>
+) {
+  const supabase = await createServerClient();
+
+  const { error: delErr } = await supabase
+    .from("routine_items")
+    .delete()
+    .eq("routine_id", routineId);
+
+  if (delErr) throw delErr;
+
+  if (items.length) {
+    const rows = items.map(it => ({
+      routine_id: routineId,
+      position: it.position,
+      location: it.location,
+      item: it.item,
+      target_key: it.target_key,
+    }));
+    const { error: insErr } = await supabase.from("routine_items").insert(rows);
+    if (insErr) throw insErr;
+  }
+}
+
+/**
+ * Update routine name or metadata
+ */
+export async function updateRoutine(id: string, data: { name?: string }) {
+  const supabase = await createServerClient();
+  const { error } = await supabase.from("temp_routines").update(data).eq("id", id);
+  if (error) throw error;
+}
+
+/**
+ * Delete routine and items
+ */
+export async function deleteRoutine(id: string) {
+  const supabase = await createServerClient();
+  await supabase.from("routine_items").delete().eq("routine_id", id);
+  const { error } = await supabase.from("temp_routines").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/**
+ * Fetch one routine by ID (for run page)
+ */
+export async function getRoutineById(routineId: string): Promise<RoutineWithItems> {
+  const supabase = await createServerClient();
+
   const { data: routine, error: rErr } = await supabase
-    .from("routines")
-    .select("id, name")
+    .from("temp_routines")
+    .select("id, name, last_used_at")
     .eq("id", routineId)
     .single();
 
@@ -111,180 +150,76 @@ export async function getRoutineById(routineId: string) {
   if (iErr) throw iErr;
 
   return {
-    id: routine.id as string,
-    name: routine.name as string,
-    items: (items ?? []).map((it) => ({
-      id: String(it.id),
-      position: Number(it.position ?? 0),
-      location: it.location as string | null,
-      item: it.item as string | null,
-      target_key: it.target_key as string,
-    })),
+    id: routine.id,
+    name: routine.name,
+    last_used_at: routine.last_used_at ?? null,
+    items: items ?? [],
   };
 }
-
-// --- ADD: write many temp logs as one run ---
-type RunRowInput = {
+// -- record a routine run (supports old & new call shapes) --
+type RoutineRunRow = {
+  position?: number;
   location: string | null;
   item: string | null;
-  target_key: string;
-  initials: string;
-  temp_c: number;
+  target_key: string | null;
+  initials?: string | null;
+  temp_c?: number | null;
 };
 
+type RoutineRunPayload =
+  | { routine_id: string; entries?: RoutineRunRow[]; rows?: RoutineRunRow[] }
+  | [routineId: string, rows: RoutineRunRow[]]; // backward-compat tuple
+
 export async function recordRoutineRun(
-  routineId: string,
-  rows: RunRowInput[]
+  arg1: RoutineRunPayload | string,
+  arg2?: RoutineRunRow[]
 ) {
-  if (!rows.length) return;
-
-  const nowISO = new Date().toISOString();
-
-  const payload = rows.map((r) => ({
-    at: nowISO,
-    area: r.location,                 // ← your app uses "area" as location field
-    note: r.item,                     // ← human-readable item
-    temp_c: r.temp_c,
-    target_key: r.target_key,
-    status: null,                     // (optional) let DB compute or leave null
-    initials: r.initials,             // if your column is "staff_initials", feel free to duplicate
-    staff_initials: r.initials,
-    routine_id: routineId,
-  }));
-
-  const { error } = await supabase.from("food_temp_logs").insert(payload);
-  if (error) throw error;
-
-  // update last used (optional)
-  await supabase
-    .from("routines")
-    .update({ last_used_at: nowISO })
-    .eq("id", routineId);
-}
-
-
-export async function createRoutine(input: {
-  name: string;
-  items?: RoutineItemInput[];
-}): Promise<string> {
   const supabase = await createServerClient();
 
-  const { data: me } = await supabase.auth.getUser();
-  const uid = me?.user?.id;
-  if (!uid) throw new Error("Not signed in.");
+  // accept both: recordRoutineRun(routineId, rows) and recordRoutineRun({ routine_id, entries })
+  let routine_id: string;
+  let rows: RoutineRunRow[];
 
-  const { data: created, error } = await supabase
-    .from("temp_routines")
-    .insert({ name: input.name, created_by: uid, last_used_at: null })
-    .select("id")
-    .single();
-
-  if (error) throw error;
-  const routineId = String(created!.id);
-
-  if (input.items?.length) {
-    const payload = input.items.map((it, idx) => ({
-      routine_id: routineId,
-      position: it.position ?? idx,
-      location: (it.location ?? null) as string | null,
-      item: (it.item ?? null) as string | null,
-      target_key: it.target_key,
-    }));
-    const { error: iErr } = await supabase.from("temp_routine_items").insert(payload);
-    if (iErr) throw iErr;
+  if (typeof arg1 === "string") {
+    routine_id = arg1;
+    rows = Array.isArray(arg2) ? arg2 : [];
+  } else if (Array.isArray(arg1)) {
+    routine_id = arg1[0];
+    rows = Array.isArray(arg1[1]) ? arg1[1] : [];
+  } else {
+    routine_id = arg1.routine_id;
+    rows = arg1.entries ?? arg1.rows ?? [];
   }
 
-  return routineId;
-}
+  if (!routine_id) throw new Error("routine_id required");
 
-/* ---------- Replace all items for a routine ---------- */
+  const nowIso = new Date().toISOString();
 
-export async function replaceRoutineItems(
-  routineId: string,
-  items: RoutineItemInput[]
-): Promise<void> {
-  const supabase = await createServerClient();
-
-  // wipe then bulk insert
-  const { error: delErr } = await supabase
-    .from("temp_routine_items")
-    .delete()
-    .eq("routine_id", routineId);
-  if (delErr) throw delErr;
-
-  if (items.length === 0) return;
-
-  const payload = items.map((it, idx) => ({
-    routine_id: routineId,
-    position: it.position ?? idx,
-    location: (it.location ?? null) as string | null,
-    item: (it.item ?? null) as string | null,
-    target_key: it.target_key,
+  // Map to your food_temp_logs schema
+  const insertRows = rows.map((r) => ({
+    at: nowIso,
+    routine_id,
+    area: r.location ?? null,
+    note: r.item ?? null,
+    target_key: r.target_key ?? null,
+    staff_initials: r.initials ?? null,
+    temp_c: r.temp_c ?? null,
+    status: null, // compute later if you have logic
   }));
 
-  const { error: insErr } = await supabase.from("temp_routine_items").insert(payload);
-  if (insErr) throw insErr;
-}
+  if (insertRows.length) {
+    const { error: insErr } = await supabase
+      .from("food_temp_logs")
+      .insert(insertRows);
+    if (insErr) throw new Error(insErr.message);
+  }
 
-/* ---------- Update routine meta (name / last_used_at) ---------- */
-// --- single routine with items ---------------------------------------------
-export async function getRoutineWithItems(id: string): Promise<RoutineWithItems | null> {
-  const supabase = await createServerClient();
-
-  // fetch routine
-  const { data: r, error: rErr } = await supabase
+  // touch last_used_at on the routine (your routines table is temp_routines)
+  const { error: upErr } = await supabase
     .from("temp_routines")
-    .select("id, name, last_used_at")
-    .eq("id", id)
-    .maybeSingle();
+    .update({ last_used_at: nowIso })
+    .eq("id", routine_id);
+  if (upErr) throw new Error(upErr.message);
 
-  if (rErr) throw rErr;
-  if (!r) return null;
-
-  // fetch items
-  const { data: items, error: iErr } = await supabase
-    .from("temp_routine_items")
-    .select("id, routine_id, position, location, item, target_key")
-    .eq("routine_id", r.id)
-    .order("position", { ascending: true });
-
-  if (iErr) throw iErr;
-
-  return {
-    id: String(r.id),
-    name: String(r.name ?? "Untitled"),
-    last_used_at: r.last_used_at ?? null,
-    items: (items ?? []).map((it: any) => ({
-
-      id: String(it.id),
-      routine_id: String(it.routine_id),
-      position: Number(it.position ?? 0),
-      location: it.location ?? null,
-      item: it.item ?? null,
-      target_key: String(it.target_key),
-    })),
-  };
-}
-
-
-export async function updateRoutine(
-  id: string,
-  patch: Partial<Pick<Routine, "name" | "last_used_at">>
-): Promise<void> {
-  const supabase = await createServerClient();
-  const { error } = await supabase.from("temp_routines").update(patch).eq("id", id);
-  if (error) throw error;
-}
-
-/* ---------- Delete routine (and cascade items) ---------- */
-
-export async function deleteRoutine(id: string): Promise<void> {
-  const supabase = await createServerClient();
-
-  // remove items first (in case FK is not ON DELETE CASCADE)
-  const { error: iErr } = await supabase.from("temp_routine_items").delete().eq("routine_id", id);
-  if (iErr) throw iErr;
-
-  const { error: rErr } = await supabase.from("temp_routines").delete().eq("id", id);
-  if (rErr) throw rErr;
+  return { inserted: insertRows.length };
 }
