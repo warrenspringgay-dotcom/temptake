@@ -2,8 +2,8 @@
 
 import React, { useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import Button from "@/components/ui/Button";
-import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
+import Button from "@/components/ui/button";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Download, Printer } from "lucide-react";
 
 type TempRow = {
