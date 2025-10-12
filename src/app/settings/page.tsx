@@ -1,10 +1,7 @@
-// src/app/settings/page.tsx
-import SettingsInner from "./SettingsInner";
+export const dynamic = "force-dynamic"; // avoids static prerender if settings rely on client state
 
-export const metadata = {
-  title: "Settings – TempTake",
-};
+import SettingsClient from "./SettingsClient";
 
 export default function SettingsPage() {
-  return <SettingsInner />;
+  return <SettingsClient />;
 }

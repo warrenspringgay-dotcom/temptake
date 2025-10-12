@@ -1,3 +1,4 @@
+// src/components/RoutinesManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -8,12 +9,13 @@ import {
   replaceRoutineItems,
   updateRoutine,
   deleteRoutine,
-  type RoutineWithItems,
-  type RoutineItemInput,
 } from "@/app/actions/routines";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
 import Chevron from "./ui/Chevron";
 import { Play } from "lucide-react";
+import type { RoutineWithItems, RoutineItemInput } from "@/types/routines";
+
+const DEFAULT_TARGET = TARGET_PRESETS[0]?.key ?? "chill";
 
 type BuilderItem = { location: string; item: string; target_key: string };
 
@@ -22,11 +24,10 @@ export default function RoutinesManager() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // modal state
   const [openId, setOpenId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [items, setItems] = useState<BuilderItem[]>([
-    { location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" },
+    { location: "", item: "", target_key: DEFAULT_TARGET },
   ]);
 
   const current = useMemo(
@@ -52,10 +53,7 @@ export default function RoutinesManager() {
   }, []);
 
   function addRow() {
-    setItems((p) => [
-      ...p,
-      { location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" },
-    ]);
+    setItems((p) => [...p, { location: "", item: "", target_key: DEFAULT_TARGET }]);
   }
 
   function removeRow(idx: number) {
@@ -65,18 +63,14 @@ export default function RoutinesManager() {
   function resetEditor() {
     setOpenId(null);
     setName("");
-    setItems([
-      { location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" },
-    ]);
+    setItems([{ location: "", item: "", target_key: DEFAULT_TARGET }]);
     setSaving(false);
   }
 
   async function openNew() {
     setOpenId("NEW");
     setName("");
-    setItems([
-      { location: "", item: "", target_key: TARGET_PRESETS[0]?.key ?? "chill" },
-    ]);
+    setItems([{ location: "", item: "", target_key: DEFAULT_TARGET }]);
   }
 
   function openEdit(r: RoutineWithItems) {
@@ -85,22 +79,21 @@ export default function RoutinesManager() {
     setItems(
       r.items
         .slice()
-        .sort((a, b) => a.position - b.position)
+        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
         .map((it) => ({
           location: it.location ?? "",
           item: it.item ?? "",
-          target_key: it.target_key,
+          target_key: it.target_key ?? DEFAULT_TARGET, // ensure string
         }))
     );
   }
 
-  /** Remove completely blank rows and trim everything else. */
   function normalizedItems(): BuilderItem[] {
     return items
       .map((it) => ({
         location: it.location.trim(),
         item: it.item.trim(),
-        target_key: it.target_key,
+        target_key: it.target_key || DEFAULT_TARGET,
       }))
       .filter((it) => it.location !== "" || it.item !== "");
   }
@@ -108,21 +101,16 @@ export default function RoutinesManager() {
   async function saveNew() {
     if (saving) return;
     const trimmedName = name.trim();
-    if (!trimmedName) {
-      alert("Name required.");
-      return;
-    }
+    if (!trimmedName) return alert("Name required.");
+
     const clean = normalizedItems();
-    if (clean.length === 0) {
-      alert("Add at least one entry (or fill an existing row).");
-      return;
-    }
+    if (clean.length === 0) return alert("Add at least one entry.");
 
     const payload: RoutineItemInput[] = clean.map((it, idx) => ({
       position: idx,
       location: it.location || null,
       item: it.item || null,
-      target_key: it.target_key,
+      target_key: it.target_key || DEFAULT_TARGET,
     }));
 
     setSaving(true);
@@ -141,21 +129,16 @@ export default function RoutinesManager() {
     if (!current || saving) return;
 
     const trimmedName = name.trim();
-    if (!trimmedName) {
-      alert("Name required.");
-      return;
-    }
+    if (!trimmedName) return alert("Name required.");
+
     const clean = normalizedItems();
-    if (clean.length === 0) {
-      alert("Add at least one entry (or fill an existing row).");
-      return;
-    }
+    if (clean.length === 0) return alert("Add at least one entry.");
 
     const payload: RoutineItemInput[] = clean.map((it, idx) => ({
       position: idx,
       location: it.location || null,
       item: it.item || null,
-      target_key: it.target_key,
+      target_key: it.target_key || DEFAULT_TARGET,
     }));
 
     setSaving(true);
@@ -350,7 +333,7 @@ export default function RoutinesManager() {
                         </label>
                         <select
                           className="w-full rounded-xl border px-3 py-2"
-                          value={it.target_key}
+                          value={it.target_key || DEFAULT_TARGET}
                           onChange={(e) => {
                             const v = e.target.value;
                             setItems((p) => {

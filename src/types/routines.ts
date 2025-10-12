@@ -1,10 +1,17 @@
 // src/types/routines.ts
-export type RoutineItem = {
-  id?: string;
+export type RoutineItemInput = {
   position: number;
   location: string | null;
   item: string | null;
   target_key: string | null;
+};
+
+export type RoutineItem = {
+  id?: string;
+  position?: number;
+  location?: string | null;
+  item?: string | null;
+  target_key?: string | null;
 };
 
 export type RoutineWithItems = {

@@ -1,90 +1,99 @@
+// src/app/routines/[id]/run/RunRoutineClient.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { recordRoutineRun } from "@/app/actions/routines";
 
-type RoutineForRun = {
+/** Strict shape the page passes down after normalization */
+export type RoutineForRun = {
   id: string;
   name: string;
-  items: {
+  items: Array<{
     id: string;
     position: number;
     location: string | null;
     item: string | null;
     target_key: string;
-  }[];
+  }>;
 };
 
-function isValidNumber(v: string) {
-  return /^-?\d+(\.\d+)?$/.test(v.trim());
-}
-
-export default function RunRoutineClient({ routine }: { routine: RoutineForRun }) {
+export default function RoutineRunnerClient({ routine }: { routine: RoutineForRun }) {
   const router = useRouter();
+
+  // inputs
   const [initials, setInitials] = useState("");
-  const [temps, setTemps] = useState<string[]>(routine.items.map(() => ""));
-  const [saving, setSaving] = useState(false);
+  const [temps, setTemps] = useState<string[]>(
+    () => new Array(routine.items.length).fill("")
+  );
+  const tempRefs = useRef<Array<HTMLInputElement | null>>([]);
 
-  const tempRefs = useRef<(HTMLInputElement | null)[]>([]);
-  useEffect(() => {
-    tempRefs.current[0]?.focus();
-  }, []);
-
-  const canSave = useMemo(() => {
-    if (!initials.trim()) return false;
-    return temps.some((t) => isValidNumber(t));
-  }, [initials, temps]);
-
-  function setTempAt(idx: number, val: string) {
+  function setTempAt(idx: number, v: string) {
     setTemps((prev) => {
-      const arr = prev.slice();
-      arr[idx] = val;
-      return arr;
+      const next = prev.slice();
+      next[idx] = v;
+      return next;
     });
+  }
+
+  function focusRow(idx: number) {
+    const el = tempRefs.current[idx];
+    if (el) el.focus();
   }
 
   function handleTempKeyDown(idx: number, e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") {
       e.preventDefault();
-      if (idx === temps.length - 1) {
-        if (canSave) void doSave();
-      } else {
-        tempRefs.current[idx + 1]?.focus();
-        tempRefs.current[idx + 1]?.select();
+      if (idx < routine.items.length - 1) {
+        focusRow(idx + 1);
       }
     }
   }
+
+  const canSave = useMemo(() => {
+    if (!initials.trim()) return false;
+    return temps.some((t) => t.trim() !== "");
+  }, [initials, temps]);
+
+  const [saving, setSaving] = useState(false);
 
   async function doSave() {
     if (!canSave || saving) return;
     setSaving(true);
     try {
+      // Build rows; only include lines with a temp value
       const rows = routine.items
-        .map((it, idx) => ({
+        .map((it, i) => ({ it, t: temps[i]?.trim() ?? "" }))
+        .filter(({ t }) => t !== "")
+        .map(({ it, t }) => ({
+          routine_id: routine.id,
+          routine_item_id: it.id,
           location: it.location,
           item: it.item,
           target_key: it.target_key,
-          initials: initials.trim(),
-          temp_c: Number(temps[idx]),
-        }))
-        .filter((r) => Number.isFinite(r.temp_c));
+          initials: initials.trim().toUpperCase(),
+          temp_c: Number(t),
+        }));
 
-      if (!rows.length) {
-        alert("Enter at least one valid temperature.");
-        setSaving(false);
-        return;
-      }
+      // Your server action should accept a single array argument:
+      //   recordRoutineRun(rows: Array<...>)
+      await recordRoutineRun({ routine_id: routine.id, rows });
 
-      await recordRoutineRun({ routineId: routine.id, entries: rows });
 
       router.push("/routines");
       router.refresh();
     } catch (err: any) {
-      alert(err?.message ?? "Failed to save run.");
+      alert(err?.message ?? "Failed to save");
+    } finally {
       setSaving(false);
     }
   }
+
+  // Autofocus first temp on mount
+  useEffect(() => {
+    focusRow(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <>
@@ -142,9 +151,9 @@ export default function RunRoutineClient({ routine }: { routine: RoutineForRun }
                 <td className="py-2 pr-3">
                   <input
                     ref={(el) => {
-  tempRefs.current[idx] = el;
-}}
-
+                      // return void, not the element
+                      tempRefs.current[idx] = el ?? null;
+                    }}
                     value={temps[idx]}
                     onChange={(e) => setTempAt(idx, e.target.value)}
                     onKeyDown={(e) => handleTempKeyDown(idx, e)}
