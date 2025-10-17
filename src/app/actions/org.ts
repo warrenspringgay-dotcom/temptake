@@ -1,10 +1,10 @@
 // src/app/actions/org.ts
 "use server";
 
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 export async function getOrgIdOrCreate(): Promise<string> {
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
   const { data: { user }, error: userErr } = await supabase.auth.getUser();
   if (userErr) throw userErr;
   if (!user) throw new Error("Not signed in");

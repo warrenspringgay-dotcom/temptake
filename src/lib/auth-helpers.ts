@@ -1,5 +1,5 @@
 // src/lib/auth-helpers.ts
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 export type SessionUser = {
   id: string;
@@ -8,7 +8,7 @@ export type SessionUser = {
 
 /** Small helper that mirrors a classic `getSession()` shape */
 export async function getSession(): Promise<{ user: SessionUser | null }> {
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
   const { data } = await supabase.auth.getUser();
 
   if (!data?.user) {

@@ -1,5 +1,5 @@
 // src/lib/get-user-role.ts
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 export type Role = "staff" | "manager" | "owner";
 
@@ -8,7 +8,7 @@ export type Role = "staff" | "manager" | "owner";
  * Adjust the table/column names to match your schema.
  */
 export async function getUserRole(userId?: string): Promise<Role | null> {
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
 
   // Resolve a user id if not supplied
   const id =

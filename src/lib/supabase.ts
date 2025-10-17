@@ -1,8 +1,14 @@
 // src/lib/supabase.ts
-import { createClient } from "@supabase/supabase-js";
+"use client";
 
-export const supabase = await createClient(
+import { createBrowserClient } from "@supabase/ssr";
+
+export const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
+
+// Optional sanity warning in the browser console
+if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+  console.warn("[Supabase] Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
+}

@@ -1,6 +1,6 @@
 // src/components/DashboardKpis.tsx
 // Server component
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 async function countSince(
@@ -64,7 +64,7 @@ async function distinctLocationsSince(
 }
 
 export default async function DashboardKpis() {
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
   const {
     data: { user },
   } = await supabase.auth.getUser();

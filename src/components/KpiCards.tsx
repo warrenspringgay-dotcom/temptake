@@ -1,6 +1,6 @@
 // src/components/KpiCards.tsx
 // Server Component
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 type Kpis = {
   total7d: number;
@@ -49,7 +49,7 @@ async function resolveOrgId(
 }
 
 async function loadKpis(): Promise<Kpis> {
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
   const org_id = await resolveOrgId(supabase);
 
   const startISO = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();

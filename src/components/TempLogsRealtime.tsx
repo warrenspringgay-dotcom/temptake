@@ -1,7 +1,8 @@
 // src/components/TempLogsRealtime.tsx
 "use client";
 import { useEffect } from "react";
-import { supabase } from "@/lib/supabase"; // your existing client
+import { supabase } from "@/lib/supabaseBrowser";
+ // your existing client
 
 export function useTempLogsRealtime(onChange: () => void) {
   useEffect(() => {

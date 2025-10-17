@@ -1,8 +1,11 @@
+// src/components/FoodTempLogger.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabaseBrowser";
+import { getActiveOrgIdClient } from "@/lib/orgClient";
+
 import {
   LOCATION_PRESETS,
   TARGET_PRESETS,
@@ -10,12 +13,13 @@ import {
   type TargetPreset,
 } from "@/lib/temp-constants";
 
+/* ================== Types ================== */
 type CanonRow = {
   id: string;
-  date: string | null;  // yyyy-mm-dd from 'at'
+  date: string | null;          // yyyy-mm-dd
   staff_initials: string | null;
-  location: string | null; // from 'area'
-  item: string | null;     // from 'note'
+  location: string | null;
+  item: string | null;
   target_key: string | null;
   temp_c: number | null;
   status: "pass" | "fail" | null;
@@ -29,7 +33,7 @@ type Props = {
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
 
-/* ---------------- helpers ---------------- */
+/* ================== Helpers ================== */
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -59,7 +63,39 @@ function inferStatus(temp: number | null, preset?: TargetPreset): "pass" | "fail
   return "pass";
 }
 
-/* -------------- component --------------- */
+async function safeSelect(table: string, select: string) {
+  try {
+    const res = await supabase.from(table).select(select);
+    if (res.error) throw res.error;
+    return res.data ?? [];
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRowsFromFood(data: any[]): CanonRow[] {
+  return data.map((r) => {
+    const temp =
+      typeof r.temp_c === "number"
+        ? r.temp_c
+        : r.temp_c != null
+        ? Number(r.temp_c)
+        : null;
+
+    return {
+      id: String(r.id ?? crypto.randomUUID()),
+      date: toISODate(r.at ?? r.created_at ?? null),
+      staff_initials: (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
+      location: (r.area ?? r.location ?? null)?.toString() ?? null,
+      item: (r.note ?? r.item ?? null)?.toString() ?? null,
+      target_key: r.target_key != null ? String(r.target_key) : null,
+      temp_c: temp,
+      status: (r.status as any) ?? null,
+    };
+  });
+}
+
+/* ================== Component ================== */
 export default function FoodTempLogger({ initials: initialsSeed, locations: locationsSeed }: Props) {
   // DATA
   const [rows, setRows] = useState<CanonRow[]>([]);
@@ -107,48 +143,19 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     } catch {}
   }, []);
 
-  /* ---------- KPI fetch (best-effort) ---------- */
+  /* ---------- initials list (org-scoped) ---------- */
   useEffect(() => {
     (async () => {
       try {
-        const soon = new Date();
-        soon.setDate(soon.getDate() + 14);
+        const orgId = await getActiveOrgIdClient();
+        if (!orgId) return;
 
-        let trainingDue = 0;
-        let allergenDue = 0;
+        const { data: tm } = await supabase
+          .from("team_members")
+          .select("initials,name,email")
+          .eq("org_id", orgId)
+          .order("initials", { ascending: true });
 
-        try {
-          const { data } = await supabase.from("team_members").select("*");
-          trainingDue = (data ?? []).reduce((acc: number, r: any) => {
-            const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
-            if (!raw) return acc;
-            const d = new Date(raw);
-            return isNaN(d.getTime()) ? acc : d <= soon ? acc + 1 : acc;
-          }, 0);
-        } catch {}
-
-        try {
-          const { data } = await supabase.from("allergen_reviews").select("*");
-          allergenDue = (data ?? []).reduce((acc: number, r: any) => {
-            const raw = r.next_due ?? r.next_review_due ?? r.due_at ?? r.review_due ?? null;
-            if (!raw) return acc;
-            const d = new Date(raw);
-            return isNaN(d.getTime()) ? acc : d <= soon ? acc + 1 : acc;
-          }, 0);
-        } catch {}
-
-        setKpi({ trainingDue, allergenDue });
-      } catch {
-        setKpi({ trainingDue: 0, allergenDue: 0 });
-      }
-    })();
-  }, []);
-
-  /* ---------- initials list ---------- */
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data: tm } = await supabase.from("team_members").select("*");
         const fromDb =
           (tm ?? [])
             .map(
@@ -158,135 +165,177 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                 firstLetter(r.email)
             )
             .filter(Boolean) || [];
-        const merged = Array.from(new Set([...(initialsSeed ?? []), ...fromDb, ...initials]));
+
+        const merged = Array.from(new Set([...(initialsSeed ?? []), ...fromDb]));
         if (merged.length) setInitials(merged);
         if (!form.staff_initials && merged[0]) {
           setForm((f) => ({ ...f, staff_initials: merged[0] }));
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialsSeed]);
 
-  /* ---------- locations list ---------- */
+  /* ---------- locations list (org-scoped) ---------- */
   useEffect(() => {
     (async () => {
       try {
-        // Only select 'area' (no 'location' column)
-        const { data } = await supabase.from("food_temp_logs").select("area");
+        const orgId = await getActiveOrgIdClient();
+        if (!orgId) {
+          const base = Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS]));
+          setLocations(base.length ? base : ["Kitchen"]);
+          if (!form.location) setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
+          return;
+        }
+
+        const { data } = await supabase
+          .from("food_temp_logs")
+          .select("area")
+          .eq("org_id", orgId)
+          .order("area", { ascending: true });
+
         const fromAreas =
           (data ?? [])
             .map((r: any) => (r.area ?? "").toString().trim())
             .filter((s: string) => s.length > 0) || [];
-        const merged = Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...fromAreas, ...locations]));
+
+        const merged = Array.from(
+          new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...fromAreas])
+        );
         setLocations(merged.length ? merged : ["Kitchen"]);
-        if (!form.location && merged[0]) {
-          setForm((f) => ({ ...f, location: merged[0] }));
-        }
+        if (!form.location) setForm((f) => ({ ...f, location: merged[0] || "Kitchen" }));
       } catch {
-        const base = Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...locations]));
+        const base = Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS]));
         setLocations(base.length ? base : ["Kitchen"]);
-        if (!form.location) {
-          setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
-        }
+        if (!form.location) setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationsSeed]);
 
-  /* ---------- rows ---------- */
+  /* ---------- KPI fetch (org-scoped best-effort) ---------- */
   useEffect(() => {
     (async () => {
-      setLoading(true);
-      setErr(null);
       try {
-        const { data } = await supabase
-          .from("food_temp_logs")
-          .select("*")
-          .order("at", { ascending: false })
-          .limit(300);
+        const orgId = await getActiveOrgIdClient();
+        if (!orgId) return;
 
-        const normalized: CanonRow[] = (data ?? []).map((r: any) => {
-          const temp =
-            typeof r.temp_c === "number"
-              ? r.temp_c
-              : r.temp_c != null
-              ? Number(r.temp_c)
-              : null;
+        const soon = new Date();
+        soon.setDate(soon.getDate() + 14);
 
-          return {
-            id: String(r.id ?? crypto.randomUUID()),
-            date: toISODate(r.at ?? null),
-            staff_initials: (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
-            location: (r.area ?? null)?.toString() ?? null,
-            item: (r.note ?? null)?.toString() ?? null,
-            target_key: r.target_key != null ? String(r.target_key) : null,
-            temp_c: temp,
-            status: (r.status as any) ?? null,
-          };
-        });
-        setRows(normalized);
-      } catch (e: any) {
-        setErr(e?.message || "Failed to fetch logs.");
-        setRows([]);
-      } finally {
-        setLoading(false);
-      }
+        let trainingDue = 0;
+        let allergenDue = 0;
+
+        try {
+          const { data } = await supabase
+            .from("team_members")
+            .select("training_expires_at,training_expiry,expires_at")
+            .eq("org_id", orgId);
+          trainingDue = (data ?? []).reduce((acc: number, r: any) => {
+            const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
+            if (!raw) return acc;
+            const d = new Date(raw);
+            return isNaN(d.getTime()) ? acc : d <= soon ? acc + 1 : acc;
+          }, 0);
+        } catch {}
+
+        try {
+          // your table is allergen_review (singular) per screenshot
+          const { data } = await supabase
+            .from("allergen_review")
+            .select("last_reviewed,interval_days")
+            .eq("org_id", orgId);
+
+          allergenDue = (data ?? []).reduce((acc: number, r: any) => {
+            const last = r.last_reviewed ? new Date(r.last_reviewed) : null;
+            const interval = Number(r.interval_days ?? 0);
+            if (!last || !Number.isFinite(interval)) return acc;
+            const due = new Date(last);
+            due.setDate(due.getDate() + interval);
+            return due <= soon ? acc + 1 : acc;
+          }, 0);
+        } catch {}
+
+        setKpi({ trainingDue, allergenDue });
+      } catch {}
     })();
   }, []);
 
-  async function refreshRows() {
-    const { data } = await supabase
-      .from("food_temp_logs")
-      .select("*")
-      .order("at", { ascending: false })
-      .limit(300);
+  /* ---------- rows (org-scoped) ---------- */
+  async function loadRows() {
+    setLoading(true);
+    setErr(null);
+    try {
+      const orgId = await getActiveOrgIdClient();
+      if (!orgId) {
+        setRows([]);
+        setLoading(false);
+        return;
+      }
 
-    const normalized: CanonRow[] = (data ?? []).map((r: any) => ({
-      id: String(r.id ?? crypto.randomUUID()),
-      date: toISODate(r.at ?? null),
-      staff_initials: (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
-      location: (r.area ?? null)?.toString() ?? null,
-      item: (r.note ?? null)?.toString() ?? null,
-      target_key: r.target_key != null ? String(r.target_key) : null,
-      temp_c: r.temp_c != null ? Number(r.temp_c) : null,
-      status: r.status,
-    }));
-    setRows(normalized);
+      const { data, error } = await supabase
+        .from("food_temp_logs")
+        .select("*")
+        .eq("org_id", orgId)
+        .order("at", { ascending: false })
+        .limit(300);
+
+      if (error) throw error;
+      setRows(normalizeRowsFromFood(data ?? []));
+    } catch (e: any) {
+      setErr(e?.message || "Failed to fetch logs.");
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  /* ---------- saving one entry ---------- */
+  useEffect(() => {
+    loadRows();
+  }, []);
+
+  async function refreshRows() {
+    await loadRows();
+  }
+
+  /* ---------- saving one entry (with org_id + status) ---------- */
   async function handleAddQuick() {
     const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
+    const preset = (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[form.target_key];
+    const status: "pass" | "fail" | null = inferStatus(tempNum, preset);
+
+    const org_id = await getActiveOrgIdClient();
+    if (!org_id) {
+      alert("No organisation found for this user.");
+      return;
+    }
 
     const payload = {
-      at: form.date, // 'YYYY-MM-DD' → timestamptz
+      org_id,
+      at: form.date, // 'YYYY-MM-DD' is fine for timestamptz
       area: form.location || null,
       note: form.item || null,
       staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
       target_key: form.target_key || null,
       temp_c: tempNum,
+      status, // NOT NULL per your schema
     };
 
     const { error } = await supabase.from("food_temp_logs").insert(payload);
     if (error) {
-      console.error("save food_temp_logs failed:", error);
       alert(`Save failed: ${error.message}`);
       return;
     }
 
     try {
       if (form.staff_initials) localStorage.setItem(LS_LAST_INITIALS, form.staff_initials);
-      if (form.location)       localStorage.setItem(LS_LAST_LOCATION,  form.location);
+      if (form.location) localStorage.setItem(LS_LAST_LOCATION, form.location);
     } catch {}
 
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
     await refreshRows();
   }
 
-  // handle Enter key in the Temp (°C) field
   const onTempKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
     if (e.key === "Enter" && canSave) {
       e.preventDefault();
@@ -307,10 +356,10 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
       .map(([date, list]) => ({ date, list }));
   }, [rows]);
 
-  /* --------------- render --------------- */
+  /* ================== Render ================== */
   return (
     <div className="space-y-6">
-      {/* KPI card */}
+      {/* KPI grid + pills */}
       <div className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
         {(() => {
           const todayISO = new Date().toISOString().slice(0, 10);
@@ -371,6 +420,12 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
             </span>
           </a>
         </div>
+
+        {err && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            {err}
+          </div>
+        )}
       </div>
 
       {/* ENTRY FORM */}
@@ -398,12 +453,6 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
 
         {formOpen && (
           <>
-            {err && (
-              <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                {err}
-              </div>
-            )}
-
             <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-6">
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Date</label>
@@ -440,7 +489,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                 </select>
               </div>
 
-              {/* Location (maps to 'area') */}
+              {/* Location */}
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Location</label>
                 <select
@@ -522,9 +571,17 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
         )}
       </div>
 
-      {/* LOGS TABLE (grouped by date, dd/mm/yyyy) */}
+      {/* LOGS TABLE */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
-        <h2 className="mb-4 text-lg font-semibold">Temperature Logs</h2>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Temperature Logs</h2>
+          <button
+            onClick={refreshRows}
+            className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+          >
+            Refresh
+          </button>
+        </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
@@ -541,7 +598,9 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">Loading…</td>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">
+                    Loading…
+                  </td>
                 </tr>
               ) : grouped.length ? (
                 grouped.map((g) => (
@@ -594,7 +653,9 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">No entries</td>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">
+                    No entries
+                  </td>
                 </tr>
               )}
             </tbody>

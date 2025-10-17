@@ -1,10 +1,10 @@
 // src/app/actions/kpis.ts
 "use server";
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 export async function countTrainingExpiring14d(org_id: string | null) {
   if (!org_id) return 0; // nothing to scope by – render 0
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
   const { data, error } = await supabase
     .from("team_training")
     .select("id")
@@ -17,7 +17,7 @@ export async function countTrainingExpiring14d(org_id: string | null) {
 
 export async function countAllergenReviewExpiring14d(org_id: string | null) {
   if (!org_id) return 0;
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
   const { data, error } = await supabase
     .from("allergen_reviews")
     .select("id")

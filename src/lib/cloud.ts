@@ -1,7 +1,8 @@
 // src/lib/cloud.ts
 "use client";
 
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabaseBrowser";
+
 
 /** Get current user's id (or null if signed out) */
 export async function currentUserId(): Promise<string | null> {

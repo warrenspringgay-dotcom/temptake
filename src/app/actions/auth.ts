@@ -2,49 +2,44 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";   // ✅ from next/cache
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
+/** Return authenticated user (or null) + role if you store it in app_metadata */
+export async function getSession() {
+  const supabase = await getServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  const user = data.user ?? null;
 
-export type SessionUser = { id: string; email: string | null };
-
-/** Get current session user (server) */
-export async function getSession(): Promise<{ user: SessionUser | null }> {
-  const supabase = await createServerClient();
-  const { data, error } = await supabase.auth.getUser();
-  if (error || !data.user) return { user: null };
-  return { user: { id: data.user.id, email: data.user.email ?? null } };
+  let role: "staff" | "manager" | "admin" | null = null;
+  try {
+    role = (user?.app_metadata?.role as typeof role) ?? null;
+  } catch {
+    role = null;
+  }
+  return { user, role };
 }
 
-/** Require user or redirect to /login */
-export async function requireUser(): Promise<SessionUser> {
-  const { user } = await getSession();
-  if (!user) redirect("/login");
+/** Redirect to /login if no user */
+export async function requireUser(redirectTo: string = "/") {
+  const supabase = await getServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  const user = data.user;
+  if (!user) {
+    redirect(`/login?redirect=${encodeURIComponent(redirectTo)}`);
+  }
   return user;
 }
 
-/** Sign in with email/password from the login form */
-export async function signInAction(
-  _prev: { ok: boolean; message?: string; redirect?: string } | null,
-  formData: FormData
-) {
-  const email = String(formData.get("email") ?? "");
-  const password = String(formData.get("password") ?? "");
-  const redirectTo = String(formData.get("redirectTo") ?? "/");
-
-  const supabase = await createServerClient();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) return { ok: false, message: error.message };
-
-  // session cookie is set by @supabase/ssr via our cookie adapter
-  revalidatePath("/");
-  return { ok: true, redirect: redirectTo };
+/** Sign out WITHOUT redirect (plain action) */
+export async function signOut() {
+  const supabase = await getServerSupabase();
+  await supabase.auth.signOut();
+  return { ok: true };
 }
 
-/** Sign out */
-export async function signOutAction() {
-  const supabase = await createServerClient();
+/** Sign out AND redirect to login page */
+export async function signOutAndRedirect() {
+  const supabase = await getServerSupabase();
   await supabase.auth.signOut();
-  revalidatePath("/");
   redirect("/login");
 }

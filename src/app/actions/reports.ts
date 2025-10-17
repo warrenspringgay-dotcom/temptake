@@ -1,52 +1,31 @@
-"use server";
+'use server';
+import { requireUser } from '@/lib/requireUser';
+import { getServerClient } from '@/lib/supabaseServer';
 
-import { createServerClient } from "@/lib/supabaseServer";
-
-type ReportRow = {
+export type LogRow = {
   id: string;
-  at: string | null;
-  staff_initials: string | null;
+  at: string;
+  routine_id: string | null;
+  routine_item_id: string | null;
   area: string | null;
   note: string | null;
   target_key: string | null;
+  staff_initials: string | null;
   temp_c: number | null;
-  status: "pass" | "fail" | null;
+  status: string | null;
 };
 
-export async function getCustomReport(params: {
-  limit?: number;
-  from?: string; // yyyy-mm-dd (optional)
-  to?: string;   // yyyy-mm-dd (optional)
-}) {
-  const { limit = 200, from, to } = params ?? {};
-  const supabase = await createServerClient();
+export async function listLogs(opts: { from?: string; to?: string; limit?: number } = {}) {
+  const sb = await getServerSupabase();
+  let q = sb.from('food_temp_logs')
+    .select('id,at,routine_id,routine_item_id,area,note,target_key,staff_initials,temp_c,status')
+    .order('at', { ascending: false });
 
-  let query = supabase
-    .from("food_temp_logs")
-    .select("id, at, staff_initials, area, note, target_key, temp_c, status")
-    .order("at", { ascending: false })
-    .limit(limit);
+  if (opts.from) q = q.gte('at', opts.from);
+  if (opts.to) q = q.lte('at', opts.to);
+  if (opts.limit) q = q.limit(opts.limit);
 
-  if (from) {
-    query = query.gte("at", new Date(from).toISOString());
-  }
-  if (to) {
-    // include whole "to" day
-    const end = new Date(new Date(to).getTime() + 24 * 3600 * 1000 - 1);
-    query = query.lte("at", end.toISOString());
-  }
-
-  const { data, error } = await query;
-  if (error) throw error;
-
-  const items = (data ?? []) as ReportRow[];
-
-  const counts = {
-    total: items.length,
-    pass: items.filter((r) => r.status === "pass").length,
-    fail: items.filter((r) => r.status === "fail").length,
-    locations: new Set(items.map((r) => r.area ?? "")).size,
-  };
-
-  return { items, counts };
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LogRow[];
 }

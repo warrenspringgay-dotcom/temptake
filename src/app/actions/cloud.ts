@@ -1,8 +1,8 @@
 "use server";
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 export default async function Page() {
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
   // ...
 }
 
@@ -15,6 +15,6 @@ export async function someAction(...) {
 …convert it to: */
 export async function someAction(/* args */) {
 
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
   // ... your logic
 }

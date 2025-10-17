@@ -1,7 +1,7 @@
 // src/components/org.ts
 "use server";
 
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 /**
  * Tries to determine the active org_id for the signed-in user.
@@ -12,7 +12,7 @@ import { createServerClient } from "@/lib/supabaseServer";
  * 4) null if not found
  */
 export async function getActiveOrgId(): Promise<string | null> {
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
 
   const {
     data: { user },

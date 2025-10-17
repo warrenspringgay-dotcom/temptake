@@ -1,113 +1,102 @@
 // src/app/login/page.tsx
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import React, { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { supabase } from "@/lib/supabaseBrowser"; // cookie-syncing client
 
 export default function LoginPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const search = useSearchParams();
+  const redirectTo = search.get("redirect") || "/";
+
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [pwd, setPwd] = useState("");
   const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
+  // If already authenticated, bounce to redirect target
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (!alive) return;
+      if (data.user) router.replace(redirectTo);
+    })();
+    return () => { alive = false; };
+  }, [router, redirectTo]);
+
+  async function signInWithPassword(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      if (mode === "signin") {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-      }
-      router.refresh(); // re-render server components (nav + home)
-      router.push("/"); // go to dashboard
-    } catch (e: any) {
-      setErr(e?.message ?? "Authentication failed");
-    } finally {
-      setBusy(false);
-    }
+    setBusy(true); setErr(null); setMsg(null);
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pwd });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    router.replace(redirectTo);
+  }
+
+  async function sendMagicLink(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setErr(null); setMsg(null);
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: `${window.location.origin}${redirectTo}` },
+    });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setMsg("Check your email for the sign-in link.");
   }
 
   return (
-    <main className="p-4">
-      <div className="mx-auto max-w-md rounded-2xl border bg-white p-6 shadow-sm">
-        <h1 className="text-xl font-semibold">
-          {mode === "signin" ? "Log in to TempTake" : "Create an account"}
-        </h1>
+    <div className="min-h-screen grid place-items-center bg-gray-50">
+      <div className="w-full max-w-sm rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+        <h1 className="text-lg font-semibold mb-1">Sign in</h1>
+        <p className="text-sm text-slate-600 mb-4">
+          Use your email + password or request a magic link.
+        </p>
 
-        {err ? (
-          <div className="mt-3 rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-800">
-            {err}
-          </div>
-        ) : null}
-
-        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+        <form className="space-y-3" onSubmit={signInWithPassword}>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Email</label>
+            <label className="block text-sm mb-1">Email</label>
             <input
               type="email"
-              required
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-xl border px-3 py-2"
-              placeholder="you@company.com"
               autoComplete="email"
+              required
             />
           </div>
-
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Password</label>
+            <label className="block text-sm mb-1">Password</label>
             <input
               type="password"
-              required
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-xl border px-3 py-2"
-              placeholder="••••••••"
-              autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+              value={pwd}
+              onChange={(e) => setPwd(e.target.value)}
+              autoComplete="current-password"
             />
           </div>
-
           <button
             type="submit"
-            disabled={busy}
-            className="w-full rounded-xl bg-black px-4 py-2 font-medium text-white hover:bg-gray-900 disabled:opacity-60"
+            disabled={busy || !email || !pwd}
+            className={`w-full rounded-md px-3 py-2 text-sm font-medium text-white ${busy || !email || !pwd ? "bg-gray-400" : "bg-black hover:bg-gray-900"}`}
           >
-            {busy ? "Working…" : mode === "signin" ? "Log in" : "Sign up"}
+            {busy ? "Signing in…" : "Sign in"}
+          </button>
+          <button
+            onClick={sendMagicLink}
+            disabled={busy || !email}
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50"
+          >
+            {busy ? "Sending…" : "Email me a magic link"}
           </button>
         </form>
 
-        <div className="mt-4 text-center text-sm">
-          {mode === "signin" ? (
-            <>
-              New here?{" "}
-              <button
-                className="text-blue-600 hover:underline"
-                onClick={() => setMode("signup")}
-              >
-                Create an account
-              </button>
-            </>
-          ) : (
-            <>
-              Already have an account?{" "}
-              <button
-                className="text-blue-600 hover:underline"
-                onClick={() => setMode("signin")}
-              >
-                Log in
-              </button>
-            </>
-          )}
-        </div>
+        {err && <div className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-700">{err}</div>}
+        {msg && <div className="mt-3 rounded-md bg-emerald-50 p-2 text-sm text-emerald-700">{msg}</div>}
       </div>
-    </main>
+    </div>
   );
 }

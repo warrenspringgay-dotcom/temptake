@@ -1,37 +1,25 @@
-// src/lib/supabaseServer.ts
-import { createServerClient as _createServerClient } from "@supabase/ssr";
-import type { CookieOptions } from "@supabase/ssr";
+// Server-only Supabase client
 import { cookies } from "next/headers";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-/**
- * Creates a Supabase server client safely in Next.js 15+ (await cookies())
- */
-export async function createServerClient() {
-  const cookieStore = await cookies(); // ✅ await required
-
-  const supabase = _createServerClient(
+export async function getServerSupabase() {
+  const cookieStore = cookies();
+  const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get: (name: string) => cookieStore.get(name)?.value,
-        set: (name: string, value: string, options?: CookieOptions) => {
-          try {
-            cookieStore.set({ name, value, ...options });
-          } catch {
-            /* ignore */
-          }
+        get(name: string) {
+          return cookieStore.get(name)?.value;
         },
-        remove: (name: string, options?: CookieOptions) => {
-          try {
-            cookieStore.set({ name, value: "", ...options, maxAge: 0 });
-          } catch {
-            /* ignore */
-          }
+        set(name: string, value: string, options: CookieOptions) {
+          cookieStore.set({ name, value, ...options } as any);
+        },
+        remove(name: string, options: CookieOptions) {
+          cookieStore.set({ name, value: "", ...options, expires: new Date(0) } as any);
         },
       },
     }
   );
-
   return supabase;
 }

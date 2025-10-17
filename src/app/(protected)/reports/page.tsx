@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useMemo, useRef, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabaseBrowser";
+
 import Button from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Download, Printer } from "lucide-react";

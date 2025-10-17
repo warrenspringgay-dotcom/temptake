@@ -11,7 +11,7 @@ type Props = { className?: string; size?: number };
 export default function BrandLogo({ className, size = 28 }: { className?: string; size?: number }) {
   return (
     <Image
-      src="/logo.png" // ✅ must start with /
+      src="/icon.png" // ✅ must start with /
       alt="TempTake logo"
       width={size}
       height={size}

@@ -1,17 +1,7 @@
 "use client";
-
-import React from "react";
-import { SettingsProvider } from "@/components/SettingsProvider";
-import { I18nProvider } from "@/lib/i18n";
-import ThemeClient from "@/components/ThemeClient";
+import { SettingsProvider } from "@/contexts/SettingsContext";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
-  return (
-    <SettingsProvider>
-      <I18nProvider>
-        {children}
-        <ThemeClient />
-      </I18nProvider>
-    </SettingsProvider>
-  );
+  // Add more providers here if needed (Theme, QueryClient, etc.)
+  return <SettingsProvider>{children}</SettingsProvider>;
 }

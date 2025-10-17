@@ -1,7 +1,8 @@
 // src/components/TeamManagerCloud.tsx
 "use client";
 
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabaseBrowser";
+
 
 /** Shape coming from your UI */
 export type TrainingInput = {

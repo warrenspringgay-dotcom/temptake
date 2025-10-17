@@ -1,225 +1,150 @@
 // src/app/actions/routines.ts
 "use server";
 
-import { createServerClient } from "@/lib/supabaseServer";
-import type { RoutineWithItems } from "@/types/routines";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
-/* =========================
-   Types for recording a run
-   ========================= */
-export type RoutineRunRow = {
-  routine_item_id: string;
-  location: string | null;
-  item: string | null;
-  target_key: string;      // "chill" | "freeze" | "hot-hold" | ...
-  initials: string;        // e.g. "AB"
-  temp_c: number;          // parsed number
+export type Routine = {
+  id: string;
+  name: string;
+  location?: string | null;
+  active: boolean;        // synthesized for UI (table doesn’t have it)
+  items?: RoutineItem[];
 };
 
-export type RoutineRunPayload = {
+export type RoutineItem = {
+  id: string;
   routine_id: string;
-  rows: RoutineRunRow[];
+  title: string;
+  hint?: string | null;
+  required: boolean;
+  sort_index: number;
 };
 
-/* =========================
-   Helpers
-   ========================= */
-function statusFromTarget(
-  target_key: string,
-  temp_c: number | null
-): "pass" | "fail" | null {
-  if (temp_c == null) return null;
-  if (target_key === "chill") return temp_c <= 8 ? "pass" : "fail";
-  if (target_key === "freeze") return temp_c <= 0 ? "pass" : "fail";
-  if (target_key === "hot-hold") return temp_c >= 63 ? "pass" : "fail";
-  return null;
+export type CreateRoutineInput = {
+  name: string;
+  location?: string | null;
+  items?: Array<{ title: string; hint?: string | null; required?: boolean; sort_index?: number }>;
+};
+
+export type UpdateRoutineInput = {
+  name?: string;
+  location?: string | null;
+};
+
+// optional: still used when creating
+async function getUserId(): Promise<string | null> {
+  const supabase = await getServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  return data.user?.id ?? null;
 }
 
-/* =========================
-   Actions
-   ========================= */
+export async function listRoutines(): Promise<Routine[]> {
+  const supabase = await getServerSupabase();
 
-// Record a routine run (single, canonical shape)
-export async function recordRoutineRun(payload: RoutineRunPayload) {
-  const supabase = await createServerClient();
-
-  const nowIso = new Date().toISOString();
-
-  const toInsert = payload.rows.map((r) => ({
-    at: nowIso,
-    routine_id: payload.routine_id,
-    routine_item_id: r.routine_item_id,
-    area: r.location,
-    note: r.item,
-    target_key: r.target_key,
-    initials: r.initials,
-    staff_initials: r.initials,
-    temp_c: r.temp_c,
-    status: statusFromTarget(r.target_key, r.temp_c),
-  }));
-
-  if (toInsert.length) {
-    const { error } = await supabase.from("food_temp_logs").insert(toInsert);
-    if (error) throw error;
-  }
-
-  // touch last_used_at
-  const { error: upErr } = await supabase
-    .from("temp_routines")
-    .update({ last_used_at: nowIso })
-    .eq("id", payload.routine_id);
-  if (upErr) throw upErr;
-
-  return { inserted: toInsert.length };
-}
-
-// List routines + item counts (no FK required)
-export async function listRoutines(): Promise<RoutineWithItems[]> {
-  const supabase = await createServerClient();
-
+  // Show ALL routines (no created_by filter)
   const { data: routines, error: rErr } = await supabase
     .from("temp_routines")
-    .select("id, name, last_used_at")
+    .select("*")
     .order("name", { ascending: true });
-  if (rErr) throw rErr;
 
-  const ids = (routines ?? []).map((r) => r.id);
-  if (ids.length === 0) return [];
+  if (rErr || !routines?.length) return [];
 
-  const { data: itemsRows, error: iErr } = await supabase
+  const ids = routines.map((r: any) => r.id);
+  const { data: items } = await supabase
     .from("temp_routine_items")
-    .select("routine_id")
-    .in("routine_id", ids);
-  if (iErr) throw iErr;
+    .select("*")
+    .in("routine_id", ids)
+    .order("sort_index", { ascending: true });
 
-  const counts = new Map<string, number>();
-  for (const row of itemsRows ?? []) {
-    counts.set(row.routine_id, (counts.get(row.routine_id) ?? 0) + 1);
+  const by = new Map<string, RoutineItem[]>();
+  for (const it of (items ?? []) as any[]) {
+    const arr = by.get(it.routine_id) ?? [];
+    arr.push({
+      id: it.id,
+      routine_id: it.routine_id,
+      title: it.title,
+      hint: it.hint ?? null,
+      required: !!it.required,
+      sort_index: Number(it.sort_index ?? 0),
+    });
+    by.set(it.routine_id, arr);
   }
 
-  return (routines ?? []).map((r) => {
-    const n = counts.get(r.id) ?? 0;
-    return {
-      id: r.id,
-      name: r.name,
-      last_used_at: r.last_used_at ?? null,
-      // stub array so UI can use items.length; your page that needs real items uses getRoutineById
-      items: Array.from({ length: n }, () => ({} as any)),
-    } as RoutineWithItems;
-  });
+  return (routines as any[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    location: r.location ?? null,
+    active: true,
+    items: by.get(r.id) ?? [],
+  }));
 }
 
-// Create a routine (and optional items)
-export async function createRoutine(params: {
-  name: string;
-  items: Array<{
-    position: number;
-    location: string | null;
-    item: string | null;
-    target_key: string | null;
-  }>;
-}) {
-  const supabase = await createServerClient();
+export async function createRoutine(input: CreateRoutineInput) {
+  const supabase = await getServerSupabase();
+  const userId = await getUserId(); // may be null if RLS allows
+  const payload: any = {
+    name: input.name,
+    location: input.location ?? null,
+    ...(userId ? { created_by: userId } : {}),
+  };
 
-  const { data: routine, error } = await supabase
+  const { data, error } = await supabase
     .from("temp_routines")
-    .insert({ name: params.name })
+    .insert(payload)
     .select("id")
     .single();
-  if (error) throw error;
 
-  if (params.items?.length) {
-    const rows = params.items.map((it) => ({
-      routine_id: routine.id,
-      position: it.position,
-      location: it.location,
-      item: it.item,
-      target_key: it.target_key,
+  if (error || !data?.id) return { error: error?.message ?? "Failed to create routine" };
+
+  const id = data.id as string;
+
+  if (input.items?.length) {
+    const itemsPayload = input.items.map((it, idx) => ({
+      routine_id: id,
+      title: it.title,
+      hint: it.hint ?? null,
+      required: it.required ?? true,
+      sort_index: typeof it.sort_index === "number" ? it.sort_index : idx,
     }));
-    const { error: itemsErr } = await supabase
-      .from("temp_routine_items")
-      .insert(rows);
-    if (itemsErr) throw itemsErr;
+    await supabase.from("temp_routine_items").insert(itemsPayload);
   }
 
-  return routine.id as string;
+  return { id };
 }
 
-// Replace items in a routine
 export async function replaceRoutineItems(
   routineId: string,
-  items: Array<{
-    position: number;
-    location: string | null;
-    item: string | null;
-    target_key: string | null;
-  }>
+  items: Array<{ title: string; hint?: string | null; required?: boolean; sort_index?: number }>
 ) {
-  const supabase = await createServerClient();
-
-  const { error: delErr } = await supabase
-    .from("temp_routine_items")
-    .delete()
-    .eq("routine_id", routineId);
-  if (delErr) throw delErr;
-
-  if (!items.length) return;
-
-  const rows = items.map((it) => ({
+  const supabase = await getServerSupabase();
+  await supabase.from("temp_routine_items").delete().eq("routine_id", routineId);
+  if (!items.length) return { ok: true };
+  const payload = items.map((it, idx) => ({
     routine_id: routineId,
-    position: it.position,
-    location: it.location,
-    item: it.item,
-    target_key: it.target_key,
+    title: it.title,
+    hint: it.hint ?? null,
+    required: it.required ?? true,
+    sort_index: typeof it.sort_index === "number" ? it.sort_index : idx,
   }));
-  const { error: insErr } = await supabase
-    .from("temp_routine_items") // ✅ fixed table name
-    .insert(rows);
-  if (insErr) throw insErr;
+  const { error } = await supabase.from("temp_routine_items").insert(payload);
+  if (error) return { error: error.message };
+  return { ok: true };
 }
 
-// Update routine metadata
-export async function updateRoutine(id: string, data: { name?: string }) {
-  const supabase = await createServerClient();
-  const { error } = await supabase
-    .from("temp_routines")
-    .update(data)
-    .eq("id", id);
-  if (error) throw error;
+export async function updateRoutine(id: string, patch: UpdateRoutineInput) {
+  const supabase = await getServerSupabase();
+  const upd: Record<string, unknown> = {};
+  if (patch.name !== undefined) upd.name = patch.name;
+  if (patch.location !== undefined) upd.location = patch.location;
+  if (!Object.keys(upd).length) return { ok: true };
+  const { error } = await supabase.from("temp_routines").update(upd).eq("id", id);
+  if (error) return { error: error.message };
+  return { ok: true };
 }
 
-// Delete routine + items
 export async function deleteRoutine(id: string) {
-  const supabase = await createServerClient();
-  await supabase.from("temp_routine_items").delete().eq("routine_id", id);
+  const supabase = await getServerSupabase();
   const { error } = await supabase.from("temp_routines").delete().eq("id", id);
-  if (error) throw error;
-}
-
-// Fetch one routine with items (for run page)
-export async function getRoutineById(
-  routineId: string
-): Promise<RoutineWithItems> {
-  const supabase = await createServerClient();
-
-  const { data: routine, error: rErr } = await supabase
-    .from("temp_routines")
-    .select("id, name, last_used_at")
-    .eq("id", routineId)
-    .single();
-  if (rErr) throw rErr;
-
-  const { data: items, error: iErr } = await supabase
-    .from("temp_routine_items")
-    .select("id, position, location, item, target_key")
-    .eq("routine_id", routineId)
-    .order("position", { ascending: true });
-  if (iErr) throw iErr;
-
-  return {
-    id: routine.id,
-    name: routine.name,
-    last_used_at: routine.last_used_at ?? null,
-    items: items ?? [],
-  };
+  if (error) return { error: error.message };
+  return { ok: true };
 }

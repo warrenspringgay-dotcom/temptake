@@ -1,11 +1,11 @@
 // src/app/api/team-initials/route.ts
 import { NextResponse } from "next/server";
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 import { getOrgId } from "@/lib/org-helpers";
 
 export async function GET() {
   try {
-    const supabase = await createServerClient();
+    const supabase = await getServerSupabase();
     const org_id = await getOrgId();
 
     // Adjust table/column names to your schema:

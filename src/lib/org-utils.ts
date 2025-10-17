@@ -1,12 +1,12 @@
 // src/lib/org-utils.ts
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 /**
  * Resolve the caller's org_id on the server.
  * Tries team_members first, then user metadata.
  */
 export async function getOrgIdServer(): Promise<string | null> {
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
 
   try {
     const {

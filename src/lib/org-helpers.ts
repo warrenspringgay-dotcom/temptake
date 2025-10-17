@@ -1,7 +1,7 @@
 // src/lib/org-helpers.ts
 "use server";
 
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 import { getSession } from "@/app/actions/auth";
 
 /**
@@ -13,7 +13,7 @@ export async function getOrgId(): Promise<string | null> {
   const { user } = await getSession();
   if (!user) return null;
 
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
 
   // 1) profiles.org_id (most common)
   const { data: profRows, error: profErr } = await supabase

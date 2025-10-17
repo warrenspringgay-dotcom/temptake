@@ -1,28 +1,39 @@
 "use client";
-
-import React, { createContext, useContext, useState } from "react";
-
-type Settings = {
-  theme: "light" | "dark";
-  siteName: string;
-  // add whatever you actually use here
-};
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { getSettings, saveSettings, type AppSettings } from "@/app/actions/settings";
 
 type Ctx = {
-  settings: Settings;
-  setSettings: React.Dispatch<React.SetStateAction<Settings>>;
+  settings: AppSettings | null;
+  loading: boolean;
+  refresh: () => Promise<void>;
+  update: (patch: Partial<AppSettings>) => Promise<void>;
 };
 
 const SettingsContext = createContext<Ctx | null>(null);
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-  const [settings, setSettings] = useState<Settings>({
-    theme: "light",
-    siteName: "TempTake",
-  });
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  async function refresh() {
+    setLoading(true);
+    try {
+      const s = await getSettings();
+      setSettings(s);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function update(patch: Partial<AppSettings>) {
+    const next = await saveSettings(patch);
+    setSettings(next);
+  }
+
+  useEffect(() => { void refresh(); }, []);
 
   return (
-    <SettingsContext.Provider value={{ settings, setSettings }}>
+    <SettingsContext.Provider value={{ settings, loading, refresh, update }}>
       {children}
     </SettingsContext.Provider>
   );
@@ -30,8 +41,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
 export function useSettings() {
   const ctx = useContext(SettingsContext);
-  if (!ctx) {
-    throw new Error("useSettings must be used within SettingsProvider");
-  }
+  if (!ctx) throw new Error("useSettings must be used within SettingsProvider");
   return ctx;
 }
