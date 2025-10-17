@@ -1,49 +1,34 @@
-// src/app/actions/settings.ts
 "use server";
-import { requireUser } from '@/lib/requireUser';
-import { getServerSupabase } from "@/lib/supabaseServer"; // ← fixed path
 
-export type AppSettings = {
-  org_name: string | null;
-  locale: string | null;
-  date_format: string | null;
+import { getServerSupabase } from "@/lib/supabaseServer";
+import { getActiveOrgIdServer } from "@/lib/orgServer";
+import { requireUser } from "@/lib/requireUser";
+
+type Payload = {
+  org_name?: string;
+  logo_url?: string;
+  timezone?: string;
 };
 
-const DEFAULTS: AppSettings = {
-  org_name: "TempTake",
-  locale: "en-GB",
-  date_format: "dd/MM/yyyy",
-};
-
-function isMissingTable(errMsg?: string) {
-  return !!errMsg && (/42P01/.test(errMsg) || /does not exist/i.test(errMsg) || /schema cache/i.test(errMsg));
-}
-
-export async function getSettings(): Promise<AppSettings> {
+export async function saveSettings(input: Payload): Promise<{ ok: true } | { ok: false; message: string }> {
+  await requireUser(); // ensure logged in
   const supabase = await getServerSupabase();
-  const { data, error } = await supabase.from("settings").select("*").limit(1).maybeSingle();
-  if (error) {
-    if (isMissingTable(error.message)) return DEFAULTS;
-    console.error("getSettings:", error.message);
-    return DEFAULTS;
-  }
-  return { ...DEFAULTS, ...data };
-}
+  const orgId = await getActiveOrgIdServer();
+  if (!orgId) return { ok: false, message: "No active org." };
 
-export async function saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
- const supabase = await getServerSupabase();
-  const payload = { id: 1, ...patch };
+  // upsert into a single-row-per-org table (adjust table/columns if different)
+  const { error } = await supabase
+    .from("org_settings")
+    .upsert(
+      {
+        org_id: orgId,
+        org_name: input.org_name ?? null,
+        logo_url: input.logo_url ?? null,
+        timezone: input.timezone ?? null,
+      },
+      { onConflict: "org_id" }
+    );
 
-  const { data, error } = await supabase
-    .from("settings")
-    .upsert(payload, { onConflict: "id" })
-    .select("*")
-    .single();
-
-  if (error) {
-    if (isMissingTable(error.message)) return { ...DEFAULTS, ...patch };
-    console.error("saveSettings:", error.message);
-    return { ...DEFAULTS, ...patch };
-  }
-  return { ...DEFAULTS, ...data };
+  if (error) return { ok: false, message: error.message };
+  return { ok: true };
 }

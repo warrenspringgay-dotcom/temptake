@@ -1,45 +1,42 @@
 // src/app/actions/auth.ts
 "use server";
 
-import { redirect } from "next/navigation";
 import { getServerSupabase } from "@/lib/supabaseServer";
 
-/** Return authenticated user (or null) + role if you store it in app_metadata */
+/** Read the current session (used by layouts, etc.) */
 export async function getSession() {
   const supabase = await getServerSupabase();
-  const { data } = await supabase.auth.getUser();
-  const user = data.user ?? null;
-
-  let role: "staff" | "manager" | "admin" | null = null;
-  try {
-    role = (user?.app_metadata?.role as typeof role) ?? null;
-  } catch {
-    role = null;
-  }
-  return { user, role };
+  const { data: { session } } = await supabase.auth.getSession();
+  return session;
 }
 
-/** Redirect to /login if no user */
-export async function requireUser(redirectTo: string = "/") {
+type AuthResult = { ok: boolean; message?: string; redirect?: string };
+
+/** Server Action for the login form (useActionState) */
+export async function signInAction(
+  _prevState: AuthResult,
+  formData: FormData
+): Promise<AuthResult> {
+  const email = String(formData.get("email") || "");
+  const password = String(formData.get("password") || "");
+  const redirectTo = String(formData.get("redirectTo") || "/");
+
+  if (!email || !password) {
+    return { ok: false, message: "Email and password are required." };
+  }
+
   const supabase = await getServerSupabase();
-  const { data } = await supabase.auth.getUser();
-  const user = data.user;
-  if (!user) {
-    redirect(`/login?redirect=${encodeURIComponent(redirectTo)}`);
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (error) {
+    return { ok: false, message: error.message };
   }
-  return user;
+  return { ok: true, redirect: redirectTo };
 }
 
-/** Sign out WITHOUT redirect (plain action) */
-export async function signOut() {
+/** Server Action for the Sign Out button */
+export async function signOutAndRedirect(redirectTo = "/login") {
   const supabase = await getServerSupabase();
   await supabase.auth.signOut();
-  return { ok: true };
-}
-
-/** Sign out AND redirect to login page */
-export async function signOutAndRedirect() {
-  const supabase = await getServerSupabase();
-  await supabase.auth.signOut();
-  redirect("/login");
+  return { ok: true as const, redirect: redirectTo };
 }

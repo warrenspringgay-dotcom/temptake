@@ -1,12 +1,14 @@
 // src/app/(protected)/layout.tsx
-import { requireUser } from "@/app/actions/auth";
+import React from "react";
+import { requireUser } from "@/lib/requireUser";
 
 export default async function ProtectedLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // Redirects to /login?redirect=… if unauthenticated
-  await requireUser("/");
+  // Enforce auth; your helper should throw/redirect to /login if unauthenticated
+  await requireUser();
+
   return <>{children}</>;
 }

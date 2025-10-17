@@ -3,7 +3,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
-import { saveTeamMemberServer, deleteTeamMemberServer, type TeamMemberInput } from "@/app/actions/team";
 import { saveTrainingServer } from "@/app/actions/training";
 
 
