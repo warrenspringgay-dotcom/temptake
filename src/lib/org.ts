@@ -27,3 +27,6 @@ export async function getActiveOrgId(opts?: { server?: boolean }): Promise<strin
   const { data } = await browserClient.from("profiles").select("org_id").eq("id", userId).maybeSingle();
   return (data?.org_id as string) ?? null;
 }
+// src/lib/org.ts
+export { getActiveOrgIdServer as getOrgId, getActiveOrgIdServer } from "./orgServer";
+export { getActiveOrgIdClient } from "./orgClient";

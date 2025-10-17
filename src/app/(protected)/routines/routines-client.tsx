@@ -49,12 +49,21 @@ export default function RoutinesClient() {
   async function add() {
     if (!name.trim()) return;
     try {
-      await createRoutine({
-        name,
-        items: [
-          { position: 0, location, item, target_key: target }, // create a 1-item routine
-        ],
-      });
+     // src/app/(protected)/routines/routines-client.tsx
+// inside your create handler where you call createRoutine(...)
+await createRoutine({
+  name,
+  items: [
+    {
+      position: 1,                       // start at 1
+      location: location || null,        // RoutineItem expects string | null
+      item: item || null,                // RoutineItem expects string | null
+      target_key: target,
+      notes: null,                       // <-- REQUIRED in RoutineItem
+    },
+  ],
+});
+
       setName(""); setLocation(""); setItem("");
       await refresh();
     } catch (e: any) {

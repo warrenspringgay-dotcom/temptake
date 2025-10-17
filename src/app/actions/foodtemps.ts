@@ -4,35 +4,32 @@
 import { revalidatePath } from "next/cache";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { requireUser } from "@/lib/requireUser";
-import { getOrgId } from "@/lib/org";
+import { getActiveOrgIdServer } from "@/lib/orgServer";
 
 export type NewFoodTemp = {
   takenAt?: string; // ISO optional
   location: string;
   item: string;
   tempC: number;
-  source: "probe" | "fridge" | "freezer" | "delivery" | "other";
+  // keep for caller compatibility, but we don't insert it unless your table has this column
+  source?: "probe" | "fridge" | "freezer" | "delivery" | "other";
   notes?: string;
 };
 
-type Result =
-  | { ok: true }
-  | { ok: false; message: string };
+type Result = { ok: true } | { ok: false; message: string };
 
 export async function logFoodTemp(payload: NewFoodTemp): Promise<Result> {
-  // ✅ enforce auth
+  // ✅ Require authentication
   const user = await requireUser();
-
   const supabase = await getServerSupabase();
 
-  // ✅ derive org (adjust if your helper needs args)
-  const orgId = await getOrgId(); // or: getOrgId(user)
+  // ✅ Get organisation ID safely
+  const orgId = await getActiveOrgIdServer();
 
-  // ✅ light validation/normalization
+  // ✅ Validate and normalise data
   const location = (payload.location ?? "").trim();
   const item = (payload.item ?? "").trim();
   const tempC = Number(payload.tempC);
-  const source = payload.source ?? "other";
   const taken_at = payload.takenAt ?? new Date().toISOString();
   const notes = payload.notes?.trim() || null;
 
@@ -40,24 +37,31 @@ export async function logFoodTemp(payload: NewFoodTemp): Promise<Result> {
   if (!item) return { ok: false, message: "Item is required." };
   if (!Number.isFinite(tempC)) return { ok: false, message: "Temperature must be a number." };
 
-  // ⚠️ Ensure the table/columns match your schema:
-  //   If your table is `food_temp_logs` and the time column is `at`, rename accordingly.
-  const { error } = await supabase.from("food_temps").insert({
+  // ✅ Prepare record for insertion
+  // Your Supabase table `food_temp_logs` has columns:
+  // id, org_id, created_by, at, area, target_key, temp_c, status, note, meta, staff_initials
+  const insertRow: any = {
     org_id: orgId,
-    user_id: user.id,              // <- from requireUser()
-    taken_at,                      // or `at` if your column is named that
-    location,
-    item,
+    created_by: user.id,      // correct column name (not user_id)
+    at: taken_at,
+    area: location,
+    note: item,
     temp_c: tempC,
-    source,
-    notes,
-  });
+    status: "ok",             // required if status column is NOT NULL
+    notes,                    // optional
+  };
 
-  if (error) return { ok: false, message: error.message };
+  // ✅ Insert into Supabase
+  const { error } = await supabase.from("food_temp_logs").insert(insertRow);
 
-  // keep SSR pages fresh
-  revalidatePath("/reports");
-  revalidatePath("/"); // dashboard/home
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  // ✅ Revalidate pages that display this data
+  revalidatePath("/foodtemps");    // correct route
+  revalidatePath("/dashboard");
+  revalidatePath("/");
 
   return { ok: true };
 }

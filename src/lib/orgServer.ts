@@ -1,26 +1,23 @@
 // src/lib/orgServer.ts
-// Server-only helper to get the active org_id
 import { getServerSupabase } from "@/lib/supabaseServer";
 
+/** Server-only: get org_id for the current user. */
 export async function getActiveOrgIdServer(): Promise<string | null> {
   const supabase = await getServerSupabase();
-
   const { data: { session } } = await supabase.auth.getSession();
 
-  // Try org_id from JWT first
-  const fromJwt = (session?.user?.user_metadata?.org_id as string) || null;
-  if (fromJwt) return fromJwt;
+  const md = session?.user?.user_metadata ?? {};
+  const orgFromJwt = (md.org_id as string) || null;
+  if (orgFromJwt) return orgFromJwt;
 
-  // Fallback to profiles table
-  const uid = session?.user?.id;
-  if (!uid) return null;
+  const userId = session?.user?.id;
+  if (!userId) return null;
 
-  const { data, error } = await supabase
+  const { data } = await supabase
     .from("profiles")
     .select("org_id")
-    .eq("id", uid)
+    .eq("id", userId)
     .maybeSingle();
 
-  if (error) return null;
   return (data?.org_id as string) ?? null;
 }

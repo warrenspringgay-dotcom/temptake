@@ -1,33 +1,15 @@
-// src/app/routines/[id]/run/page.tsx
+// src/app/(protected)/routines/[id]/run/page.tsx
 import { notFound } from "next/navigation";
 import { getRoutineById } from "@/app/actions/routines";
-import RoutineRunnerClient, { type RoutineForRun } from "./RunRoutineClient";
+import RunRoutineClient from "./RunRoutineClient";
 
-export default async function RunRoutinePage(
-  props: { params: Promise<{ id: string }> } // Next 15 dynamic params must be awaited
-) {
-  const { id } = await props.params;
+export default async function RunRoutinePage({ params }: { params: any }) {
+  const p = await Promise.resolve(params);
+  const id = String(p?.id ?? "");
+  if (!id) notFound();
 
-  const routine = await getRoutineById(id).catch(() => null);
-  if (!routine) return notFound();
+  const routine = await getRoutineById(id);
+  if (!routine) notFound();
 
-  // 🔧 Normalize to the strict client shape
-  const normalized: RoutineForRun = {
-    id: String(routine.id),
-    name: routine.name ?? "Routine",
-    items: (routine.items ?? []).map((it, idx) => ({
-      id: String(it.id ?? `${routine.id}-${idx}`),
-      position: Number(it.position ?? idx),
-      location: it.location ?? null,
-      item: it.item ?? null,
-      target_key: it.target_key ?? "chill",
-    })),
-  };
-
-  return (
-    <main className="p-4 space-y-4">
-      <h1 className="text-xl font-semibold">Run routine: {normalized.name}</h1>
-      <RoutineRunnerClient routine={normalized} />
-    </main>
-  );
+  return <RunRoutineClient routine={routine} />;
 }

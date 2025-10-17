@@ -1,150 +1,301 @@
 // src/app/actions/routines.ts
 "use server";
 
+import { cookies } from "next/headers";
 import { getServerSupabase } from "@/lib/supabaseServer";
 
-export type Routine = {
-  id: string;
-  name: string;
-  location?: string | null;
-  active: boolean;        // synthesized for UI (table doesn’t have it)
-  items?: RoutineItem[];
-};
 
+/** ——— Types your UI expects ——— */
 export type RoutineItem = {
   id: string;
-  routine_id: string;
-  title: string;
-  hint?: string | null;
-  required: boolean;
-  sort_index: number;
+  position: number;
+  location: string | null;
+  item: string | null;
+  target_key: string;
+  notes: string | null;
+};
+
+export type RoutineWithItems = {
+  id: string;
+  org_id: string;
+  name: string;
+  active: boolean;
+  last_used_at: string | null;
+  items: RoutineItem[];
+};
+
+/** Minimal shape needed by the run page */
+export type RoutineForRun = {
+  id: string;
+  name: string;
+  items: Array<{
+    id: string;
+    position: number;
+    location: string | null;
+    item: string | null;
+    target_key: string;
+  }>;
 };
 
 export type CreateRoutineInput = {
   name: string;
-  location?: string | null;
-  items?: Array<{ title: string; hint?: string | null; required?: boolean; sort_index?: number }>;
+  active?: boolean;
+  items?: Array<Omit<RoutineItem, "id"> & { id?: string }>;
 };
 
 export type UpdateRoutineInput = {
+  id: string;
   name?: string;
-  location?: string | null;
+  active?: boolean;
+  /** If provided, replaces all items */
+  items?: Array<Omit<RoutineItem, "id"> & { id?: string }>;
 };
 
-// optional: still used when creating
-async function getUserId(): Promise<string | null> {
-  const supabase = await getServerSupabase();
-  const { data } = await supabase.auth.getUser();
-  return data.user?.id ?? null;
+export type RecordRoutineRunInput = {
+  routineId: string;
+  at?: string; // ISO time (optional; defaults to now)
+  items: Array<{
+    stepId: string;
+    location: string | null;
+    item: string | null;
+    target_key: string;
+    temp_c: number | null;
+    status: "pass" | "fail" | null;
+    notes: string | null;
+  }>;
+};
+
+/** ——— Helpers ——— */
+
+
+
+// ...
+
+async function requireOrgId(): Promise<string> {
+  const cookieStore = await cookies();              // <— await here (Next 15)
+  const orgId = cookieStore.get("org_id")?.value;
+  if (!orgId) throw new Error("No active organisation. (Missing org_id cookie)");
+  return orgId;
 }
 
-export async function listRoutines(): Promise<Routine[]> {
-  const supabase = await getServerSupabase();
 
-  // Show ALL routines (no created_by filter)
-  const { data: routines, error: rErr } = await supabase
-    .from("temp_routines")
-    .select("*")
-    .order("name", { ascending: true });
 
-  if (rErr || !routines?.length) return [];
-
-  const ids = routines.map((r: any) => r.id);
-  const { data: items } = await supabase
-    .from("temp_routine_items")
-    .select("*")
-    .in("routine_id", ids)
-    .order("sort_index", { ascending: true });
-
-  const by = new Map<string, RoutineItem[]>();
-  for (const it of (items ?? []) as any[]) {
-    const arr = by.get(it.routine_id) ?? [];
-    arr.push({
-      id: it.id,
-      routine_id: it.routine_id,
-      title: it.title,
-      hint: it.hint ?? null,
-      required: !!it.required,
-      sort_index: Number(it.sort_index ?? 0),
-    });
-    by.set(it.routine_id, arr);
-  }
-
-  return (routines as any[]).map((r) => ({
-    id: r.id,
-    name: r.name,
+function normalizeItems(rows: any[]): RoutineItem[] {
+  return (rows ?? []).map((r) => ({
+    id: String(r.id),
+    position: Number(r.position ?? 0),
     location: r.location ?? null,
-    active: true,
-    items: by.get(r.id) ?? [],
+    item: r.item ?? null,
+    target_key: String(r.target_key ?? "chill"),
+    notes: r.notes ?? null,
   }));
 }
 
-export async function createRoutine(input: CreateRoutineInput) {
+/** ——— Actions ——— */
+
+export async function listRoutines(): Promise<RoutineWithItems[]> {
   const supabase = await getServerSupabase();
-  const userId = await getUserId(); // may be null if RLS allows
-  const payload: any = {
-    name: input.name,
-    location: input.location ?? null,
-    ...(userId ? { created_by: userId } : {}),
-  };
+  ;
+const orgId = await requireOrgId();
 
   const { data, error } = await supabase
-    .from("temp_routines")
-    .insert(payload)
+    .from("routines")
+    .select(
+      `
+      id, org_id, name, active, last_used_at,
+      routine_items:id (
+        id, position, location, item, target_key, notes
+      )
+    `
+        // aliasing is driver-sensitive; if your Supabase instance doesn’t like the alias,
+        // switch to: routine_items ( id, position, location, item, target_key, notes )
+    )
+    .eq("org_id", orgId)
+    .order("name", { ascending: true });
+
+  if (error) throw new Error(`[routines.list] ${error.message}`);
+
+  // Some drivers return the nested as "routine_items", not "id"; handle both:
+  return (data ?? []).map((r: any) => {
+    const nested = r.routine_items ?? r.id ?? [];
+    return {
+      id: String(r.id),
+      org_id: String(r.org_id),
+      name: String(r.name),
+      active: !!r.active,
+      last_used_at: r.last_used_at ?? null,
+      items: normalizeItems(nested).sort((a, b) => a.position - b.position),
+    };
+  });
+}
+
+export async function createRoutine(input: CreateRoutineInput): Promise<{ id: string }> {
+  const supabase = await getServerSupabase();
+  ;
+const orgId = await requireOrgId();
+
+  const { data, error } = await supabase
+    .from("routines")
+    .insert({
+      org_id: orgId,
+      name: input.name,
+      active: input.active ?? true,
+    })
     .select("id")
     .single();
 
-  if (error || !data?.id) return { error: error?.message ?? "Failed to create routine" };
-
-  const id = data.id as string;
+  if (error) throw new Error(`[routines.create] ${error.message}`);
+  const routineId = String(data.id);
 
   if (input.items?.length) {
-    const itemsPayload = input.items.map((it, idx) => ({
-      routine_id: id,
-      title: it.title,
-      hint: it.hint ?? null,
-      required: it.required ?? true,
-      sort_index: typeof it.sort_index === "number" ? it.sort_index : idx,
+    const payload = input.items.map((it, idx) => ({
+      routine_id: routineId,
+      position: Number(it.position ?? idx + 1),
+      location: it.location ?? null,
+      item: it.item ?? null,
+      target_key: it.target_key ?? "chill",
+      notes: it.notes ?? null,
     }));
-    await supabase.from("temp_routine_items").insert(itemsPayload);
+
+    const { error: itemsErr } = await supabase.from("routine_items").insert(payload);
+    if (itemsErr) throw new Error(`[routines.create.items] ${itemsErr.message}`);
   }
 
-  return { id };
+  return { id: routineId };
 }
 
-export async function replaceRoutineItems(
-  routineId: string,
-  items: Array<{ title: string; hint?: string | null; required?: boolean; sort_index?: number }>
-) {
+export async function updateRoutine(input: UpdateRoutineInput): Promise<void> {
   const supabase = await getServerSupabase();
-  await supabase.from("temp_routine_items").delete().eq("routine_id", routineId);
-  if (!items.length) return { ok: true };
-  const payload = items.map((it, idx) => ({
-    routine_id: routineId,
-    title: it.title,
-    hint: it.hint ?? null,
-    required: it.required ?? true,
-    sort_index: typeof it.sort_index === "number" ? it.sort_index : idx,
-  }));
-  const { error } = await supabase.from("temp_routine_items").insert(payload);
-  if (error) return { error: error.message };
-  return { ok: true };
+  ;
+const orgId = await requireOrgId();
+
+  if (input.name != null || input.active != null) {
+    const { error } = await supabase
+      .from("routines")
+      .update({
+        ...(input.name != null ? { name: input.name } : {}),
+        ...(input.active != null ? { active: input.active } : {}),
+      })
+      .eq("id", input.id)
+      .eq("org_id", orgId);
+
+    if (error) throw new Error(`[routines.update] ${error.message}`);
+  }
+
+  // Replace items if provided
+  if (input.items) {
+    const { error: delErr } = await supabase
+      .from("routine_items")
+      .delete()
+      .eq("routine_id", input.id);
+    if (delErr) throw new Error(`[routines.update.deleteItems] ${delErr.message}`);
+
+    const payload = input.items.map((it, idx) => ({
+      routine_id: input.id,
+      position: Number(it.position ?? idx + 1),
+      location: it.location ?? null,
+      item: it.item ?? null,
+      target_key: it.target_key ?? "chill",
+      notes: it.notes ?? null,
+    }));
+
+    const { error: insErr } = await supabase.from("routine_items").insert(payload);
+    if (insErr) throw new Error(`[routines.update.insertItems] ${insErr.message}`);
+  }
 }
 
-export async function updateRoutine(id: string, patch: UpdateRoutineInput) {
+export async function deleteRoutine(id: string): Promise<void> {
   const supabase = await getServerSupabase();
-  const upd: Record<string, unknown> = {};
-  if (patch.name !== undefined) upd.name = patch.name;
-  if (patch.location !== undefined) upd.location = patch.location;
-  if (!Object.keys(upd).length) return { ok: true };
-  const { error } = await supabase.from("temp_routines").update(upd).eq("id", id);
-  if (error) return { error: error.message };
-  return { ok: true };
+  ;
+const orgId = await requireOrgId();
+
+  // If you don’t have ON DELETE CASCADE, delete child rows first:
+  await supabase.from("routine_items").delete().eq("routine_id", id);
+
+  const { error } = await supabase.from("routines").delete().eq("id", id).eq("org_id", orgId);
+  if (error) throw new Error(`[routines.delete] ${error.message}`);
 }
 
-export async function deleteRoutine(id: string) {
+/** Used by the runner page */
+export async function getRoutineById(id: string): Promise<RoutineForRun | null> {
   const supabase = await getServerSupabase();
-  const { error } = await supabase.from("temp_routines").delete().eq("id", id);
-  if (error) return { error: error.message };
-  return { ok: true };
+  ;
+const orgId = await requireOrgId();
+
+  const { data, error } = await supabase
+    .from("routines")
+    .select(
+      `
+      id, org_id, name,
+      routine_items (
+        id, position, location, item, target_key
+      )
+    `
+    )
+    .eq("id", id)
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  if (error) throw new Error(`[routines.getById] ${error.message}`);
+  if (!data) return null;
+
+  const items = normalizeItems(data.routine_items ?? []).sort((a, b) => a.position - b.position);
+
+  const forRun: RoutineForRun = {
+    id: String(data.id),
+    name: String(data.name),
+    items: items.map((it) => ({
+      id: it.id,
+      position: it.position,
+      location: it.location,
+      item: it.item,
+      target_key: it.target_key,
+    })),
+  };
+
+  return forRun;
+}
+
+/** Save a completed routine run + update last_used_at */
+export async function recordRoutineRun(input: RecordRoutineRunInput): Promise<void> {
+  const supabase = await getServerSupabase();
+  ;
+const orgId = await requireOrgId();
+
+  const { data: run, error: runErr } = await supabase
+    .from("routine_runs")
+    .insert({
+      org_id: orgId,
+      routine_id: input.routineId,
+      at: input.at ?? new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+
+  if (runErr) throw new Error(`[routines.recordRun] ${runErr.message}`);
+
+  const runId = String(run.id);
+
+  if (input.items?.length) {
+    const payload = input.items.map((it) => ({
+      run_id: runId,
+      step_id: it.stepId,
+      location: it.location,
+      item: it.item,
+      target_key: it.target_key,
+      temp_c: it.temp_c,
+      status: it.status,
+      notes: it.notes,
+    }));
+
+    const { error: itemsErr } = await supabase.from("routine_run_items").insert(payload);
+    if (itemsErr) throw new Error(`[routines.recordRun.items] ${itemsErr.message}`);
+  }
+
+  // Touch routine.last_used_at
+  await supabase
+    .from("routines")
+    .update({ last_used_at: new Date().toISOString() })
+    .eq("id", input.routineId)
+    .eq("org_id", orgId);
 }

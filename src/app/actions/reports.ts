@@ -1,31 +1,36 @@
-'use server';
-import { requireUser } from '@/lib/requireUser';
-import { getServerClient } from '@/lib/supabaseServer';
+// src/app/actions/reports.ts
+"use server";
 
-export type LogRow = {
-  id: string;
-  at: string;
-  routine_id: string | null;
-  routine_item_id: string | null;
-  area: string | null;
-  note: string | null;
-  target_key: string | null;
-  staff_initials: string | null;
-  temp_c: number | null;
-  status: string | null;
+import { getServerSupabase } from "@/lib/supabaseServer";
+import { getActiveOrgIdServer } from "@/lib/orgServer";
+
+export type CustomReportInput = {
+  from: string; // "YYYY-MM-DD"
+  to: string;   // "YYYY-MM-DD"
+  limit?: number; // default 500
 };
 
-export async function listLogs(opts: { from?: string; to?: string; limit?: number } = {}) {
-  const sb = await getServerSupabase();
-  let q = sb.from('food_temp_logs')
-    .select('id,at,routine_id,routine_item_id,area,note,target_key,staff_initials,temp_c,status')
-    .order('at', { ascending: false });
+/**
+ * Fetch food temperature logs for the active org between dates (inclusive).
+ * Returns raw rows from `food_temp_logs`.
+ */
+export async function getCustomReport(params: CustomReportInput) {
+  const { from, to, limit = 500 } = params;
+  if (!from || !to) throw new Error("from/to are required");
 
-  if (opts.from) q = q.gte('at', opts.from);
-  if (opts.to) q = q.lte('at', opts.to);
-  if (opts.limit) q = q.limit(opts.limit);
+  const supabase = await getServerSupabase();
+  const orgId = await getActiveOrgIdServer();
+  if (!orgId) throw new Error("No active org");
 
-  const { data, error } = await q;
-  if (error) throw new Error(error.message);
-  return (data ?? []) as LogRow[];
+  const { data, error } = await supabase
+    .from("food_temp_logs")
+    .select("*")
+    .eq("org_id", orgId)
+    .gte("at", from)
+    .lte("at", to)
+    .order("at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(`[reports.getCustomReport] ${error.message}`);
+  return data ?? [];
 }

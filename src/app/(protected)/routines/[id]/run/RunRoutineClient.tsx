@@ -1,182 +1,121 @@
-// src/app/routines/[id]/run/RunRoutineClient.tsx
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useState } from "react";
 import { useRouter } from "next/navigation";
+import type { RoutineForRun } from "@/app/actions/routines";
 import { recordRoutineRun } from "@/app/actions/routines";
 
-/** Strict shape the page passes down after normalization */
-export type RoutineForRun = {
+type Props = { routine: RoutineForRun };
+
+type RowState = {
   id: string;
-  name: string;
-  items: Array<{
-    id: string;
-    position: number;
-    location: string | null;
-    item: string | null;
-    target_key: string;
-  }>;
+  location: string | null;
+  item: string | null;
+  target_key: string;
+  temp_c: number | null;
+  status: "pass" | "fail" | null;
+  notes: string | null;
 };
 
-export default function RoutineRunnerClient({ routine }: { routine: RoutineForRun }) {
+export default function RunRoutineClient({ routine }: Props) {
   const router = useRouter();
 
-  // inputs
-  const [initials, setInitials] = useState("");
-  const [temps, setTemps] = useState<string[]>(
-    () => new Array(routine.items.length).fill("")
+  // seed per-step rows the runner can fill in
+  const [rows, setRows] = useState<RowState[]>(
+    routine.items.map((it) => ({
+      id: String(it.id),
+      location: it.location,
+      item: it.item,
+      target_key: it.target_key,
+      temp_c: null,
+      status: null,
+      notes: null,
+    }))
   );
-  const tempRefs = useRef<Array<HTMLInputElement | null>>([]);
 
-  function setTempAt(idx: number, v: string) {
-    setTemps((prev) => {
-      const next = prev.slice();
-      next[idx] = v;
-      return next;
-    });
+  async function onSubmitRun() {
+    const items = rows.map((r) => ({
+      stepId: String(r.id),
+      location: r.location,
+      item: r.item,
+      target_key: r.target_key,
+      temp_c: r.temp_c,
+      status: r.status,
+      notes: r.notes,
+    }));
+
+    await recordRoutineRun({ routineId: routine.id, items });
+    router.push("/routines");
   }
-
-  function focusRow(idx: number) {
-    const el = tempRefs.current[idx];
-    if (el) el.focus();
-  }
-
-  function handleTempKeyDown(idx: number, e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (idx < routine.items.length - 1) {
-        focusRow(idx + 1);
-      }
-    }
-  }
-
-  const canSave = useMemo(() => {
-    if (!initials.trim()) return false;
-    return temps.some((t) => t.trim() !== "");
-  }, [initials, temps]);
-
-  const [saving, setSaving] = useState(false);
-
-  async function doSave() {
-    if (!canSave || saving) return;
-    setSaving(true);
-    try {
-      // Build rows; only include lines with a temp value
-      const rows = routine.items
-        .map((it, i) => ({ it, t: temps[i]?.trim() ?? "" }))
-        .filter(({ t }) => t !== "")
-        .map(({ it, t }) => ({
-          routine_id: routine.id,
-          routine_item_id: it.id,
-          location: it.location,
-          item: it.item,
-          target_key: it.target_key,
-          initials: initials.trim().toUpperCase(),
-          temp_c: Number(t),
-        }));
-
-      // Your server action should accept a single array argument:
-      //   recordRoutineRun(rows: Array<...>)
-      await recordRoutineRun({ routine_id: routine.id, rows });
-
-
-      router.push("/routines");
-      router.refresh();
-    } catch (err: any) {
-      alert(err?.message ?? "Failed to save");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // Autofocus first temp on mount
-  useEffect(() => {
-    focusRow(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   return (
-    <>
-      <div className="mb-3 flex items-center justify-between">
+    <div className="space-y-4">
+      <h1 className="text-lg font-semibold">Run routine: {routine.name}</h1>
+
+      {/* Minimal UI – replace with your real form */}
+      <div className="rounded-xl border bg-white p-4">
+        {rows.map((r, idx) => (
+          <div key={r.id} className="grid grid-cols-1 gap-2 sm:grid-cols-4 mb-3">
+            <div className="text-sm">
+              <div className="text-gray-500">Item</div>
+              <div>{r.item ?? r.location ?? "Step"}</div>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">Temp (°C)</label>
+              <input
+                className="w-full rounded border px-2 py-1"
+                value={r.temp_c ?? ""}
+                onChange={(e) =>
+                  setRows((prev) => {
+                    const copy = [...prev];
+                    copy[idx] = { ...copy[idx], temp_c: e.target.value ? Number(e.target.value) : null };
+                    return copy;
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">Status</label>
+              <select
+                className="w-full rounded border px-2 py-1"
+                value={r.status ?? ""}
+                onChange={(e) =>
+                  setRows((prev) => {
+                    const copy = [...prev];
+                    copy[idx] = { ...copy[idx], status: (e.target.value || null) as RowState["status"] };
+                    return copy;
+                  })
+                }
+              >
+                <option value="">—</option>
+                <option value="pass">pass</option>
+                <option value="fail">fail</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">Notes</label>
+              <input
+                className="w-full rounded border px-2 py-1"
+                value={r.notes ?? ""}
+                onChange={(e) =>
+                  setRows((prev) => {
+                    const copy = [...prev];
+                    copy[idx] = { ...copy[idx], notes: e.target.value || null };
+                    return copy;
+                  })
+                }
+              />
+            </div>
+          </div>
+        ))}
+
         <button
-          onClick={() => router.push("/routines")}
-          className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+          onClick={onSubmitRun}
+          className="mt-2 rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
         >
-          Back
-        </button>
-
-        <div className="flex items-center gap-2">
-          <input
-            placeholder="e.g., AB"
-            value={initials}
-            onChange={(e) => setInitials(e.target.value.toUpperCase())}
-            className="h-10 w-24 rounded-xl border px-3 py-2"
-          />
-          <button
-            onClick={doSave}
-            disabled={!canSave || saving}
-            className="rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-60"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="text-left text-gray-500">
-              <th className="py-2 pr-3 w-8">#</th>
-              <th className="py-2 pr-3">Location</th>
-              <th className="py-2 pr-3">Item</th>
-              <th className="py-2 pr-3">Target</th>
-              <th className="py-2 pr-3">Initials</th>
-              <th className="py-2 pr-3">Temp (°C)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {routine.items.map((it, idx) => (
-              <tr key={it.id} className="border-t">
-                <td className="py-2 pr-3">{idx + 1}</td>
-                <td className="py-2 pr-3">{it.location ?? "—"}</td>
-                <td className="py-2 pr-3">{it.item ?? "—"}</td>
-                <td className="py-2 pr-3">{it.target_key}</td>
-                <td className="py-2 pr-3">
-                  <input
-                    value={initials}
-                    onChange={(e) => setInitials(e.target.value.toUpperCase())}
-                    className="w-20 rounded-md border px-2 py-1"
-                  />
-                </td>
-                <td className="py-2 pr-3">
-                  <input
-                    ref={(el) => {
-                      // return void, not the element
-                      tempRefs.current[idx] = el ?? null;
-                    }}
-                    value={temps[idx]}
-                    onChange={(e) => setTempAt(idx, e.target.value)}
-                    onKeyDown={(e) => handleTempKeyDown(idx, e)}
-                    inputMode="decimal"
-                    placeholder="e.g., 5.0"
-                    className="w-28 rounded-md border px-2 py-1"
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="mt-4 flex justify-end">
-        <button
-          onClick={doSave}
-          disabled={!canSave || saving}
-          className="rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-60"
-        >
-          {saving ? "Saving…" : "Save"}
+          Submit run
         </button>
       </div>
-    </>
+    </div>
   );
 }

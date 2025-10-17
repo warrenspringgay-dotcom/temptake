@@ -1,36 +1,22 @@
 // src/lib/orgClient.ts
-"use client";
+import { supabase as browserClient } from "@/lib/supabaseBrowser";
 
-import { supabase } from "@/lib/supabaseBrowser";
-
-/**
- * Returns the active org_id for the current user on the client.
- * Tries profile.org_id first, then user_orgs table.
- */
+/** Client-only: get org_id for the current user. */
 export async function getActiveOrgIdClient(): Promise<string | null> {
-  try {
-    const { data: auth } = await supabase.auth.getUser();
-    const uid = auth?.user?.id;
-    if (!uid) return null;
+  const { data: { session } } = await browserClient.auth.getSession();
 
-    // profiles.org_id (if you store it there)
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id")
-      .eq("id", uid)
-      .maybeSingle();
+  const md = session?.user?.user_metadata ?? {};
+  const orgFromJwt = (md.org_id as string) || null;
+  if (orgFromJwt) return orgFromJwt;
 
-    if (prof?.org_id) return prof.org_id as string;
+  const userId = session?.user?.id;
+  if (!userId) return null;
 
-    // fallback: user_orgs(user_id, org_id)
-    const { data: uo } = await supabase
-      .from("user_orgs")
-      .select("org_id")
-      .eq("user_id", uid)
-      .maybeSingle();
+  const { data } = await browserClient
+    .from("profiles")
+    .select("org_id")
+    .eq("id", userId)
+    .maybeSingle();
 
-    return (uo?.org_id as string) ?? null;
-  } catch {
-    return null;
-  }
+  return (data?.org_id as string) ?? null;
 }
