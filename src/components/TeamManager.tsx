@@ -3,10 +3,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
-import { saveTrainingServer } from "@/app/actions/training";
+import { saveTrainingServer } from "@/app/actions/training"; // <-- plural
+import { saveTeamMember, deleteTeamMember, type TeamMemberInput as TeamMemberInputAction } from "@/app/actions/team";
 
-
-
+// ----- Types -----
 type Member = {
   id: string;
   org_id: string;
@@ -19,16 +19,29 @@ type Member = {
   active: boolean | null;
 };
 
+// Use the server's input type, but allow UI-only fields like `notes`
+type TeamMemberForm = TeamMemberInputAction & {
+  notes?: string | null;
+};
+
 async function getOrgIdClient(): Promise<string | null> {
   try {
     const { data: auth } = await supabase.auth.getUser();
     const uid = auth?.user?.id;
     if (!uid) return null;
 
-    const { data: prof } = await supabase.from("profiles").select("org_id").eq("id", uid).maybeSingle();
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id")
+      .eq("id", uid)
+      .maybeSingle();
     if (prof?.org_id) return prof.org_id as string;
 
-    const { data: uo } = await supabase.from("user_orgs").select("org_id").eq("user_id", uid).maybeSingle();
+    const { data: uo } = await supabase
+      .from("user_orgs")
+      .select("org_id")
+      .eq("user_id", uid)
+      .maybeSingle();
     return (uo?.org_id as string) ?? null;
   } catch {
     return null;
@@ -42,14 +55,15 @@ export default function TeamManager() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<TeamMemberInput>({
+  const [form, setForm] = useState<TeamMemberForm>({
+    // ensure fields that must be strings are initialized as strings
     name: "",
     initials: "",
-    role: "",
-    phone: "",
-    email: "",
-    notes: "",
+    role: "", // <-- always a string for TS + server
+    phone: null,
+    email: null,
     active: true,
+    training_expires_on: null,
   });
 
   // training modal
@@ -69,11 +83,15 @@ export default function TeamManager() {
 
   async function load() {
     if (!orgId) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("team_members")
       .select("*")
       .eq("org_id", orgId)
       .order("name");
+    if (error) {
+      alert(error.message);
+      return;
+    }
     setRows((data as Member[]) ?? []);
   }
 
@@ -86,7 +104,9 @@ export default function TeamManager() {
     const s = q.trim().toLowerCase();
     if (!s) return rows;
     return rows.filter((r) =>
-      [r.initials, r.name, r.role, r.phone, r.email].filter(Boolean).some((v) => String(v).toLowerCase().includes(s))
+      [r.initials, r.name, r.role, r.phone, r.email]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(s))
     );
   }, [rows, q]);
 
@@ -94,11 +114,12 @@ export default function TeamManager() {
     setForm({
       name: "",
       initials: "",
-      role: "",
-      phone: "",
-      email: "",
-      notes: "",
+      role: "", // keep string
+      phone: null,
+      email: null,
       active: true,
+      training_expires_on: null,
+      notes: "", // UI-only
     });
     setModalOpen(true);
   }
@@ -106,13 +127,15 @@ export default function TeamManager() {
   function openEdit(r: Member) {
     setForm({
       id: r.id,
-      name: r.name,
+      name: r.name ?? "",
       initials: r.initials ?? "",
-      role: r.role ?? "",
-      phone: r.phone ?? "",
-      email: r.email ?? "",
-      notes: r.notes ?? "",
-      active: !!r.active,
+      role: r.role ?? "", // ensure string
+      phone: r.phone ?? null,
+      email: r.email ?? null,
+      active: r.active ?? true,
+      training_expires_on: null, // keep if you actually store this
+      notes: r.notes ?? "", // UI-only
+       // safe to pass along if your action accepts it
     });
     setModalOpen(true);
   }
@@ -120,7 +143,21 @@ export default function TeamManager() {
   async function save() {
     try {
       setSaving(true);
-      await saveTeamMemberServer(form);
+
+      // Build payload matching the action type EXACTLY (no UI-only fields)
+      const payload: TeamMemberInputAction = {
+        id: form.id,
+
+        name: form.name,
+        initials: form.initials,
+        role: form.role ?? "", // <-- coerce to string for the action
+        email: form.email ?? null,
+        phone: form.phone ?? null,
+        active: form.active ?? true,
+        training_expires_on: form.training_expires_on ?? null,
+      };
+
+      await saveTeamMember(payload);
       setModalOpen(false);
       await load();
     } catch (e: any) {
@@ -133,7 +170,7 @@ export default function TeamManager() {
   async function remove(id: string) {
     if (!confirm("Delete member?")) return;
     try {
-      await deleteTeamMemberServer(id);
+      await deleteTeamMember(id);
       await load();
     } catch (e: any) {
       alert(e?.message || "Delete failed");
@@ -216,13 +253,22 @@ export default function TeamManager() {
                     <td className="py-2 pr-3">{r.active ? "Yes" : "—"}</td>
                     <td className="py-2 pr-3">
                       <div className="flex gap-2">
-                        <button onClick={() => openEdit(r)} className="rounded-md border px-2 text-xs hover:bg-gray-50">
+                        <button
+                          onClick={() => openEdit(r)}
+                          className="rounded-md border px-2 text-xs hover:bg-gray-50"
+                        >
                           ✏️
                         </button>
-                        <button onClick={() => openTraining(r)} className="rounded-md border px-2 text-xs hover:bg-gray-50">
+                        <button
+                          onClick={() => openTraining(r)}
+                          className="rounded-md border px-2 text-xs hover:bg-gray-50"
+                        >
                           🎓
                         </button>
-                        <button onClick={() => remove(r.id)} className="rounded-md border px-2 text-xs hover:bg-gray-50">
+                        <button
+                          onClick={() => remove(r.id)}
+                          className="rounded-md border px-2 text-xs hover:bg-gray-50"
+                        >
                           🗑️
                         </button>
                       </div>
@@ -250,7 +296,9 @@ export default function TeamManager() {
           >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">{form.id ? "Edit member" : "Add member"}</div>
-              <button onClick={() => setModalOpen(false)} className="rounded-md p-2 hover:bg-gray-100">✕</button>
+              <button onClick={() => setModalOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
+                ✕
+              </button>
             </div>
 
             <div className="grid grid-cols-1 gap-3">
@@ -308,12 +356,14 @@ export default function TeamManager() {
                     checked={!!form.active}
                     onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))}
                   />
-                  <label htmlFor="tm-active" className="text-sm">Active</label>
+                  <label htmlFor="tm-active" className="text-sm">
+                    Active
+                  </label>
                 </div>
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-gray-500">Notes</label>
+                <label className="mb-1 block text-xs text-gray-500">Notes (UI-only)</label>
                 <input
                   value={form.notes ?? ""}
                   onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
@@ -347,7 +397,9 @@ export default function TeamManager() {
           >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Add training · {trainFor.name}</div>
-              <button onClick={() => setTrainOpen(false)} className="rounded-md p-2 hover:bg-gray-100">✕</button>
+              <button onClick={() => setTrainOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
+                ✕
+              </button>
             </div>
 
             <div className="grid grid-cols-1 gap-3">

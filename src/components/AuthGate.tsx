@@ -1,30 +1,33 @@
 // src/components/AuthGate.tsx
-import { ReactNode } from "react";
+"use client";
+
+import React from "react";
 import { redirect } from "next/navigation";
 import { getSession } from "@/app/actions/auth";
-// If your roles helper lives elsewhere, adjust this import:
-import { hasRole } from "@/lib/roles";
+import { hasRole, type Role } from "@/lib/roles";
 
 type Props = {
-  children: ReactNode;
-  requireRole?: string; // or string[] if you support multiple roles
+  children: React.ReactNode;
+  /** Single role or any-of these roles required to view children */
+  requireRole?: Role | Role[];
 };
 
 export default async function AuthGate({ children, requireRole }: Props) {
-  const session = await getSession();           // Session | null
-  const user = session?.user ?? null;           // User | null
+  // Get the current session (server action)
+  const session = await getSession();
+  const user = session?.user ?? null;
 
+  // Not signed in → send to login
   if (!user) {
     redirect("/login");
   }
 
+  // If a role requirement is provided, enforce it
   if (requireRole) {
-    const ok = Array.isArray(requireRole)
-      ? (requireRole as string[]).some((r) => hasRole(user, r))
-      : hasRole(user, requireRole);
-
+    const needed: Role[] = Array.isArray(requireRole) ? requireRole : [requireRole];
+    const ok = needed.some((r) => hasRole(user, r));
     if (!ok) {
-      redirect("/not-authorized"); // or wherever you handle auth failures
+      redirect("/"); // or a dedicated 403 page
     }
   }
 

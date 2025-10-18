@@ -1,150 +1,96 @@
 // src/components/KpiCards.tsx
-// Server Component
+// Server component (no "use client")
 import { getServerSupabase } from "@/lib/supabaseServer";
+import { getActiveOrgIdServer } from "@/lib/orgServer";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-type Kpis = {
-  total7d: number;
-  avgTemp7d: number | null;
-  lastLogAt: string | null; // ISO
-};
+async function resolveOrgId(supabase: SupabaseClient): Promise<string | null> {
+  // Prefer your helper (cookie/JWT/profile)
+  const org = await getActiveOrgIdServer();
+  if (org) return org;
 
-/** Try to resolve an org_id for the signed-in user. */
-async function resolveOrgId(
-  supabase: Awaited<ReturnType<typeof createServerClient>>
-): Promise<string | null> {
-  try {
-    const { data: userData } = await supabase.auth.getUser();
-    const uid = userData.user?.id;
-    if (!uid) return null;
-
-    // 1) team_members.user_id -> org_id / owner_id
-    try {
-      const { data: tm } = await supabase
-        .from("team_members")
-        .select("org_id, owner_id")
-        .eq("user_id", uid)
-        .maybeSingle();
-
-      if (tm?.org_id) return String(tm.org_id);
-      if (tm?.owner_id) return String(tm.owner_id);
-    } catch {
-      /* ignore */
-    }
-
-    // 2) user_orgs mapping (if present)
-    try {
-      const { data: uo } = await supabase
-        .from("user_orgs")
-        .select("org_id")
-        .eq("user_id", uid)
-        .maybeSingle();
-      if (uo?.org_id) return String(uo.org_id);
-    } catch {
-      /* ignore */
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
-async function loadKpis(): Promise<Kpis> {
-  const supabase = await getServerSupabase();
-  const org_id = await resolveOrgId(supabase);
-
-  const startISO = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
-
-  // Total entries in last 7 days
-  let total7d = 0;
-  {
-    let q = supabase
-      .from("food_temp_logs")
-      .select("*", { count: "exact", head: true })
-      .gte("at", startISO);
-    if (org_id) q = q.eq("org_id", org_id);
-    const { count } = await q;
-    total7d = count ?? 0;
-  }
-
-  // Average temp in last 7 days
-  let avgTemp7d: number | null = null;
-  {
-    let q = supabase
-      .from("food_temp_logs")
-      .select("avg_temp:avg(temp_c)")
-      .gte("at", startISO)
-      .single();
-    if (org_id) {
-      // Rebuild query when adding filter (Supabase typings require recompose)
-      const { data } = await supabase
-        .from("food_temp_logs")
-        .select("avg_temp:avg(temp_c)")
-        .gte("at", startISO)
-        .eq("org_id", org_id)
-        .single();
-      avgTemp7d = (data as any)?.avg_temp ?? null;
-    } else {
-      const { data } = await q;
-      avgTemp7d = (data as any)?.avg_temp ?? null;
-    }
-  }
-
-  // Last log time (any)
-  let lastLogAt: string | null = null;
-  {
-    let q = supabase
-      .from("food_temp_logs")
-      .select("at")
-      .order("at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (org_id) {
-      const { data } = await supabase
-        .from("food_temp_logs")
-        .select("at")
-        .eq("org_id", org_id)
-        .order("at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      lastLogAt = (data as any)?.at ?? null;
-    } else {
-      const { data } = await q;
-      lastLogAt = (data as any)?.at ?? null;
-    }
-  }
-
-  return { total7d, avgTemp7d, lastLogAt };
-}
-
-function fmtDateTime(iso: string | null): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  // Fallback: try user -> profile lookup
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData.user?.id;
+  if (!uid) return null;
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("org_id")
+    .eq("id", uid)
+    .maybeSingle();
+  return (prof?.org_id as string) ?? null;
 }
 
 export default async function KpiCards() {
-  const { total7d, avgTemp7d, lastLogAt } = await loadKpis();
+  const supabase = await getServerSupabase();
+  const orgId = await resolveOrgId(supabase);
+
+  // Default zeros in case org or queries fail
+  let trainingDue = 0;
+  let allergenDue = 0;
+
+  // Look 14 days ahead
+  const soonISO = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  try {
+    // Count trainings expiring within 14 days
+    const { count: c1, error: e1 } = await supabase
+      .from("trainings")
+      .select("id", { count: "exact", head: true })
+      .lte("expires_on", soonISO)
+      .order("expires_on", { ascending: true })
+      .maybeSingle(); // head: true means no rows, but count still returns
+    if (!e1 && typeof c1 === "number") trainingDue = c1;
+  } catch {}
+
+  try {
+    // Allergen: prefer 'next_due'; if your schema uses a different column,
+    // uncomment another block or adjust the column name below.
+    let count = 0;
+
+    // next_due
+    const { count: a1, error: ae1 } = await supabase
+      .from("allergen_reviews")
+      .select("id", { count: "exact", head: true })
+      .lte("next_due", soonISO)
+      .maybeSingle();
+    if (!ae1 && typeof a1 === "number") count = Math.max(count, a1 ?? 0);
+
+    // next_review_due (fallback)
+    const { count: a2, error: ae2 } = await supabase
+      .from("allergen_reviews")
+      .select("id", { count: "exact", head: true })
+      .lte("next_review_due", soonISO)
+      .maybeSingle();
+    if (!ae2 && typeof a2 === "number") count = Math.max(count, a2 ?? 0);
+
+    allergenDue = count;
+  } catch {}
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <div className="rounded-xl border bg-white p-3">
-        <div className="text-xs text-gray-500">Entries (last 7 days)</div>
-        <div className="mt-1 text-2xl font-semibold">{total7d}</div>
-      </div>
-
-      <div className="rounded-xl border bg-white p-3">
-        <div className="text-xs text-gray-500">Average temp (last 7 days)</div>
-        <div className="mt-1 text-2xl font-semibold">
-          {avgTemp7d == null ? "—" : `${Number(avgTemp7d).toFixed(1)} °C`}
+        <div className="text-xs text-gray-500">Training</div>
+        <div className="mt-1 inline-flex items-center gap-2">
+          <span className="text-2xl font-semibold">{trainingDue}</span>
+          <span className="text-xs text-gray-500">due in 14 days</span>
         </div>
       </div>
-
       <div className="rounded-xl border bg-white p-3">
-        <div className="text-xs text-gray-500">Last temperature log</div>
-        <div className="mt-1 text-sm">{fmtDateTime(lastLogAt)}</div>
+        <div className="text-xs text-gray-500">Allergen Review</div>
+        <div className="mt-1 inline-flex items-center gap-2">
+          <span className="text-2xl font-semibold">{allergenDue}</span>
+          <span className="text-xs text-gray-500">due in 14 days</span>
+        </div>
+      </div>
+      {/* Add two empty cards (or other KPIs) to keep a 4-card grid */}
+      <div className="rounded-xl border bg-white p-3">
+        <div className="text-xs text-gray-500">Entries today</div>
+        <div className="text-2xl font-semibold">—</div>
+      </div>
+      <div className="rounded-xl border bg-white p-3">
+        <div className="text-xs text-gray-500">Locations (7d)</div>
+        <div className="text-2xl font-semibold">—</div>
       </div>
     </div>
   );

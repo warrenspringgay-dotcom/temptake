@@ -1,24 +1,44 @@
+// src/lib/roles.ts
 // Central place for role types & checks
-import type { SessionUser } from "@/app/actions/auth";
+
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 export type Role = "staff" | "manager" | "admin";
 
-// Lowest → Highest
-export const ROLE_ORDER: Role[] = ["staff", "manager", "admin"];
+/** Extend Supabase's User with optional metadata containers we read roles from. */
+export type SessionUser = SupabaseUser & {
+  user_metadata?: Record<string, unknown> & { roles?: Role[] };
+  app_metadata?: Record<string, unknown> & { roles?: Role[] };
+};
 
-/**
- * Returns true if `current` meets or exceeds `required` in the hierarchy.
- * If `required` is undefined, access is allowed.
- */
-
-
-
-export function hasRole(_user: SessionUser | null, _role: string): boolean {
-  // keep permissive until you persist roles
-  return !!_user;
+function rolesFrom(user: SessionUser | null | undefined): Role[] {
+  if (!user) return [];
+  const fromUser = (user.user_metadata as any)?.roles as Role[] | undefined;
+  const fromApp = (user.app_metadata as any)?.roles as Role[] | undefined;
+  return (fromUser ?? fromApp ?? []).filter(Boolean) as Role[];
 }
 
-/** Type guard (useful if reading a string from DB/env) */
-export function isRole(x: unknown): x is Role {
-  return x === "staff" || x === "manager" || x === "admin";
+export function hasRole(
+  user: SessionUser | null | undefined,
+  role: Role
+): boolean {
+  return rolesFrom(user).includes(role);
+}
+
+export function hasAnyRole(
+  user: SessionUser | null | undefined,
+  roles: Role[]
+): boolean {
+  if (!roles?.length) return false;
+  const set = new Set(rolesFrom(user));
+  return roles.some((r) => set.has(r));
+}
+
+export function isManager(user: SessionUser | null | undefined): boolean {
+  // Managers and admins can pass manager checks
+  return hasAnyRole(user, ["manager", "admin"]);
+}
+
+export function isAdmin(user: SessionUser | null | undefined): boolean {
+  return hasRole(user, "admin");
 }

@@ -1,26 +1,21 @@
 // src/components/SignOutButton.tsx
 "use client";
 
-import { useFormStatus } from "react-dom";
 import { signOutAndRedirect } from "@/app/actions/auth";
 
-function Submit({ label, pendingLabel }: { label: string; pendingLabel: string }) {
-  const { pending } = useFormStatus();
-  return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
-    >
-      {pending ? pendingLabel : label}
-    </button>
-  );
-}
-
-export default function SignOutButton() {
+export default function SignOutButton({
+  redirectTo = "/login",
+}: { redirectTo?: string }) {
   return (
     <form action={signOutAndRedirect}>
-      <Submit label="Sign out" pendingLabel="Signing out…" />
+      {/* optional: lets you control where to go after sign out */}
+      <input type="hidden" name="redirectTo" value={redirectTo} />
+      <button
+        type="submit"
+        className="rounded-md bg-black px-4 py-2 text-white hover:bg-gray-900"
+      >
+        Sign out
+      </button>
     </form>
   );
 }

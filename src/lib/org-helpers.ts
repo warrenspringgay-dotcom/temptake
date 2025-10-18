@@ -1,40 +1,57 @@
 // src/lib/org-helpers.ts
-"use server";
 
 import { getServerSupabase } from "@/lib/supabaseServer";
-import { getSession } from "@/app/actions/auth";
 
 /**
- * Try to find the current user's org id. Returns null if not found/signed-in.
- * - Looks in profiles(org_id) by user.id
- * - Falls back to first orgs.id where the user is a member (if you later add a members table)
+ * Resolve the active org_id for the currently authenticated user.
+ * Order of precedence:
+ * 1) JWT user_metadata.org_id
+ * 2) profiles.org_id
+ * 3) user_orgs(org link table).org_id
  */
 export async function getOrgId(): Promise<string | null> {
-  const { user } = await getSession();
-  if (!user) return null;
-
   const supabase = await getServerSupabase();
 
-  // 1) profiles.org_id (most common)
-  const { data: profRows, error: profErr } = await supabase
+  // Get the signed-in user (server-safe)
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
+
+  if (userErr) {
+    console.warn("[getOrgId] auth.getUser error:", userErr.message);
+  }
+  if (!user) return null;
+
+  // 1) Try JWT metadata
+  const md = (user.user_metadata ?? {}) as Record<string, unknown>;
+  const fromJwt = (md.org_id as string) || null;
+  if (fromJwt) return fromJwt;
+
+  // 2) Try profiles.org_id
+  const { data: prof, error: profErr } = await supabase
     .from("profiles")
     .select("org_id")
     .eq("id", user.id)
-    .limit(1);
+    .maybeSingle();
 
-  if (!profErr) {
-    const orgId = profRows?.[0]?.org_id ?? null;
-    if (orgId) return orgId;
+  if (profErr) {
+    console.warn("[getOrgId] profiles lookup error:", profErr.message);
   }
+  if (prof?.org_id) return prof.org_id as string;
 
-  // 2) (optional) fallback: if you have orgs_members with (user_id, org_id)
-  // const { data: memRows, error: memErr } = await supabase
-  //   .from("orgs_members")
-  //   .select("org_id")
-  //   .eq("user_id", user.id)
-  //   .limit(1);
-  // if (!memErr && memRows?.[0]?.org_id) return memRows[0].org_id;
+  // 3) Try user_orgs(org link table).org_id
+  const { data: uo, error: uoErr } = await supabase
+    .from("user_orgs")
+    .select("org_id")
+    .eq("user_id", user.id)
+    .maybeSingle();
 
-  // No org found yet
-  return null;
+  if (uoErr) {
+    console.warn("[getOrgId] user_orgs lookup error:", uoErr.message);
+  }
+  return (uo?.org_id as string) ?? null;
 }
+
+/** Alias for clarity where you only call this server-side. */
+export const getActiveOrgIdServer = getOrgId;

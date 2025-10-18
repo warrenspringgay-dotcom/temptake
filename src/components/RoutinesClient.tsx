@@ -8,7 +8,7 @@ import {
   updateRoutine,
   deleteRoutine,
 } from "@/app/actions/routines";
-import type { RoutineWithItems, RoutineItemInput } from "@/types/routines";
+import type { RoutineWithItems } from "@/types/routines";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
 
 export default function RoutinesClient() {
@@ -31,17 +31,37 @@ export default function RoutinesClient() {
       setLoading(false);
     }
   }
+
   useEffect(() => {
     refresh();
   }, []);
 
   async function add() {
     if (!name.trim()) return;
-    const newItems: RoutineItemInput[] = [
-      { position: 0, location, item, target_key: target },
+
+    // Minimal item payload. Include notes: null so we satisfy servers that require it,
+    // but keep it optional in the local type to handle either schema.
+    type PayloadItem = {
+      position: number;
+      location: string | null;
+      item: string | null;
+      target_key: string;
+      notes?: string | null;
+    };
+
+    const newItems: PayloadItem[] = [
+      {
+        position: 0,
+        location: location.trim() || null,
+        item: item.trim() || null,
+        target_key: target,
+        notes: null, // harmless if not used; required by some server types
+      },
     ];
+
     try {
-      await createRoutine({ name, items: newItems });
+      // Cast to the action’s expected type to avoid mismatched local typings.
+      await createRoutine({ name: name.trim(), items: newItems as any });
       setName("");
       setLocation("");
       setItem("");
@@ -130,9 +150,7 @@ export default function RoutinesClient() {
                     <div className="flex gap-2">
                       <button
                         className="rounded-lg border px-2 py-1 text-xs hover:bg-gray-50"
-                        onClick={() =>
-                          alert("Open editor modal here (not included in this simple client)")
-                        }
+                        onClick={() => alert("Open editor modal here")}
                       >
                         Edit
                       </button>

@@ -1,28 +1,30 @@
 // src/utils/supabase/server.ts
+import "server-only";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { getServerClient } from "@supabase/ssr";
 
-export async function createClient() {
-  // Next.js now requires awaiting dynamic APIs like cookies()
-  const cookieStore = await cookies();
+/**
+ * Unified helper to get a Supabase server client in API routes,
+ * Server Components, or Server Actions.
+ */
+export async function getServerSupabase() {
+  const cookieStore = await Promise.resolve(cookies() as any);
 
-  // @supabase/ssr supports async cookie handlers
-  const client = getServerSupabase(
+  return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get: (name: string) => cookieStore.get(name)?.value,
-        set: async (name: string, value: string, options: any) => {
-          // In RSC, direct mutation is allowed; Next writes back to response.
-          (await cookies()).set({ name, value, ...options });
+        get(name: string) {
+          return cookieStore.get(name)?.value;
         },
-        remove: async (name: string, options: any) => {
-          (await cookies()).set({ name, value: "", ...options });
+        set(name: string, value: string, options?: CookieOptions) {
+          cookieStore.set({ name, value, ...options });
+        },
+        remove(name: string, options?: CookieOptions) {
+          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
         },
       },
     }
   );
-
-  return client;
 }

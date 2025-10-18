@@ -2,30 +2,40 @@
 import "server-only";
 
 import { cookies } from "next/headers";
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import {
+  createServerClient as createSupabaseServerClient,
+  type CookieOptions,
+} from "@supabase/ssr";
 
 /**
- * Server-only Supabase client, scoped to Next's request/response cookies.
- * Use only in Server Components, Route Handlers, or Server Actions.
+ * Create a Supabase server client bound to Next.js cookies.
+ * Note: In your Next version, cookies() is async → this function is async too.
  */
-export async function getServerSupabase() {
-  const cookieStore = await cookies();
+export async function createServerClient() {
+  // In some Next versions cookies() is sync, in others it's a Promise.
+  // This works for both:
+  const cookieStore = await Promise.resolve(cookies() as any);
 
-  return createServerClient(
+  return createSupabaseServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        // @supabase/ssr prefers getAll/setAll on the server
-        getAll() {
-          return cookieStore.getAll().map((c) => ({ name: c.name, value: c.value }));
+        get(name: string) {
+          return cookieStore.get(name)?.value;
         },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options as CookieOptions);
-          });
+        set(name: string, value: string, options?: CookieOptions) {
+          cookieStore.set({ name, value, ...options });
+        },
+        remove(name: string, options?: CookieOptions) {
+          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
         },
       },
     }
   );
+}
+
+/** Back-compat helper many server actions already await */
+export async function getServerSupabase() {
+  return createServerClient();
 }

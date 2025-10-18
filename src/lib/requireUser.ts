@@ -1,11 +1,16 @@
 // src/lib/requireUser.ts
-import { getServerClient } from '@/lib/supabaseServer';
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 export async function requireUser() {
-  const sb = await getServerSupabase();
-  const { data, error } = await sb.auth.getUser();
-  if (error || !data.user) {
-    throw new Error('UNAUTHENTICATED');
+  const supabase = await getServerSupabase();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const user = session?.user ?? null;
+  if (!user) {
+    throw new Error("Not authenticated");
   }
-  return data.user;
+
+  return user;
 }
