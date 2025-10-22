@@ -1,211 +1,464 @@
-// src/components/RoutinesManager.tsx
+// src/components/RoutineManager.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabaseBrowser";
+import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { TARGET_PRESETS } from "@/lib/temp-constants";
 
-/* =========================
-   Types
-========================= */
-type Routine = {
-  id: string;
-  name: string | null;
-  created_by: string | null;
+type RoutineItem = {
+  id?: string;
+  routine_id?: string;
+  position: number;
   location: string | null;
-  created_at?: string | null;
+  item: string | null;
+  target_key: string;
+};
+type RoutineRow = {
+  id: string;
+  name: string;
+  active: boolean | null;
+  items: RoutineItem[];
+  last_used_at?: string | null;
 };
 
-type RoutineRow = Routine & { itemsCount: number };
-
-/* =========================
-   Data access
-========================= */
-async function fetchRoutines(): Promise<RoutineRow[]> {
-  // try to pull counts with a join; if the FK is named differently
-  // we’ll fallback to a 2nd query for counts.
-  const { data, error } = await supabase
-    .from("temp_routines")
-    .select("id,name,created_by,location,created_at");
-
-  if (error) throw new Error(error.message);
-
-  const routines: Routine[] = (data ?? []) as Routine[];
-
-  if (routines.length === 0) return [];
-
-  // Count items per routine
-  const ids = routines.map((r) => r.id);
-  const { data: countsData, error: countsErr } = await supabase
-    .from("temp_routine_items")
-    .select("routine_id, id");
-
-  if (countsErr) {
-    // fallback: zero counts
-    return routines
-      .sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""))
-      .map((r) => ({ ...r, itemsCount: 0 }));
-  }
-
-  const map = new Map<string, number>();
-  (countsData ?? []).forEach((row: any) => {
-    const rid = row.routine_id as string;
-    map.set(rid, (map.get(rid) ?? 0) + 1);
-  });
-
-  return routines
-    .sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""))
-    .map((r) => ({ ...r, itemsCount: map.get(r.id) ?? 0 }));
+function cls(...p: Array<string | false | undefined>) {
+  return p.filter(Boolean).join(" ");
 }
 
-async function insertRoutine(name: string) {
-  const clean = name.trim();
-  if (!clean) return;
-  const { error } = await supabase.from("temp_routines").insert({ name: clean });
-  if (error) throw new Error(error.message);
-}
-
-async function deleteRoutine(id: string) {
-  const { error } = await supabase.from("temp_routines").delete().eq("id", id);
-  if (error) throw new Error(error.message);
-}
-
-/* =========================
-   Component
-========================= */
-export default function RoutinesManager() {
+export default function RoutineManager() {
   const [rows, setRows] = useState<RoutineRow[]>([]);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [newName, setNewName] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [orgId, setOrgId] = useState<string | null>(null);
 
-  async function reload() {
+  // search
+  const [q, setQ] = useState("");
+
+  // add quick
+  const [newName, setNewName] = useState("");
+
+  // view card
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewing, setViewing] = useState<RoutineRow | null>(null);
+
+  // edit modal
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState<RoutineRow | null>(null);
+
+  // =============== data ===============
+  async function refresh() {
+    setLoading(true);
     try {
-      setErrorMsg(null);
-      setRows(await fetchRoutines());
-    } catch (e: any) {
-      console.error("Routines load error:", e);
-      setErrorMsg(e?.message ?? "Failed to load routines (check RLS policies).");
-      setRows([]);
+      const id = await getActiveOrgIdClient();
+      setOrgId(id ?? null);
+      if (!id) {
+        setRows([]);
+        return;
+      }
+
+      const { data: routines, error: rErr } = await supabase
+        .from("temp_routines")
+        .select("id,name,active,last_used_at")
+        .eq("org_id", id)
+        .order("name");
+      if (rErr) throw rErr;
+
+      if (!routines?.length) {
+        setRows([]);
+        return;
+      }
+
+      const ids = routines.map((r) => r.id);
+      const { data: items, error: iErr } = await supabase
+        .from("temp_routine_items")
+        .select("id,routine_id,position,location,item,target_key")
+        .in("routine_id", ids);
+      if (iErr) throw iErr;
+
+      const grouped = new Map<string, RoutineItem[]>();
+      (items ?? []).forEach((it) => {
+        const arr = grouped.get(it.routine_id) ?? [];
+        arr.push({
+          id: it.id,
+          routine_id: it.routine_id,
+          position: Number(it.position ?? 0),
+          location: it.location ?? null,
+          item: it.item ?? null,
+          target_key: it.target_key ?? "chill",
+        });
+        grouped.set(it.routine_id, arr);
+      });
+
+      setRows(
+        routines.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          active: r.active ?? true,
+          last_used_at: r.last_used_at ?? null,
+          items: (grouped.get(r.id) ?? []).sort((a, b) => a.position - b.position),
+        }))
+      );
+    } finally {
+      setLoading(false);
     }
   }
 
   useEffect(() => {
-    reload();
+    refresh();
   }, []);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => (r.name ?? "").toLowerCase().includes(q));
-  }, [rows, query]);
+    const term = q.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter((r) => r.name.toLowerCase().includes(term));
+  }, [rows, q]);
 
-  async function handleAdd() {
-    const nm = newName.trim();
-    if (!nm) return;
-    setSaving(true);
+  // =============== actions ===============
+  async function addQuick() {
+    if (!newName.trim() || !orgId) return;
+    const { data: created, error } = await supabase
+      .from("temp_routines")
+      .insert({ org_id: orgId, name: newName.trim(), active: true })
+      .select("id")
+      .single();
+    if (error) return alert(error.message);
+    setNewName("");
+    setViewing(null);
+    await refresh();
+    // open edit to add steps quickly
+    const r = (await supabase
+      .from("temp_routines")
+      .select("id,name,active")
+      .eq("id", created!.id)
+      .single()).data!;
+    setEditing({ id: r.id, name: r.name, active: true, items: [] });
+    setEditOpen(true);
+  }
+
+  function openView(r: RoutineRow) {
+    setViewing(r);
+    setViewOpen(true);
+  }
+  function openEdit(r: RoutineRow) {
+    // deep copy so edits are local
+    setEditing(JSON.parse(JSON.stringify(r)));
+    setEditOpen(true);
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
     try {
-      await insertRoutine(nm);
-      setNewName("");
-      await reload();
+      // update routine
+      const { error: uErr } = await supabase
+        .from("temp_routines")
+        .update({ name: editing.name, active: editing.active ?? true })
+        .eq("id", editing.id);
+      if (uErr) throw uErr;
+
+      // replace items (simple + reliable)
+      await supabase.from("temp_routine_items").delete().eq("routine_id", editing.id);
+      const inserts = editing.items.map((it, i) => ({
+        routine_id: editing.id,
+        position: it.position ?? i + 1,
+        location: it.location ?? null,
+        item: it.item ?? null,
+        target_key: it.target_key,
+      }));
+      if (inserts.length) {
+        const { error: iErr } = await supabase.from("temp_routine_items").insert(inserts);
+        if (iErr) throw iErr;
+      }
+
+      setEditOpen(false);
+      await refresh();
     } catch (e: any) {
-      alert(e?.message ?? "Failed to create routine");
-    } finally {
-      setSaving(false);
+      alert(e?.message ?? "Save failed.");
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm("Delete this routine?")) return;
-    try {
-      await deleteRoutine(id);
-      await reload();
-    } catch (e: any) {
-      alert(e?.message ?? "Failed to delete routine");
-    }
+  async function removeRoutine(id: string) {
+    if (!confirm("Delete routine?")) return;
+    const { error } = await supabase.from("temp_routines").delete().eq("id", id);
+    if (error) return alert(error.message);
+    await refresh();
   }
 
+  // =============== render ===============
   return (
-    <div>
-      <div className="mb-4 flex items-center gap-3">
-        <h1 className="text-[18px] font-semibold">Routines</h1>
+    <div className="space-y-4 rounded-2xl border bg-white p-4">
+      <div className="flex items-center gap-2">
+        <h1 className="text-lg font-semibold">Routines</h1>
         <div className="ml-auto flex items-center gap-2">
           <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            className="h-9 rounded-xl border px-3 text-sm"
             placeholder="Search…"
-            className="h-9 w-[240px] rounded-lg border border-gray-200 bg-white px-3 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-200"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
           />
         </div>
       </div>
 
-      {errorMsg ? (
-        <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-          {errorMsg}
-        </div>
-      ) : null}
-
-      {/* Add new routine */}
-      <div className="mb-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="flex items-center gap-2">
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="New routine name"
-            className="h-9 w-full max-w-xl rounded-xl border border-gray-200 px-3 text-sm"
-          />
-          <button
-            onClick={handleAdd}
-            disabled={saving || !newName.trim()}
-            className="h-9 rounded-xl bg-black px-4 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-50"
-          >
-            {saving ? "Saving…" : "Add"}
-          </button>
-        </div>
+      {/* quick add */}
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+        <input
+          className="rounded-xl border px-3 py-2"
+          placeholder="New routine name"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+        />
+        <button
+          className="rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900"
+          onClick={addQuick}
+        >
+          Add
+        </button>
       </div>
 
-      {/* Table */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500">
-                <th className="py-2 pr-3">Name</th>
-                <th className="py-2 pr-3">Items</th>
-                <th className="py-2 pr-3">Actions</th>
+      {/* list */}
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="text-left text-gray-500">
+              <th className="py-2 pr-3">Name</th>
+              <th className="py-2 pr-3 w-24">Items</th>
+              <th className="py-2 pr-3 w-[160px]">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={3} className="py-6 text-center text-gray-500">
+                  Loading…
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {filtered.length ? (
-                filtered.map((r) => (
-                  <tr key={r.id} className="border-t align-middle">
-                    <td className="py-2 pr-3">{r.name ?? "—"}</td>
-                    <td className="py-2 pr-3">{r.itemsCount}</td>
-                    <td className="py-2 pr-3">
-                      <div className="flex flex-wrap gap-2">
-                        {/* put “edit items” flow here later */}
-                        <button
-                          onClick={() => handleDelete(r.id)}
-                          className="h-7 rounded-xl border border-gray-200 bg-white px-2 text-xs hover:bg-gray-50"
-                          title="Delete"
-                        >
-                          🗑️
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={3} className="py-8 text-center text-gray-500">
-                    No routines yet.
+            ) : filtered.length ? (
+              filtered.map((r) => (
+                <tr key={r.id} className="border-t">
+                  <td className="py-2 pr-3">
+                    <button
+                      className="text-blue-600 underline hover:text-blue-700"
+                      title="Open"
+                      onClick={() => openView(r)}
+                    >
+                      {r.name}
+                    </button>
+                  </td>
+                  <td className="py-2 pr-3">{r.items.length}</td>
+                  <td className="py-2 pr-3">
+                    <div className="flex gap-2">
+                      <button
+                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
+                        title="View"
+                        onClick={() => openView(r)}
+                      >
+                        👁️
+                      </button>
+                      <button
+                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
+                        title="Edit"
+                        onClick={() => openEdit(r)}
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
+                        title="Delete"
+                        onClick={() => removeRoutine(r.id)}
+                      >
+                        🗑️
+                      </button>
+                    </div>
                   </td>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={3} className="py-6 text-center text-gray-500">
+                  No routines
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
+
+      {/* ===== view card (supplier-style) ===== */}
+      {viewOpen && viewing && (
+        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
+          <div
+            className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-2xl border bg-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-slate-800 px-4 py-3 text-white">
+              <div className="text-sm opacity-80">Routine</div>
+              <div className="text-xl font-semibold">{viewing.name}</div>
+              <div className="opacity-80">{viewing.active ? "Active" : "Inactive"}</div>
+            </div>
+
+            <div className="p-4">
+              {viewing.items.length ? (
+                <ul className="divide-y">
+                  {viewing.items.map((it) => (
+                    <li key={`${it.position}-${it.item}-${it.location}`} className="py-2 text-sm">
+                      <div className="font-medium">Step {it.position}</div>
+                      <div className="text-gray-600">
+                        {[it.location, it.item].filter(Boolean).join(" · ") || "—"} · target:{" "}
+                        <code>{it.target_key}</code>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-sm text-gray-600">No items in this routine.</div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t bg-gray-50 p-3">
+              <a
+                href={`/dashboard?r=${encodeURIComponent(viewing.id)}`}
+                className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
+                title="Load into logger"
+              >
+                Use routine
+              </a>
+              <button
+                className="rounded-md border px-3 py-1.5 text-sm hover:bg-white"
+                onClick={() => {
+                  setViewOpen(false);
+                  openEdit(viewing);
+                }}
+              >
+                Edit
+              </button>
+              <button className="rounded-md bg-white px-3 py-1.5 text-sm" onClick={() => setViewOpen(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== edit modal ===== */}
+      {editOpen && editing && (
+        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEditOpen(false)}>
+          <div
+            className="mx-auto mt-16 w-full max-w-3xl rounded-2xl border bg-white p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-base font-semibold">Edit routine</div>
+              <button onClick={() => setEditOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
+                ✕
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <input
+                className="h-10 w-full rounded-xl border px-3"
+                value={editing.name}
+                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+              />
+              <label className="mt-2 flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={!!editing.active}
+                  onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
+                />
+                Active
+              </label>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              {editing.items.map((it, i) => (
+                <div key={i} className="grid gap-2 sm:grid-cols-[80px_1fr_1fr_1fr_auto]">
+                  <input
+                    className="rounded-xl border px-3 py-2"
+                    placeholder="#"
+                    type="number"
+                    value={it.position}
+                    onChange={(e) => {
+                      const copy = { ...editing, items: [...editing.items] };
+                      copy.items[i] = { ...copy.items[i], position: Number(e.target.value) || 0 };
+                      setEditing(copy);
+                    }}
+                  />
+                  <input
+                    className="rounded-xl border px-3 py-2"
+                    placeholder="Location"
+                    value={it.location ?? ""}
+                    onChange={(e) => {
+                      const copy = { ...editing, items: [...editing.items] };
+                      copy.items[i] = { ...copy.items[i], location: e.target.value || null };
+                      setEditing(copy);
+                    }}
+                  />
+                  <input
+                    className="rounded-xl border px-3 py-2"
+                    placeholder="Item"
+                    value={it.item ?? ""}
+                    onChange={(e) => {
+                      const copy = { ...editing, items: [...editing.items] };
+                      copy.items[i] = { ...copy.items[i], item: e.target.value || null };
+                      setEditing(copy);
+                    }}
+                  />
+                  <select
+                    className="rounded-xl border px-3 py-2"
+                    value={it.target_key}
+                    onChange={(e) => {
+                      const copy = { ...editing, items: [...editing.items] };
+                      copy.items[i] = { ...copy.items[i], target_key: e.target.value };
+                      setEditing(copy);
+                    }}
+                  >
+                    {TARGET_PRESETS.map((p) => (
+                      <option key={p.key} value={p.key}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+                    onClick={() => {
+                      const copy = { ...editing, items: editing.items.filter((_, idx) => idx !== i) };
+                      setEditing(copy);
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+
+              <button
+                className="mt-2 rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+                onClick={() =>
+                  setEditing({
+                    ...editing,
+                    items: [
+                      ...editing.items,
+                      { position: (editing.items.at(-1)?.position ?? 0) + 1, location: "", item: "", target_key: "chill" },
+                    ],
+                  })
+                }
+              >
+                + Add step
+              </button>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setEditOpen(false)}>
+                Cancel
+              </button>
+              <button
+                className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
+                onClick={saveEdit}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

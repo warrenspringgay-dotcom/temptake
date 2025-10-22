@@ -2,21 +2,21 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-
 import {
   LOCATION_PRESETS,
   TARGET_PRESETS,
   TARGET_BY_KEY,
   type TargetPreset,
 } from "@/lib/temp-constants";
+import RoutinePickerModal, { type RoutineRow } from "@/components/RoutinePickerModal";
 
 /* ================== Types ================== */
 type CanonRow = {
   id: string;
-  date: string | null;          // yyyy-mm-dd
+  date: string | null; // yyyy-mm-dd
   staff_initials: string | null;
   location: string | null;
   item: string | null;
@@ -30,10 +30,10 @@ type Props = {
   locations?: string[];
 };
 
+/* ================== Helpers ================== */
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
 
-/* ================== Helpers ================== */
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -62,17 +62,6 @@ function inferStatus(temp: number | null, preset?: TargetPreset): "pass" | "fail
   if (maxC != null && temp > maxC) return "fail";
   return "pass";
 }
-
-async function safeSelect(table: string, select: string) {
-  try {
-    const res = await supabase.from(table).select(select);
-    if (res.error) throw res.error;
-    return res.data ?? [];
-  } catch {
-    return null;
-  }
-}
-
 function normalizeRowsFromFood(data: any[]): CanonRow[] {
   return data.map((r) => {
     const temp =
@@ -96,23 +85,25 @@ function normalizeRowsFromFood(data: any[]): CanonRow[] {
 }
 
 /* ================== Component ================== */
-export default function FoodTempLogger({ initials: initialsSeed, locations: locationsSeed }: Props) {
+export default function FoodTempLogger({
+  initials: initialsSeed = [],
+  locations: locationsSeed = [],
+}: Props) {
+  const search = useSearchParams();
+
   // DATA
   const [rows, setRows] = useState<CanonRow[]>([]);
   const [initials, setInitials] = useState<string[]>(() =>
-    Array.from(new Set([...(initialsSeed ?? [])]))
+    Array.from(new Set([...initialsSeed]))
   );
   const [locations, setLocations] = useState<string[]>(() =>
-    Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS]))
+    Array.from(new Set([...locationsSeed, ...LOCATION_PRESETS]))
   );
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // KPIs
-  const [kpi, setKpi] = useState<{ trainingDue: number; allergenDue: number }>({
-    trainingDue: 0,
-    allergenDue: 0,
-  });
+  // KPIs (training & allergen due)
+  const [kpi, setKpi] = useState({ trainingDue: 0, allergenDue: 0 });
 
   // ENTRY FORM
   const [formOpen, setFormOpen] = useState(true);
@@ -125,8 +116,15 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     temp_c: "",
   });
 
+  // Routine picker
+  const [routineModal, setRoutineModal] = useState(false);
+
   const canSave =
-    !!form.date && !!form.location && !!form.item && !!form.target_key && form.temp_c.trim().length > 0;
+    !!form.date &&
+    !!form.location &&
+    !!form.item &&
+    !!form.target_key &&
+    form.temp_c.trim().length > 0;
 
   /* ---------- prime from localStorage ---------- */
   useEffect(() => {
@@ -166,7 +164,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
             )
             .filter(Boolean) || [];
 
-        const merged = Array.from(new Set([...(initialsSeed ?? []), ...fromDb]));
+        const merged = Array.from(new Set([...initialsSeed, ...fromDb]));
         if (merged.length) setInitials(merged);
         if (!form.staff_initials && merged[0]) {
           setForm((f) => ({ ...f, staff_initials: merged[0] }));
@@ -182,7 +180,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
       try {
         const orgId = await getActiveOrgIdClient();
         if (!orgId) {
-          const base = Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS]));
+          const base = Array.from(new Set([...locationsSeed, ...LOCATION_PRESETS]));
           setLocations(base.length ? base : ["Kitchen"]);
           if (!form.location) setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
           return;
@@ -200,12 +198,12 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
             .filter((s: string) => s.length > 0) || [];
 
         const merged = Array.from(
-          new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS, ...fromAreas])
+          new Set([...locationsSeed, ...LOCATION_PRESETS, ...fromAreas])
         );
         setLocations(merged.length ? merged : ["Kitchen"]);
         if (!form.location) setForm((f) => ({ ...f, location: merged[0] || "Kitchen" }));
       } catch {
-        const base = Array.from(new Set([...(locationsSeed ?? []), ...LOCATION_PRESETS]));
+        const base = Array.from(new Set([...locationsSeed, ...LOCATION_PRESETS]));
         setLocations(base.length ? base : ["Kitchen"]);
         if (!form.location) setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
       }
@@ -213,7 +211,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationsSeed]);
 
-  /* ---------- KPI fetch (org-scoped best-effort) ---------- */
+  /* ---------- KPI fetch (best-effort) ---------- */
   useEffect(() => {
     (async () => {
       try {
@@ -240,7 +238,6 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
         } catch {}
 
         try {
-          // your table is allergen_review (singular) per screenshot
           const { data } = await supabase
             .from("allergen_review")
             .select("last_reviewed,interval_days")
@@ -298,6 +295,44 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
     await loadRows();
   }
 
+  /* ---------- auto-apply routine when arriving with ?r=<routine_id> ---------- */
+  useEffect(() => {
+    const rid = search.get("r");
+    if (!rid) return;
+
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("temp_routine_items")
+          .select("position,location,item,target_key")
+          .eq("routine_id", rid);
+        if (error) throw error;
+
+        const first = (data ?? [])
+          .map((it: any) => ({
+            position: Number(it.position ?? 0),
+            location: it.location ?? "",
+            item: it.item ?? "",
+            target_key: it.target_key ?? "chill",
+          }))
+          .sort((a, b) => a.position - b.position)[0];
+
+        if (first) {
+          setForm((f) => ({
+            ...f,
+            location: first.location || f.location,
+            item: first.item || f.item,
+            target_key: first.target_key || f.target_key,
+          }));
+        }
+      } catch {
+        /* no-op */
+      }
+    })();
+    // run once on mount (query param doesn't change without nav)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ---------- saving one entry (with org_id + status) ---------- */
   async function handleAddQuick() {
     const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
@@ -312,13 +347,13 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
 
     const payload = {
       org_id,
-      at: form.date, // 'YYYY-MM-DD' is fine for timestamptz
+      at: form.date, // YYYY-MM-DD is acceptable for timestamptz
       area: form.location || null,
       note: form.item || null,
       staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
       target_key: form.target_key || null,
       temp_c: tempNum,
-      status, // NOT NULL per your schema
+      status,
     };
 
     const { error } = await supabase.from("food_temp_logs").insert(payload);
@@ -363,12 +398,13 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
       <div className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
         {(() => {
           const todayISO = new Date().toISOString().slice(0, 10);
-          const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-          const within7 = (d: string | null) => (d ? new Date(d) >= sevenDaysAgo : false);
+          const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+          const in7d = (d: string | null) => (d ? new Date(d) >= since : false);
+
           const entriesToday = rows.filter((r) => r.date === todayISO).length;
-          const last7 = rows.filter((r) => within7(r.date)).length;
-          const failures7 = rows.filter((r) => within7(r.date) && r.status === "fail").length;
-          const locations7 = new Set(rows.filter((r) => within7(r.date)).map((r) => r.location || "")).size;
+          const last7 = rows.filter((r) => in7d(r.date)).length;
+          const fails7 = rows.filter((r) => in7d(r.date) && r.status === "fail").length;
+          const loc7 = new Set(rows.filter((r) => in7d(r.date)).map((r) => r.location || "")).size;
 
           return (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -382,17 +418,17 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
               </div>
               <div className="rounded-xl border bg-white p-3">
                 <div className="text-xs text-gray-500">Failures (7d)</div>
-                <div className="text-2xl font-semibold">{failures7}</div>
+                <div className="text-2xl font-semibold">{fails7}</div>
               </div>
               <div className="rounded-xl border bg-white p-3">
                 <div className="text-xs text-gray-500">Locations (7d)</div>
-                <div className="text-2xl font-semibold">{locations7}</div>
+                <div className="text-2xl font-semibold">{loc7}</div>
               </div>
             </div>
           );
         })()}
 
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-wrap gap-2">
           <a
             href="/team"
             className={cls(
@@ -406,6 +442,7 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
               {kpi.trainingDue > 0 ? `${kpi.trainingDue} due` : "OK"}
             </span>
           </a>
+
           <a
             href="/allergens"
             className={cls(
@@ -433,143 +470,165 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">Enter Temperature Log</h2>
           <div className="ml-auto flex items-center gap-2">
-            <Link
-              href="/routines"
+            <button
+              type="button"
+              onClick={() => setRoutineModal(true)}
               className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-              title="Use or manage routines"
+              title="Pick a routine"
             >
               Use routine
-            </Link>
+            </button>
+
             <button
               type="button"
               onClick={() => setFormOpen((v) => !v)}
-              className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="flex items-center gap-1 rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
               title="Hide or show entry form"
+              aria-expanded={formOpen}
             >
-              {formOpen ? "Hide form" : "Show form"}
+              {formOpen ? "Hide" : "Show"}
+              <span className={`transition-transform ${formOpen ? "rotate-180" : ""}`}>▾</span>
             </button>
           </div>
         </div>
 
         {formOpen && (
-          <>
-            <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-6">
-              <div>
-                <label className="mb-1 block text-xs text-gray-500">Date</label>
-                <input
-                  type="date"
-                  value={form.date}
-                  onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
-                  className="h-10 w-full rounded-xl border px-3 py-2"
-                />
-              </div>
-
-              {/* Initials */}
-              <div>
-                <label className="mb-1 block text-xs text-gray-500">Initials</label>
-                <select
-                  value={form.staff_initials}
-                  onChange={(e) => {
-                    const v = e.target.value.toUpperCase();
-                    setForm((f) => ({ ...f, staff_initials: v }));
-                    try { localStorage.setItem(LS_LAST_INITIALS, v); } catch {}
-                  }}
-                  className="h-10 w-full rounded-xl border px-3 py-2 uppercase"
-                >
-                  {!form.staff_initials && initials.length === 0 && (
-                    <option value="" disabled>
-                      Loading initials…
-                    </option>
-                  )}
-                  {initials.map((ini) => (
-                    <option key={ini} value={ini}>
-                      {ini}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Location */}
-              <div>
-                <label className="mb-1 block text-xs text-gray-500">Location</label>
-                <select
-                  value={form.location}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setForm((f) => ({ ...f, location: v }));
-                    try { localStorage.setItem(LS_LAST_LOCATION, v); } catch {}
-                  }}
-                  className="h-10 w-full rounded-xl border px-3 py-2"
-                >
-                  {!form.location && locations.length === 0 && (
-                    <option value="" disabled>
-                      Loading locations…
-                    </option>
-                  )}
-                  {locations.map((loc) => (
-                    <option key={loc} value={loc}>
-                      {loc}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="lg:col-span-2">
-                <label className="mb-1 block text-xs text-gray-500">Item</label>
-                <input
-                  value={form.item}
-                  onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
-                  className="h-10 w-full rounded-xl border px-3 py-2"
-                  placeholder="e.g., Chicken curry"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs text-gray-500">Target</label>
-                <select
-                  value={form.target_key}
-                  onChange={(e) => setForm((f) => ({ ...f, target_key: e.target.value }))}
-                  className="h-10 w-full rounded-xl border px-3 py-2"
-                >
-                  {TARGET_PRESETS.map((p) => (
-                    <option key={p.key} value={p.key}>
-                      {p.label}
-                      {p.minC != null || p.maxC != null
-                        ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
-                        : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs text-gray-500">Temp (°C)</label>
-                <input
-                  value={form.temp_c}
-                  onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
-                  onKeyDown={onTempKeyDown}
-                  className="h-10 w-full rounded-xl border px-3 py-2"
-                  inputMode="decimal"
-                  placeholder="e.g., 5.0"
-                />
-              </div>
-
-              <div className="lg:col-span-6">
-                <button
-                  onClick={handleAddQuick}
-                  disabled={!canSave}
-                  className={cls(
-                    "rounded-2xl px-4 py-2 text-sm font-medium text-white",
-                    canSave ? "bg-black hover:bg-gray-900" : "bg-gray-400"
-                  )}
-                >
-                  Save quick entry
-                </button>
-              </div>
+          <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-6">
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">Date</label>
+              <input
+                type="date"
+                value={form.date}
+                onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+                className="h-10 w-full rounded-xl border px-3 py-2"
+              />
             </div>
-          </>
+
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">Initials</label>
+              <select
+                value={form.staff_initials}
+                onChange={(e) => {
+                  const v = e.target.value.toUpperCase();
+                  setForm((f) => ({ ...f, staff_initials: v }));
+                  try {
+                    localStorage.setItem(LS_LAST_INITIALS, v);
+                  } catch {}
+                }}
+                className="h-10 w-full rounded-xl border px-3 py-2 uppercase"
+              >
+                {!form.staff_initials && initials.length === 0 && (
+                  <option value="" disabled>
+                    Loading initials…
+                  </option>
+                )}
+                {initials.map((ini) => (
+                  <option key={ini} value={ini}>
+                    {ini}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">Location</label>
+              <select
+                value={form.location}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setForm((f) => ({ ...f, location: v }));
+                  try {
+                    localStorage.setItem(LS_LAST_LOCATION, v);
+                  } catch {}
+                }}
+                className="h-10 w-full rounded-xl border px-3 py-2"
+              >
+                {!form.location && locations.length === 0 && (
+                  <option value="" disabled>
+                    Loading locations…
+                  </option>
+                )}
+                {locations.map((loc) => (
+                  <option key={loc} value={loc}>
+                    {loc}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="lg:col-span-2">
+              <label className="mb-1 block text-xs text-gray-500">Item</label>
+              <input
+                value={form.item}
+                onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
+                className="h-10 w-full rounded-xl border px-3 py-2"
+                placeholder="e.g., Chicken curry"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">Target</label>
+              <select
+                value={form.target_key}
+                onChange={(e) => setForm((f) => ({ ...f, target_key: e.target.value }))}
+                className="h-10 w-full rounded-xl border px-3 py-2"
+              >
+                {TARGET_PRESETS.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
+                    {p.minC != null || p.maxC != null
+                      ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
+                      : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">Temp (°C)</label>
+              <input
+                value={form.temp_c}
+                onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
+                onKeyDown={onTempKeyDown}
+                className="h-10 w-full rounded-xl border px-3 py-2"
+                inputMode="decimal"
+                placeholder="e.g., 5.0"
+              />
+            </div>
+
+            <div className="lg:col-span-6">
+              <button
+                onClick={handleAddQuick}
+                disabled={!canSave}
+                className={cls(
+                  "rounded-2xl px-4 py-2 text-sm font-medium text-white",
+                  canSave ? "bg-black hover:bg-gray-900" : "bg-gray-400"
+                )}
+              >
+                Save quick entry
+              </button>
+            </div>
+          </div>
         )}
       </div>
+
+    <RoutinePickerModal
+  open={routineModal}
+  onClose={() => setRoutineModal(false)}
+  onApply={(r) => {
+    const first = (r.items ?? []).slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0))[0];
+    if (first) {
+      setForm((f) => ({
+        ...f,
+        location: first.location ?? f.location,
+        item: first.item ?? f.item,
+        target_key: first.target_key ?? f.target_key,
+      }));
+    }
+    setRoutineModal(false);
+  }}
+/>
+
 
       {/* LOGS TABLE */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
@@ -612,7 +671,9 @@ export default function FoodTempLogger({ initials: initialsSeed, locations: loca
                     </tr>
                     {g.list.map((r) => {
                       const preset: TargetPreset | undefined =
-                        r.target_key ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[r.target_key] : undefined;
+                        r.target_key
+                          ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[r.target_key]
+                          : undefined;
                       const st: "pass" | "fail" | null = r.status ?? inferStatus(r.temp_c, preset);
                       return (
                         <tr key={r.id} className="border-t">

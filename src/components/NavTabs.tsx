@@ -13,7 +13,10 @@ const TABS = [
   { href: "/reports", label: "Reports" },
 ];
 
-export default function NavTabs() {
+
+
+
+export default function NavTabs({ userEmail }: { userEmail?: string }) {
   const pathname = usePathname();
 
   return (

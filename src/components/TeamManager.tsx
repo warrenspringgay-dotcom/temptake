@@ -1,322 +1,426 @@
-// src/app/team/TeamManager.tsx
+// src/components/TeamManager.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
-import { saveTrainingServer } from "@/app/actions/training"; // <-- plural
-import { saveTeamMember, deleteTeamMember, type TeamMemberInput as TeamMemberInputAction } from "@/app/actions/team";
+import { getActiveOrgIdClient } from "@/lib/orgClient";
 
-// ----- Types -----
+/* -------------------- Types -------------------- */
 type Member = {
   id: string;
-  org_id: string;
   initials: string | null;
   name: string;
+  email: string | null;
   role: string | null;
   phone: string | null;
-  email: string | null;
-  notes: string | null;
   active: boolean | null;
-};
-
-// Use the server's input type, but allow UI-only fields like `notes`
-type TeamMemberForm = TeamMemberInputAction & {
   notes?: string | null;
 };
 
-async function getOrgIdClient(): Promise<string | null> {
-  try {
-    const { data: auth } = await supabase.auth.getUser();
-    const uid = auth?.user?.id;
-    if (!uid) return null;
+type Training = {
+  id: string;
+  staff_id: string;
+  type: string | null;
+  certificate_url: string | null;
+  awarded_on: string | null; // yyyy-mm-dd
+  expires_on: string | null; // yyyy-mm-dd
+  notes: string | null;
+};
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id")
-      .eq("id", uid)
-      .maybeSingle();
-    if (prof?.org_id) return prof.org_id as string;
-
-    const { data: uo } = await supabase
-      .from("user_orgs")
-      .select("org_id")
-      .eq("user_id", uid)
-      .maybeSingle();
-    return (uo?.org_id as string) ?? null;
-  } catch {
-    return null;
-  }
+/* -------------------- Helpers -------------------- */
+function cls(...p: Array<string | false | undefined>) {
+  return p.filter(Boolean).join(" ");
+}
+function fmt(iso?: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString();
 }
 
+/* =================================================
+   Component
+================================================= */
 export default function TeamManager() {
-  const [orgId, setOrgId] = useState<string | null>(null);
   const [rows, setRows] = useState<Member[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [orgId, setOrgId] = useState<string | null>(null);
+
+  // search & filtering
   const [q, setQ] = useState("");
 
-  const [modalOpen, setModalOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<TeamMemberForm>({
-    // ensure fields that must be strings are initialized as strings
-    name: "",
-    initials: "",
-    role: "", // <-- always a string for TS + server
-    phone: null,
-    email: null,
-    active: true,
-    training_expires_on: null,
-  });
+  // add/edit member
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState<Member | null>(null);
 
-  // training modal
-  const [trainOpen, setTrainOpen] = useState(false);
-  const [trainFor, setTrainFor] = useState<Member | null>(null);
-  const [trainForm, setTrainForm] = useState({
-    type: "Food Hygiene L2",
-    awarded_on: new Date().toISOString().slice(0, 10),
-    expires_on: "",
-    certificate_url: "",
+  // view card
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewFor, setViewFor] = useState<Member | null>(null);
+
+  // education modal (add a record)
+  const [eduOpen, setEduOpen] = useState(false);
+  const [eduFor, setEduFor] = useState<Member | null>(null);
+  const [eduSaving, setEduSaving] = useState(false);
+  const [eduForm, setEduForm] = useState({
+    course: "",
+    provider: "",
+    certificateUrl: "",
+    completedOn: "",
+    expiryOn: "",
     notes: "",
   });
 
-  useEffect(() => {
-    (async () => setOrgId(await getOrgIdClient()))();
-  }, []);
+  // member's current trainings (for card + small drawer)
+  const [eduList, setEduList] = useState<Training[]>([]);
+  const [eduListLoading, setEduListLoading] = useState(false);
 
+  /* -------------------- Load org + team -------------------- */
   async function load() {
-    if (!orgId) return;
-    const { data, error } = await supabase
-      .from("team_members")
-      .select("*")
-      .eq("org_id", orgId)
-      .order("name");
-    if (error) {
-      alert(error.message);
-      return;
-    }
-    setRows((data as Member[]) ?? []);
-  }
+    setLoading(true);
+    try {
+      const id = await getActiveOrgIdClient();
+      setOrgId(id ?? null);
+      if (!id) {
+        setRows([]);
+        return;
+      }
 
+      const { data, error } = await supabase
+        .from("team_members")
+        .select("id, initials, name, email, role, phone, active, notes")
+        .eq("org_id", id)
+        .order("name", { ascending: true });
+
+      if (error) throw error;
+      setRows((data ?? []) as Member[]);
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to load team.");
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId]);
+  }, []);
 
+  /* -------------------- Derived: filtered -------------------- */
   const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return rows;
+    const term = q.trim().toLowerCase();
+    if (!term) return rows;
     return rows.filter((r) =>
-      [r.initials, r.name, r.role, r.phone, r.email]
+      [r.initials, r.name, r.email, r.role]
         .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(s))
+        .some((s) => (s ?? "").toLowerCase().includes(term))
     );
   }, [rows, q]);
 
+  /* -------------------- CRUD: member -------------------- */
   function openAdd() {
-    setForm({
-      name: "",
+    setEditing({
+      id: "",
       initials: "",
-      role: "", // keep string
-      phone: null,
-      email: null,
+      name: "",
+      email: "",
+      role: "",
+      phone: "",
       active: true,
-      training_expires_on: null,
-      notes: "", // UI-only
+      notes: "",
     });
-    setModalOpen(true);
+    setEditOpen(true);
   }
 
-  function openEdit(r: Member) {
-    setForm({
-      id: r.id,
-      name: r.name ?? "",
-      initials: r.initials ?? "",
-      role: r.role ?? "", // ensure string
-      phone: r.phone ?? null,
-      email: r.email ?? null,
-      active: r.active ?? true,
-      training_expires_on: null, // keep if you actually store this
-      notes: r.notes ?? "", // UI-only
-       // safe to pass along if your action accepts it
-    });
-    setModalOpen(true);
+  function openEdit(m: Member) {
+    setEditing({ ...m });
+    setEditOpen(true);
   }
 
-  async function save() {
+  async function saveMember() {
+    if (!editing) return;
     try {
-      setSaving(true);
+      if (!orgId) return alert("No organisation found.");
+      if (!editing.name.trim()) return alert("Name is required.");
 
-      // Build payload matching the action type EXACTLY (no UI-only fields)
-      const payload: TeamMemberInputAction = {
-        id: form.id,
+      if (editing.id) {
+        const { error } = await supabase
+          .from("team_members")
+          .update({
+            initials: editing.initials?.trim() || null,
+            name: editing.name.trim(),
+            email: editing.email?.trim() || null,
+            role: editing.role?.trim() || null,
+            phone: editing.phone?.trim() || null,
+            notes: editing.notes?.trim() || null,
+            active: editing.active ?? true,
+          })
+          .eq("id", editing.id)
+          .eq("org_id", orgId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("team_members").insert({
+          org_id: orgId,
+          initials: editing.initials?.trim() || null,
+          name: editing.name.trim(),
+          email: editing.email?.trim() || null,
+          role: editing.role?.trim() || null,
+          phone: editing.phone?.trim() || null,
+          notes: editing.notes?.trim() || null,
+          active: true,
+        });
+        if (error) throw error;
+      }
 
-        name: form.name,
-        initials: form.initials,
-        role: form.role ?? "", // <-- coerce to string for the action
-        email: form.email ?? null,
-        phone: form.phone ?? null,
-        active: form.active ?? true,
-        training_expires_on: form.training_expires_on ?? null,
-      };
-
-      await saveTeamMember(payload);
-      setModalOpen(false);
+      setEditOpen(false);
+      setEditing(null);
       await load();
     } catch (e: any) {
-      alert(e?.message || "Save failed");
-    } finally {
-      setSaving(false);
+      alert(e?.message ?? "Save failed.");
     }
   }
 
   async function remove(id: string) {
-    if (!confirm("Delete member?")) return;
+    if (!confirm("Delete this team member?")) return;
     try {
-      await deleteTeamMember(id);
+      const { error } = await supabase.from("team_members").delete().eq("id", id);
+      if (error) throw error;
       await load();
     } catch (e: any) {
-      alert(e?.message || "Delete failed");
+      alert(e?.message ?? "Delete failed.");
     }
   }
 
-  function openTraining(r: Member) {
-    setTrainFor(r);
-    setTrainForm({
-      type: "Food Hygiene L2",
-      awarded_on: new Date().toISOString().slice(0, 10),
-      expires_on: "",
-      certificate_url: "",
+  /* -------------------- View card + trainings -------------------- */
+  async function loadTrainingsFor(staffId: string) {
+    setEduListLoading(true);
+    try {
+      const q = supabase
+        .from("trainings")
+        .select("id, staff_id, type, certificate_url, awarded_on, expires_on, notes")
+        .eq("staff_id", staffId)
+        .order("awarded_on", { ascending: false });
+      const { data, error } = await q;
+      if (error) throw error;
+      setEduList((data ?? []) as Training[]);
+    } catch {
+      setEduList([]);
+    } finally {
+      setEduListLoading(false);
+    }
+  }
+
+  function openCard(m: Member) {
+    setViewFor(m);
+    setViewOpen(true);
+    loadTrainingsFor(m.id);
+  }
+
+  /* -------------------- Education modal (insert) -------------------- */
+  function openEducation(m: Member) {
+    setEduFor(m);
+    setEduForm({
+      course: "",
+      provider: "",
+      certificateUrl: "",
+      completedOn: "",
+      expiryOn: "",
       notes: "",
     });
-    setTrainOpen(true);
+    setEduOpen(true);
   }
 
-  async function saveTraining() {
-    if (!trainFor) return;
+  async function saveEducation() {
+    if (!eduFor) return;
+    if (!eduForm.course.trim()) return;
+
     try {
-      await saveTrainingServer({
-        staffId: trainFor.id, // map team member id as staff
-        staffInitials: trainFor.initials ?? undefined,
-        type: trainForm.type,
-        awarded_on: trainForm.awarded_on,
-        expires_on: trainForm.expires_on || undefined,
-        certificate_url: trainForm.certificate_url || undefined,
-        notes: trainForm.notes || undefined,
-      });
-      setTrainOpen(false);
+      if (!orgId) return alert("No organisation found.");
+      setEduSaving(true);
+
+      const me = (await supabase.auth.getUser()).data.user?.id ?? null;
+
+      const payload: any = {
+        staff_id: eduFor.id, // ✅ FK — must exist in team_members.id
+        type: eduForm.course.trim(),
+        certificate_url: eduForm.certificateUrl.trim() || null,
+        awarded_on: eduForm.completedOn || null,
+        expires_on: eduForm.expiryOn || null,
+        notes: [
+          eduForm.provider && `Provider: ${eduForm.provider}`,
+          eduForm.notes && eduForm.notes,
+        ]
+          .filter(Boolean)
+          .join(" · ") || null,
+        org_id: orgId, // if column exists, harmless if nullable
+        created_by: me, // if column exists, harmless if nullable
+      };
+
+      const { error } = await supabase.from("trainings").insert(payload);
+      if (error) throw error;
+
+      // refresh list on the card
+      await loadTrainingsFor(eduFor.id);
+
+      setEduOpen(false);
     } catch (e: any) {
-      alert(e?.message || "Training save failed");
+      alert(e?.message ?? "Failed to save training.");
+    } finally {
+      setEduSaving(false);
     }
   }
 
+  /* -------------------- Render -------------------- */
   return (
-    <div className="mx-auto max-w-6xl space-y-4 px-4 py-6">
+    <div className="space-y-4 rounded-2xl border bg-white p-4">
       <div className="flex items-center gap-2">
         <h1 className="text-lg font-semibold">Team</h1>
         <div className="ml-auto flex items-center gap-2">
           <input
+            className="h-9 rounded-xl border px-3 text-sm"
+            placeholder="Search…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search…"
-            className="h-9 w-[240px] rounded-xl border px-3 text-sm"
           />
           <button
             onClick={openAdd}
-            className="h-9 rounded-xl bg-black px-3 text-sm font-medium text-white hover:bg-gray-900"
+            className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
           >
             + Add member
           </button>
         </div>
       </div>
 
-      <div className="rounded-2xl border bg-white p-4">
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500">
-                <th className="py-2 pr-3">Initials</th>
-                <th className="py-2 pr-3">Name</th>
-                <th className="py-2 pr-3">Role</th>
-                <th className="py-2 pr-3">Contact</th>
-                <th className="py-2 pr-3">Active</th>
-                <th className="py-2 pr-3">Actions</th>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="text-left text-gray-500">
+              <th className="py-2 pr-3 w-24">Initials</th>
+              <th className="py-2 pr-3">Name</th>
+              <th className="py-2 pr-3 w-40">Role</th>
+              <th className="py-2 pr-3 w-24">Active</th>
+              <th className="py-2 pr-3 w-[210px]">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={5} className="py-6 text-center text-gray-500">
+                  Loading…
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {filtered.length ? (
-                filtered.map((r) => (
-                  <tr key={r.id} className="border-t">
-                    <td className="py-2 pr-3">{r.initials ?? "—"}</td>
-                    <td className="py-2 pr-3">{r.name}</td>
-                    <td className="py-2 pr-3">{r.role ?? "—"}</td>
-                    <td className="py-2 pr-3">
-                      {[r.email, r.phone].filter(Boolean).join(" · ") || "—"}
-                    </td>
-                    <td className="py-2 pr-3">{r.active ? "Yes" : "—"}</td>
-                    <td className="py-2 pr-3">
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => openEdit(r)}
-                          className="rounded-md border px-2 text-xs hover:bg-gray-50"
-                        >
-                          ✏️
-                        </button>
-                        <button
-                          onClick={() => openTraining(r)}
-                          className="rounded-md border px-2 text-xs hover:bg-gray-50"
-                        >
-                          🎓
-                        </button>
-                        <button
-                          onClick={() => remove(r.id)}
-                          className="rounded-md border px-2 text-xs hover:bg-gray-50"
-                        >
-                          🗑️
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="py-6 text-center text-gray-500">
-                    No team members yet.
+            ) : filtered.length ? (
+              filtered.map((r) => (
+                <tr key={r.id} className="border-t">
+                  <td className="py-2 pr-3">{r.initials ?? "—"}</td>
+                  <td className="py-2 pr-3">
+                    <button
+                      className="text-blue-600 underline hover:text-blue-700"
+                      onClick={() => openCard(r)}
+                      title="Open card"
+                    >
+                      {r.name}
+                    </button>
+                  </td>
+                  <td className="py-2 pr-3">{r.role ?? "—"}</td>
+                  <td className="py-2 pr-3">{r.active ? "Yes" : "No"}</td>
+                  <td className="py-2 pr-3">
+                    <div className="flex gap-2">
+                      {/* View */}
+                      <button
+                        title="View card"
+                        onClick={() => openCard(r)}
+                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
+                      >
+                        👁️
+                      </button>
+                      {/* Edit */}
+                      <button
+                        title="Edit"
+                        onClick={() => openEdit(r)}
+                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
+                      >
+                        ✏️
+                      </button>
+                      {/* Education */}
+                      <button
+                        title="Education"
+                        onClick={() => openEducation(r)}
+                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
+                      >
+                        🎓
+                      </button>
+                      {/* Delete */}
+                      <button
+                        title="Delete"
+                        onClick={() => remove(r.id)}
+                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
+                      >
+                        🗑️
+                      </button>
+                    </div>
                   </td>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={5} className="py-6 text-center text-gray-500">
+                  No team members yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
-      {/* Member modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setModalOpen(false)}>
+      {/* -------- Edit / Add modal -------- */}
+      {editOpen && editing && (
+        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEditOpen(false)}>
           <div
-            className="mx-auto mt-16 w-full max-w-2xl rounded-2xl border bg-white p-4"
+            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">{form.id ? "Edit member" : "Add member"}</div>
-              <button onClick={() => setModalOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
+              <div className="text-base font-semibold">
+                {editing.id ? "Edit member" : "Add member"}
+              </div>
+              <button onClick={() => setEditOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
                 ✕
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-3">
+            <div className="grid gap-3">
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="mb-1 block text-xs text-gray-500">Initials</label>
                   <input
-                    value={form.initials ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, initials: e.target.value.toUpperCase() }))}
-                    className="h-10 w-full rounded-xl border px-3 uppercase"
+                    className="h-10 w-full rounded-xl border px-3"
+                    value={editing.initials ?? ""}
+                    onChange={(e) => setEditing({ ...editing, initials: e.target.value })}
                   />
                 </div>
                 <div className="col-span-2">
                   <label className="mb-1 block text-xs text-gray-500">Name *</label>
                   <input
-                    value={form.name}
-                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                     className="h-10 w-full rounded-xl border px-3"
+                    value={editing.name}
+                    onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Email</label>
+                  <input
+                    className="h-10 w-full rounded-xl border px-3"
+                    value={editing.email ?? ""}
+                    onChange={(e) => setEditing({ ...editing, email: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Phone</label>
+                  <input
+                    className="h-10 w-full rounded-xl border px-3"
+                    value={editing.phone ?? ""}
+                    onChange={(e) => setEditing({ ...editing, phone: e.target.value })}
                   />
                 </div>
               </div>
@@ -325,62 +429,39 @@ export default function TeamManager() {
                 <div>
                   <label className="mb-1 block text-xs text-gray-500">Role</label>
                   <input
-                    value={form.role ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
                     className="h-10 w-full rounded-xl border px-3"
+                    value={editing.role ?? ""}
+                    onChange={(e) => setEditing({ ...editing, role: e.target.value })}
                   />
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs text-gray-500">Email</label>
+                <label className="mt-6 flex items-center gap-2 text-sm">
                   <input
-                    value={form.email ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                    className="h-10 w-full rounded-xl border px-3"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-gray-500">Phone</label>
-                  <input
-                    value={form.phone ?? ""}
-                    onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                    className="h-10 w-full rounded-xl border px-3"
-                  />
-                </div>
-                <div className="flex items-center gap-3 pt-6">
-                  <input
-                    id="tm-active"
                     type="checkbox"
-                    checked={!!form.active}
-                    onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))}
+                    checked={!!editing.active}
+                    onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
                   />
-                  <label htmlFor="tm-active" className="text-sm">
-                    Active
-                  </label>
-                </div>
+                  Active
+                </label>
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-gray-500">Notes (UI-only)</label>
-                <input
-                  value={form.notes ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-                  className="h-10 w-full rounded-xl border px-3"
+                <label className="mb-1 block text-xs text-gray-500">Notes</label>
+                <textarea
+                  className="min-h-[80px] w-full rounded-xl border px-3 py-2"
+                  value={editing.notes ?? ""}
+                  onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button onClick={() => setModalOpen(false)} className="rounded-xl border px-4 py-2 text-sm">
+              <div className="flex justify-end gap-2 pt-1">
+                <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setEditOpen(false)}>
                   Cancel
                 </button>
                 <button
-                  onClick={save}
-                  disabled={saving}
-                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-60"
+                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
+                  onClick={saveMember}
                 >
-                  {saving ? "Saving…" : "Save"}
+                  Save
                 </button>
               </div>
             </div>
@@ -388,78 +469,167 @@ export default function TeamManager() {
         </div>
       )}
 
-      {/* Training modal */}
-      {trainOpen && trainFor && (
-        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setTrainOpen(false)}>
+      {/* -------- Business card modal (Supplier look) -------- */}
+      {viewOpen && viewFor && (
+        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
           <div
-            className="mx-auto mt-20 w-full max-w-xl rounded-2xl border bg-white p-4"
+            className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-2xl border bg-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-slate-800 px-4 py-3 text-white">
+              <div className="text-sm opacity-80">Team member</div>
+              <div className="text-xl font-semibold">{viewFor.name}</div>
+              <div className="opacity-80">
+                {viewFor.active ? "Active" : "Inactive"}
+              </div>
+            </div>
+
+            <div className="p-4 space-y-2 text-sm">
+              <div><span className="font-medium">Initials:</span> {viewFor.initials ?? "—"}</div>
+              <div><span className="font-medium">Role:</span> {viewFor.role ?? "—"}</div>
+              <div><span className="font-medium">Email:</span> {viewFor.email ?? "—"}</div>
+              <div><span className="font-medium">Phone:</span> {viewFor.phone ?? "—"}</div>
+              <div><span className="font-medium">Notes:</span> {viewFor.notes ?? "—"}</div>
+
+              <div className="mt-3">
+                <div className="mb-1 font-medium">Education</div>
+                {eduListLoading ? (
+                  <div className="text-gray-500">Loading…</div>
+                ) : eduList.length ? (
+                  <ul className="list-disc pl-5 space-y-1">
+                    {eduList.map((t) => (
+                      <li key={t.id}>
+                        <span className="font-medium">{t.type ?? "Course"}</span>{" "}
+                        {t.certificate_url && (
+                          <a
+                            className="text-blue-600 underline"
+                            href={t.certificate_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            (certificate)
+                          </a>
+                        )}
+                        <div className="text-xs text-gray-600">
+                          Awarded: {fmt(t.awarded_on)} · Expires: {fmt(t.expires_on)}
+                          {t.notes ? ` · ${t.notes}` : ""}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="text-gray-500">No education records.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t bg-gray-50 p-3">
+              <button
+                onClick={() => {
+                  setViewOpen(false);
+                  openEducation(viewFor);
+                }}
+                className="rounded-md border px-3 py-1.5 text-sm hover:bg-white"
+              >
+                Add education
+              </button>
+              <button
+                onClick={() => setViewOpen(false)}
+                className="rounded-md bg-white px-3 py-1.5 text-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* -------- Education modal -------- */}
+      {eduOpen && eduFor && (
+        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEduOpen(false)}>
+          <div
+            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">Add training · {trainFor.name}</div>
-              <button onClick={() => setTrainOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
+              <div className="text-base font-semibold">Education · {eduFor.name}</div>
+              <button onClick={() => setEduOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
                 ✕
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-3">
+            <div className="grid gap-3">
               <div>
-                <label className="mb-1 block text-xs text-gray-500">Type</label>
+                <label className="mb-1 block text-xs text-gray-500">Course / Type *</label>
                 <input
-                  value={trainForm.type}
-                  onChange={(e) => setTrainForm((f) => ({ ...f, type: e.target.value }))}
                   className="h-10 w-full rounded-xl border px-3"
+                  value={eduForm.course}
+                  onChange={(e) => setEduForm((f) => ({ ...f, course: e.target.value }))}
+                  placeholder="e.g., Food Hygiene L2"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">Awarded on</label>
+                  <label className="mb-1 block text-xs text-gray-500">Provider</label>
                   <input
-                    type="date"
-                    value={trainForm.awarded_on}
-                    onChange={(e) => setTrainForm((f) => ({ ...f, awarded_on: e.target.value }))}
                     className="h-10 w-full rounded-xl border px-3"
+                    value={eduForm.provider}
+                    onChange={(e) => setEduForm((f) => ({ ...f, provider: e.target.value }))}
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">Expires on (optional)</label>
+                  <label className="mb-1 block text-xs text-gray-500">Certificate URL / ID</label>
                   <input
-                    type="date"
-                    value={trainForm.expires_on}
-                    onChange={(e) => setTrainForm((f) => ({ ...f, expires_on: e.target.value }))}
                     className="h-10 w-full rounded-xl border px-3"
+                    value={eduForm.certificateUrl}
+                    onChange={(e) => setEduForm((f) => ({ ...f, certificateUrl: e.target.value }))}
+                    placeholder="Link or reference"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="mb-1 block text-xs text-gray-500">Certificate URL (optional)</label>
-                <input
-                  value={trainForm.certificate_url}
-                  onChange={(e) => setTrainForm((f) => ({ ...f, certificate_url: e.target.value }))}
-                  className="h-10 w-full rounded-xl border px-3"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Completed on</label>
+                  <input
+                    type="date"
+                    className="h-10 w-full rounded-xl border px-3"
+                    value={eduForm.completedOn}
+                    onChange={(e) => setEduForm((f) => ({ ...f, completedOn: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Expiry date</label>
+                  <input
+                    type="date"
+                    className="h-10 w-full rounded-xl border px-3"
+                    value={eduForm.expiryOn}
+                    onChange={(e) => setEduForm((f) => ({ ...f, expiryOn: e.target.value }))}
+                  />
+                </div>
               </div>
 
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Notes</label>
-                <input
-                  value={trainForm.notes}
-                  onChange={(e) => setTrainForm((f) => ({ ...f, notes: e.target.value }))}
-                  className="h-10 w-full rounded-xl border px-3"
+                <textarea
+                  className="min-h-[90px] w-full rounded-xl border px-3 py-2"
+                  value={eduForm.notes}
+                  onChange={(e) => setEduForm((f) => ({ ...f, notes: e.target.value }))}
+                  placeholder="Any extra info…"
                 />
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button onClick={() => setTrainOpen(false)} className="rounded-xl border px-4 py-2 text-sm">
+                <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setEduOpen(false)}>
                   Cancel
                 </button>
                 <button
-                  onClick={saveTraining}
-                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
+                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-60"
+                  disabled={eduSaving || !eduForm.course.trim()}
+                  onClick={saveEducation}
                 >
-                  Save training
+                  {eduSaving ? "Saving…" : "Save"}
                 </button>
               </div>
             </div>

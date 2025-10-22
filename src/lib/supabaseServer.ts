@@ -1,41 +1,40 @@
 // src/lib/supabaseServer.ts
-import "server-only";
-
 import { cookies } from "next/headers";
-import {
-  createServerClient as createSupabaseServerClient,
-  type CookieOptions,
-} from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-/**
- * Create a Supabase server client bound to Next.js cookies.
- * Note: In your Next version, cookies() is async → this function is async too.
- */
-export async function createServerClient() {
-  // In some Next versions cookies() is sync, in others it's a Promise.
-  // This works for both:
-  const cookieStore = await Promise.resolve(cookies() as any);
+const URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-  return createSupabaseServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options?: CookieOptions) {
-          cookieStore.set({ name, value, ...options });
-        },
-        remove(name: string, options?: CookieOptions) {
-          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
-        },
+/** Use inside Server Components / loaders (cannot modify cookies) */
+export async function getServerSupabase() {
+  const store = await cookies(); // OK to read in SC
+  return createServerClient(URL, KEY, {
+    cookies: {
+      get(name: string) {
+        return store.get(name)?.value;
       },
-    }
-  );
+      // NO-OP writers so nothing tries to change cookies in SC
+      set(_n: string, _v: string, _o?: CookieOptions) {},
+      remove(_n: string, _o?: CookieOptions) {},
+    },
+  });
 }
 
-/** Back-compat helper many server actions already await */
-export async function getServerSupabase() {
-  return createServerClient();
+/** Use only inside "use server" actions or route handlers (can modify cookies) */
+export async function getServerSupabaseAction() {
+  const store = await cookies(); // In a Server Action this is writable
+  return createServerClient(URL, KEY, {
+    cookies: {
+      get(name: string) {
+        return store.get(name)?.value;
+      },
+      set(name: string, value: string, options?: CookieOptions) {
+        // Allowed *only* in Server Actions / Route Handlers
+        store.set({ name, value, ...options });
+      },
+      remove(name: string, options?: CookieOptions) {
+        store.set({ name, value: "", ...options, maxAge: 0 });
+      },
+    },
+  });
 }
