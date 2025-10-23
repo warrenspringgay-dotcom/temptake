@@ -12,7 +12,7 @@ import {
   type TargetPreset,
 } from "@/lib/temp-constants";
 import RoutinePickerModal, { type RoutineRow } from "@/components/RoutinePickerModal";
-
+import RoutineRunModal from "@/components/RoutineRunModal";
 /* ================== Types ================== */
 type CanonRow = {
   id: string;
@@ -90,6 +90,9 @@ export default function FoodTempLogger({
   locations: locationsSeed = [],
 }: Props) {
   const search = useSearchParams();
+
+const [showPicker, setShowPicker] = useState(false);
+const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
 
   // DATA
   const [rows, setRows] = useState<CanonRow[]>([]);
@@ -470,14 +473,14 @@ export default function FoodTempLogger({
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">Enter Temperature Log</h2>
           <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setRoutineModal(true)}
-              className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-              title="Pick a routine"
-            >
-              Use routine
-            </button>
+           <button
+  type="button"
+  onClick={() => setShowPicker(true)}
+  className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+  title="Pick a routine"
+>
+  Use routine
+</button>
 
             <button
               type="button"
@@ -628,7 +631,20 @@ export default function FoodTempLogger({
     setRoutineModal(false);
   }}
 />
+<RoutinePickerModal
+  open={showPicker}
+  onClose={()=>setShowPicker(false)}
+  onPick={(r) => { setShowPicker(false); setRunRoutine(r); }}
+/>
 
+<RoutineRunModal
+  open={!!runRoutine}
+  routine={runRoutine}
+  defaultDate={form.date}
+  defaultInitials={form.staff_initials}
+  onClose={()=>setRunRoutine(null)}
+  onSaved={refreshRows}
+/>
 
       {/* LOGS TABLE */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">

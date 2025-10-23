@@ -7,7 +7,7 @@ import { getActiveOrgIdClient } from "@/lib/orgClient";
 type SupplierRow = {
   id: string;
   name: string;
-  contact_name: string | null;
+  contact: string | null;
   phone: string | null;
   email: string | null;
   categories: string | null;
@@ -31,7 +31,7 @@ export default function SuppliersManager() {
   const [addOpen, setAddOpen] = useState(false);
   const [adding, setAdding] = useState({
     name: "",
-    contact_name: "",
+    contact: "",
     phone: "",
     email: "",
     categories: "",
@@ -49,7 +49,7 @@ export default function SuppliersManager() {
       }
       const { data, error } = await supabase
         .from("suppliers")
-        .select("id,name,contact_name,phone,email,categories,notes,active")
+        .select("id,name,contact,phone,email,categories,notes,active")
         .eq("org_id", orgId)
         .order("name");
       if (error) throw error;
@@ -66,7 +66,7 @@ export default function SuppliersManager() {
     const term = q.trim().toLowerCase();
     if (!term) return rows;
     return rows.filter((r) =>
-      [r.name, r.contact_name, r.email, r.phone, r.categories]
+      [r.name, r.contact, r.email, r.phone, r.categories]
         .filter(Boolean)
         .some((s) => s!.toLowerCase().includes(term))
     );
@@ -85,7 +85,7 @@ export default function SuppliersManager() {
       .from("suppliers")
       .update({
         name: editing.name,
-        contact_name: editing.contact_name,
+        contact: editing.contact,
         phone: editing.phone,
         email: editing.email,
         categories: editing.categories,
@@ -105,7 +105,7 @@ export default function SuppliersManager() {
     const { error } = await supabase.from("suppliers").insert({
       org_id: orgId,
       name: adding.name.trim(),
-      contact_name: adding.contact_name || null,
+      contact: adding.contact || null,
       phone: adding.phone || null,
       email: adding.email || null,
       categories: adding.categories || null,
@@ -116,7 +116,7 @@ export default function SuppliersManager() {
     setAddOpen(false);
     setAdding({
       name: "",
-      contact_name: "",
+      contact: "",
       phone: "",
       email: "",
       categories: "",
@@ -197,7 +197,7 @@ export default function SuppliersManager() {
                       {r.name}
                     </button>
                   </td>
-                  <td className="py-2 pr-3">{r.contact_name || "—"}</td>
+                  <td className="py-2 pr-3">{r.contact || "—"}</td>
                   <td className="py-2 pr-3">{r.phone || "—"}</td>
                   <td className="py-2 pr-3">{r.email || "—"}</td>
                   <td className="py-2 pr-3">{r.categories || "—"}</td>
@@ -258,7 +258,7 @@ export default function SuppliersManager() {
             <div className="space-y-3 p-4 text-sm">
               <div>
                 <span className="font-medium">Contact:</span>{" "}
-                {viewing.contact_name || "—"}
+                {viewing.contact || "—"}
               </div>
               <div>
                 <span className="font-medium">Phone:</span>{" "}
@@ -320,9 +320,9 @@ export default function SuppliersManager() {
               <input
                 className="h-10 w-full rounded-xl border px-3"
                 placeholder="Contact"
-                value={editing.contact_name ?? ""}
+                value={editing.contact ?? ""}
                 onChange={(e) =>
-                  setEditing((s) => ({ ...s!, contact_name: e.target.value }))
+                  setEditing((s) => ({ ...s!, contact: e.target.value }))
                 }
               />
               <div className="grid grid-cols-2 gap-3">
@@ -421,9 +421,9 @@ export default function SuppliersManager() {
               <input
                 className="h-10 w-full rounded-xl border px-3"
                 placeholder="Contact"
-                value={adding.contact_name}
+                value={adding.contact}
                 onChange={(e) =>
-                  setAdding((s) => ({ ...s, contact_name: e.target.value }))
+                  setAdding((s) => ({ ...s, contact: e.target.value }))
                 }
               />
               <div className="grid grid-cols-2 gap-3">

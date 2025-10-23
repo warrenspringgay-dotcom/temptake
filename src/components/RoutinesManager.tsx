@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
-
+import RoutineRunModal from "@/components/RoutineRunModal";
 type RoutineItem = {
   id?: string;
   routine_id?: string;
@@ -33,6 +33,9 @@ export default function RoutineManager() {
 
   // search
   const [q, setQ] = useState("");
+
+const [runnerOpen, setRunnerOpen] = useState(false);
+const [runnerRoutine, setRunnerRoutine] = useState<RoutineRow|null>(null);
 
   // add quick
   const [newName, setNewName] = useState("");
@@ -281,7 +284,21 @@ export default function RoutineManager() {
           </tbody>
         </table>
       </div>
+<button
+  className="rounded-lg border px-2 py-1 text-xs hover:bg-gray-50"
+  onClick={() => { setRunnerRoutine(r); setRunnerOpen(true); }}
+>
+  Use
+</button>
 
+// modal
+<RoutineRunModal
+  open={runnerOpen}
+  routine={runnerRoutine}
+  defaultDate={new Date().toISOString().slice(0,10)}
+  defaultInitials={""}
+  onClose={() => { setRunnerOpen(false); setRunnerRoutine(null); }}
+/>
       {/* ===== view card (supplier-style) ===== */}
       {viewOpen && viewing && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>

@@ -13,6 +13,20 @@ const TABS = [
   { href: "/reports", label: "Reports" },
 ];
 
+function errToText(e: any): string {
+  try {
+    if (!e) return "Unknown error";
+    if (typeof e === "string") return e;
+    // Supabase/PostgREST errors often have these fields:
+    if (e.message) return e.message;
+    if (e.error?.message) return e.error.message;
+    if (e.data?.message) return e.data.message;
+    const s = JSON.stringify(e);
+    return s === "{}" ? String(e) : s;
+  } catch {
+    return "Unknown error";
+  }
+}
 
 
 
