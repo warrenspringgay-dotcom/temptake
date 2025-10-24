@@ -8,9 +8,11 @@ const TABS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/routines", label: "Routines" },
   { href: "/allergens", label: "Allergens" },
+  { href: "/cleaning-rota", label: "Cleaning Rota" },
   { href: "/team", label: "Team" },
   { href: "/suppliers", label: "Suppliers" },
   { href: "/reports", label: "Reports" },
+  
 ];
 
 function errToText(e: any): string {

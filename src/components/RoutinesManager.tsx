@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
-import RoutineRunModal from "@/components/RoutineRunModal";
+
 type RoutineItem = {
   id?: string;
   routine_id?: string;
@@ -33,9 +33,6 @@ export default function RoutineManager() {
 
   // search
   const [q, setQ] = useState("");
-
-const [runnerOpen, setRunnerOpen] = useState(false);
-const [runnerRoutine, setRunnerRoutine] = useState<RoutineRow|null>(null);
 
   // add quick
   const [newName, setNewName] = useState("");
@@ -101,6 +98,8 @@ const [runnerRoutine, setRunnerRoutine] = useState<RoutineRow|null>(null);
           items: (grouped.get(r.id) ?? []).sort((a, b) => a.position - b.position),
         }))
       );
+    } catch (e) {
+      setRows([]);
     } finally {
       setLoading(false);
     }
@@ -129,11 +128,9 @@ const [runnerRoutine, setRunnerRoutine] = useState<RoutineRow|null>(null);
     setViewing(null);
     await refresh();
     // open edit to add steps quickly
-    const r = (await supabase
-      .from("temp_routines")
-      .select("id,name,active")
-      .eq("id", created!.id)
-      .single()).data!;
+    const r = (
+      await supabase.from("temp_routines").select("id,name,active").eq("id", created!.id).single()
+    ).data!;
     setEditing({ id: r.id, name: r.name, active: true, items: [] });
     setEditOpen(true);
   }
@@ -224,7 +221,7 @@ const [runnerRoutine, setRunnerRoutine] = useState<RoutineRow|null>(null);
             <tr className="text-left text-gray-500">
               <th className="py-2 pr-3">Name</th>
               <th className="py-2 pr-3 w-24">Items</th>
-              <th className="py-2 pr-3 w-[160px]">Actions</th>
+              <th className="py-2 pr-3 w-[200px]">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -248,7 +245,7 @@ const [runnerRoutine, setRunnerRoutine] = useState<RoutineRow|null>(null);
                   </td>
                   <td className="py-2 pr-3">{r.items.length}</td>
                   <td className="py-2 pr-3">
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <button
                         className="rounded-md border px-2 text-xs hover:bg-gray-50"
                         title="View"
@@ -256,6 +253,13 @@ const [runnerRoutine, setRunnerRoutine] = useState<RoutineRow|null>(null);
                       >
                         👁️
                       </button>
+                      <a
+                        href={`/dashboard?run=${encodeURIComponent(r.id)}`}
+                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
+                        title="Use routine"
+                      >
+                        ▶️ Use
+                      </a>
                       <button
                         className="rounded-md border px-2 text-xs hover:bg-gray-50"
                         title="Edit"
@@ -284,21 +288,7 @@ const [runnerRoutine, setRunnerRoutine] = useState<RoutineRow|null>(null);
           </tbody>
         </table>
       </div>
-<button
-  className="rounded-lg border px-2 py-1 text-xs hover:bg-gray-50"
-  onClick={() => { setRunnerRoutine(r); setRunnerOpen(true); }}
->
-  Use
-</button>
 
-// modal
-<RoutineRunModal
-  open={runnerOpen}
-  routine={runnerRoutine}
-  defaultDate={new Date().toISOString().slice(0,10)}
-  defaultInitials={""}
-  onClose={() => { setRunnerOpen(false); setRunnerRoutine(null); }}
-/>
       {/* ===== view card (supplier-style) ===== */}
       {viewOpen && viewing && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
@@ -331,22 +321,13 @@ const [runnerRoutine, setRunnerRoutine] = useState<RoutineRow|null>(null);
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t bg-gray-50 p-3">
+              {/* Only render link when viewing is set (it is, in this modal) */}
               <a
-                href={`/dashboard?r=${encodeURIComponent(viewing.id)}`}
+                href={`/dashboard?run=${encodeURIComponent(viewing.id)}`}
                 className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
-                title="Load into logger"
               >
                 Use routine
               </a>
-              <button
-                className="rounded-md border px-3 py-1.5 text-sm hover:bg-white"
-                onClick={() => {
-                  setViewOpen(false);
-                  openEdit(viewing);
-                }}
-              >
-                Edit
-              </button>
               <button className="rounded-md bg-white px-3 py-1.5 text-sm" onClick={() => setViewOpen(false)}>
                 Close
               </button>
@@ -453,7 +434,12 @@ const [runnerRoutine, setRunnerRoutine] = useState<RoutineRow|null>(null);
                     ...editing,
                     items: [
                       ...editing.items,
-                      { position: (editing.items.at(-1)?.position ?? 0) + 1, location: "", item: "", target_key: "chill" },
+                      {
+                        position: (editing.items.at(-1)?.position ?? 0) + 1,
+                        location: "",
+                        item: "",
+                        target_key: "chill",
+                      },
                     ],
                   })
                 }

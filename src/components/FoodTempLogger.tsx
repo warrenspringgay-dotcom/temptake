@@ -1,4 +1,3 @@
-// src/components/FoodTempLogger.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -13,6 +12,7 @@ import {
 } from "@/lib/temp-constants";
 import RoutinePickerModal, { type RoutineRow } from "@/components/RoutinePickerModal";
 import RoutineRunModal from "@/components/RoutineRunModal";
+
 /* ================== Types ================== */
 type CanonRow = {
   id: string;
@@ -52,7 +52,7 @@ function toISODate(val: any): string | null {
 function formatDDMMYYYY(iso: string | null) {
   if (!iso) return "—";
   const [y, m, d] = iso.split("-");
-  if (!y || !m || !d) return iso;
+  if (!y || !m || !d) return iso!;
   return `${d}/${m}/${y}`;
 }
 function inferStatus(temp: number | null, preset?: TargetPreset): "pass" | "fail" | null {
@@ -91,8 +91,9 @@ export default function FoodTempLogger({
 }: Props) {
   const search = useSearchParams();
 
-const [showPicker, setShowPicker] = useState(false);
-const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
+  // NEW: state must be inside the component
+  const [showPicker, setShowPicker] = useState(false);
+  const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
 
   // DATA
   const [rows, setRows] = useState<CanonRow[]>([]);
@@ -118,9 +119,6 @@ const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
     target_key: (TARGET_PRESETS[0]?.key as string) ?? "chill",
     temp_c: "",
   });
-
-  // Routine picker
-  const [routineModal, setRoutineModal] = useState(false);
 
   const canSave =
     !!form.date &&
@@ -298,7 +296,7 @@ const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
     await loadRows();
   }
 
-  /* ---------- auto-apply routine when arriving with ?r=<routine_id> ---------- */
+  /* ---------- Prefill first item via ?r= (old behaviour) ---------- */
   useEffect(() => {
     const rid = search.get("r");
     if (!rid) return;
@@ -328,11 +326,53 @@ const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
             target_key: first.target_key || f.target_key,
           }));
         }
+      } catch {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---------- NEW: open full Run modal via ?run=<routine_id> ---------- */
+  useEffect(() => {
+    const runId = search.get("run");
+    if (!runId) return;
+
+    (async () => {
+      try {
+        const { data: r, error: rErr } = await supabase
+          .from("temp_routines")
+          .select("id,name,active,last_used_at")
+          .eq("id", runId)
+          .maybeSingle();
+        if (rErr || !r) return;
+
+        const { data: items } = await supabase
+          .from("temp_routine_items")
+          .select("id,routine_id,position,location,item,target_key")
+          .eq("routine_id", r.id);
+
+        const routine: RoutineRow = {
+          id: r.id,
+          name: r.name,
+          active: r.active ?? true,
+          last_used_at: r.last_used_at ?? null,
+          items:
+            (items ?? [])
+              .map((it: any) => ({
+                id: it.id,
+                routine_id: it.routine_id,
+                position: Number(it.position ?? 0),
+                location: it.location ?? null,
+                item: it.item ?? null,
+                target_key: it.target_key ?? "chill",
+              }))
+              .sort((a, b) => a.position - b.position),
+        };
+
+        setRunRoutine(routine); // opens modal
       } catch {
-        /* no-op */
+        /* ignore */
       }
     })();
-    // run once on mount (query param doesn't change without nav)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -473,14 +513,14 @@ const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">Enter Temperature Log</h2>
           <div className="ml-auto flex items-center gap-2">
-           <button
-  type="button"
-  onClick={() => setShowPicker(true)}
-  className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-  title="Pick a routine"
->
-  Use routine
-</button>
+            <button
+              type="button"
+              onClick={() => setShowPicker(true)}
+              className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+              title="Pick a routine"
+            >
+              Use routine
+            </button>
 
             <button
               type="button"
@@ -615,36 +655,30 @@ const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
         )}
       </div>
 
-    <RoutinePickerModal
-  open={routineModal}
-  onClose={() => setRoutineModal(false)}
-  onApply={(r) => {
-    const first = (r.items ?? []).slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0))[0];
-    if (first) {
-      setForm((f) => ({
-        ...f,
-        location: first.location ?? f.location,
-        item: first.item ?? f.item,
-        target_key: first.target_key ?? f.target_key,
-      }));
-    }
-    setRoutineModal(false);
-  }}
-/>
-<RoutinePickerModal
-  open={showPicker}
-  onClose={()=>setShowPicker(false)}
-  onPick={(r) => { setShowPicker(false); setRunRoutine(r); }}
-/>
+      {/* Routine selector (shows list of routines) */}
+      <RoutinePickerModal
+        open={showPicker}
+        onClose={() => setShowPicker(false)}
+        // support either prop name from your component:
+        onPick={(r: RoutineRow) => {
+          setShowPicker(false);
+          setRunRoutine(r);
+        }}
+        onApply={(r: RoutineRow) => {
+          setShowPicker(false);
+          setRunRoutine(r);
+        }}
+      />
 
-<RoutineRunModal
-  open={!!runRoutine}
-  routine={runRoutine}
-  defaultDate={form.date}
-  defaultInitials={form.staff_initials}
-  onClose={()=>setRunRoutine(null)}
-  onSaved={refreshRows}
-/>
+      {/* Full run modal for a selected routine */}
+      <RoutineRunModal
+        open={!!runRoutine}
+        routine={runRoutine}
+        defaultDate={form.date}
+        defaultInitials={form.staff_initials}
+        onClose={() => setRunRoutine(null)}
+        onSaved={refreshRows}
+      />
 
       {/* LOGS TABLE */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">

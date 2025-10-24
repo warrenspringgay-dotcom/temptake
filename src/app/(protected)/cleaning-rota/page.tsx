@@ -1,4 +1,4 @@
-import CleaningRota from "@/components/CleaningRota";
+import CleaningRota from "@/components/Cleaning-Rota";
 
 export default function Page() {
   return (
