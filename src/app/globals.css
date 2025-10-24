@@ -45,3 +45,15 @@
   table td, table th { padding-top: .4rem; padding-bottom: .4rem; }
   input, select, button { height: 2.25rem; font-size: .875rem; }
 }
+
+/* Smooth horizontal scrollbar for wide tables */
+::-webkit-scrollbar {
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1; /* Tailwind gray-300 */
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8; /* Tailwind gray-400 */
+}

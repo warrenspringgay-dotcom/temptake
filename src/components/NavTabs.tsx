@@ -12,27 +12,9 @@ const TABS = [
   { href: "/team", label: "Team" },
   { href: "/suppliers", label: "Suppliers" },
   { href: "/reports", label: "Reports" },
-  
 ];
 
-function errToText(e: any): string {
-  try {
-    if (!e) return "Unknown error";
-    if (typeof e === "string") return e;
-    // Supabase/PostgREST errors often have these fields:
-    if (e.message) return e.message;
-    if (e.error?.message) return e.error.message;
-    if (e.data?.message) return e.data.message;
-    const s = JSON.stringify(e);
-    return s === "{}" ? String(e) : s;
-  } catch {
-    return "Unknown error";
-  }
-}
-
-
-
-export default function NavTabs({ userEmail }: { userEmail?: string }) {
+export default function NavTabs() {
   const pathname = usePathname();
 
   return (

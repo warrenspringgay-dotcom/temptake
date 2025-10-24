@@ -391,12 +391,12 @@ export default function AllergenManager() {
       <div className="mb-2 text-sm font-semibold">Allergen matrix</div>
 
       {/* Desktop/tablet table */}
-      <div className="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
-        <table className="min-w-[940px] w-full text-sm">
+      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
+        <table className="min-w-[500px] w-full text-sm">
           <thead className="bg-gray-50">
             <tr className="text-left text-gray-600">
-              <th className="px-3 py-2 font-medium">Item</th>
-              <th className="px-3 py-2 font-medium">Category</th>
+              <th className="px-2 py-2 font-medium">Item</th>
+              <th className="px-2 py-2 font-medium">Category</th>
               {ALLERGENS.map((a) => (
                 <th
                   key={a.key}

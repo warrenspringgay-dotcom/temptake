@@ -17,10 +17,19 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body>
-        {/* example header using user */}
         <header className="border-b">
-          <div className="mx-auto max-w-5xl px-4 h-12 flex items-center gap-3">
-            <Link href="/" className="font-semibold">TempTake</Link>
+          {/* WIDTH CHANGED HERE */}
+          <div className="mx-auto max-w-[1200px] px-4 h-12 flex items-center gap-3">
+            <Link href="/" className="flex items-center gap-2">
+              <Image
+                src="/logo.png"
+                alt="TempTake"
+                width={24}
+                height={24}
+                priority
+              />
+              <span className="font-semibold">TempTake</span>
+            </Link>
             <div className="mx-auto">
               <NavTabs />
             </div>
@@ -32,7 +41,8 @@ export default async function RootLayout({
           </div>
         </header>
 
-        <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
+        {/* WIDTH CHANGED HERE */}
+        <main className="mx-auto max-w-[1200px] px-4 py-6">{children}</main>
       </body>
     </html>
   );
