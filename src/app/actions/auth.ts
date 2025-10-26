@@ -7,6 +7,22 @@ import {
   getServerSupabaseAction,
 } from "@/lib/supabaseServer";
 
+
+export async function requireUser() {
+  // Safe in Server Components: uses getServerSupabase (read-only cookies)
+  const supabase = await getServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) redirect("/login");
+  return data.user;
+}
+
+export async function getUserOrNull() {
+  const supabase = await getServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  return data.user ?? null;
+}
+
+
 export type AuthResult = { ok: boolean; message?: string; redirect?: string };
 
 export async function getSession() {
