@@ -4,11 +4,12 @@ import NavTabs from "@/components/NavTabs";
 import SignOutButton from "@/components/SignOutButton";
 import Image from "next/image";
 import Link from "next/link";
-import { getUserOrNull } from "@/app/actions/auth";
+// src/app/layout.tsx
+import { getUser } from "@/app/actions/auth"; // <-- change this
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const user = await getUserOrNull();
-
+  const user = await getUser(); // <-- and this
+  
   return (
     <html lang="en">
       <body>

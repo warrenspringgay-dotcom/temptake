@@ -1,34 +1,27 @@
 // src/components/AuthGate.tsx
-"use client";
-
 import React from "react";
 import { redirect } from "next/navigation";
-import { getSession } from "@/app/actions/auth";
+import { getUser } from "@/app/actions/auth";
 import { hasRole, type Role } from "@/lib/roles";
 
 type Props = {
   children: React.ReactNode;
-  /** Single role or any-of these roles required to view children */
-  requireRole?: Role | Role[];
+  requireRole?: Role; // optional: only allow if user has this role
 };
 
+/**
+ * Server Component guard: redirects to /login if no user,
+ * and optionally enforces a required role.
+ */
 export default async function AuthGate({ children, requireRole }: Props) {
-  // Get the current session (server action)
-  const session = await getSession();
-  const user = session?.user ?? null;
+  const user = await getUser(); // returns the authenticated user or null
 
-  // Not signed in → send to login
   if (!user) {
     redirect("/login");
   }
 
-  // If a role requirement is provided, enforce it
-  if (requireRole) {
-    const needed: Role[] = Array.isArray(requireRole) ? requireRole : [requireRole];
-    const ok = needed.some((r) => hasRole(user, r));
-    if (!ok) {
-      redirect("/"); // or a dedicated 403 page
-    }
+  if (requireRole && !hasRole(user, requireRole)) {
+    redirect("/login?reason=forbidden");
   }
 
   return <>{children}</>;
