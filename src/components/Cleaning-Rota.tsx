@@ -1,4 +1,3 @@
-// src/components/CleaningRota.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -18,7 +17,7 @@ type Log = {
   task_id: string;
   date: string; // YYYY-MM-DD
   done_by: string | null;
-  done: boolean;
+  done: boolean | null;
 };
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -33,13 +32,17 @@ function ymd(d: Date) {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+function weekdayMon1Sun7(d: Date) {
+  // JS: 0=Sun..6=Sat -> 1=Mon..7=Sun
+  const js = d.getDay(); // 0..6
+  return js === 0 ? 7 : js; // Sun -> 7
+}
 
 export default function CleaningRota() {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0..11
   const [mode, setMode] = useState<"digital" | "print">("digital");
-  const [weekIndex, setWeekIndex] = useState<number>(1); // 1..6 (some months show 6 partial weeks)
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<Log[]>([]);
@@ -64,18 +67,17 @@ export default function CleaningRota() {
     [year, month]
   );
 
-  /** Build a matrix of weeks × 7 (Mon–Sun) with Date | null for outside days */
+  /** Build a matrix for the chosen week-style layout (Mon..Sun) */
   const weeks: (Date | null)[][] = useMemo(() => {
     const first = new Date(year, month, 1);
     const last = new Date(year, month, daysInMonth);
 
-    // shift to Monday=0..Sunday=6
-    const firstDow = (first.getDay() + 6) % 7; // 0=Mon
+    // Shift to Monday=0
+    const firstDow = (first.getDay() + 6) % 7;
     const grid: (Date | null)[][] = [];
     let cursor = new Date(first);
     cursor.setDate(first.getDate() - firstDow);
 
-    // build 6 rows × 7 columns (covers all months)
     for (let r = 0; r < 6; r++) {
       const row: (Date | null)[] = [];
       for (let c = 0; c < 7; c++) {
@@ -90,7 +92,8 @@ export default function CleaningRota() {
     return grid;
   }, [year, month, daysInMonth]);
 
-  const activeWeekDays = weeks[weekIndex - 1] ?? [];
+  // We’ll show the whole month; initials inputs appear only for in-month days.
+  const flatDays = weeks[0]?.concat(weeks[1], weeks[2], weeks[3], weeks[4], weeks[5]) ?? [];
 
   /* ------------------ Data I/O ------------------ */
   async function loadData() {
@@ -103,6 +106,7 @@ export default function CleaningRota() {
       return;
     }
 
+    // Tasks
     const { data: t, error: tErr } = await supabase
       .from("cleaning_tasks")
       .select("id,name,area,freq")
@@ -111,7 +115,7 @@ export default function CleaningRota() {
 
     if (!tErr) setTasks((t ?? []) as Task[]);
 
-    // Pull logs for the whole month
+    // Logs for the entire month (by date range)
     const start = `${year}-${String(month + 1).padStart(2, "0")}-01`;
     const end = `${year}-${String(month + 1).padStart(2, "0")}-${String(
       daysInMonth
@@ -149,40 +153,62 @@ export default function CleaningRota() {
     await loadData();
   }
 
-  const isDone = (taskId: string, d: Date | null) => {
-    if (!d) return false;
+  function initialsFor(taskId: string, d: Date | null) {
+    if (!d) return "";
     const key = ymd(d);
-    return logs.some((l) => l.task_id === taskId && l.date === key);
-  };
+    const hit = logs.find((l) => l.task_id === taskId && l.date === key);
+    return hit?.done_by ?? "";
+  }
 
-  async function toggleDone(task: Task, d: Date | null) {
-    if (!d) return;
+  async function saveInitials(task: Task, d: Date, value: string) {
     const orgId = await getActiveOrgIdClient();
-    const key = ymd(d);
+    const dateStr = ymd(d);
+    const inits = value.trim().toUpperCase();
 
-    const existing = logs.find(
-      (l) => l.task_id === task.id && l.date === key
-    );
-
-    if (existing) {
-      // delete tick
+    // If empty => delete
+    if (!inits) {
       const { error } = await supabase
         .from("cleaning_logs")
         .delete()
         .eq("org_id", orgId)
         .eq("task_id", task.id)
-        .eq("date", key);
-      if (error) return alert(error.message);
-    } else {
-      // add tick
-      const { error } = await supabase.from("cleaning_logs").insert({
-        org_id: orgId,
-        task_id: task.id,
-        date: key,
-        done: true,
-        done_by: null, // or capture initials field if you add one
-      });
-      if (error) return alert(error.message);
+        .eq("date", dateStr);
+      if (error) alert(error.message);
+      await loadData();
+      return;
+    }
+
+    // Insert/Upsert with required NOT NULL metadata
+    const payload = {
+      org_id: orgId as string,
+      task_id: task.id,
+      date: dateStr,
+      year: d.getFullYear(),
+      month: d.getMonth() + 1,
+      weekday: weekdayMon1Sun7(d),
+      done_by: inits,
+      done: true,
+    };
+
+    // Prefer upsert so editing an existing cell overwrites in place
+    const { error } = await supabase
+      .from("cleaning_logs")
+      // @ts-ignore PostgREST option supported by supabase-js:
+      .upsert(payload, { onConflict: "org_id,task_id,date" });
+
+    if (error) {
+      // Some older PostgREST versions don’t allow onConflict in client. Fallback:
+      if (String(error.message || "").toLowerCase().includes("on conflict")) {
+        await supabase.from("cleaning_logs").delete().match({
+          org_id: orgId,
+          task_id: task.id,
+          date: dateStr,
+        });
+        const { error: e2 } = await supabase.from("cleaning_logs").insert(payload);
+        if (e2) alert(e2.message);
+      } else {
+        alert(error.message);
+      }
     }
     await loadData();
   }
@@ -204,9 +230,7 @@ export default function CleaningRota() {
           >
             {Array.from({ length: 12 }).map((_, i) => (
               <option key={i} value={i}>
-                {new Date(2000, i, 1).toLocaleString(undefined, {
-                  month: "long",
-                })}
+                {new Date(2000, i, 1).toLocaleString(undefined, { month: "long" })}
               </option>
             ))}
           </select>
@@ -218,23 +242,8 @@ export default function CleaningRota() {
             onChange={(e) => setYear(Number(e.target.value))}
           />
 
-          <select
-            className="h-9 rounded-xl border px-3 text-sm"
-            value={weekIndex}
-            onChange={(e) => setWeekIndex(Number(e.target.value))}
-            title="Pick week of month (Mon–Sun rows)"
-          >
-            {weeks.map((_, i) => (
-              <option key={i} value={i + 1}>
-                Week {i + 1}
-              </option>
-            ))}
-          </select>
-
           <button
-            onClick={() =>
-              setMode((m) => (m === "digital" ? "print" : "digital"))
-            }
+            onClick={() => setMode((m) => (m === "digital" ? "print" : "digital"))}
             className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
           >
             {mode === "digital" ? "Printable view" : "Digital view"}
@@ -251,31 +260,24 @@ export default function CleaningRota() {
 
       {/* Quick add */}
       {mode === "digital" && (
-        <div className="grid gap-3 sm:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto]">
           <input
-            className="rounded-lg border px-3 py-2 sm:col-span-2"
+            className="rounded-lg border px-3 py-2"
             placeholder="Task name"
             value={newTask.name}
-            onChange={(e) =>
-              setNewTask((t) => ({ ...t, name: e.target.value }))
-            }
+            onChange={(e) => setNewTask((t) => ({ ...t, name: e.target.value }))}
           />
           <input
             className="rounded-lg border px-3 py-2"
             placeholder="Area (optional)"
             value={newTask.area}
-            onChange={(e) =>
-              setNewTask((t) => ({ ...t, area: e.target.value }))
-            }
+            onChange={(e) => setNewTask((t) => ({ ...t, area: e.target.value }))}
           />
           <select
             className="rounded-lg border px-3 py-2"
             value={newTask.freq}
             onChange={(e) =>
-              setNewTask((t) => ({
-                ...t,
-                freq: e.target.value as Task["freq"],
-              }))
+              setNewTask((t) => ({ ...t, freq: e.target.value as Task["freq"] }))
             }
           >
             <option value="daily">Daily</option>
@@ -291,9 +293,9 @@ export default function CleaningRota() {
         </div>
       )}
 
-      {/* Week table: columns = Mon..Sun */}
+      {/* Week-style table: Mon..Sun (no double border) */}
       <div className="overflow-x-auto print:overflow-visible">
-        <table className="min-w-full border text-sm">
+        <table className="min-w-full text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-gray-600">
               <th className="border-b px-2 py-2 w-56">Task</th>
@@ -303,47 +305,99 @@ export default function CleaningRota() {
                   {lbl}
                 </th>
               ))}
+              <th className="border-b px-2 py-2 text-right w-36">Actions</th>
             </tr>
           </thead>
           <tbody>
             {tasks.length === 0 ? (
               <tr>
-                <td colSpan={2 + 7} className="py-6 text-center text-gray-500">
+                <td colSpan={2 + 7 + 1} className="py-6 text-center text-gray-500 border-t">
                   No tasks added yet.
                 </td>
               </tr>
             ) : (
               tasks.map((t) => (
-                <tr key={t.id} className="align-top">
-                  <td className="border-t px-2 py-2 font-medium">{t.name}</td>
-                  <td className="border-t px-2 py-2">{t.area || "—"}</td>
+                <tr key={t.id} className="border-t align-top">
+                  <td className="px-2 py-2 font-medium">{t.name}</td>
+                  <td className="px-2 py-2">{t.area || "—"}</td>
 
-                  {activeWeekDays.map((d, idx) => (
-                    <td key={idx} className="border-t px-2 py-2 text-center">
-                      {d ? (
-                        mode === "digital" ? (
-                          <button
-                            onClick={() => toggleDone(t, d)}
-                            className={cls(
-                              "h-7 w-7 rounded-md border text-xs",
-                              isDone(t.id, d)
-                                ? "bg-emerald-500 text-white"
-                                : "hover:bg-gray-100"
-                            )}
-                            title={ymd(d)}
-                          >
-                            {isDone(t.id, d) ? "✓" : ""}
-                          </button>
-                        ) : (
-                          <div className="h-7 w-10 border rounded text-xs flex items-center justify-center print:h-6">
-                            &nbsp;
-                          </div>
-                        )
-                      ) : (
-                        <div className="h-7 w-10 opacity-40" />
-                      )}
-                    </td>
-                  ))}
+                  {WEEKDAY_LABELS.map((_, col) => {
+                    // Find the first in-month date for this weekday in the current month,
+                    // then show a small initials box for each week-cell stacked vertically.
+                    // Simpler: just render inputs for each visible day in the month that matches this weekday.
+                    return (
+                      <td key={col} className="px-2 py-2">
+                        <div className="flex flex-col gap-2">
+                          {weeks.map((row, rIdx) => {
+                            const d = row[col];
+                            if (!d) return <div key={rIdx} className="h-7" />;
+                            const val = initialsFor(t.id, d);
+                            return mode === "digital" ? (
+                              <input
+                                key={rIdx + "-" + ymd(d)}
+                                defaultValue={val}
+                                placeholder=""
+                                maxLength={3}
+                                className="h-7 w-12 rounded border px-1 text-xs text-center uppercase"
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    (e.target as HTMLInputElement).blur();
+                                  }
+                                }}
+                                onBlur={(e) => {
+                                  const v = e.currentTarget.value;
+                                  void saveInitials(t, d, v);
+                                }}
+                                title={ymd(d)}
+                              />
+                            ) : (
+                              <div
+                                key={rIdx + "-" + ymd(d)}
+                                className="h-7 w-12 rounded border text-xs flex items-center justify-center print:h-6"
+                              >
+                                {val}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </td>
+                    );
+                  })}
+
+                  <td className="px-2 py-2 text-right">
+                    <div className="inline-flex gap-2">
+                      <button
+                        className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
+                        title="Edit"
+                        onClick={async () => {
+                          const name = prompt("Rename task", t.name);
+                          if (!name || name.trim() === t.name) return;
+                          const org_id = await getActiveOrgIdClient();
+                          await supabase
+                            .from("cleaning_tasks")
+                            .update({ name: name.trim() })
+                            .eq("org_id", org_id)
+                            .eq("id", t.id);
+                          await loadData();
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
+                        title="Delete"
+                        onClick={async () => {
+                          if (!confirm("Delete this task?")) return;
+                          const org_id = await getActiveOrgIdClient();
+                          await supabase.from("cleaning_logs").delete().eq("org_id", org_id).eq("task_id", t.id);
+                          await supabase.from("cleaning_tasks").delete().eq("org_id", org_id).eq("id", t.id);
+                          await loadData();
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))
             )}
@@ -366,6 +420,9 @@ export default function CleaningRota() {
           }
           button {
             display: none !important;
+          }
+          input {
+            border: 1px solid #ccc !important;
           }
         }
       `}</style>
