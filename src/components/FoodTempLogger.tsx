@@ -354,7 +354,7 @@ export default function FoodTempLogger({
           id: r.id,
           name: r.name,
           active: r.active ?? true,
-          last_used_at: r.last_used_at ?? null,
+      
           items:
             (items ?? [])
               .map((it: any) => ({
@@ -655,20 +655,16 @@ export default function FoodTempLogger({
         )}
       </div>
 
-      {/* Routine selector (shows list of routines) */}
-      <RoutinePickerModal
-        open={showPicker}
-        onClose={() => setShowPicker(false)}
-        // support either prop name from your component:
-        onPick={(r: RoutineRow) => {
-          setShowPicker(false);
-          setRunRoutine(r);
-        }}
-        onApply={(r: RoutineRow) => {
-          setShowPicker(false);
-          setRunRoutine(r);
-        }}
-      />
+    <RoutinePickerModal
+  open={showPicker}
+  onClose={() => setShowPicker(false)}
+  onPick={(r: RoutineRow) => {
+    setShowPicker(false);
+    setRunRoutine(r);
+  }}
+/>
+
+
 
       {/* Full run modal for a selected routine */}
       <RoutineRunModal
