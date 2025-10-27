@@ -1,11 +1,12 @@
 // src/lib/supabaseServer.ts
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-/** Use inside Server Components / loaders (read-only cookies) */
+/** Safe to use in Server Components (read-only cookie store) */
 export async function getServerSupabase() {
   const store = await cookies();
   return createServerClient(URL, KEY, {
@@ -13,13 +14,13 @@ export async function getServerSupabase() {
       get(name: string) {
         return store.get(name)?.value;
       },
-      set(_n: string, _v: string, _o?: CookieOptions) {},
-      remove(_n: string, _o?: CookieOptions) {},
+      set() {},
+      remove() {},
     },
   });
 }
 
-/** Use only in Server Actions / route handlers (writable cookies) */
+/** Use this inside server actions / route handlers (writable cookie store) */
 export async function getServerSupabaseAction() {
   const store = await cookies();
   return createServerClient(URL, KEY, {
@@ -35,4 +36,25 @@ export async function getServerSupabaseAction() {
       },
     },
   });
+}
+
+/** Helper for middleware – creates a client bound to the request/response */
+export function supabaseForMiddleware(req: NextRequest) {
+  const res = NextResponse.next();
+  return {
+    supabase: createServerClient(URL, KEY, {
+      cookies: {
+        get(name: string) {
+          return req.cookies.get(name)?.value;
+        },
+        set(name: string, value: string, options?: CookieOptions) {
+          res.cookies.set({ name, value, ...options });
+        },
+        remove(name: string, options?: CookieOptions) {
+          res.cookies.set({ name, value: "", ...options, maxAge: 0 });
+        },
+      },
+    }),
+    res,
+  };
 }

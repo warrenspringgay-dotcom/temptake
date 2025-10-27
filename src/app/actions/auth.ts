@@ -1,41 +1,47 @@
-// src/app/actions/auth.ts
 "use server";
 
 import { redirect } from "next/navigation";
 import { getServerSupabase, getServerSupabaseAction } from "@/lib/supabaseServer";
 
-export type AuthResult = { ok: boolean; message?: string; redirect?: string };
-
-/** Server Component helper (read-only). */
-export async function getUser() {
+// ——— Queries ———
+export async function getUserOrNull() {
   const supabase = await getServerSupabase();
-  const { data, error } = await supabase.auth.getUser();
-  if (error) return null;
-  return data.user ?? null;
+  const { data: { user } } = await supabase.auth.getUser();
+  return user ?? null;
 }
 
-/** Server Action used with useActionState in the Login client. */
-export async function signInAction(
-  _prevState: AuthResult,
-  formData: FormData
-): Promise<AuthResult> {
+export async function getSessionOrNull() {
+  const supabase = await getServerSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  return session ?? null;
+}
+
+/** Use when a server component absolutely needs a user. Redirects if none. */
+export async function requireUser(next?: string) {
+  const user = await getUserOrNull();
+  if (!user) redirect(`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`);
+  return user;
+}
+
+// ——— Mutations ———
+export type AuthResult = { ok: boolean; message?: string; redirect?: string };
+
+
+export async function signInAction(_: AuthResult, formData: FormData): Promise<AuthResult> {
   const email = String(formData.get("email") ?? "");
   const password = String(formData.get("password") ?? "");
+  const next = String(formData.get("next") ?? "") || "/dashboard";
 
-  if (!email || !password) {
-    return { ok: false, message: "Email and password are required." };
-  }
+  if (!email || !password) return { ok: false, message: "Email and password required." };
 
   const supabase = await getServerSupabaseAction();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) {
-    return { ok: false, message: error.message };
-  }
-  return { ok: true, redirect: "/dashboard" };
+  if (error) return { ok: false, message: error.message };
+
+  return { ok: true, redirect: next };
 }
 
-/** Log out via Server Action (use it as a <form action={...}>). */
-export async function signOutAndRedirect() {
+export async function signOutAction(): Promise<void> {
   const supabase = await getServerSupabaseAction();
   await supabase.auth.signOut();
   redirect("/login");
