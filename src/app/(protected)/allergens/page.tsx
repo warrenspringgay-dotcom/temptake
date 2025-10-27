@@ -3,6 +3,8 @@
 
 import AllergenManager from "@/components/AllergenManager";
 
+
+
 export default function AllergensPage() {
   return <AllergenManager />;
 }

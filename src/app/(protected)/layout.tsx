@@ -1,14 +1,9 @@
-// src/app/(protected)/layout.tsx
-import React from "react";
-import { requireUser } from "@/lib/requireUser";
+// app/(protected)/layout.tsx
+import { redirect } from "next/navigation";
+import { getUserOrNull } from "@/app/actions/auth";
 
-export default async function ProtectedLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  // Enforce auth; your helper should throw/redirect to /login if unauthenticated
-  await requireUser();
-
+export default async function ProtectedLayout({ children }: { children: React.ReactNode }) {
+  const user = await getUserOrNull();
+  if (!user) redirect("/login");
   return <>{children}</>;
 }
