@@ -4,6 +4,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { uid } from "@/lib/uid";
 import ActionMenu from "@/components/ActionMenu";
 
+import { parseCSV } from "@/lib/csv";
+import { emptyFlags, draftFromRow, type MatrixDraft } from "@/lib/allergens";
+import { supabase } from "@/lib/supabaseBrowser";
+import { getActiveOrgIdClient } from "@/lib/orgClient";
+
+
 /* ---------- Types & Constants ---------- */
 type AllergenKey =
   | "gluten"
@@ -60,12 +66,12 @@ type ReviewInfo = {
   intervalDays: number;
 };
 
+
+
 const LS_ROWS = "tt_allergens_rows_v3";
 const LS_REVIEW = "tt_allergens_review_v2";
 
 /* ---------- Helpers ---------- */
-const emptyFlags = (): Flags =>
-  Object.fromEntries(ALLERGENS.map((a) => [a.key, false])) as Flags;
 
 const overdue = (info: ReviewInfo): boolean => {
   if (!info.lastReviewedOn) return true;
@@ -78,6 +84,97 @@ const overdue = (info: ReviewInfo): boolean => {
 export default function AllergenManager() {
   // Hydration guard
   const [hydrated, setHydrated] = useState(false);
+
+const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+const [importTarget, setImportTarget] = useState<"local" | "supabase" | null>(null);
+
+function triggerImport(target: "local" | "supabase") {
+  setImportTarget(target);
+  fileInputRef.current?.click();
+}
+
+async function loadFromSupabase() {
+  const orgId = await getActiveOrgIdClient();
+  if (!orgId) return;
+
+  const { data, error } = await supabase
+    .from("allergen_items")
+    .select("id,item,category,notes,flags,locked")
+    .eq("org_id", orgId)
+    .order("item", { ascending: true });
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  setRows(
+    (data ?? []).map((r: any) => ({
+      id: r.id,
+      item: r.item,
+      category: r.category ?? undefined,
+      flags: { ...emptyFlags(), ...(r.flags ?? {}) },
+      notes: r.notes ?? undefined,
+      locked: !!r.locked,
+    }))
+  );
+}
+
+
+async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+  const file = e.target.files?.[0];
+  e.target.value = ""; // reset
+  if (!file) return;
+
+  const text = await file.text();
+  const rows = parseCSV(text);
+  const drafts: MatrixDraft[] = rows.map(draftFromRow).filter(Boolean) as MatrixDraft[];
+
+  if (drafts.length === 0) {
+    alert("No valid rows found in CSV.");
+    return;
+  }
+
+  if (importTarget === "local") {
+    // Convert to your in-memory row shape and save to localStorage via setRows
+    setRows((prev) => [
+      ...prev,
+      ...drafts.map((d) => ({
+        id: uid(),
+        item: d.item,
+        category: d.category as any,
+        flags: d.flags,
+        notes: d.notes,
+        locked: true,
+      })),
+    ]);
+    alert(`Imported ${drafts.length} items into this device.`);
+  }
+
+  if (importTarget === "supabase") {
+    const orgId = await getActiveOrgIdClient();
+    if (!orgId) return alert("No organisation found.");
+
+    const payload = drafts.map((d) => ({
+      org_id: orgId,
+      item: d.item,
+      category: d.category ?? null,
+      notes: d.notes ?? null,
+      flags: d.flags, // jsonb
+      locked: true,
+    }));
+
+    const { error } = await supabase.from("allergen_items").insert(payload);
+    if (error) {
+      alert(`Supabase import failed: ${error.message}`);
+      return;
+    }
+    alert(`Imported ${drafts.length} items to Supabase.`);
+  }
+
+  setImportTarget(null);
+}
+
 
   // State
   const [review, setReview] = useState<ReviewInfo>({ intervalDays: 30 });
@@ -370,15 +467,41 @@ export default function AllergenManager() {
         )}
       </details>
 
-      {/* Top actions */}
-      <div className="mb-3">
-        <button
-          className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
-          onClick={openAdd}
-        >
-          + Add item
-        </button>
-      </div>
+<div className="mb-3 flex flex-wrap gap-2">
+  <button
+    className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+    onClick={openAdd}
+  >
+    + Add item
+  </button>
+
+  <button
+    className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+    onClick={() => triggerImport("local")}
+    title="Load a CSV into this device's matrix"
+  >
+    Bulk import (CSV → local)
+  </button>
+
+  <button
+    className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+    onClick={() => triggerImport("supabase")}
+    title="Load a CSV into your Supabase table"
+  >
+    Import to Supabase (CSV)
+  </button>
+
+  <input
+    ref={fileInputRef}
+    type="file"
+    accept=".csv,text/csv"
+    className="hidden"
+    onChange={handleFileChosen}
+  />
+</div>
+
+
+    
 
       {/* MATRIX – Desktop/tablet */}
       <div className="mb-2 text-sm font-semibold">Allergen matrix</div>
