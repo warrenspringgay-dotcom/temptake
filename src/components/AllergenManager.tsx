@@ -1,8 +1,8 @@
-// src/components/AllergenManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { uid } from "@/lib/uid";
+import ActionMenu from "@/components/ActionMenu";
 
 /* ---------- Types & Constants ---------- */
 type AllergenKey =
@@ -99,7 +99,7 @@ export default function AllergenManager() {
             ...r,
             flags: { ...emptyFlags(), ...r.flags },
             locked: r.locked ?? true,
-          })),
+          }))
         );
       } else {
         // seed demo rows for first run
@@ -159,7 +159,7 @@ export default function AllergenManager() {
   /* ===== Query (SAFE FOODS) ===== */
   const selectedAllergenKeys = useMemo(
     () => ALLERGENS.map((a) => a.key).filter((k) => qFlags[k]) as AllergenKey[],
-    [qFlags],
+    [qFlags]
   );
 
   const safeFoods = useMemo(() => {
@@ -206,7 +206,7 @@ export default function AllergenManager() {
                 notes: (draft.notes ?? "").trim(),
                 locked: true,
               }
-            : r,
+            : r
         );
       }
       return [
@@ -312,9 +312,7 @@ export default function AllergenManager() {
                   <input
                     type="checkbox"
                     checked={qFlags[a.key]}
-                    onChange={(e) =>
-                      setQFlags((f) => ({ ...f, [a.key]: e.target.checked }))
-                    }
+                    onChange={(e) => setQFlags((f) => ({ ...f, [a.key]: e.target.checked }))}
                   />
                   <span title={a.label}>
                     {a.icon}{" "}
@@ -340,9 +338,7 @@ export default function AllergenManager() {
         {/* Safe results */}
         {hydrated && selectedAllergenKeys.length > 0 && (
           <div className="mt-4">
-            <div className="mb-2 text-sm font-semibold">
-              Safe foods ({safeFoods.length})
-            </div>
+            <div className="mb-2 text-sm font-semibold">Safe foods ({safeFoods.length})</div>
             <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
               <table className="min-w-[640px] w-full text-sm">
                 <thead className="bg-gray-50">
@@ -355,10 +351,7 @@ export default function AllergenManager() {
                 <tbody>
                   {safeFoods.length === 0 && (
                     <tr>
-                      <td
-                        colSpan={3}
-                        className="px-3 py-6 text-center text-gray-500"
-                      >
+                      <td colSpan={3} className="px-3 py-6 text-center text-gray-500">
                         No safe items for this selection.
                       </td>
                     </tr>
@@ -387,26 +380,19 @@ export default function AllergenManager() {
         </button>
       </div>
 
-      {/* MATRIX – RESPONSIVE */}
+      {/* MATRIX – Desktop/tablet */}
       <div className="mb-2 text-sm font-semibold">Allergen matrix</div>
-
-      {/* Desktop/tablet table */}
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
+      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
         <table className="min-w-[500px] w-full text-sm">
           <thead className="bg-gray-50">
             <tr className="text-left text-gray-600">
               <th className="px-2 py-2 font-medium">Item</th>
               <th className="px-2 py-2 font-medium">Category</th>
               {ALLERGENS.map((a) => (
-                <th
-                  key={a.key}
-                  className="whitespace-nowrap px-2 py-2 text-center font-medium"
-                >
+                <th key={a.key} className="whitespace-nowrap px-2 py-2 text-center font-medium">
                   <span title={a.label}>
                     {a.icon}{" "}
-                    <span className="font-mono text-[11px] text-gray-500">
-                      {a.short}
-                    </span>
+                    <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
                   </span>
                 </th>
               ))}
@@ -414,145 +400,57 @@ export default function AllergenManager() {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {rows.length === 0 ? (
               <tr>
-                <td
-                  colSpan={2 + ALLERGENS.length + 1}
-                  className="px-3 py-6 text-center text-gray-500"
-                >
+                <td colSpan={2 + ALLERGENS.length + 1} className="px-3 py-6 text-center text-gray-500">
                   No items.
                 </td>
               </tr>
+            ) : (
+              rows.map((row) => (
+                <tr key={row.id} className="border-t">
+                  <td className="px-3 py-2">{row.item}</td>
+                  <td className="px-3 py-2">{row.category ?? ""}</td>
+                  {ALLERGENS.map((a) => {
+                    const yes = row.flags[a.key];
+                    return (
+                      <td key={a.key} className="px-2 py-2 text-center">
+                        <span
+                          className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${
+                            yes ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"
+                          }`}
+                        >
+                          {yes ? "Yes" : "No"}
+                        </span>
+                      </td>
+                    );
+                  })}
+                  <td className="px-3 py-2 text-right">
+                    <ActionMenu
+                      items={[
+                        { label: "Edit", onClick: () => openEdit(row) },
+                        {
+                          label: "Delete",
+                          onClick: () =>
+                            setRows((rs) => rs.filter((r) => r.id !== row.id)),
+                          variant: "danger",
+                        },
+                      ]}
+                    />
+                  </td>
+                </tr>
+              ))
             )}
-            {rows.map((row) => (
-              <tr key={row.id} className="border-t">
-                <td className="px-3 py-2">{row.item}</td>
-                <td className="px-3 py-2">{row.category ?? ""}</td>
-                {ALLERGENS.map((a) => {
-                  const yes = row.flags[a.key];
-                  return (
-                    <td key={a.key} className="px-2 py-2 text-center">
-                      <span
-                        className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${
-                          yes
-                            ? "bg-red-100 text-red-800"
-                            : "bg-emerald-100 text-emerald-800"
-                        }`}
-                      >
-                        {yes ? "Yes" : "No"}
-                      </span>
-                    </td>
-                  );
-                })}
-                <td className="px-3 py-2 text-right">
-                  <div className="inline-flex gap-2">
-                    <button
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
-                      title="Edit"
-                      onClick={() => openEdit(row)}
-                    >
-                      ✏️
-                    </button>
-                    <button
-                      className="rounded-xl border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
-                      title="Delete"
-                      onClick={() =>
-                        setRows((rs) => rs.filter((r) => r.id !== row.id))
-                      }
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
           </tbody>
         </table>
       </div>
 
-      {/* Mobile cards */}
-      <div className="md:hidden">
-        {rows.length === 0 ? (
-          <div className="rounded-lg border border-gray-200 bg-white p-4 text-center text-gray-500">
-            No items.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {rows.map((row) => (
-              <div
-                key={row.id}
-                className="rounded-lg border border-gray-200 bg-white p-3"
-              >
-                <div className="mb-2 flex items-start justify-between gap-2">
-                  <div>
-                    <div className="font-medium">{row.item}</div>
-                    {row.category ? (
-                      <div className="text-xs text-gray-500">{row.category}</div>
-                    ) : null}
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
-                      onClick={() => openEdit(row)}
-                      title="Edit"
-                    >
-                      ✏️
-                    </button>
-                    <button
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
-                      onClick={() =>
-                        setRows((rs) => rs.filter((r) => r.id !== row.id))
-                      }
-                      title="Delete"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                </div>
-
-                {/* Compact allergen pills grid */}
-                <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-                  {ALLERGENS.map((a) => {
-                    const yes = row.flags[a.key];
-                    return (
-                      <div
-                        key={a.key}
-                        className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
-                          yes
-                            ? "bg-red-50 text-red-800"
-                            : "bg-emerald-50 text-emerald-800"
-                        }`}
-                      >
-                        <span className="flex items-center gap-1">
-                          <span>{a.icon}</span>
-                          <span className="font-mono">{a.short}</span>
-                        </span>
-                        <span className="font-medium">{yes ? "Yes" : "No"}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {row.notes ? (
-                  <div className="mt-2 text-xs text-gray-600">{row.notes}</div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* Legend */}
       <details className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
-        <summary className="cursor-pointer select-none font-medium">
-          Allergen key
-        </summary>
+        <summary className="cursor-pointer select-none font-medium">Allergen key</summary>
         <div className="mt-2 flex flex-wrap gap-3 text-sm">
           {ALLERGENS.map((a) => (
-            <div
-              key={a.key}
-              className="inline-flex items-center gap-2 rounded border px-2 py-1"
-            >
+            <div key={a.key} className="inline-flex items-center gap-2 rounded border px-2 py-1">
               <span>{a.icon}</span>
               <span className="font-medium">{a.label}</span>
               <span className="font-mono text-xs text-gray-500">{a.short}</span>
@@ -568,10 +466,11 @@ export default function AllergenManager() {
           onKeyDown={(e) => {
             if (e.key === "Escape") closeModal();
           }}
+          onClick={closeModal}
         >
-          {/* Full-screen sheet on phones, dialog on larger screens */}
           <form
             onSubmit={saveDraft}
+            onClick={(e) => e.stopPropagation()}
             className="h-[88vh] w-full max-w-2xl overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow sm:h-auto sm:rounded-lg"
           >
             <div className="border-b px-4 py-3 font-semibold">Allergen item</div>
@@ -611,29 +510,19 @@ export default function AllergenManager() {
                 {ALLERGENS.map((a) => {
                   const val = draft.flags[a.key];
                   return (
-                    <div
-                      key={a.key}
-                      className="flex items-center justify-between rounded border p-2"
-                    >
+                    <div key={a.key} className="flex items-center justify-between rounded border p-2">
                       <span title={a.label} className="text-sm">
                         {a.icon}{" "}
-                        <span className="font-mono text-[11px] text-gray-500">
-                          {a.short}
-                        </span>
+                        <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
                       </span>
                       <div className="inline-flex overflow-hidden rounded border">
                         <button
                           type="button"
                           className={`px-2 py-1 text-xs ${
-                            val
-                              ? "bg-red-600 text-white"
-                              : "bg-white text-gray-700 hover:bg-gray-50"
+                            val ? "bg-red-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
                           }`}
                           onClick={() =>
-                            setDraft((d) => ({
-                              ...d!,
-                              flags: { ...d!.flags, [a.key]: true },
-                            }))
+                            setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: true } }))
                           }
                         >
                           Yes
@@ -646,10 +535,7 @@ export default function AllergenManager() {
                               : "bg-white text-gray-700 hover:bg-gray-50"
                           }`}
                           onClick={() =>
-                            setDraft((d) => ({
-                              ...d!,
-                              flags: { ...d!.flags, [a.key]: false },
-                            }))
+                            setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: false } }))
                           }
                         >
                           No

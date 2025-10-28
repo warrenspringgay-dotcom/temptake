@@ -1,10 +1,10 @@
-// src/components/RoutineManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
+import ActionMenu from "@/components/ActionMenu";
 
 type RoutineItem = {
   id?: string;
@@ -14,6 +14,7 @@ type RoutineItem = {
   item: string | null;
   target_key: string;
 };
+
 type RoutineRow = {
   id: string;
   name: string;
@@ -98,7 +99,7 @@ export default function RoutineManager() {
           items: (grouped.get(r.id) ?? []).sort((a, b) => a.position - b.position),
         }))
       );
-    } catch (e) {
+    } catch {
       setRows([]);
     } finally {
       setLoading(false);
@@ -127,9 +128,13 @@ export default function RoutineManager() {
     setNewName("");
     setViewing(null);
     await refresh();
-    // open edit to add steps quickly
+    // fetch fresh + open for editing
     const r = (
-      await supabase.from("temp_routines").select("id,name,active").eq("id", created!.id).single()
+      await supabase
+        .from("temp_routines")
+        .select("id,name,active")
+        .eq("id", created!.id)
+        .single()
     ).data!;
     setEditing({ id: r.id, name: r.name, active: true, items: [] });
     setEditOpen(true);
@@ -140,22 +145,19 @@ export default function RoutineManager() {
     setViewOpen(true);
   }
   function openEdit(r: RoutineRow) {
-    // deep copy so edits are local
-    setEditing(JSON.parse(JSON.stringify(r)));
+    setEditing(JSON.parse(JSON.stringify(r))); // deep copy
     setEditOpen(true);
   }
 
   async function saveEdit() {
     if (!editing) return;
     try {
-      // update routine
       const { error: uErr } = await supabase
         .from("temp_routines")
         .update({ name: editing.name, active: editing.active ?? true })
         .eq("id", editing.id);
       if (uErr) throw uErr;
 
-      // replace items (simple + reliable)
       await supabase.from("temp_routine_items").delete().eq("routine_id", editing.id);
       const inserts = editing.items.map((it, i) => ({
         routine_id: editing.id,
@@ -216,12 +218,17 @@ export default function RoutineManager() {
 
       {/* list */}
       <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
+        <table className="min-w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-[55%]" />
+            <col className="w-[12%]" />
+            <col className="w-[33%]" />
+          </colgroup>
           <thead>
             <tr className="text-left text-gray-500">
               <th className="py-2 pr-3">Name</th>
-              <th className="py-2 pr-3 w-24">Items</th>
-              <th className="py-2 pr-3 w-[200px]">Actions</th>
+              <th className="py-2 pr-3">Items</th>
+              <th className="py-2 pr-3">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -243,37 +250,22 @@ export default function RoutineManager() {
                       {r.name}
                     </button>
                   </td>
+
                   <td className="py-2 pr-3">{r.items.length}</td>
+
                   <td className="py-2 pr-3">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
-                        title="View"
-                        onClick={() => openView(r)}
-                      >
-                        👁️
-                      </button>
-                      <a
-                        href={`/dashboard?run=${encodeURIComponent(r.id)}`}
-                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
-                        title="Use routine"
-                      >
-                        ▶️ Use
-                      </a>
-                      <button
-                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
-                        title="Edit"
-                        onClick={() => openEdit(r)}
-                      >
-                        ✏️
-                      </button>
-                      <button
-                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
-                        title="Delete"
-                        onClick={() => removeRoutine(r.id)}
-                      >
-                        🗑️
-                      </button>
+                    <div className="relative inline-block text-left">
+                      <td className="py-2 pr-3">
+  <ActionMenu
+    items={[
+      { label: "View", onClick: () => openView(r) },
+      { label: "Edit", onClick: () => openEdit(r) },
+      { label: "Use routine", href: `/dashboard?run=${encodeURIComponent(r.id)}` },
+      { label: "Delete", onClick: () => removeRoutine(r.id), variant: "danger" },
+    ]}
+  />
+</td>
+
                     </div>
                   </td>
                 </tr>
@@ -281,7 +273,7 @@ export default function RoutineManager() {
             ) : (
               <tr>
                 <td colSpan={3} className="py-6 text-center text-gray-500">
-                  No routines
+                  No routines yet.
                 </td>
               </tr>
             )}
@@ -289,7 +281,7 @@ export default function RoutineManager() {
         </table>
       </div>
 
-      {/* ===== view card (supplier-style) ===== */}
+      {/* ===== view card ===== */}
       {viewOpen && viewing && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
           <div
@@ -321,7 +313,6 @@ export default function RoutineManager() {
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t bg-gray-50 p-3">
-              {/* Only render link when viewing is set (it is, in this modal) */}
               <a
                 href={`/dashboard?run=${encodeURIComponent(viewing.id)}`}
                 className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"

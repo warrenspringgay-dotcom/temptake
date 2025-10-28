@@ -1,9 +1,9 @@
-// src/components/TeamManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import ActionMenu from "@/components/ActionMenu";
 
 /* -------------------- Types -------------------- */
 type Member = {
@@ -28,9 +28,6 @@ type Training = {
 };
 
 /* -------------------- Helpers -------------------- */
-function cls(...p: Array<string | false | undefined>) {
-  return p.filter(Boolean).join(" ");
-}
 function fmt(iso?: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -69,7 +66,7 @@ export default function TeamManager() {
     notes: "",
   });
 
-  // member's current trainings (for card + small drawer)
+  // member trainings
   const [eduList, setEduList] = useState<Training[]>([]);
   const [eduListLoading, setEduListLoading] = useState(false);
 
@@ -192,12 +189,11 @@ export default function TeamManager() {
   async function loadTrainingsFor(staffId: string) {
     setEduListLoading(true);
     try {
-      const q = supabase
+      const { data, error } = await supabase
         .from("trainings")
         .select("id, staff_id, type, certificate_url, awarded_on, expires_on, notes")
         .eq("staff_id", staffId)
         .order("awarded_on", { ascending: false });
-      const { data, error } = await q;
       if (error) throw error;
       setEduList((data ?? []) as Training[]);
     } catch {
@@ -210,7 +206,7 @@ export default function TeamManager() {
   function openCard(m: Member) {
     setViewFor(m);
     setViewOpen(true);
-    loadTrainingsFor(m.id);
+    void loadTrainingsFor(m.id);
   }
 
   /* -------------------- Education modal (insert) -------------------- */
@@ -238,7 +234,7 @@ export default function TeamManager() {
       const me = (await supabase.auth.getUser()).data.user?.id ?? null;
 
       const payload: any = {
-        staff_id: eduFor.id, // ✅ FK — must exist in team_members.id
+        staff_id: eduFor.id,
         type: eduForm.course.trim(),
         certificate_url: eduForm.certificateUrl.trim() || null,
         awarded_on: eduForm.completedOn || null,
@@ -249,16 +245,14 @@ export default function TeamManager() {
         ]
           .filter(Boolean)
           .join(" · ") || null,
-        org_id: orgId, // if column exists, harmless if nullable
-        created_by: me, // if column exists, harmless if nullable
+        org_id: orgId,
+        created_by: me,
       };
 
       const { error } = await supabase.from("trainings").insert(payload);
       if (error) throw error;
 
-      // refresh list on the card
       await loadTrainingsFor(eduFor.id);
-
       setEduOpen(false);
     } catch (e: any) {
       alert(e?.message ?? "Failed to save training.");
@@ -269,7 +263,7 @@ export default function TeamManager() {
 
   /* -------------------- Render -------------------- */
   return (
-    <div className="space-y-4 rounded-2xl border bg-white p-4">
+    <div className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
       <div className="flex items-center gap-2">
         <h1 className="text-lg font-semibold">Team</h1>
         <div className="ml-auto flex items-center gap-2">
@@ -289,16 +283,25 @@ export default function TeamManager() {
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-24" />
+            <col className="w-auto" />
+            <col className="w-40" />
+            <col className="w-24" />
+            <col className="w-[180px]" />
+          </colgroup>
+
           <thead>
             <tr className="text-left text-gray-500">
-              <th className="py-2 pr-3 w-24">Initials</th>
+              <th className="py-2 pr-3">Initials</th>
               <th className="py-2 pr-3">Name</th>
-              <th className="py-2 pr-3 w-40">Role</th>
-              <th className="py-2 pr-3 w-24">Active</th>
-              <th className="py-2 pr-3 w-[210px]">Actions</th>
+              <th className="py-2 pr-3">Role</th>
+              <th className="py-2 pr-3">Active</th>
+              <th className="py-2 pr-0 text-right">Actions</th>
             </tr>
           </thead>
+
           <tbody>
             {loading ? (
               <tr>
@@ -309,7 +312,7 @@ export default function TeamManager() {
             ) : filtered.length ? (
               filtered.map((r) => (
                 <tr key={r.id} className="border-t">
-                  <td className="py-2 pr-3">{r.initials ?? "—"}</td>
+                  <td className="py-2 pr-3 text-center font-medium">{r.initials ?? "—"}</td>
                   <td className="py-2 pr-3">
                     <button
                       className="text-blue-600 underline hover:text-blue-700"
@@ -321,41 +324,15 @@ export default function TeamManager() {
                   </td>
                   <td className="py-2 pr-3">{r.role ?? "—"}</td>
                   <td className="py-2 pr-3">{r.active ? "Yes" : "No"}</td>
-                  <td className="py-2 pr-3">
-                    <div className="flex gap-2">
-                      {/* View */}
-                      <button
-                        title="View card"
-                        onClick={() => openCard(r)}
-                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
-                      >
-                        👁️
-                      </button>
-                      {/* Edit */}
-                      <button
-                        title="Edit"
-                        onClick={() => openEdit(r)}
-                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
-                      >
-                        ✏️
-                      </button>
-                      {/* Education */}
-                      <button
-                        title="Education"
-                        onClick={() => openEducation(r)}
-                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
-                      >
-                        🎓
-                      </button>
-                      {/* Delete */}
-                      <button
-                        title="Delete"
-                        onClick={() => remove(r.id)}
-                        className="rounded-md border px-2 text-xs hover:bg-gray-50"
-                      >
-                        🗑️
-                      </button>
-                    </div>
+                  <td className="py-2 pr-3 text-right">
+                    <ActionMenu
+                      items={[
+                        { label: "View card", onClick: () => openCard(r) },
+                        { label: "Edit", onClick: () => openEdit(r) },
+                        { label: "Add education", onClick: () => openEducation(r) },
+                        { label: "Delete", onClick: () => remove(r.id), variant: "danger" },
+                      ]}
+                    />
                   </td>
                 </tr>
               ))
@@ -469,7 +446,7 @@ export default function TeamManager() {
         </div>
       )}
 
-      {/* -------- Business card modal (Supplier look) -------- */}
+      {/* -------- Business card modal -------- */}
       {viewOpen && viewFor && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
           <div
@@ -479,12 +456,10 @@ export default function TeamManager() {
             <div className="bg-slate-800 px-4 py-3 text-white">
               <div className="text-sm opacity-80">Team member</div>
               <div className="text-xl font-semibold">{viewFor.name}</div>
-              <div className="opacity-80">
-                {viewFor.active ? "Active" : "Inactive"}
-              </div>
+              <div className="opacity-80">{viewFor.active ? "Active" : "Inactive"}</div>
             </div>
 
-            <div className="p-4 space-y-2 text-sm">
+            <div className="space-y-2 p-4 text-sm">
               <div><span className="font-medium">Initials:</span> {viewFor.initials ?? "—"}</div>
               <div><span className="font-medium">Role:</span> {viewFor.role ?? "—"}</div>
               <div><span className="font-medium">Email:</span> {viewFor.email ?? "—"}</div>
@@ -496,7 +471,7 @@ export default function TeamManager() {
                 {eduListLoading ? (
                   <div className="text-gray-500">Loading…</div>
                 ) : eduList.length ? (
-                  <ul className="list-disc pl-5 space-y-1">
+                  <ul className="list-disc space-y-1 pl-5">
                     {eduList.map((t) => (
                       <li key={t.id}>
                         <span className="font-medium">{t.type ?? "Course"}</span>{" "}
@@ -613,7 +588,7 @@ export default function TeamManager() {
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Notes</label>
                 <textarea
-                  className="min-h-[90px] w-full rounded-xl border px-3 py-2"
+                  className="minh-[90px] w-full rounded-xl border px-3 py-2"
                   value={eduForm.notes}
                   onChange={(e) => setEduForm((f) => ({ ...f, notes: e.target.value }))}
                   placeholder="Any extra info…"

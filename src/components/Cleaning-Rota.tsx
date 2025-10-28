@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import ActionMenu from "@/components/ActionMenu";
 
 type Task = {
   id: string;
@@ -67,33 +68,25 @@ export default function CleaningRota() {
     [year, month]
   );
 
-  /** Build a matrix for the chosen week-style layout (Mon..Sun) */
+  /** Build Mon..Sun grid */
   const weeks: (Date | null)[][] = useMemo(() => {
     const first = new Date(year, month, 1);
-    const last = new Date(year, month, daysInMonth);
-
-    // Shift to Monday=0
-    const firstDow = (first.getDay() + 6) % 7;
+    const days = new Date(year, month + 1, 0).getDate();
     const grid: (Date | null)[][] = [];
+    const firstDow = (first.getDay() + 6) % 7; // shift so Monday=0
     let cursor = new Date(first);
-    cursor.setDate(first.getDate() - firstDow);
-
+    cursor.setDate(1 - firstDow);
     for (let r = 0; r < 6; r++) {
       const row: (Date | null)[] = [];
       for (let c = 0; c < 7; c++) {
-        const inMonth =
-          cursor >= new Date(year, month, 1) &&
-          cursor <= new Date(year, month, daysInMonth);
+        const inMonth = cursor.getMonth() === month;
         row.push(inMonth ? new Date(cursor) : null);
         cursor.setDate(cursor.getDate() + 1);
       }
       grid.push(row);
     }
     return grid;
-  }, [year, month, daysInMonth]);
-
-  // We’ll show the whole month; initials inputs appear only for in-month days.
-  const flatDays = weeks[0]?.concat(weeks[1], weeks[2], weeks[3], weeks[4], weeks[5]) ?? [];
+  }, [year, month]);
 
   /* ------------------ Data I/O ------------------ */
   async function loadData() {
@@ -115,10 +108,10 @@ export default function CleaningRota() {
 
     if (!tErr) setTasks((t ?? []) as Task[]);
 
-    // Logs for the entire month (by date range)
+    // Logs for the entire month
     const start = `${year}-${String(month + 1).padStart(2, "0")}-01`;
     const end = `${year}-${String(month + 1).padStart(2, "0")}-${String(
-      daysInMonth
+      new Date(year, month + 1, 0).getDate()
     ).padStart(2, "0")}`;
 
     const { data: l, error: lErr } = await supabase
@@ -162,6 +155,7 @@ export default function CleaningRota() {
 
   async function saveInitials(task: Task, d: Date, value: string) {
     const orgId = await getActiveOrgIdClient();
+    if (!orgId) return;
     const dateStr = ymd(d);
     const inits = value.trim().toUpperCase();
 
@@ -178,7 +172,6 @@ export default function CleaningRota() {
       return;
     }
 
-    // Insert/Upsert with required NOT NULL metadata
     const payload = {
       org_id: orgId as string,
       task_id: task.id,
@@ -190,14 +183,12 @@ export default function CleaningRota() {
       done: true,
     };
 
-    // Prefer upsert so editing an existing cell overwrites in place
     const { error } = await supabase
       .from("cleaning_logs")
-      // @ts-ignore PostgREST option supported by supabase-js:
+      // @ts-ignore: PostgREST option is supported by supabase-js
       .upsert(payload, { onConflict: "org_id,task_id,date" });
 
     if (error) {
-      // Some older PostgREST versions don’t allow onConflict in client. Fallback:
       if (String(error.message || "").toLowerCase().includes("on conflict")) {
         await supabase.from("cleaning_logs").delete().match({
           org_id: orgId,
@@ -213,7 +204,6 @@ export default function CleaningRota() {
     await loadData();
   }
 
-  /* ------------------ UI ------------------ */
   return (
     <div className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
       {/* Header / Controls */}
@@ -276,9 +266,7 @@ export default function CleaningRota() {
           <select
             className="rounded-lg border px-3 py-2"
             value={newTask.freq}
-            onChange={(e) =>
-              setNewTask((t) => ({ ...t, freq: e.target.value as Task["freq"] }))
-            }
+            onChange={(e) => setNewTask((t) => ({ ...t, freq: e.target.value as Task["freq"] }))}
           >
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
@@ -293,7 +281,7 @@ export default function CleaningRota() {
         </div>
       )}
 
-      {/* Week-style table: Mon..Sun (no double border) */}
+      {/* Grid */}
       <div className="overflow-x-auto print:overflow-visible">
         <table className="min-w-full text-sm">
           <thead>
@@ -322,9 +310,6 @@ export default function CleaningRota() {
                   <td className="px-2 py-2">{t.area || "—"}</td>
 
                   {WEEKDAY_LABELS.map((_, col) => {
-                    // Find the first in-month date for this weekday in the current month,
-                    // then show a small initials box for each week-cell stacked vertically.
-                    // Simpler: just render inputs for each visible day in the month that matches this weekday.
                     return (
                       <td key={col} className="px-2 py-2">
                         <div className="flex flex-col gap-2">
@@ -336,13 +321,10 @@ export default function CleaningRota() {
                               <input
                                 key={rIdx + "-" + ymd(d)}
                                 defaultValue={val}
-                                placeholder=""
                                 maxLength={3}
                                 className="h-7 w-12 rounded border px-1 text-xs text-center uppercase"
                                 onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    (e.target as HTMLInputElement).blur();
-                                  }
+                                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                                 }}
                                 onBlur={(e) => {
                                   const v = e.currentTarget.value;
@@ -365,38 +347,35 @@ export default function CleaningRota() {
                   })}
 
                   <td className="px-2 py-2 text-right">
-                    <div className="inline-flex gap-2">
-                      <button
-                        className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
-                        title="Edit"
-                        onClick={async () => {
-                          const name = prompt("Rename task", t.name);
-                          if (!name || name.trim() === t.name) return;
-                          const org_id = await getActiveOrgIdClient();
-                          await supabase
-                            .from("cleaning_tasks")
-                            .update({ name: name.trim() })
-                            .eq("org_id", org_id)
-                            .eq("id", t.id);
-                          await loadData();
-                        }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
-                        title="Delete"
-                        onClick={async () => {
-                          if (!confirm("Delete this task?")) return;
-                          const org_id = await getActiveOrgIdClient();
-                          await supabase.from("cleaning_logs").delete().eq("org_id", org_id).eq("task_id", t.id);
-                          await supabase.from("cleaning_tasks").delete().eq("org_id", org_id).eq("id", t.id);
-                          await loadData();
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
+                    <ActionMenu
+                      items={[
+                        {
+                          label: "Edit name",
+                          onClick: async () => {
+                            const name = prompt("Rename task", t.name);
+                            if (!name || name.trim() === t.name) return;
+                            const org_id = await getActiveOrgIdClient();
+                            await supabase
+                              .from("cleaning_tasks")
+                              .update({ name: name.trim() })
+                              .eq("org_id", org_id)
+                              .eq("id", t.id);
+                            await loadData();
+                          },
+                        },
+                        {
+                          label: "Delete",
+                          onClick: async () => {
+                            if (!confirm("Delete this task?")) return;
+                            const org_id = await getActiveOrgIdClient();
+                            await supabase.from("cleaning_logs").delete().eq("org_id", org_id).eq("task_id", t.id);
+                            await supabase.from("cleaning_tasks").delete().eq("org_id", org_id).eq("id", t.id);
+                            await loadData();
+                          },
+                          variant: "danger",
+                        },
+                      ]}
+                    />
                   </td>
                 </tr>
               ))

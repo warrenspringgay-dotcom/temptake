@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import ActionMenu from "@/components/ActionMenu";
 
 type SupplierRow = {
   id: string;
@@ -54,6 +55,9 @@ export default function SuppliersManager() {
         .order("name");
       if (error) throw error;
       setRows((data ?? []) as SupplierRow[]);
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to load suppliers.");
+      setRows([]);
     } finally {
       setLoading(false);
     }
@@ -72,7 +76,16 @@ export default function SuppliersManager() {
     );
   }, [q, rows]);
 
-  async function remove(id: string) {
+  function openView(r: SupplierRow) {
+    setViewing(r);
+    setViewOpen(true);
+  }
+  function openEdit(r: SupplierRow) {
+    setEditing({ ...r });
+    setEditOpen(true);
+  }
+
+  async function removeSupplier(id: string) {
     if (!confirm("Delete supplier?")) return;
     const { error } = await supabase.from("suppliers").delete().eq("id", id);
     if (error) return alert(error.message);
@@ -102,6 +115,7 @@ export default function SuppliersManager() {
   async function saveAdd() {
     const orgId = await getActiveOrgIdClient();
     if (!orgId) return alert("No organisation found.");
+    if (!adding.name.trim()) return alert("Name is required.");
     const { error } = await supabase.from("suppliers").insert({
       org_id: orgId,
       name: adding.name.trim(),
@@ -125,17 +139,6 @@ export default function SuppliersManager() {
     });
     refresh();
   }
-
-  const SmallBtn: React.FC<
-    React.ButtonHTMLAttributes<HTMLButtonElement>
-  > = ({ children, className = "", ...props }) => (
-    <button
-      {...props}
-      className={`rounded-lg border px-2 py-1 text-xs hover:bg-gray-50 ${className}`}
-    >
-      {children}
-    </button>
-  );
 
   return (
     <div className="space-y-6 rounded-2xl border bg-white p-4 shadow-sm">
@@ -167,7 +170,7 @@ export default function SuppliersManager() {
               <th className="py-2 pr-3">Email</th>
               <th className="py-2 pr-3">Categories</th>
               <th className="py-2 pr-3">Active</th>
-              <th className="py-2 pr-3">Actions</th>
+              <th className="py-2 pr-0 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -189,49 +192,24 @@ export default function SuppliersManager() {
                   <td className="py-2 pr-3">
                     <button
                       className="text-blue-600 underline hover:text-blue-700"
-                      onClick={() => {
-                        setViewing(r);
-                        setViewOpen(true);
-                      }}
+                      onClick={() => openView(r)}
                     >
                       {r.name}
                     </button>
                   </td>
-                  <td className="py-2 pr-3">{r.contact || "—"}</td>
-                  <td className="py-2 pr-3">{r.phone || "—"}</td>
-                  <td className="py-2 pr-3">{r.email || "—"}</td>
-                  <td className="py-2 pr-3">{r.categories || "—"}</td>
+                  <td className="py-2 pr-3">{r.contact ?? "—"}</td>
+                  <td className="py-2 pr-3">{r.phone ?? "—"}</td>
+                  <td className="py-2 pr-3">{r.email ?? "—"}</td>
+                  <td className="py-2 pr-3">{r.categories ?? "—"}</td>
                   <td className="py-2 pr-3">{r.active ? "Yes" : "No"}</td>
-                  <td className="py-2 pr-3">
-                    <div className="flex gap-2">
-                      <SmallBtn
-                        title="View"
-                        onClick={() => {
-                          setViewing(r);
-                          setViewOpen(true);
-                        }}
-                        aria-label="View supplier"
-                      >
-                        👁️
-                      </SmallBtn>
-                      <SmallBtn
-                        title="Edit"
-                        onClick={() => {
-                          setEditing({ ...r });
-                          setEditOpen(true);
-                        }}
-                        aria-label="Edit supplier"
-                      >
-                        ✏️
-                      </SmallBtn>
-                      <SmallBtn
-                        title="Delete"
-                        onClick={() => remove(r.id)}
-                        aria-label="Delete supplier"
-                      >
-                        🗑️
-                      </SmallBtn>
-                    </div>
+                  <td className="py-2 pr-3 text-right">
+                    <ActionMenu
+                      items={[
+                        { label: "View", onClick: () => openView(r) },
+                        { label: "Edit", onClick: () => openEdit(r) },
+                        { label: "Delete", onClick: () => removeSupplier(r.id), variant: "danger" },
+                      ]}
+                    />
                   </td>
                 </tr>
               ))
@@ -242,10 +220,7 @@ export default function SuppliersManager() {
 
       {/* View card */}
       {viewOpen && viewing && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40"
-          onClick={() => setViewOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
           <div
             className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-0"
             onClick={(e) => e.stopPropagation()}
@@ -257,24 +232,19 @@ export default function SuppliersManager() {
             </div>
             <div className="space-y-3 p-4 text-sm">
               <div>
-                <span className="font-medium">Contact:</span>{" "}
-                {viewing.contact || "—"}
+                <span className="font-medium">Contact:</span> {viewing.contact || "—"}
               </div>
               <div>
-                <span className="font-medium">Phone:</span>{" "}
-                {viewing.phone || "—"}
+                <span className="font-medium">Phone:</span> {viewing.phone || "—"}
               </div>
               <div>
-                <span className="font-medium">Email:</span>{" "}
-                {viewing.email || "—"}
+                <span className="font-medium">Email:</span> {viewing.email || "—"}
               </div>
               <div>
-                <span className="font-medium">Categories:</span>{" "}
-                {viewing.categories || "—"}
+                <span className="font-medium">Categories:</span> {viewing.categories || "—"}
               </div>
               <div>
-                <span className="font-medium">Notes:</span>{" "}
-                {viewing.notes || "—"}
+                <span className="font-medium">Notes:</span> {viewing.notes || "—"}
               </div>
             </div>
             <div className="flex justify-end gap-2 border-t p-3">
@@ -291,20 +261,14 @@ export default function SuppliersManager() {
 
       {/* Edit modal */}
       {editOpen && editing && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40"
-          onClick={() => setEditOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEditOpen(false)}>
           <div
             className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Edit supplier</div>
-              <button
-                onClick={() => setEditOpen(false)}
-                className="rounded-md p-2 hover:bg-gray-100"
-              >
+              <button onClick={() => setEditOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
                 ✕
               </button>
             </div>
@@ -313,68 +277,51 @@ export default function SuppliersManager() {
               <input
                 className="h-10 w-full rounded-xl border px-3"
                 value={editing.name}
-                onChange={(e) =>
-                  setEditing((s) => ({ ...s!, name: e.target.value }))
-                }
+                onChange={(e) => setEditing((s) => ({ ...s!, name: e.target.value }))}
               />
               <input
                 className="h-10 w-full rounded-xl border px-3"
                 placeholder="Contact"
                 value={editing.contact ?? ""}
-                onChange={(e) =>
-                  setEditing((s) => ({ ...s!, contact: e.target.value }))
-                }
+                onChange={(e) => setEditing((s) => ({ ...s!, contact: e.target.value }))}
               />
               <div className="grid grid-cols-2 gap-3">
                 <input
                   className="h-10 w-full rounded-xl border px-3"
                   placeholder="Phone"
                   value={editing.phone ?? ""}
-                  onChange={(e) =>
-                    setEditing((s) => ({ ...s!, phone: e.target.value }))
-                  }
+                  onChange={(e) => setEditing((s) => ({ ...s!, phone: e.target.value }))}
                 />
                 <input
                   className="h-10 w-full rounded-xl border px-3"
                   placeholder="Email"
                   value={editing.email ?? ""}
-                  onChange={(e) =>
-                    setEditing((s) => ({ ...s!, email: e.target.value }))
-                  }
+                  onChange={(e) => setEditing((s) => ({ ...s!, email: e.target.value }))}
                 />
               </div>
               <input
                 className="h-10 w-full rounded-xl border px-3"
                 placeholder="Categories"
                 value={editing.categories ?? ""}
-                onChange={(e) =>
-                  setEditing((s) => ({ ...s!, categories: e.target.value }))
-                }
+                onChange={(e) => setEditing((s) => ({ ...s!, categories: e.target.value }))}
               />
               <textarea
                 className="min-h-[90px] w-full rounded-xl border px-3 py-2"
                 placeholder="Notes"
                 value={editing.notes ?? ""}
-                onChange={(e) =>
-                  setEditing((s) => ({ ...s!, notes: e.target.value }))
-                }
+                onChange={(e) => setEditing((s) => ({ ...s!, notes: e.target.value }))}
               />
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   checked={!!editing.active}
-                  onChange={(e) =>
-                    setEditing((s) => ({ ...s!, active: e.target.checked }))
-                  }
+                  onChange={(e) => setEditing((s) => ({ ...s!, active: e.target.checked }))}
                 />
                 Active
               </label>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button
-                  className="rounded-xl border px-4 py-2 text-sm"
-                  onClick={() => setEditOpen(false)}
-                >
+                <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setEditOpen(false)}>
                   Cancel
                 </button>
                 <button
@@ -391,20 +338,14 @@ export default function SuppliersManager() {
 
       {/* Add modal */}
       {addOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40"
-          onClick={() => setAddOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setAddOpen(false)}>
           <div
             className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Add supplier</div>
-              <button
-                onClick={() => setAddOpen(false)}
-                className="rounded-md p-2 hover:bg-gray-100"
-              >
+              <button onClick={() => setAddOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
                 ✕
               </button>
             </div>
@@ -414,68 +355,51 @@ export default function SuppliersManager() {
                 className="h-10 w-full rounded-xl border px-3"
                 placeholder="Name"
                 value={adding.name}
-                onChange={(e) =>
-                  setAdding((s) => ({ ...s, name: e.target.value }))
-                }
+                onChange={(e) => setAdding((s) => ({ ...s, name: e.target.value }))}
               />
               <input
                 className="h-10 w-full rounded-xl border px-3"
                 placeholder="Contact"
                 value={adding.contact}
-                onChange={(e) =>
-                  setAdding((s) => ({ ...s, contact: e.target.value }))
-                }
+                onChange={(e) => setAdding((s) => ({ ...s, contact: e.target.value }))}
               />
               <div className="grid grid-cols-2 gap-3">
                 <input
                   className="h-10 w-full rounded-xl border px-3"
                   placeholder="Phone"
                   value={adding.phone}
-                  onChange={(e) =>
-                    setAdding((s) => ({ ...s, phone: e.target.value }))
-                  }
+                  onChange={(e) => setAdding((s) => ({ ...s, phone: e.target.value }))}
                 />
                 <input
                   className="h-10 w-full rounded-xl border px-3"
                   placeholder="Email"
                   value={adding.email}
-                  onChange={(e) =>
-                    setAdding((s) => ({ ...s, email: e.target.value }))
-                  }
+                  onChange={(e) => setAdding((s) => ({ ...s, email: e.target.value }))}
                 />
               </div>
               <input
                 className="h-10 w-full rounded-xl border px-3"
                 placeholder="Categories"
                 value={adding.categories}
-                onChange={(e) =>
-                  setAdding((s) => ({ ...s, categories: e.target.value }))
-                }
+                onChange={(e) => setAdding((s) => ({ ...s, categories: e.target.value }))}
               />
               <textarea
                 className="min-h-[90px] w-full rounded-xl border px-3 py-2"
                 placeholder="Notes"
                 value={adding.notes}
-                onChange={(e) =>
-                  setAdding((s) => ({ ...s, notes: e.target.value }))
-                }
+                onChange={(e) => setAdding((s) => ({ ...s, notes: e.target.value }))}
               />
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   checked={adding.active}
-                  onChange={(e) =>
-                    setAdding((s) => ({ ...s, active: e.target.checked }))
-                  }
+                  onChange={(e) => setAdding((s) => ({ ...s, active: e.target.checked }))}
                 />
                 Active
               </label>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button
-                  className="rounded-xl border px-4 py-2 text-sm"
-                  onClick={() => setAddOpen(false)}
-                >
+                <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setAddOpen(false)}>
                   Cancel
                 </button>
                 <button

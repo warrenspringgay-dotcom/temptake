@@ -688,85 +688,90 @@ export default function FoodTempLogger({
           </button>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500">
-                <th className="py-2 pr-3">Date</th>
-                <th className="py-2 pr-3">Staff</th>
-                <th className="py-2 pr-3">Location</th>
-                <th className="py-2 pr-3">Item</th>
-                <th className="py-2 pr-3">Target</th>
-                <th className="py-2 pr-3">Temp (°C)</th>
-                <th className="py-2 pr-3">Status</th>
+         {/* inside the table JSX of FoodTempLogger */}
+<table className="w-full table-fixed text-sm">
+  <thead className="bg-gray-50 text-gray-600">
+    <tr className="text-left">
+      <th className="px-3 py-2 w-[7.5rem]">Date</th>
+      <th className="px-3 py-2 w-12 text-center">Staff</th>
+      <th className="px-3 py-2 w-[8rem]">Location</th>
+      <th className="px-3 py-2 w-[8rem]">Item</th>
+      <th className="px-3 py-2 w-[9rem]">Target</th>
+      <th className="px-3 py-2">Temp (°C)</th>
+      <th className="px-3 py-2 w-[6.5rem] text-right">Status</th>
+    </tr>
+  </thead>
+
+  <tbody>
+    {loading ? (
+      <tr>
+        <td colSpan={7} className="py-6 text-center text-gray-500">Loading…</td>
+      </tr>
+    ) : grouped.length ? (
+      grouped.map((g) => (
+        <React.Fragment key={g.date}>
+          {/* group header row */}
+          <tr className="border-t bg-gray-50/70">
+            <td colSpan={7} className="py-2 px-2 text-xs font-medium text-gray-700">
+              {formatDDMMYYYY(g.date)}
+            </td>
+          </tr>
+
+          {g.list.map((r) => {
+            const preset: TargetPreset | undefined =
+              r.target_key
+                ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[r.target_key]
+                : undefined;
+            const st: "pass" | "fail" | null = r.status ?? inferStatus(r.temp_c, preset);
+
+            return (
+              <tr key={r.id} className="border-t">
+                {/* empty because date is shown in the group header above */}
+                <td className="px-3 py-2" />
+                <td className="px-3 py-2 text-center font-medium tabular-nums w-12">
+                  {r.staff_initials ?? "—"}
+                </td>
+                <td className="px-3 py-2">{r.location ?? "—"}</td>
+                <td className="px-3 py-2">{r.item ?? "—"}</td>
+                <td className="px-3 py-2">
+                  {preset
+                    ? `${preset.label}${
+                        preset.minC != null || preset.maxC != null
+                          ? ` (${preset.minC ?? "−∞"}–${preset.maxC ?? "+∞"} °C)`
+                          : ""
+                      }`
+                    : "—"}
+                </td>
+                <td className="px-3 py-2">{r.temp_c ?? "—"}</td>
+                <td className="px-3 py-2 text-right">
+                  {st ? (
+                    <span
+                      className={
+                        "inline-flex rounded-full px-2 py-0.5 text-xs font-medium " +
+                        (st === "pass"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-red-100 text-red-800")
+                      }
+                    >
+                      {st}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
-                    Loading…
-                  </td>
-                </tr>
-              ) : grouped.length ? (
-                grouped.map((g) => (
-                  <React.Fragment key={g.date}>
-                    <tr className="border-t bg-gray-50/70">
-                      <td colSpan={7} className="py-2 px-2 text-xs font-medium text-gray-700">
-                        {formatDDMMYYYY(g.date)}
-                      </td>
-                    </tr>
-                    {g.list.map((r) => {
-                      const preset: TargetPreset | undefined =
-                        r.target_key
-                          ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[r.target_key]
-                          : undefined;
-                      const st: "pass" | "fail" | null = r.status ?? inferStatus(r.temp_c, preset);
-                      return (
-                        <tr key={r.id} className="border-t">
-                          <td className="py-2 pr-3">{/* grouped date header */}</td>
-                          <td className="py-2 pr-3">{r.staff_initials ?? "—"}</td>
-                          <td className="py-2 pr-3">{r.location ?? "—"}</td>
-                          <td className="py-2 pr-3">{r.item ?? "—"}</td>
-                          <td className="py-2 pr-3">
-                            {preset
-                              ? `${preset.label}${
-                                  preset.minC != null || preset.maxC != null
-                                    ? ` (${preset.minC ?? "−∞"}–${preset.maxC ?? "+∞"} °C)`
-                                    : ""
-                                }`
-                              : "—"}
-                          </td>
-                          <td className="py-2 pr-3">{r.temp_c ?? "—"}</td>
-                          <td className="py-2 pr-3">
-                            {st ? (
-                              <span
-                                className={cls(
-                                  "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                                  st === "pass"
-                                    ? "bg-emerald-100 text-emerald-800"
-                                    : "bg-red-100 text-red-800"
-                                )}
-                              >
-                                {st}
-                              </span>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </React.Fragment>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
-                    No entries
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+            );
+          })}
+        </React.Fragment>
+      ))
+    ) : (
+      <tr>
+        <td colSpan={7} className="py-6 text-center text-gray-500">No entries</td>
+      </tr>
+    )}
+  </tbody>
+</table>
+
         </div>
       </div>
     </div>
