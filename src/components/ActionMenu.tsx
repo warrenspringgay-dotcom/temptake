@@ -19,19 +19,14 @@ type MenuItem = {
   rel?: string;
   disabled?: boolean;
   icon?: React.ReactNode;
-  /** Use "danger" for destructive actions */
   variant?: "default" | "danger";
 };
 
 type ActionMenuProps = {
   items: MenuItem[];
-  /** Optional aria-label for the trigger button (default: "Open actions") */
   "aria-label"?: string;
-  /** Optional className for the trigger button wrapper */
   className?: string;
-  /** If true, renders a small icon-only trigger. */
   size?: "sm" | "md";
-  /** Optional tooltip/label text for trigger (visually hidden). */
   triggerLabel?: string;
 };
 
@@ -44,61 +39,74 @@ export default function ActionMenu({
 }: ActionMenuProps) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number }>({
-    top: 0,
-    left: 0,
-    width: 0,
-  });
-  const [activeIndex, setActiveIndex] = useState<number>(-1);
+  const [activeIndex, setActiveIndex] = useState(-1);
+
+  // position + flipping
+  const [pos, setPos] = useState<{ top: number; left: number }>(() => ({ top: 0, left: 0 }));
+  const [placement, setPlacement] = useState<"down" | "up">("down");
 
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // Portal mount guard (Next.js app router + SSR)
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // Toggle
-  const toggle = useCallback(() => {
-    setOpen((v) => !v);
-  }, []);
+  useEffect(() => setMounted(true), []);
 
   const close = useCallback(() => {
     setOpen(false);
     setActiveIndex(-1);
   }, []);
 
-  // Calculate position relative to viewport, keep inside screen.
   const updatePosition = useCallback(() => {
     const btn = triggerRef.current;
     if (!btn) return;
+
     const r = btn.getBoundingClientRect();
-    const gap = 6; // small offset
-    const menuWidth = 240; // estimated; we’ll still clamp by viewport
+    const gap = 6;
     const vw = window.innerWidth;
-    const left = Math.min(Math.max(8, r.left + r.width - menuWidth), vw - menuWidth - 8);
-    const top = Math.max(8, r.top + window.scrollY + r.height + gap);
-    setPos({ top, left, width: r.width });
+    const vh = window.innerHeight;
+
+    // estimate width first; refine after first paint
+    const estWidth = 240;
+    const left = Math.min(Math.max(8, r.left + r.width - estWidth), vw - estWidth - 8);
+
+    // choose up vs down so it never gets hidden off-screen
+    const spaceBelow = vh - (r.bottom);
+    const needsFlipUp = spaceBelow < 220; // ~ menu height
+    setPlacement(needsFlipUp ? "up" : "down");
+
+    const top =
+      (needsFlipUp ? r.top + window.scrollY - gap : r.bottom + window.scrollY + gap);
+
+    setPos({ top, left });
   }, []);
 
   useLayoutEffect(() => {
     if (!open) return;
     updatePosition();
+    // second pass after the menu renders to use real width
+    requestAnimationFrame(() => {
+      const btn = triggerRef.current;
+      const m = menuRef.current;
+      if (!btn || !m) return;
+      const r = btn.getBoundingClientRect();
+      const w = Math.min(Math.max(200, m.offsetWidth), 320);
+      const vw = window.innerWidth;
+      const left = Math.min(Math.max(8, r.left + r.width - w), vw - w - 8);
+      setPos(p => ({ ...p, left }));
+    });
   }, [open, updatePosition]);
 
   useEffect(() => {
     if (!open) return;
-    const onScrollOrResize = () => updatePosition();
-    window.addEventListener("scroll", onScrollOrResize, true);
-    window.addEventListener("resize", onScrollOrResize);
+    const handler = () => updatePosition();
+    window.addEventListener("scroll", handler, true);
+    window.addEventListener("resize", handler);
     return () => {
-      window.removeEventListener("scroll", onScrollOrResize, true);
-      window.removeEventListener("resize", onScrollOrResize);
+      window.removeEventListener("scroll", handler, true);
+      window.removeEventListener("resize", handler);
     };
   }, [open, updatePosition]);
 
-  // Close on outside click
+  // close on outside click
   useEffect(() => {
     if (!open) return;
     function onDocClick(e: MouseEvent) {
@@ -111,18 +119,12 @@ export default function ActionMenu({
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [open, close]);
 
-  // Keyboard handling
-  const focusItem = useCallback(
-    (idx: number) => {
-      setActiveIndex(idx);
-      // Move focus into the corresponding button/anchor when available
-      requestAnimationFrame(() => {
-        const el = menuRef.current?.querySelectorAll<HTMLElement>('[data-ak="item"]')[idx];
-        el?.focus();
-      });
-    },
-    [setActiveIndex]
-  );
+  const focusItem = useCallback((idx: number) => {
+    setActiveIndex(idx);
+    requestAnimationFrame(() => {
+      menuRef.current?.querySelectorAll<HTMLElement>('[data-ak="item"]')[idx]?.focus();
+    });
+  }, []);
 
   const onTriggerKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
@@ -139,81 +141,63 @@ export default function ActionMenu({
       triggerRef.current?.focus();
       return;
     }
-    const enabled = items.map((it) => !it.disabled);
-    const count = enabled.length;
+    const enabled = items.map(it => !it.disabled);
+    const n = items.length;
+
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      let next = activeIndex;
-      for (let i = 1; i <= count; i++) {
-        const tryIdx = (activeIndex + i) % items.length;
-        if (enabled[tryIdx]) {
-          next = tryIdx;
-          break;
-        }
+      for (let i = 1; i <= n; i++) {
+        const j = (activeIndex + i) % n;
+        if (enabled[j]) return focusItem(j);
       }
-      focusItem(next);
-    } else if (e.key === "ArrowUp") {
+    }
+    if (e.key === "ArrowUp") {
       e.preventDefault();
-      let next = activeIndex;
-      for (let i = 1; i <= count; i++) {
-        const tryIdx = (activeIndex - i + items.length) % items.length;
-        if (enabled[tryIdx]) {
-          next = tryIdx;
-          break;
-        }
+      for (let i = 1; i <= n; i++) {
+        const j = (activeIndex - i + n) % n;
+        if (enabled[j]) return focusItem(j);
       }
-      focusItem(next);
-    } else if (e.key === "Home") {
+    }
+    if (e.key === "Home") {
       e.preventDefault();
-      for (let i = 0; i < items.length; i++) {
-        if (!items[i].disabled) {
-          focusItem(i);
-          break;
-        }
-      }
-    } else if (e.key === "End") {
+      const j = items.findIndex(it => !it.disabled);
+      if (j >= 0) focusItem(j);
+    }
+    if (e.key === "End") {
       e.preventDefault();
-      for (let i = items.length - 1; i >= 0; i--) {
-        if (!items[i].disabled) {
-          focusItem(i);
-          break;
-        }
-      }
-    } else if (e.key === "Enter" || e.key === " ") {
+      for (let j = n - 1; j >= 0; j--) if (!items[j].disabled) return focusItem(j);
+    }
+    if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       const it = items[activeIndex];
       if (!it || it.disabled) return;
       if (it.href) {
-        // Let the element's default click happen via refocus/enter
-        (menuRef.current?.querySelectorAll<HTMLElement>('[data-ak="item"]')[activeIndex])?.click();
-        return;
+        menuRef.current?.querySelectorAll<HTMLElement>('[data-ak="item"]')[activeIndex]?.click();
+      } else {
+        it.onClick?.();
+        close();
+        triggerRef.current?.focus();
       }
-      it.onClick?.();
-      close();
-      triggerRef.current?.focus();
     }
   };
 
   const triggerClasses = useMemo(
     () =>
-      `inline-flex items-center justify-center rounded-md border px-2 ${
+      `inline-flex items-center justify-center rounded-xl border px-2 ${
         size === "sm" ? "h-8" : "h-9"
-      } text-sm hover:bg-gray-50 ${className}`,
+      } text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black/20 ${className}`,
     [size, className]
   );
 
-  // Render a single menu row (button or link)
   const renderRow = (it: MenuItem, i: number) => {
-    const base =
-      "w-full flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm outline-none";
+    const base = "w-full flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm outline-none";
     const tone =
       it.variant === "danger"
         ? "text-red-700 hover:bg-red-50 focus:bg-red-50"
         : "text-gray-800 hover:bg-gray-100 focus:bg-gray-100";
     const disabledCls = it.disabled ? "opacity-50 pointer-events-none" : "";
-    const className = `${base} ${tone} ${disabledCls}`;
+    const cls = `${base} ${tone} ${disabledCls}`;
 
-    // Anchor
     if (it.href) {
       return (
         <Link
@@ -221,12 +205,12 @@ export default function ActionMenu({
           href={it.href}
           target={it.target}
           rel={it.rel ?? (it.target === "_blank" ? "noopener noreferrer" : undefined)}
-          className={className}
+          className={cls}
           role="menuitem"
           tabIndex={i === 0 ? 0 : -1}
           data-ak="item"
           onClick={() => {
-            if (it.onClick && !it.disabled) it.onClick();
+            if (!it.disabled) it.onClick?.();
             close();
           }}
         >
@@ -236,12 +220,11 @@ export default function ActionMenu({
       );
     }
 
-    // Button
     return (
       <button
         key={i}
         type="button"
-        className={className}
+        className={cls}
         role="menuitem"
         tabIndex={i === 0 ? 0 : -1}
         data-ak="item"
@@ -264,12 +247,13 @@ export default function ActionMenu({
       aria-orientation="vertical"
       aria-labelledby="actionmenu-trigger"
       onKeyDown={onMenuKeyDown}
-      className="z-[9999] fixed"
+      className="fixed z-[9999]"
       style={{
-        top: pos.top,
+        top: placement === "down" ? pos.top : undefined,
         left: pos.left,
+        bottom: placement === "up" ? (window.innerHeight - pos.top) : undefined,
         minWidth: 200,
-        maxWidth: 280,
+        maxWidth: 320,
       }}
     >
       <div className="rounded-xl border border-gray-200 bg-white p-1 shadow-xl">
@@ -301,7 +285,7 @@ export default function ActionMenu({
         onKeyDown={onTriggerKeyDown}
         title={triggerLabel}
       >
-        {/* three-dots icon */}
+        {/* 3-dots icon */}
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width={size === "sm" ? 16 : 18}
