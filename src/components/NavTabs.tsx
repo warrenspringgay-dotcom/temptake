@@ -96,7 +96,7 @@ export default function NavTabs() {
           ].join(" ")}
         >
           <div className="rounded-xl border bg-white shadow-xl overflow-hidden">
-            <nav className="flex flex-col py-1">
+            <nav  className="sticky top-0 z-40 flex w-full items-center justify-between border-b bg-white/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-white/75">
               {TABS.map((t) => {
                 const active =
                   pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);

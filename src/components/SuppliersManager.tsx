@@ -70,9 +70,7 @@ export default function SuppliersManager() {
     const term = q.trim().toLowerCase();
     if (!term) return rows;
     return rows.filter((r) =>
-      [r.name, r.contact, r.email, r.phone, r.categories]
-        .filter(Boolean)
-        .some((s) => s!.toLowerCase().includes(term))
+      [r.name, r.contact, r.email, r.phone, r.categories].filter(Boolean).some((s) => s!.toLowerCase().includes(term))
     );
   }, [q, rows]);
 
@@ -144,15 +142,15 @@ export default function SuppliersManager() {
     <div className="space-y-6 rounded-2xl border bg-white p-4 shadow-sm">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold">Suppliers</h1>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex min-w-0 items-center gap-2">
           <input
-            className="h-10 w-64 rounded-xl border px-3"
+            className="h-10 min-w-0 flex-1 rounded-xl border px-3 md:w-64"
             placeholder="Search..."
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
           <button
-            className="rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900"
+            className="whitespace-nowrap rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900"
             onClick={() => setAddOpen(true)}
           >
             + Add supplier
@@ -160,7 +158,8 @@ export default function SuppliersManager() {
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      {/* Desktop table with trimmed columns */}
+      <div className="hidden overflow-x-auto md:block">
         <table className="min-w-full text-sm">
           <thead>
             <tr className="text-left text-gray-500">
@@ -168,7 +167,6 @@ export default function SuppliersManager() {
               <th className="py-2 pr-3">Contact</th>
               <th className="py-2 pr-3">Phone</th>
               <th className="py-2 pr-3">Email</th>
-              <th className="py-2 pr-3">Categories</th>
               <th className="py-2 pr-3">Active</th>
               <th className="py-2 pr-0 text-right">Actions</th>
             </tr>
@@ -176,13 +174,13 @@ export default function SuppliersManager() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="py-6 text-center text-gray-500">
+                <td colSpan={6} className="py-6 text-center text-gray-500">
                   Loading…
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-6 text-center text-gray-500">
+                <td colSpan={6} className="py-6 text-center text-gray-500">
                   No suppliers yet.
                 </td>
               </tr>
@@ -190,17 +188,13 @@ export default function SuppliersManager() {
               filtered.map((r) => (
                 <tr key={r.id} className="border-t">
                   <td className="py-2 pr-3">
-                    <button
-                      className="text-blue-600 underline hover:text-blue-700"
-                      onClick={() => openView(r)}
-                    >
+                    <button className="text-blue-600 underline hover:text-blue-700" onClick={() => openView(r)}>
                       {r.name}
                     </button>
                   </td>
                   <td className="py-2 pr-3">{r.contact ?? "—"}</td>
                   <td className="py-2 pr-3">{r.phone ?? "—"}</td>
-                  <td className="py-2 pr-3">{r.email ?? "—"}</td>
-                  <td className="py-2 pr-3">{r.categories ?? "—"}</td>
+                  <td className="py-2 pr-3 truncate max-w-[240px]">{r.email ?? "—"}</td>
                   <td className="py-2 pr-3">{r.active ? "Yes" : "No"}</td>
                   <td className="py-2 pr-3 text-right">
                     <ActionMenu
@@ -218,40 +212,58 @@ export default function SuppliersManager() {
         </table>
       </div>
 
+      {/* Mobile cards (compact) */}
+      <div className="space-y-3 md:hidden">
+        {loading ? (
+          <div className="rounded-lg border bg-white p-4 text-center text-gray-500">Loading…</div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-lg border bg-white p-4 text-center text-gray-500">No suppliers yet.</div>
+        ) : (
+          filtered.map((r) => (
+            <div key={r.id} className="rounded-lg border bg-white p-3">
+              <div className="mb-1 flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-medium">{r.name}</div>
+                  <div className="text-xs text-gray-500">{r.active ? "Active" : "Inactive"}</div>
+                </div>
+                <ActionMenu
+                  items={[
+                    { label: "View", onClick: () => openView(r) },
+                    { label: "Edit", onClick: () => openEdit(r) },
+                    { label: "Delete", onClick: () => removeSupplier(r.id), variant: "danger" },
+                  ]}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs text-gray-700">
+                <div><span className="text-gray-500">Contact:</span> {r.contact ?? "—"}</div>
+                <div><span className="text-gray-500">Phone:</span> {r.phone ?? "—"}</div>
+                <div className="col-span-2 truncate"><span className="text-gray-500">Email:</span> {r.email ?? "—"}</div>
+                {r.categories ? <div className="col-span-2"><span className="text-gray-500">Categories:</span> {r.categories}</div> : null}
+                {r.notes ? <div className="col-span-2 text-gray-600">{r.notes}</div> : null}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
       {/* View card */}
       {viewOpen && viewing && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
-          <div
-            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-0"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-0" onClick={(e) => e.stopPropagation()}>
             <div className="rounded-t-2xl bg-slate-800 p-4 text-white">
               <div className="text-sm opacity-80">Supplier</div>
               <div className="text-xl font-semibold">{viewing.name}</div>
               <div className="opacity-80">{viewing.active ? "Active" : "Inactive"}</div>
             </div>
             <div className="space-y-3 p-4 text-sm">
-              <div>
-                <span className="font-medium">Contact:</span> {viewing.contact || "—"}
-              </div>
-              <div>
-                <span className="font-medium">Phone:</span> {viewing.phone || "—"}
-              </div>
-              <div>
-                <span className="font-medium">Email:</span> {viewing.email || "—"}
-              </div>
-              <div>
-                <span className="font-medium">Categories:</span> {viewing.categories || "—"}
-              </div>
-              <div>
-                <span className="font-medium">Notes:</span> {viewing.notes || "—"}
-              </div>
+              <div><span className="font-medium">Contact:</span> {viewing.contact || "—"}</div>
+              <div><span className="font-medium">Phone:</span> {viewing.phone || "—"}</div>
+              <div><span className="font-medium">Email:</span> {viewing.email || "—"}</div>
+              <div><span className="font-medium">Categories:</span> {viewing.categories || "—"}</div>
+              <div><span className="font-medium">Notes:</span> {viewing.notes || "—"}</div>
             </div>
             <div className="flex justify-end gap-2 border-t p-3">
-              <button
-                className="rounded-md px-3 py-1.5 hover:bg-gray-100"
-                onClick={() => setViewOpen(false)}
-              >
+              <button className="rounded-md px-3 py-1.5 hover:bg-gray-100" onClick={() => setViewOpen(false)}>
                 Close
               </button>
             </div>
@@ -262,15 +274,10 @@ export default function SuppliersManager() {
       {/* Edit modal */}
       {editOpen && editing && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEditOpen(false)}>
-          <div
-            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4" onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Edit supplier</div>
-              <button onClick={() => setEditOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
-                ✕
-              </button>
+              <button onClick={() => setEditOpen(false)} className="rounded-md p-2 hover:bg-gray-100">✕</button>
             </div>
 
             <div className="grid gap-3">
@@ -339,15 +346,10 @@ export default function SuppliersManager() {
       {/* Add modal */}
       {addOpen && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setAddOpen(false)}>
-          <div
-            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4" onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Add supplier</div>
-              <button onClick={() => setAddOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
-                ✕
-              </button>
+              <button onClick={() => setAddOpen(false)} className="rounded-md p-2 hover:bg-gray-100">✕</button>
             </div>
 
             <div className="grid gap-3">

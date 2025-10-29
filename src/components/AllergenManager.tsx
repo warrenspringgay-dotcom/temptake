@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { uid } from "@/lib/uid";
 import ActionMenu from "@/components/ActionMenu";
 
@@ -8,7 +8,6 @@ import { parseCSV } from "@/lib/csv";
 import { emptyFlags, draftFromRow, type MatrixDraft } from "@/lib/allergens";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-
 
 /* ---------- Types & Constants ---------- */
 type AllergenKey =
@@ -30,20 +29,20 @@ type AllergenKey =
 type Allergen = { key: AllergenKey; icon: string; label: string; short: string };
 
 const ALLERGENS: Allergen[] = [
-  { key: "gluten", icon: "🌾", label: "Gluten", short: "GLU" },
-  { key: "crustaceans", icon: "🦐", label: "Crustaceans", short: "CRU" },
-  { key: "eggs", icon: "🥚", label: "Eggs", short: "EGG" },
-  { key: "fish", icon: "🐟", label: "Fish", short: "FIS" },
-  { key: "peanuts", icon: "🥜", label: "Peanuts", short: "PEA" },
-  { key: "soybeans", icon: "🌱", label: "Soy", short: "SOY" },
-  { key: "milk", icon: "🥛", label: "Milk", short: "MIL" },
-  { key: "nuts", icon: "🌰", label: "Tree nuts", short: "NUT" },
-  { key: "celery", icon: "🥬", label: "Celery", short: "CEL" },
-  { key: "mustard", icon: "🌿", label: "Mustard", short: "MUS" },
-  { key: "sesame", icon: "🧴", label: "Sesame", short: "SES" },
-  { key: "sulphites", icon: "🧪", label: "Sulphites", short: "SUL" },
-  { key: "lupin", icon: "🌼", label: "Lupin", short: "LUP" },
-  { key: "molluscs", icon: "🐚", label: "Molluscs", short: "MOL" },
+  { key: "gluten",       icon: "🌾", label: "Gluten",       short: "GLU" },
+  { key: "crustaceans",  icon: "🦐", label: "Crustaceans",  short: "CRU" },
+  { key: "eggs",         icon: "🥚", label: "Eggs",         short: "EGG" },
+  { key: "fish",         icon: "🐟", label: "Fish",         short: "FIS" },
+  { key: "peanuts",      icon: "🥜", label: "Peanuts",      short: "PEA" },
+  { key: "soybeans",     icon: "🌱", label: "Soy",          short: "SOY" },
+  { key: "milk",         icon: "🥛", label: "Milk",         short: "MIL" },
+  { key: "nuts",         icon: "🌰", label: "Tree nuts",    short: "NUT" },
+  { key: "celery",       icon: "🥬", label: "Celery",       short: "CEL" },
+  { key: "mustard",      icon: "🌿", label: "Mustard",      short: "MUS" },
+  { key: "sesame",       icon: "🧴", label: "Sesame",       short: "SES" },
+  { key: "sulphites",    icon: "🧪", label: "Sulphites",    short: "SUL" },
+  { key: "lupin",        icon: "🌼", label: "Lupin",        short: "LUP" },
+  { key: "molluscs",     icon: "🐚", label: "Molluscs",     short: "MOL" },
 ];
 
 const CATEGORIES = ["Starter", "Main", "Side", "Dessert", "Drink"] as const;
@@ -61,18 +60,15 @@ export type MatrixRow = {
 };
 
 type ReviewInfo = {
-  lastReviewedOn?: string; // ISO (yyyy-mm-dd)
+  lastReviewedOn?: string; // yyyy-mm-dd
   lastReviewedBy?: string;
   intervalDays: number;
 };
-
-
 
 const LS_ROWS = "tt_allergens_rows_v3";
 const LS_REVIEW = "tt_allergens_review_v2";
 
 /* ---------- Helpers ---------- */
-
 const overdue = (info: ReviewInfo): boolean => {
   if (!info.lastReviewedOn) return true;
   const last = new Date(info.lastReviewedOn + "T00:00:00Z").getTime();
@@ -85,96 +81,94 @@ export default function AllergenManager() {
   // Hydration guard
   const [hydrated, setHydrated] = useState(false);
 
-const fileInputRef = React.useRef<HTMLInputElement | null>(null);
-const [importTarget, setImportTarget] = useState<"local" | "supabase" | null>(null);
+  // File import
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importTarget, setImportTarget] = useState<"local" | "supabase" | null>(null);
 
-function triggerImport(target: "local" | "supabase") {
-  setImportTarget(target);
-  fileInputRef.current?.click();
-}
-
-async function loadFromSupabase() {
-  const orgId = await getActiveOrgIdClient();
-  if (!orgId) return;
-
-  const { data, error } = await supabase
-    .from("allergen_items")
-    .select("id,item,category,notes,flags,locked")
-    .eq("org_id", orgId)
-    .order("item", { ascending: true });
-
-  if (error) {
-    alert(error.message);
-    return;
+  function triggerImport(target: "local" | "supabase") {
+    setImportTarget(target);
+    fileInputRef.current?.click();
   }
 
-  setRows(
-    (data ?? []).map((r: any) => ({
-      id: r.id,
-      item: r.item,
-      category: r.category ?? undefined,
-      flags: { ...emptyFlags(), ...(r.flags ?? {}) },
-      notes: r.notes ?? undefined,
-      locked: !!r.locked,
-    }))
-  );
-}
-
-
-async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
-  const file = e.target.files?.[0];
-  e.target.value = ""; // reset
-  if (!file) return;
-
-  const text = await file.text();
-  const rows = parseCSV(text);
-  const drafts: MatrixDraft[] = rows.map(draftFromRow).filter(Boolean) as MatrixDraft[];
-
-  if (drafts.length === 0) {
-    alert("No valid rows found in CSV.");
-    return;
-  }
-
-  if (importTarget === "local") {
-    // Convert to your in-memory row shape and save to localStorage via setRows
-    setRows((prev) => [
-      ...prev,
-      ...drafts.map((d) => ({
-        id: uid(),
-        item: d.item,
-        category: d.category as any,
-        flags: d.flags,
-        notes: d.notes,
-        locked: true,
-      })),
-    ]);
-    alert(`Imported ${drafts.length} items into this device.`);
-  }
-
-  if (importTarget === "supabase") {
+  async function loadFromSupabase() {
     const orgId = await getActiveOrgIdClient();
-    if (!orgId) return alert("No organisation found.");
+    if (!orgId) return;
 
-    const payload = drafts.map((d) => ({
-      org_id: orgId,
-      item: d.item,
-      category: d.category ?? null,
-      notes: d.notes ?? null,
-      flags: d.flags, // jsonb
-      locked: true,
-    }));
+    const { data, error } = await supabase
+      .from("allergen_items")
+      .select("id,item,category,notes,flags,locked")
+      .eq("org_id", orgId)
+      .order("item", { ascending: true });
 
-    const { error } = await supabase.from("allergen_items").insert(payload);
     if (error) {
-      alert(`Supabase import failed: ${error.message}`);
+      alert(error.message);
       return;
     }
-    alert(`Imported ${drafts.length} items to Supabase.`);
+
+    setRows(
+      (data ?? []).map((r: any): MatrixRow => ({
+        id: r.id,
+        item: r.item,
+        category: r.category ?? undefined,
+        flags: { ...emptyFlags(), ...(r.flags ?? {}) },
+        notes: r.notes ?? undefined,
+        locked: !!r.locked,
+      }))
+    );
   }
 
-  setImportTarget(null);
-}
+  async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // reset input
+    if (!file) return;
 
+    const text = await file.text();
+    const rows = parseCSV(text);
+    const drafts: MatrixDraft[] = rows.map(draftFromRow).filter(Boolean) as MatrixDraft[];
+
+    if (drafts.length === 0) {
+      alert("No valid rows found in CSV.");
+      return;
+    }
+
+    if (importTarget === "local") {
+      setRows((prev) => [
+        ...prev,
+        ...drafts.map((d) => ({
+          id: uid(),
+          item: d.item,
+          category: d.category as Category | undefined,
+          flags: d.flags,
+          notes: d.notes,
+          locked: true,
+        })),
+      ]);
+      alert(`Imported ${drafts.length} items into this device.`);
+    }
+
+    if (importTarget === "supabase") {
+      const orgId = await getActiveOrgIdClient();
+      if (!orgId) return alert("No organisation found.");
+
+      const payload = drafts.map((d) => ({
+        org_id: orgId,
+        item: d.item,
+        category: d.category ?? null,
+        notes: d.notes ?? null,
+        flags: d.flags, // JSONB
+        locked: true,
+      }));
+
+      const { error } = await supabase.from("allergen_items").insert(payload);
+      if (error) {
+        alert(`Supabase import failed: ${error.message}`);
+        return;
+      }
+      alert(`Imported ${drafts.length} items to Supabase.`);
+    }
+
+    setImportTarget(null);
+  }
 
   // State
   const [review, setReview] = useState<ReviewInfo>({ intervalDays: 30 });
@@ -184,7 +178,7 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
   const [qCat, setQCat] = useState<"All" | Category>("All");
   const [qFlags, setQFlags] = useState<Flags>(emptyFlags());
 
-  // Load localStorage
+  // Load localStorage on mount
   useEffect(() => {
     setHydrated(true);
     try {
@@ -199,7 +193,7 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
           }))
         );
       } else {
-        // seed demo rows for first run
+        // Seed demo rows
         setRows([
           {
             id: uid(),
@@ -238,7 +232,7 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
     } catch {}
   }, []);
 
-  // Persist
+  // Persist to localStorage
   useEffect(() => {
     if (!hydrated) return;
     try {
@@ -255,7 +249,7 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
 
   /* ===== Query (SAFE FOODS) ===== */
   const selectedAllergenKeys = useMemo(
-    () => ALLERGENS.map((a) => a.key).filter((k) => qFlags[k]) as AllergenKey[],
+    () => (ALLERGENS.map((a) => a.key) as AllergenKey[]).filter((k) => qFlags[k]),
     [qFlags]
   );
 
@@ -276,6 +270,7 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
     setDraft({ item: "", category: "Starter", flags: emptyFlags(), notes: "" });
     setModalOpen(true);
   };
+
   const openEdit = (row: MatrixRow) => {
     setDraft({
       id: row.id,
@@ -286,11 +281,13 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
     });
     setModalOpen(true);
   };
+
   const closeModal = () => setModalOpen(false);
 
   const saveDraft = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!draft || !draft.item.trim()) return;
+
     setRows((rs) => {
       if (draft.id) {
         return rs.map((r) =>
@@ -318,6 +315,7 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
         },
       ];
     });
+
     setModalOpen(false);
   };
 
@@ -374,13 +372,10 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
         </div>
       </div>
 
-      {/* QUERY – SAFE FOODS */}
+      {/* Safe foods query */}
       <details className="mb-4 rounded-xl border border-gray-200 bg-white p-3">
-        <summary className="cursor-pointer select-none font-medium">
-          Allergen Query (safe foods)
-        </summary>
+        <summary className="cursor-pointer select-none font-medium">Allergen Query (safe foods)</summary>
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-          {/* Category selector */}
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
             <div className="mb-2 text-sm font-medium">Category</div>
             <select
@@ -400,7 +395,6 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
             </p>
           </div>
 
-          {/* Allergen checkboxes */}
           <div className="md:col-span-2 rounded-md border border-gray-200 bg-gray-50 p-3">
             <div className="mb-2 text-sm font-medium">Select allergens to exclude</div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
@@ -412,8 +406,7 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
                     onChange={(e) => setQFlags((f) => ({ ...f, [a.key]: e.target.checked }))}
                   />
                   <span title={a.label}>
-                    {a.icon}{" "}
-                    <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
+                    {a.icon} <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
                   </span>
                 </label>
               ))}
@@ -467,56 +460,59 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
         )}
       </details>
 
-<div className="mb-3 flex flex-wrap gap-2">
-  <button
-    className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
-    onClick={openAdd}
-  >
-    + Add item
-  </button>
+      {/* Top actions */}
+      <div className="mb-3 flex flex-wrap gap-2">
+        <button
+          className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+          onClick={openAdd}
+        >
+          + Add item
+        </button>
 
-  <button
-    className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-    onClick={() => triggerImport("local")}
-    title="Load a CSV into this device's matrix"
-  >
-    Bulk import (CSV → local)
-  </button>
+        <button
+          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+          onClick={() => triggerImport("local")}
+          title="Load a CSV into this device's matrix"
+        >
+          Bulk import (CSV → local)
+        </button>
 
-  <button
-    className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-    onClick={() => triggerImport("supabase")}
-    title="Load a CSV into your Supabase table"
-  >
-    Import to Supabase (CSV)
-  </button>
+        <button
+          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+          onClick={() => triggerImport("supabase")}
+          title="Load a CSV into your Supabase table"
+        >
+          Import to Supabase (CSV)
+        </button>
 
-  <input
-    ref={fileInputRef}
-    type="file"
-    accept=".csv,text/csv"
-    className="hidden"
-    onChange={handleFileChosen}
-  />
-</div>
+        <button
+          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+          onClick={loadFromSupabase}
+          title="Fetch items from your Supabase table"
+        >
+          Load from Supabase
+        </button>
 
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,text/csv"
+          className="hidden"
+          onChange={handleFileChosen}
+        />
+      </div>
 
-    
-
-      {/* MATRIX – Desktop/tablet */}
-      <div className="mb-2 text-sm font-semibold">Allergen matrix</div>
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-        <table className="min-w-[500px] w-full text-sm">
+      {/* MATRIX – Desktop table */}
+      <div className="mb-2 hidden text-sm font-semibold md:block">Allergen matrix</div>
+      <div className="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
+        <table className="min-w-[700px] w-full text-sm">
           <thead className="bg-gray-50">
             <tr className="text-left text-gray-600">
               <th className="px-2 py-2 font-medium">Item</th>
               <th className="px-2 py-2 font-medium">Category</th>
               {ALLERGENS.map((a) => (
                 <th key={a.key} className="whitespace-nowrap px-2 py-2 text-center font-medium">
-                  <span title={a.label}>
-                    {a.icon}{" "}
-                    <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
-                  </span>
+                  {a.icon} <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
                 </th>
               ))}
               <th className="px-3 py-2 text-right font-medium">Actions</th>
@@ -554,8 +550,7 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
                         { label: "Edit", onClick: () => openEdit(row) },
                         {
                           label: "Delete",
-                          onClick: () =>
-                            setRows((rs) => rs.filter((r) => r.id !== row.id)),
+                          onClick: () => setRows((rs) => rs.filter((r) => r.id !== row.id)),
                           variant: "danger",
                         },
                       ]}
@@ -568,37 +563,77 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
         </table>
       </div>
 
-      {/* Legend */}
-      <details className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
-        <summary className="cursor-pointer select-none font-medium">Allergen key</summary>
-        <div className="mt-2 flex flex-wrap gap-3 text-sm">
-          {ALLERGENS.map((a) => (
-            <div key={a.key} className="inline-flex items-center gap-2 rounded border px-2 py-1">
-              <span>{a.icon}</span>
-              <span className="font-medium">{a.label}</span>
-              <span className="font-mono text-xs text-gray-500">{a.short}</span>
-            </div>
-          ))}
-        </div>
-      </details>
+      {/* MOBILE – Cards */}
+      <div className="md:hidden">
+        {rows.length === 0 ? (
+          <div className="rounded-lg border border-gray-200 bg-white p-4 text-center text-gray-500">
+            No items.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {rows.map((row) => (
+              <div key={row.id} className="rounded-lg border border-gray-200 bg-white p-3">
+                <div className="mb-2 flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-medium">{row.item}</div>
+                    {row.category ? (
+                      <div className="text-xs text-gray-500">{row.category}</div>
+                    ) : null}
+                  </div>
+                  <ActionMenu
+                    items={[
+                      { label: "Edit", onClick: () => openEdit(row) },
+                      {
+                        label: "Delete",
+                        onClick: () => setRows((rs) => rs.filter((r) => r.id !== row.id)),
+                        variant: "danger",
+                      },
+                    ]}
+                  />
+                </div>
 
-      {/* Add/Edit Modal */}
+                <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+                  {ALLERGENS.map((a) => {
+                    const yes = row.flags[a.key];
+                    return (
+                      <div
+                        key={a.key}
+                        className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
+                          yes ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1">
+                          <span>{a.icon}</span>
+                          <span className="font-mono">{a.short}</span>
+                        </span>
+                        <span className="font-medium">{yes ? "Yes" : "No"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {row.notes ? <div className="mt-2 text-xs text-gray-600">{row.notes}</div> : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Modal (single, sticky header/footer) */}
       {modalOpen && draft && (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 sm:items-center sm:p-4"
-          onKeyDown={(e) => {
-            if (e.key === "Escape") closeModal();
-          }}
-          onClick={closeModal}
-        >
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={closeModal}>
           <form
             onSubmit={saveDraft}
             onClick={(e) => e.stopPropagation()}
-            className="h-[88vh] w-full max-w-2xl overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow sm:h-auto sm:rounded-lg"
+            className="mx-auto mt-3 flex h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-16 sm:h-[80vh] sm:rounded-2xl"
           >
-            <div className="border-b px-4 py-3 font-semibold">Allergen item</div>
+            {/* Sticky header */}
+            <div className="sticky top-0 z-10 border-b bg-white px-4 py-3 text-base font-semibold">
+              Allergen item
+            </div>
 
-            <div className="max-h-full overflow-y-auto p-4 sm:max-h-[70vh]">
+            {/* Scrollable content */}
+            <div className="grow overflow-y-auto px-4 py-3">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="text-sm">
                   <div className="mb-1 text-gray-600">Item</div>
@@ -615,9 +650,7 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
                   <select
                     className="w-full rounded-xl border border-gray-300 px-2 py-1.5"
                     value={draft.category ?? "Starter"}
-                    onChange={(e) =>
-                      setDraft({ ...draft, category: e.target.value as Category })
-                    }
+                    onChange={(e) => setDraft({ ...draft, category: e.target.value as Category })}
                   >
                     {CATEGORIES.map((c) => (
                       <option key={c} value={c}>
@@ -653,9 +686,7 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
                         <button
                           type="button"
                           className={`px-2 py-1 text-xs ${
-                            !val
-                              ? "bg-emerald-600 text-white"
-                              : "bg-white text-gray-700 hover:bg-gray-50"
+                            !val ? "bg-emerald-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
                           }`}
                           onClick={() =>
                             setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: false } }))
@@ -678,12 +709,14 @@ async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
                   onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
                 />
               </label>
+
               <p className="mt-1 text-xs text-gray-500">
                 Press <kbd>Enter</kbd> to save, or <kbd>Esc</kbd> to cancel.
               </p>
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
+            {/* Sticky footer */}
+            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white px-4 py-3">
               <button
                 type="button"
                 className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"

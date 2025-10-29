@@ -34,26 +34,22 @@ function fmt(iso?: string | null) {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString();
 }
 
-/* =================================================
-   Component
-================================================= */
+/* ================================================= */
 export default function TeamManager() {
   const [rows, setRows] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [orgId, setOrgId] = useState<string | null>(null);
 
-  // search & filtering
+  // search
   const [q, setQ] = useState("");
 
-  // add/edit member
+  // modals
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
 
-  // view card
   const [viewOpen, setViewOpen] = useState(false);
   const [viewFor, setViewFor] = useState<Member | null>(null);
 
-  // education modal (add a record)
   const [eduOpen, setEduOpen] = useState(false);
   const [eduFor, setEduFor] = useState<Member | null>(null);
   const [eduSaving, setEduSaving] = useState(false);
@@ -66,11 +62,9 @@ export default function TeamManager() {
     notes: "",
   });
 
-  // member trainings
   const [eduList, setEduList] = useState<Training[]>([]);
   const [eduListLoading, setEduListLoading] = useState(false);
 
-  /* -------------------- Load org + team -------------------- */
   async function load() {
     setLoading(true);
     try {
@@ -80,7 +74,6 @@ export default function TeamManager() {
         setRows([]);
         return;
       }
-
       const { data, error } = await supabase
         .from("team_members")
         .select("id, initials, name, email, role, phone, active, notes")
@@ -100,18 +93,14 @@ export default function TeamManager() {
     load();
   }, []);
 
-  /* -------------------- Derived: filtered -------------------- */
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return rows;
     return rows.filter((r) =>
-      [r.initials, r.name, r.email, r.role]
-        .filter(Boolean)
-        .some((s) => (s ?? "").toLowerCase().includes(term))
+      [r.initials, r.name, r.email, r.role].filter(Boolean).some((s) => (s ?? "").toLowerCase().includes(term))
     );
   }, [rows, q]);
 
-  /* -------------------- CRUD: member -------------------- */
   function openAdd() {
     setEditing({
       id: "",
@@ -125,7 +114,6 @@ export default function TeamManager() {
     });
     setEditOpen(true);
   }
-
   function openEdit(m: Member) {
     setEditing({ ...m });
     setEditOpen(true);
@@ -185,7 +173,6 @@ export default function TeamManager() {
     }
   }
 
-  /* -------------------- View card + trainings -------------------- */
   async function loadTrainingsFor(staffId: string) {
     setEduListLoading(true);
     try {
@@ -209,7 +196,6 @@ export default function TeamManager() {
     void loadTrainingsFor(m.id);
   }
 
-  /* -------------------- Education modal (insert) -------------------- */
   function openEducation(m: Member) {
     setEduFor(m);
     setEduForm({
@@ -239,10 +225,7 @@ export default function TeamManager() {
         certificate_url: eduForm.certificateUrl.trim() || null,
         awarded_on: eduForm.completedOn || null,
         expires_on: eduForm.expiryOn || null,
-        notes: [
-          eduForm.provider && `Provider: ${eduForm.provider}`,
-          eduForm.notes && eduForm.notes,
-        ]
+        notes: [eduForm.provider && `Provider: ${eduForm.provider}`, eduForm.notes && eduForm.notes]
           .filter(Boolean)
           .join(" · ") || null,
         org_id: orgId,
@@ -261,47 +244,39 @@ export default function TeamManager() {
     }
   }
 
-  /* -------------------- Render -------------------- */
   return (
     <div className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
-      <div className="flex items-center gap-2">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-lg font-semibold">Team</h1>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex min-w-0 items-center gap-2">
           <input
-            className="h-9 rounded-xl border px-3 text-sm"
+            className="h-9 min-w-0 flex-1 rounded-xl border px-3 text-sm md:w-64"
             placeholder="Search…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
           <button
             onClick={openAdd}
-            className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
+            className="whitespace-nowrap rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
           >
             + Add member
           </button>
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full table-fixed text-sm">
-          <colgroup>
-            <col className="w-24" />
-            <col className="w-auto" />
-            <col className="w-40" />
-            <col className="w-24" />
-            <col className="w-[180px]" />
-          </colgroup>
-
+      {/* Desktop table */}
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-gray-500">
-              <th className="py-2 pr-3">Initials</th>
+              <th className="py-2 pr-3 w-24">Initials</th>
               <th className="py-2 pr-3">Name</th>
-              <th className="py-2 pr-3">Role</th>
-              <th className="py-2 pr-3">Active</th>
-              <th className="py-2 pr-0 text-right">Actions</th>
+              <th className="py-2 pr-3 w-56">Role</th>
+              <th className="py-2 pr-3 w-20">Active</th>
+              <th className="py-2 pr-0 w-40 text-right">Actions</th>
             </tr>
           </thead>
-
           <tbody>
             {loading ? (
               <tr>
@@ -314,11 +289,7 @@ export default function TeamManager() {
                 <tr key={r.id} className="border-t">
                   <td className="py-2 pr-3 text-center font-medium">{r.initials ?? "—"}</td>
                   <td className="py-2 pr-3">
-                    <button
-                      className="text-blue-600 underline hover:text-blue-700"
-                      onClick={() => openCard(r)}
-                      title="Open card"
-                    >
+                    <button className="text-blue-600 underline hover:text-blue-700" onClick={() => openCard(r)}>
                       {r.name}
                     </button>
                   </td>
@@ -347,7 +318,41 @@ export default function TeamManager() {
         </table>
       </div>
 
-      {/* -------- Edit / Add modal -------- */}
+      {/* Mobile cards */}
+      <div className="space-y-3 md:hidden">
+        {loading ? (
+          <div className="rounded-lg border bg-white p-4 text-center text-gray-500">Loading…</div>
+        ) : filtered.length ? (
+          filtered.map((r) => (
+            <div key={r.id} className="rounded-lg border bg-white p-3">
+              <div className="mb-1 flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-medium">{r.name}</div>
+                  <div className="text-xs text-gray-500">{r.role ?? "—"} · {r.active ? "Active" : "Inactive"}</div>
+                </div>
+                <ActionMenu
+                  items={[
+                    { label: "View card", onClick: () => openCard(r) },
+                    { label: "Edit", onClick: () => openEdit(r) },
+                    { label: "Add education", onClick: () => openEducation(r) },
+                    { label: "Delete", onClick: () => remove(r.id), variant: "danger" },
+                  ]}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs text-gray-700">
+                <div><span className="text-gray-500">Initials:</span> {r.initials ?? "—"}</div>
+                <div><span className="text-gray-500">Phone:</span> {r.phone ?? "—"}</div>
+                <div className="col-span-2 truncate"><span className="text-gray-500">Email:</span> {r.email ?? "—"}</div>
+                {r.notes ? <div className="col-span-2 text-gray-600">{r.notes}</div> : null}
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-lg border bg-white p-4 text-center text-gray-500">No team members yet.</div>
+        )}
+      </div>
+
+      {/* Edit / Add modal */}
       {editOpen && editing && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEditOpen(false)}>
           <div
@@ -355,12 +360,8 @@ export default function TeamManager() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">
-                {editing.id ? "Edit member" : "Add member"}
-              </div>
-              <button onClick={() => setEditOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
-                ✕
-              </button>
+              <div className="text-base font-semibold">{editing.id ? "Edit member" : "Add member"}</div>
+              <button onClick={() => setEditOpen(false)} className="rounded-md p-2 hover:bg-gray-100">✕</button>
             </div>
 
             <div className="grid gap-3">
@@ -446,7 +447,7 @@ export default function TeamManager() {
         </div>
       )}
 
-      {/* -------- Business card modal -------- */}
+      {/* Business card modal */}
       {viewOpen && viewFor && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
           <div
@@ -476,12 +477,7 @@ export default function TeamManager() {
                       <li key={t.id}>
                         <span className="font-medium">{t.type ?? "Course"}</span>{" "}
                         {t.certificate_url && (
-                          <a
-                            className="text-blue-600 underline"
-                            href={t.certificate_url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
+                          <a className="text-blue-600 underline" href={t.certificate_url} target="_blank" rel="noreferrer">
                             (certificate)
                           </a>
                         )}
@@ -508,10 +504,7 @@ export default function TeamManager() {
               >
                 Add education
               </button>
-              <button
-                onClick={() => setViewOpen(false)}
-                className="rounded-md bg-white px-3 py-1.5 text-sm"
-              >
+              <button onClick={() => setViewOpen(false)} className="rounded-md bg-white px-3 py-1.5 text-sm">
                 Close
               </button>
             </div>
@@ -519,7 +512,7 @@ export default function TeamManager() {
         </div>
       )}
 
-      {/* -------- Education modal -------- */}
+      {/* Education modal */}
       {eduOpen && eduFor && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEduOpen(false)}>
           <div
@@ -528,9 +521,7 @@ export default function TeamManager() {
           >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Education · {eduFor.name}</div>
-              <button onClick={() => setEduOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
-                ✕
-              </button>
+              <button onClick={() => setEduOpen(false)} className="rounded-md p-2 hover:bg-gray-100">✕</button>
             </div>
 
             <div className="grid gap-3">
