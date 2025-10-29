@@ -11,10 +11,50 @@ type SupplierRow = {
   contact: string | null;
   phone: string | null;
   email: string | null;
-  categories: string | null;
+  categories: string | null; // comma-separated
   notes: string | null;
   active: boolean | null;
 };
+
+const SUPPLIER_CATEGORIES = [
+  "Meat",
+  "Fish",
+  "Produce",
+  "Dairy",
+  "Bakery",
+  "Dry Goods",
+  "Frozen",
+  "Drinks",
+  "Packaging",
+  "Cleaning",
+  "Other",
+] as const;
+type SupplierCategory = (typeof SUPPLIER_CATEGORIES)[number];
+
+function parseCats(s: string | null): SupplierCategory[] {
+  if (!s) return [];
+  return s
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean) as SupplierCategory[];
+}
+function catsToString(arr: string[]): string {
+  return arr.join(", ");
+}
+
+function Chip({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick(): void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full border px-3 py-1 text-xs ${
+        active ? "bg-black text-white border-black" : "hover:bg-gray-50"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
 export default function SuppliersManager() {
   const [rows, setRows] = useState<SupplierRow[]>([]);
@@ -27,6 +67,7 @@ export default function SuppliersManager() {
 
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<SupplierRow | null>(null);
+  const [editCats, setEditCats] = useState<SupplierCategory[]>([]);
 
   // add
   const [addOpen, setAddOpen] = useState(false);
@@ -35,10 +76,14 @@ export default function SuppliersManager() {
     contact: "",
     phone: "",
     email: "",
-    categories: "",
     notes: "",
     active: true,
   });
+  const [addCats, setAddCats] = useState<SupplierCategory[]>([]);
+
+  function toggle(arr: SupplierCategory[], v: SupplierCategory, setter: (next: SupplierCategory[]) => void) {
+    setter(arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
+  }
 
   async function refresh() {
     setLoading(true);
@@ -81,6 +126,7 @@ export default function SuppliersManager() {
   function openEdit(r: SupplierRow) {
     setEditing({ ...r });
     setEditOpen(true);
+    setEditCats(parseCats(r.categories));
   }
 
   async function removeSupplier(id: string) {
@@ -99,7 +145,7 @@ export default function SuppliersManager() {
         contact: editing.contact,
         phone: editing.phone,
         email: editing.email,
-        categories: editing.categories,
+        categories: catsToString(editCats),
         notes: editing.notes,
         active: editing.active ?? true,
       })
@@ -120,21 +166,14 @@ export default function SuppliersManager() {
       contact: adding.contact || null,
       phone: adding.phone || null,
       email: adding.email || null,
-      categories: adding.categories || null,
+      categories: catsToString(addCats) || null,
       notes: adding.notes || null,
       active: adding.active,
     });
     if (error) return alert(error.message);
     setAddOpen(false);
-    setAdding({
-      name: "",
-      contact: "",
-      phone: "",
-      email: "",
-      categories: "",
-      notes: "",
-      active: true,
-    });
+    setAdding({ name: "", contact: "", phone: "", email: "", notes: "", active: true });
+    setAddCats([]);
     refresh();
   }
 
@@ -158,7 +197,7 @@ export default function SuppliersManager() {
         </div>
       </div>
 
-      {/* Desktop table with trimmed columns */}
+      {/* Desktop table (trimmed) */}
       <div className="hidden overflow-x-auto md:block">
         <table className="min-w-full text-sm">
           <thead>
@@ -167,6 +206,7 @@ export default function SuppliersManager() {
               <th className="py-2 pr-3">Contact</th>
               <th className="py-2 pr-3">Phone</th>
               <th className="py-2 pr-3">Email</th>
+              <th className="py-2 pr-3">Categories</th>
               <th className="py-2 pr-3">Active</th>
               <th className="py-2 pr-0 text-right">Actions</th>
             </tr>
@@ -174,15 +214,11 @@ export default function SuppliersManager() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="py-6 text-center text-gray-500">
-                  Loading…
-                </td>
+                <td colSpan={7} className="py-6 text-center text-gray-500">Loading…</td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-6 text-center text-gray-500">
-                  No suppliers yet.
-                </td>
+                <td colSpan={7} className="py-6 text-center text-gray-500">No suppliers yet.</td>
               </tr>
             ) : (
               filtered.map((r) => (
@@ -194,7 +230,8 @@ export default function SuppliersManager() {
                   </td>
                   <td className="py-2 pr-3">{r.contact ?? "—"}</td>
                   <td className="py-2 pr-3">{r.phone ?? "—"}</td>
-                  <td className="py-2 pr-3 truncate max-w-[240px]">{r.email ?? "—"}</td>
+                  <td className="py-2 pr-3 truncate max-w-[220px]">{r.email ?? "—"}</td>
+                  <td className="py-2 pr-3">{parseCats(r.categories).join(", ") || "—"}</td>
                   <td className="py-2 pr-3">{r.active ? "Yes" : "No"}</td>
                   <td className="py-2 pr-3 text-right">
                     <ActionMenu
@@ -212,7 +249,7 @@ export default function SuppliersManager() {
         </table>
       </div>
 
-      {/* Mobile cards (compact) */}
+      {/* Mobile cards */}
       <div className="space-y-3 md:hidden">
         {loading ? (
           <div className="rounded-lg border bg-white p-4 text-center text-gray-500">Loading…</div>
@@ -238,7 +275,7 @@ export default function SuppliersManager() {
                 <div><span className="text-gray-500">Contact:</span> {r.contact ?? "—"}</div>
                 <div><span className="text-gray-500">Phone:</span> {r.phone ?? "—"}</div>
                 <div className="col-span-2 truncate"><span className="text-gray-500">Email:</span> {r.email ?? "—"}</div>
-                {r.categories ? <div className="col-span-2"><span className="text-gray-500">Categories:</span> {r.categories}</div> : null}
+                <div className="col-span-2"><span className="text-gray-500">Categories:</span> {parseCats(r.categories).join(", ") || "—"}</div>
                 {r.notes ? <div className="col-span-2 text-gray-600">{r.notes}</div> : null}
               </div>
             </div>
@@ -249,7 +286,7 @@ export default function SuppliersManager() {
       {/* View card */}
       {viewOpen && viewing && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
-          <div className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-0" onClick={(e) => e.stopPropagation()}>
+          <div className="mx-auto mt-16 w/full max-w-xl rounded-2xl border bg-white p-0" onClick={(e) => e.stopPropagation()}>
             <div className="rounded-t-2xl bg-slate-800 p-4 text-white">
               <div className="text-sm opacity-80">Supplier</div>
               <div className="text-xl font-semibold">{viewing.name}</div>
@@ -259,7 +296,7 @@ export default function SuppliersManager() {
               <div><span className="font-medium">Contact:</span> {viewing.contact || "—"}</div>
               <div><span className="font-medium">Phone:</span> {viewing.phone || "—"}</div>
               <div><span className="font-medium">Email:</span> {viewing.email || "—"}</div>
-              <div><span className="font-medium">Categories:</span> {viewing.categories || "—"}</div>
+              <div><span className="font-medium">Categories:</span> {parseCats(viewing.categories).join(", ") || "—"}</div>
               <div><span className="font-medium">Notes:</span> {viewing.notes || "—"}</div>
             </div>
             <div className="flex justify-end gap-2 border-t p-3">
@@ -271,7 +308,7 @@ export default function SuppliersManager() {
         </div>
       )}
 
-      {/* Edit modal */}
+      {/* Edit modal (with categories picker) */}
       {editOpen && editing && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEditOpen(false)}>
           <div className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4" onClick={(e) => e.stopPropagation()}>
@@ -281,69 +318,41 @@ export default function SuppliersManager() {
             </div>
 
             <div className="grid gap-3">
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                value={editing.name}
-                onChange={(e) => setEditing((s) => ({ ...s!, name: e.target.value }))}
-              />
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                placeholder="Contact"
-                value={editing.contact ?? ""}
-                onChange={(e) => setEditing((s) => ({ ...s!, contact: e.target.value }))}
-              />
+              <input className="h-10 w-full rounded-xl border px-3" value={editing.name} onChange={(e) => setEditing((s) => ({ ...s!, name: e.target.value }))} />
+              <input className="h-10 w-full rounded-xl border px-3" placeholder="Contact" value={editing.contact ?? ""} onChange={(e) => setEditing((s) => ({ ...s!, contact: e.target.value }))} />
               <div className="grid grid-cols-2 gap-3">
-                <input
-                  className="h-10 w-full rounded-xl border px-3"
-                  placeholder="Phone"
-                  value={editing.phone ?? ""}
-                  onChange={(e) => setEditing((s) => ({ ...s!, phone: e.target.value }))}
-                />
-                <input
-                  className="h-10 w-full rounded-xl border px-3"
-                  placeholder="Email"
-                  value={editing.email ?? ""}
-                  onChange={(e) => setEditing((s) => ({ ...s!, email: e.target.value }))}
-                />
+                <input className="h-10 w-full rounded-xl border px-3" placeholder="Phone" value={editing.phone ?? ""} onChange={(e) => setEditing((s) => ({ ...s!, phone: e.target.value }))} />
+                <input className="h-10 w-full rounded-xl border px-3" placeholder="Email" value={editing.email ?? ""} onChange={(e) => setEditing((s) => ({ ...s!, email: e.target.value }))} />
               </div>
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                placeholder="Categories"
-                value={editing.categories ?? ""}
-                onChange={(e) => setEditing((s) => ({ ...s!, categories: e.target.value }))}
-              />
-              <textarea
-                className="min-h-[90px] w-full rounded-xl border px-3 py-2"
-                placeholder="Notes"
-                value={editing.notes ?? ""}
-                onChange={(e) => setEditing((s) => ({ ...s!, notes: e.target.value }))}
-              />
+
+              {/* Categories chips */}
+              <div>
+                <div className="mb-1 text-xs text-gray-500">Categories</div>
+                <div className="flex flex-wrap gap-2">
+                  {SUPPLIER_CATEGORIES.map((c) => (
+                    <Chip key={c} active={editCats.includes(c)} onClick={() => toggle(editCats, c, setEditCats)}>
+                      {c}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+
+              <textarea className="min-h-[90px] w-full rounded-xl border px-3 py-2" placeholder="Notes" value={editing.notes ?? ""} onChange={(e) => setEditing((s) => ({ ...s!, notes: e.target.value }))} />
               <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={!!editing.active}
-                  onChange={(e) => setEditing((s) => ({ ...s!, active: e.target.checked }))}
-                />
+                <input type="checkbox" checked={!!editing.active} onChange={(e) => setEditing((s) => ({ ...s!, active: e.target.checked }))} />
                 Active
               </label>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setEditOpen(false)}>
-                  Cancel
-                </button>
-                <button
-                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
-                  onClick={saveEdit}
-                >
-                  Save
-                </button>
+                <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setEditOpen(false)}>Cancel</button>
+                <button className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900" onClick={saveEdit}>Save</button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Add modal */}
+      {/* Add modal (with categories chips) */}
       {addOpen && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setAddOpen(false)}>
           <div className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4" onClick={(e) => e.stopPropagation()}>
@@ -353,62 +362,33 @@ export default function SuppliersManager() {
             </div>
 
             <div className="grid gap-3">
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                placeholder="Name"
-                value={adding.name}
-                onChange={(e) => setAdding((s) => ({ ...s, name: e.target.value }))}
-              />
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                placeholder="Contact"
-                value={adding.contact}
-                onChange={(e) => setAdding((s) => ({ ...s, contact: e.target.value }))}
-              />
+              <input className="h-10 w-full rounded-xl border px-3" placeholder="Name" value={adding.name} onChange={(e) => setAdding((s) => ({ ...s, name: e.target.value }))} />
+              <input className="h-10 w-full rounded-xl border px-3" placeholder="Contact" value={adding.contact} onChange={(e) => setAdding((s) => ({ ...s, contact: e.target.value }))} />
               <div className="grid grid-cols-2 gap-3">
-                <input
-                  className="h-10 w-full rounded-xl border px-3"
-                  placeholder="Phone"
-                  value={adding.phone}
-                  onChange={(e) => setAdding((s) => ({ ...s, phone: e.target.value }))}
-                />
-                <input
-                  className="h-10 w-full rounded-xl border px-3"
-                  placeholder="Email"
-                  value={adding.email}
-                  onChange={(e) => setAdding((s) => ({ ...s, email: e.target.value }))}
-                />
+                <input className="h-10 w-full rounded-xl border px-3" placeholder="Phone" value={adding.phone} onChange={(e) => setAdding((s) => ({ ...s, phone: e.target.value }))} />
+                <input className="h-10 w-full rounded-xl border px-3" placeholder="Email" value={adding.email} onChange={(e) => setAdding((s) => ({ ...s, email: e.target.value }))} />
               </div>
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                placeholder="Categories"
-                value={adding.categories}
-                onChange={(e) => setAdding((s) => ({ ...s, categories: e.target.value }))}
-              />
-              <textarea
-                className="min-h-[90px] w-full rounded-xl border px-3 py-2"
-                placeholder="Notes"
-                value={adding.notes}
-                onChange={(e) => setAdding((s) => ({ ...s, notes: e.target.value }))}
-              />
+
+              <div>
+                <div className="mb-1 text-xs text-gray-500">Categories</div>
+                <div className="flex flex-wrap gap-2">
+                  {SUPPLIER_CATEGORIES.map((c) => (
+                    <Chip key={c} active={addCats.includes(c)} onClick={() => toggle(addCats, c, setAddCats)}>
+                      {c}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+
+              <textarea className="min-h-[90px] w-full rounded-xl border px-3 py-2" placeholder="Notes" value={adding.notes} onChange={(e) => setAdding((s) => ({ ...s, notes: e.target.value }))} />
               <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={adding.active}
-                  onChange={(e) => setAdding((s) => ({ ...s, active: e.target.checked }))}
-                />
+                <input type="checkbox" checked={adding.active} onChange={(e) => setAdding((s) => ({ ...s, active: e.target.checked }))} />
                 Active
               </label>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setAddOpen(false)}>
-                  Cancel
-                </button>
-                <button
-                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
-                  onClick={saveAdd}
-                  disabled={!adding.name.trim()}
-                >
+                <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setAddOpen(false)}>Cancel</button>
+                <button className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900" onClick={saveAdd} disabled={!adding.name.trim()}>
                   Add supplier
                 </button>
               </div>

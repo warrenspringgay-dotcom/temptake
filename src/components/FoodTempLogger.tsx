@@ -91,7 +91,7 @@ export default function FoodTempLogger({
 }: Props) {
   const search = useSearchParams();
 
-  // NEW: state must be inside the component
+  // Modals
   const [showPicker, setShowPicker] = useState(false);
   const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
 
@@ -354,7 +354,6 @@ export default function FoodTempLogger({
           id: r.id,
           name: r.name,
           active: r.active ?? true,
-      
           items:
             (items ?? [])
               .map((it: any) => ({
@@ -368,7 +367,7 @@ export default function FoodTempLogger({
               .sort((a, b) => a.position - b.position),
         };
 
-        setRunRoutine(routine); // opens modal
+        setRunRoutine(routine);
       } catch {
         /* ignore */
       }
@@ -390,7 +389,7 @@ export default function FoodTempLogger({
 
     const payload = {
       org_id,
-      at: form.date, // YYYY-MM-DD is acceptable for timestamptz
+      at: form.date, // YYYY-MM-DD
       area: form.location || null,
       note: form.item || null,
       staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
@@ -655,18 +654,17 @@ export default function FoodTempLogger({
         )}
       </div>
 
-    <RoutinePickerModal
-  open={showPicker}
-  onClose={() => setShowPicker(false)}
-  onPick={(r: RoutineRow) => {
-    setShowPicker(false);
-    setRunRoutine(r);
-  }}
-/>
+      {/* Routine picker modal */}
+      <RoutinePickerModal
+        open={showPicker}
+        onClose={() => setShowPicker(false)}
+        onPick={(r: RoutineRow) => {
+          setShowPicker(false);
+          setRunRoutine(r);
+        }}
+      />
 
-
-
-      {/* Full run modal for a selected routine */}
+      {/* Full run modal */}
       <RoutineRunModal
         open={!!runRoutine}
         routine={runRoutine}
@@ -687,91 +685,94 @@ export default function FoodTempLogger({
             Refresh
           </button>
         </div>
+
         <div className="overflow-x-auto">
-         {/* inside the table JSX of FoodTempLogger */}
-<table className="w-full table-fixed text-sm">
-  <thead className="bg-gray-50 text-gray-600">
-    <tr className="text-left">
-      <th className="px-3 py-2 w-[7.5rem]">Date</th>
-      <th className="px-3 py-2 w-12 text-center">Staff</th>
-      <th className="px-3 py-2 w-[8rem]">Location</th>
-      <th className="px-3 py-2 w-[8rem]">Item</th>
-      <th className="px-3 py-2 w-[9rem]">Target</th>
-      <th className="px-3 py-2">Temp (°C)</th>
-      <th className="px-3 py-2 w-[6.5rem] text-right">Status</th>
-    </tr>
-  </thead>
-
-  <tbody>
-    {loading ? (
-      <tr>
-        <td colSpan={7} className="py-6 text-center text-gray-500">Loading…</td>
-      </tr>
-    ) : grouped.length ? (
-      grouped.map((g) => (
-        <React.Fragment key={g.date}>
-          {/* group header row */}
-          <tr className="border-t bg-gray-50/70">
-            <td colSpan={7} className="py-2 px-2 text-xs font-medium text-gray-700">
-              {formatDDMMYYYY(g.date)}
-            </td>
-          </tr>
-
-          {g.list.map((r) => {
-            const preset: TargetPreset | undefined =
-              r.target_key
-                ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[r.target_key]
-                : undefined;
-            const st: "pass" | "fail" | null = r.status ?? inferStatus(r.temp_c, preset);
-
-            return (
-              <tr key={r.id} className="border-t">
-                {/* empty because date is shown in the group header above */}
-                <td className="px-3 py-2" />
-                <td className="px-3 py-2 text-center font-medium tabular-nums w-12">
-                  {r.staff_initials ?? "—"}
-                </td>
-                <td className="px-3 py-2">{r.location ?? "—"}</td>
-                <td className="px-3 py-2">{r.item ?? "—"}</td>
-                <td className="px-3 py-2">
-                  {preset
-                    ? `${preset.label}${
-                        preset.minC != null || preset.maxC != null
-                          ? ` (${preset.minC ?? "−∞"}–${preset.maxC ?? "+∞"} °C)`
-                          : ""
-                      }`
-                    : "—"}
-                </td>
-                <td className="px-3 py-2">{r.temp_c ?? "—"}</td>
-                <td className="px-3 py-2 text-right">
-                  {st ? (
-                    <span
-                      className={
-                        "inline-flex rounded-full px-2 py-0.5 text-xs font-medium " +
-                        (st === "pass"
-                          ? "bg-emerald-100 text-emerald-800"
-                          : "bg-red-100 text-red-800")
-                      }
-                    >
-                      {st}
-                    </span>
-                  ) : (
-                    "—"
-                  )}
-                </td>
+          <table className="w-full table-fixed text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr className="text-left">
+                <th className="px-3 py-2 w-[7.5rem]">Date</th>
+                {/* Renamed "Staff" -> "Initials" and kept immediately after Date */}
+                <th className="px-3 py-2 w-12 text-center">Initials</th>
+                <th className="px-3 py-2 w-[8rem]">Location</th>
+                <th className="px-3 py-2">Item</th>
+                <th className="px-3 py-2 w-[9rem]">Target</th>
+                <th className="px-3 py-2 w-[7rem]">Temp (°C)</th>
+                <th className="px-3 py-2 w-[6.5rem] text-right">Status</th>
               </tr>
-            );
-          })}
-        </React.Fragment>
-      ))
-    ) : (
-      <tr>
-        <td colSpan={7} className="py-6 text-center text-gray-500">No entries</td>
-      </tr>
-    )}
-  </tbody>
-</table>
+            </thead>
 
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">
+                    Loading…
+                  </td>
+                </tr>
+              ) : grouped.length ? (
+                grouped.map((g) => (
+                  <React.Fragment key={g.date}>
+                    {/* group header row with the Date label */}
+                    <tr className="border-t bg-gray-50/70">
+                      <td colSpan={7} className="py-2 px-2 text-xs font-medium text-gray-700">
+                        {formatDDMMYYYY(g.date)}
+                      </td>
+                    </tr>
+
+                    {g.list.map((r) => {
+                      const preset: TargetPreset | undefined = r.target_key
+                        ? (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[r.target_key]
+                        : undefined;
+                      const st: "pass" | "fail" | null = r.status ?? inferStatus(r.temp_c, preset);
+
+                      return (
+                        <tr key={r.id} className="border-t">
+                          {/* empty because date is shown in the group header above */}
+                          <td className="px-3 py-2" />
+                          <td className="px-3 py-2 text-center font-semibold tabular-nums w-12">
+                            {r.staff_initials ?? "—"}
+                          </td>
+                          <td className="px-3 py-2">{r.location ?? "—"}</td>
+                          <td className="px-3 py-2">{r.item ?? "—"}</td>
+                          <td className="px-3 py-2">
+                            {preset
+                              ? `${preset.label}${
+                                  preset.minC != null || preset.maxC != null
+                                    ? ` (${preset.minC ?? "−∞"}–${preset.maxC ?? "+∞"} °C)`
+                                    : ""
+                                }`
+                              : "—"}
+                          </td>
+                          <td className="px-3 py-2">{r.temp_c ?? "—"}</td>
+                          <td className="px-3 py-2 text-right">
+                            {st ? (
+                              <span
+                                className={
+                                  "inline-flex rounded-full px-2 py-0.5 text-xs font-medium " +
+                                  (st === "pass"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-red-100 text-red-800")
+                                }
+                              >
+                                {st}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">
+                    No entries
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
