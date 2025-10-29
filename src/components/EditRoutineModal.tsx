@@ -1,13 +1,15 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React from "react";
+import { X } from "lucide-react";
 
+/* ===================== Types (exported) ===================== */
 export type RoutineItemDraft = {
   id?: string;
   position: number;
   location: string | null;
   item: string | null;
-  target_key: string | null;
+  target_key: string; // e.g., "chill", "cook", etc.
 };
 
 export type RoutineDraft = {
@@ -17,220 +19,216 @@ export type RoutineDraft = {
   items: RoutineItemDraft[];
 };
 
+/* ===================== Props ===================== */
 type Props = {
   open: boolean;
-  initial?: RoutineDraft | null;
+  draft: RoutineDraft | null;
+  onChange: (next: RoutineDraft) => void;
+  onSave: () => void;
   onClose: () => void;
-  onSave: (draft: RoutineDraft) => Promise<void> | void; // Parent persists to DB
+  targetOptions?: { key: string; label: string }[];
 };
 
-export default function EditRoutineModal({ open, initial, onClose, onSave }: Props) {
-  const [draft, setDraft] = useState<RoutineDraft>({
-    id: undefined,
-    name: "",
-    active: true,
-    items: [],
-  });
-  const [saving, setSaving] = useState(false);
+/* ===================== Component ===================== */
+export default function EditRoutineModal({
+  open,
+  draft,
+  onChange,
+  onSave,
+  onClose,
+  targetOptions = [
+    { key: "chill", label: "Chilled (≤ 8°C)" },
+    { key: "cook", label: "Cooked (≥ 75°C)" },
+    { key: "hot-hold", label: "Hot hold (≥ 63°C)" },
+    { key: "freeze", label: "Frozen (≤ −18°C)" },
+  ],
+}: Props) {
+  if (!open || !draft) return null;
 
-  useEffect(() => {
-    if (!open) return;
-    if (initial) {
-      // clone to avoid mutating parent object
-      setDraft({
-        id: initial.id,
-        name: initial.name,
-        active: initial.active,
-        items: [...initial.items].sort((a, b) => a.position - b.position),
-      });
-    } else {
-      setDraft({ id: undefined, name: "", active: true, items: [] });
-    }
-  }, [open, initial]);
+  const update = <K extends keyof RoutineDraft>(key: K, value: RoutineDraft[K]) =>
+    onChange({ ...draft, [key]: value });
 
-  const nextPosition = useMemo(
-    () => (draft.items.length ? Math.max(...draft.items.map((i) => i.position)) + 1 : 1),
-    [draft.items]
-  );
-
+  /* ---------- Handlers ---------- */
   function addItem() {
-    setDraft((d) => ({
-      ...d,
-      items: [
-        ...d.items,
-        { position: nextPosition, location: "", item: "", target_key: "cooked" },
-      ],
-    }));
+    if (!draft) return;
+
+    const lastPos = (draft.items?.[draft.items.length - 1]?.position ?? 0) + 1;
+
+    const next: RoutineItemDraft = {
+      id: crypto.randomUUID(),
+      position: lastPos,
+      location: "",
+      item: "",
+      target_key: targetOptions[0]?.key ?? "chill",
+    };
+
+    update("items", [...draft.items, next]);
   }
 
-  function removeAt(position: number) {
-    setDraft((d) => ({
-      ...d,
-      items: d.items.filter((i) => i.position !== position),
-    }));
+  function removeItem(id?: string) {
+    if (!draft) return;
+
+    const updated = draft.items
+      .filter((it) => it.id !== id)
+      .map((it, i) => ({ ...it, position: i + 1 }));
+
+    update("items", updated);
   }
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    if (!draft.name.trim()) return;
-    setSaving(true);
-    try {
-      await onSave({
-        ...draft,
-        name: draft.name.trim(),
-        items: draft.items
-          .map((i, idx) => ({
-            ...i,
-            position: idx + 1, // reindex tidy
-            location: (i.location ?? "").trim() || null,
-            item: (i.item ?? "").trim() || null,
-            target_key: (i.target_key ?? "cooked") || null,
-          }))
-          .sort((a, b) => a.position - b.position),
-      });
-      onClose();
-    } finally {
-      setSaving(false);
-    }
+  function moveItem(id?: string, dir: -1 | 1 = 1) {
+    if (!draft) return;
+    const idx = draft.items.findIndex((it) => it.id === id);
+    if (idx < 0) return;
+
+    const j = idx + dir;
+    if (j < 0 || j >= draft.items.length) return;
+
+    const copy = [...draft.items];
+    const [row] = copy.splice(idx, 1);
+    copy.splice(j, 0, row);
+
+    const rePos = copy.map((it, k) => ({ ...it, position: k + 1 }));
+    update("items", rePos);
   }
 
-  if (!open) return null;
-
+  /* ---------- Render ---------- */
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40"
-      onClick={onClose}
-      aria-modal="true"
-      role="dialog"
-    >
+    <div className="fixed inset-0 z-50 bg-black/40" onClick={onClose}>
       <form
-        onSubmit={handleSave}
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSave();
+        }}
         onClick={(e) => e.stopPropagation()}
-        className="mx-auto mt-3 flex h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-16 sm:h-[80vh] sm:rounded-2xl"
+        className="mx-auto mt-3 flex h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-10 sm:h-[85vh] sm:rounded-2xl"
       >
         {/* Sticky header */}
         <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
-          <div className="text-base font-semibold">
-            {draft.id ? "Edit routine" : "Add routine"}
-          </div>
+          <div className="text-base font-semibold">Edit routine</div>
           <button
             type="button"
-            className="rounded-md p-2 hover:bg-gray-100"
             onClick={onClose}
+            className="rounded-md p-2 text-gray-600 hover:bg-gray-100"
             aria-label="Close"
           >
-            ✕
+            <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Scrollable content */}
         <div className="grow overflow-y-auto px-4 py-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <label className="sm:col-span-2 text-sm">
-              <div className="mb-1 text-gray-600">Name *</div>
+          <div className="mb-4 grid grid-cols-1 items-center gap-3 sm:grid-cols-3">
+            <label className="sm:col-span-2">
+              <div className="mb-1 text-xs text-gray-500">Name</div>
               <input
-                autoFocus
-                className="w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border px-3"
                 value={draft.name}
-                onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                onChange={(e) => update("name", e.target.value)}
+                placeholder="e.g., Cooking Routine"
                 required
               />
             </label>
-            <label className="flex items-center gap-2 text-sm">
+
+            <label className="flex items-center gap-2">
               <input
                 type="checkbox"
-                checked={draft.active}
-                onChange={(e) => setDraft((d) => ({ ...d, active: e.target.checked }))}
+                checked={!!draft.active}
+                onChange={(e) => update("active", e.target.checked)}
               />
               Active
             </label>
           </div>
 
-          {/* Items */}
-          <div className="mt-3">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-medium">Items</div>
-              <button
-                type="button"
-                onClick={addItem}
-                className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-              >
-                + Add row
-              </button>
-            </div>
+          {/* Items list */}
+          <div className="space-y-3">
+            {draft.items.map((it) => (
+              <div key={it.id} className="rounded-xl border p-3">
+                <div className="mb-2 text-xs font-medium text-gray-500">
+                  Step {it.position}
+                </div>
 
-            {draft.items.length === 0 ? (
-              <div className="rounded border bg-gray-50 px-3 py-2 text-sm text-gray-600">
-                No items yet.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {draft.items.map((it) => (
-                  <div
-                    key={it.position}
-                    className="grid grid-cols-1 gap-2 rounded-xl border p-3 sm:grid-cols-4"
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <input
+                    className="h-10 w-full rounded-xl border px-3"
+                    placeholder="Location"
+                    value={it.location ?? ""}
+                    onChange={(e) =>
+                      update(
+                        "items",
+                        draft.items.map((r) =>
+                          r.id === it.id ? { ...r, location: e.target.value } : r
+                        )
+                      )
+                    }
+                  />
+
+                  <input
+                    className="h-10 w-full rounded-xl border px-3"
+                    placeholder="Item"
+                    value={it.item ?? ""}
+                    onChange={(e) =>
+                      update(
+                        "items",
+                        draft.items.map((r) =>
+                          r.id === it.id ? { ...r, item: e.target.value } : r
+                        )
+                      )
+                    }
+                  />
+
+                  <select
+                    className="h-10 w-full rounded-xl border px-3"
+                    value={it.target_key}
+                    onChange={(e) =>
+                      update(
+                        "items",
+                        draft.items.map((r) =>
+                          r.id === it.id ? { ...r, target_key: e.target.value } : r
+                        )
+                      )
+                    }
                   >
-                    <div className="text-xs font-medium text-gray-500 sm:col-span-4">
-                      #{it.position}
-                    </div>
+                    {targetOptions.map((opt) => (
+                      <option key={opt.key} value={opt.key}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-                    <input
-                      className="h-10 w-full rounded-xl border px-3"
-                      placeholder="Location (e.g., Kitchen)"
-                      value={it.location ?? ""}
-                      onChange={(e) =>
-                        setDraft((d) => ({
-                          ...d,
-                          items: d.items.map((x) =>
-                            x.position === it.position ? { ...x, location: e.target.value } : x
-                          ),
-                        }))
-                      }
-                    />
-
-                    <input
-                      className="h-10 w-full rounded-xl border px-3"
-                      placeholder="Item (e.g., Chicken)"
-                      value={it.item ?? ""}
-                      onChange={(e) =>
-                        setDraft((d) => ({
-                          ...d,
-                          items: d.items.map((x) =>
-                            x.position === it.position ? { ...x, item: e.target.value } : x
-                          ),
-                        }))
-                      }
-                    />
-
-                    <select
-                      className="h-10 w-full rounded-xl border px-3"
-                      value={it.target_key ?? "cooked"}
-                      onChange={(e) =>
-                        setDraft((d) => ({
-                          ...d,
-                          items: d.items.map((x) =>
-                            x.position === it.position ? { ...x, target_key: e.target.value } : x
-                          ),
-                        }))
-                      }
-                    >
-                      <option value="chill">Chill</option>
-                      <option value="cooked">Cooked</option>
-                      <option value="hot_hold">Hot Hold</option>
-                      <option value="delivery">Delivery</option>
-                    </select>
-
-                    <button
-                      type="button"
-                      onClick={() => removeAt(it.position)}
-                      className="h-10 rounded-xl border px-3 text-sm hover:bg-gray-50"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => moveItem(it.id, -1)}
+                    className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
+                  >
+                    ↑ Move up
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveItem(it.id, 1)}
+                    className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
+                  >
+                    ↓ Move down
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeItem(it.id)}
+                    className="ml-auto rounded-md border px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
-            )}
+            ))}
+
+            <button
+              type="button"
+              onClick={addItem}
+              className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+            >
+              + Add step
+            </button>
           </div>
         </div>
 
@@ -238,17 +236,16 @@ export default function EditRoutineModal({ open, initial, onClose, onSave }: Pro
         <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white px-4 py-3">
           <button
             type="button"
-            className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"
             onClick={onClose}
+            className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"
           >
             Cancel
           </button>
           <button
             type="submit"
-            disabled={saving || !draft.name.trim()}
-            className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-60"
+            className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
           >
-            {saving ? "Saving…" : "Save"}
+            Save routine
           </button>
         </div>
       </form>

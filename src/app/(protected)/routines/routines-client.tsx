@@ -212,12 +212,16 @@ export default function RoutinesPage() {
         </table>
       </div>
 
-      <EditRoutineModal
-        open={open}
-        initial={editing}
-        onClose={() => setOpen(false)}
-        onSave={saveDraft}
-      />
+     <EditRoutineModal
+  open={open}
+  draft={editing}
+  onChange={(d) => setEditing(d)}
+  onClose={() => setOpen(false)}
+  onSave={() => {
+    if (editing) void saveDraft(editing);  // ✅ matches () => void and passes the draft
+  }}
+/>
+
     </div>
   );
 }

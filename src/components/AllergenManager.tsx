@@ -469,37 +469,8 @@ export default function AllergenManager() {
           + Add item
         </button>
 
-        <button
-          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-          onClick={() => triggerImport("local")}
-          title="Load a CSV into this device's matrix"
-        >
-          Bulk import (CSV → local)
-        </button>
-
-        <button
-          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-          onClick={() => triggerImport("supabase")}
-          title="Load a CSV into your Supabase table"
-        >
-          Import to Supabase (CSV)
-        </button>
-
-        <button
-          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-          onClick={loadFromSupabase}
-          title="Fetch items from your Supabase table"
-        >
-          Load from Supabase
-        </button>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".csv,text/csv"
-          className="hidden"
-          onChange={handleFileChosen}
-        />
+       
+      
       </div>
 
       {/* MATRIX – Desktop table */}

@@ -1,131 +1,138 @@
+// src/components/RoutinePickerModal.tsx
 "use client";
-import React, { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
 
-export type RoutineItem = {
-  id: string;
-  routine_id: string;
-  position: number | null;
-  location: string | null;
-  item: string | null;
-  target_key: string | null;
-};
+import React from "react";
 
+/** ----- Shared type (source of truth) ----- */
 export type RoutineRow = {
   id: string;
   name: string;
-  active: boolean | null;
-  items: RoutineItem[];
+  active: boolean;
+  items: {
+    id: string;
+    routine_id: string;
+    position: number;
+    location: string | null;
+    item: string | null;
+    target_key: string;
+  }[];
 };
 
+/** ----- Props ----- */
 type Props = {
   open: boolean;
   onClose: () => void;
   onPick: (r: RoutineRow) => void;
+  /** Optional: pass routines in; if you prefer to fetch inside, swap this for local state+effect */
+  routines?: RoutineRow[];
+  title?: string;
 };
 
-export default function RoutinePickerModal({ open, onClose, onPick }: Props) {
-  const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState<RoutineRow[]>([]);
-  const [q, setQ] = useState("");
+function cls(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
 
-  useEffect(() => {
+/** Simple pill for active/inactive */
+function StatusPill({ active }: { active: boolean }) {
+  return (
+    <span
+      className={cls(
+        "inline-flex rounded-full px-2 py-[2px] text-xs font-medium",
+        active ? "bg-emerald-100 text-emerald-800" : "bg-gray-200 text-gray-700"
+      )}
+    >
+      {active ? "Active" : "Inactive"}
+    </span>
+  );
+}
+
+/** ----- Component ----- */
+export default function RoutinePickerModal({
+  open,
+  onClose,
+  onPick,
+  routines = [],
+  title = "Pick a routine",
+}: Props) {
+  // close on ESC
+  React.useEffect(() => {
     if (!open) return;
-    (async () => {
-      setLoading(true);
-      try {
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) { setRows([]); return; }
-
-        const { data: routines, error: rErr } = await supabase
-          .from("temp_routines")
-          .select("id,name,active")
-          .eq("org_id", orgId)
-          .order("name", { ascending: true });
-
-        if (rErr) throw rErr;
-        const ids = (routines ?? []).map(r => r.id);
-        if (!ids.length) { setRows([]); return; }
-
-        const { data: items, error: iErr } = await supabase
-          .from("temp_routine_items")
-          .select("id,routine_id,position,location,item,target_key")
-          .in("routine_id", ids);
-
-        if (iErr) throw iErr;
-
-        const grouped = new Map<string, RoutineItem[]>();
-        (items ?? []).forEach((it: any) => {
-          const arr = grouped.get(it.routine_id) ?? [];
-          arr.push({
-            id: it.id, routine_id: it.routine_id,
-            position: it.position ?? 0,
-            location: it.location ?? null,
-            item: it.item ?? null,
-            target_key: it.target_key ?? "chill",
-          });
-          grouped.set(it.routine_id, arr);
-        });
-
-        setRows((routines ?? []).map(r => ({
-          id: r.id,
-          name: r.name,
-          active: r.active ?? true,
-          items: (grouped.get(r.id) ?? []).sort((a,b)=>(a.position??0)-(b.position??0)),
-        })));
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [open]);
-
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    if (!term) return rows;
-    return rows.filter(r => r.name.toLowerCase().includes(term));
-  }, [rows, q]);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40" onClick={onClose}>
-      <div className="mx-auto mt-16 w-full max-w-2xl rounded-2xl border bg-white p-4"
-           onClick={(e)=>e.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-base font-semibold">Use routine</div>
-          <button className="rounded-md p-2 hover:bg-gray-100" onClick={onClose}>✕</button>
+    <div
+      className="fixed inset-0 z-50"
+      aria-modal="true"
+      role="dialog"
+      onClick={onClose}
+    >
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/40" />
+
+      {/* Panel */}
+      <div
+        className="absolute inset-x-0 top-[8vh] mx-auto w-[min(720px,92vw)] overflow-hidden rounded-2xl border bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Sticky header (helps on mobile) */}
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-white/75">
+          <div className="text-base font-semibold">{title}</div>
+          <button
+            onClick={onClose}
+            className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-100"
+          >
+            Close
+          </button>
         </div>
-        <input
-          value={q}
-          onChange={(e)=>setQ(e.target.value)}
-          placeholder="Search routines…"
-          className="mb-3 w-full rounded-xl border px-3 py-2"
-        />
-        {loading ? (
-          <div className="py-8 text-center text-gray-500">Loading…</div>
-        ) : filtered.length === 0 ? (
-          <div className="py-8 text-center text-gray-500">
-            No routines. Tip: create one in <a className="text-blue-600 underline" href="/routines">Routines</a>.
-          </div>
-        ) : (
-          <ul className="divide-y">
-            {filtered.map(r => (
-              <li key={r.id} className="flex items-center justify-between py-2">
-                <div>
-                  <div className="font-medium">{r.name}</div>
-                  <div className="text-xs text-gray-500">{r.items.length} items</div>
-                </div>
-                <button
-                  className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
-                  onClick={()=>onPick(r)}
+
+        {/* Scrollable list (mobile-friendly) */}
+        <div className="max-h-[70vh] overflow-y-auto px-3 py-3 sm:px-4">
+          {routines.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-6 text-center text-sm text-gray-500">
+              No routines yet.
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {routines.map((r) => (
+                <li
+                  key={r.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2 hover:bg-gray-50 sm:px-4"
                 >
-                  Select
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{r.name}</div>
+                    <div className="mt-0.5 text-[12px] text-gray-600">
+                      {r.items.length} item{r.items.length === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <StatusPill active={!!r.active} />
+                    <button
+                      onClick={() => onPick(r)}
+                      className="rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-900"
+                    >
+                      Use
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Sticky footer (also helps on mobile) */}
+        <div className="sticky bottom-0 z-10 border-t bg-white/95 px-4 py-3 text-right backdrop-blur supports-[backdrop-filter]:bg-white/75">
+          <button
+            onClick={onClose}
+            className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-100"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );
