@@ -1,254 +1,280 @@
 "use client";
 
-import React from "react";
-import { X } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { TARGET_PRESETS } from "@/lib/temp-constants";
 
-/* ===================== Types (exported) ===================== */
+/* ======================== Types ========================= */
+
 export type RoutineItemDraft = {
-  id?: string;
+  id: string;
   position: number;
-  location: string | null;
-  item: string | null;
-  target_key: string; // e.g., "chill", "cook", etc.
+  location: string;
+  item: string;
+  target_key: string; // key from TARGET_PRESETS
 };
 
 export type RoutineDraft = {
-  id?: string;
+  id?: string; // present when editing an existing routine
   name: string;
   active: boolean;
   items: RoutineItemDraft[];
 };
 
-/* ===================== Props ===================== */
+/* ======================== Props ========================= */
+
 type Props = {
   open: boolean;
-  draft: RoutineDraft | null;
-  onChange: (next: RoutineDraft) => void;
-  onSave: () => void;
+  initial: RoutineDraft | null; // null = creating new
   onClose: () => void;
-  targetOptions?: { key: string; label: string }[];
+  onSave: (draft: RoutineDraft) => void | Promise<void>;
 };
 
-/* ===================== Component ===================== */
-export default function EditRoutineModal({
-  open,
-  draft,
-  onChange,
-  onSave,
-  onClose,
-  targetOptions = [
-    { key: "chill", label: "Chilled (≤ 8°C)" },
-    { key: "cook", label: "Cooked (≥ 75°C)" },
-    { key: "hot-hold", label: "Hot hold (≥ 63°C)" },
-    { key: "freeze", label: "Frozen (≤ −18°C)" },
-  ],
-}: Props) {
+/* ==================== Component ========================= */
+
+export default function EditRoutineModal({ open, initial, onClose, onSave }: Props) {
+  const [draft, setDraft] = useState<RoutineDraft | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Prevent background scroll when open
+  useEffect(() => {
+    if (open) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+  }, [open]);
+
+  // Seed local draft whenever the modal is opened / initial changes
+  useEffect(() => {
+    if (!open) return;
+    const seeded: RoutineDraft =
+      initial ?? {
+        name: "",
+        active: true,
+        items: [],
+      };
+    // Ensure items sorted and positions normalized
+    seeded.items = [...(seeded.items ?? [])]
+      .sort((a, b) => a.position - b.position)
+      .map((it, idx) => ({ ...it, position: idx + 1 }));
+    setDraft(seeded);
+  }, [open, initial]);
+
+  const targetOptions = useMemo(() => TARGET_PRESETS.map((t) => ({ key: t.key, label: t.label })), []);
+
   if (!open || !draft) return null;
 
-  const update = <K extends keyof RoutineDraft>(key: K, value: RoutineDraft[K]) =>
-    onChange({ ...draft, [key]: value });
+  /* ==================== Handlers ==================== */
 
-  /* ---------- Handlers ---------- */
-  function addItem() {
-    if (!draft) return;
-
-    const lastPos = (draft.items?.[draft.items.length - 1]?.position ?? 0) + 1;
-
+  const addRow = () => {
+    const lastPos = draft.items.length ? draft.items[draft.items.length - 1].position : 0;
     const next: RoutineItemDraft = {
       id: crypto.randomUUID(),
-      position: lastPos,
+      position: lastPos + 1,
       location: "",
       item: "",
       target_key: targetOptions[0]?.key ?? "chill",
     };
+    setDraft((d) => ({ ...d!, items: [...d!.items, next] }));
+  };
 
-    update("items", [...draft.items, next]);
-  }
+  const removeRow = (id: string) => {
+    setDraft((d) => {
+      const items = d!.items.filter((x) => x.id !== id).map((x, i) => ({ ...x, position: i + 1 }));
+      return { ...d!, items };
+    });
+  };
 
-  function removeItem(id?: string) {
-    if (!draft) return;
+  const updateRow = (id: string, patch: Partial<RoutineItemDraft>) => {
+    setDraft((d) => ({
+      ...d!,
+      items: d!.items
+        .map((x) => (x.id === id ? { ...x, ...patch } : x))
+        .sort((a, b) => a.position - b.position)
+        .map((x, i) => ({ ...x, position: i + 1 })),
+    }));
+  };
 
-    const updated = draft.items
-      .filter((it) => it.id !== id)
-      .map((it, i) => ({ ...it, position: i + 1 }));
+  const moveRow = (id: string, dir: -1 | 1) => {
+    setDraft((d) => {
+      const idx = d!.items.findIndex((x) => x.id === id);
+      if (idx < 0) return d!;
+      const j = idx + dir;
+      if (j < 0 || j >= d!.items.length) return d!;
+      const clone = [...d!.items];
+      [clone[idx], clone[j]] = [clone[j], clone[idx]];
+      return {
+        ...d!,
+        items: clone.map((x, i) => ({ ...x, position: i + 1 })),
+      };
+    });
+  };
 
-    update("items", updated);
-  }
+  const canSave =
+    draft.name.trim().length > 0 &&
+    draft.items.length > 0 &&
+    draft.items.every((it) => it.item.trim().length > 0);
 
-  function moveItem(id?: string, dir: -1 | 1 = 1) {
-    if (!draft) return;
-    const idx = draft.items.findIndex((it) => it.id === id);
-    if (idx < 0) return;
+  const handleSave = async () => {
+    if (!canSave) return;
+    try {
+      setSaving(true);
+      await onSave({ ...draft, items: draft.items.map((i, idx) => ({ ...i, position: idx + 1 })) });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
 
-    const j = idx + dir;
-    if (j < 0 || j >= draft.items.length) return;
+  /* ====================== UI ======================== */
 
-    const copy = [...draft.items];
-    const [row] = copy.splice(idx, 1);
-    copy.splice(j, 0, row);
-
-    const rePos = copy.map((it, k) => ({ ...it, position: k + 1 }));
-    update("items", rePos);
-  }
-
-  /* ---------- Render ---------- */
   return (
-    <div className="fixed inset-0 z-50 bg-black/40" onClick={onClose}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSave();
-        }}
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-3" onClick={onClose}>
+      {/* Panel */}
+      <div
+        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}
-        className="mx-auto mt-3 flex h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-10 sm:h-[85vh] sm:rounded-2xl"
+        role="dialog"
+        aria-modal="true"
       >
         {/* Sticky header */}
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
-          <div className="text-base font-semibold">Edit routine</div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-2 text-gray-600 hover:bg-gray-100"
-            aria-label="Close"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        {/* Scrollable content */}
-        <div className="grow overflow-y-auto px-4 py-3">
-          <div className="mb-4 grid grid-cols-1 items-center gap-3 sm:grid-cols-3">
-            <label className="sm:col-span-2">
-              <div className="mb-1 text-xs text-gray-500">Name</div>
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                value={draft.name}
-                onChange={(e) => update("name", e.target.value)}
-                placeholder="e.g., Cooking Routine"
-                required
-              />
-            </label>
-
-            <label className="flex items-center gap-2">
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b bg-white/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-white/75">
+          <div className="flex min-w-0 grow items-center gap-3">
+            <input
+              className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm font-medium"
+              placeholder="Routine name"
+              value={draft.name}
+              onChange={(e) => setDraft((d) => ({ ...d!, name: e.target.value }))}
+            />
+            <label className="flex items-center gap-2 text-sm whitespace-nowrap">
               <input
                 type="checkbox"
                 checked={!!draft.active}
-                onChange={(e) => update("active", e.target.checked)}
+                onChange={(e) => setDraft((d) => ({ ...d!, active: e.target.checked }))}
               />
               Active
             </label>
           </div>
+          <button
+            type="button"
+            className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </div>
 
-          {/* Items list */}
-          <div className="space-y-3">
-            {draft.items.map((it) => (
-              <div key={it.id} className="rounded-xl border p-3">
-                <div className="mb-2 text-xs font-medium text-gray-500">
-                  Step {it.position}
-                </div>
+        {/* Scrollable content */}
+        <div className="grow overflow-y-auto px-4 py-3 space-y-3">
+          {draft.items.length === 0 && (
+            <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-gray-500">
+              No items yet. Add your first check below.
+            </div>
+          )}
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <input
-                    className="h-10 w-full rounded-xl border px-3"
-                    placeholder="Location"
-                    value={it.location ?? ""}
-                    onChange={(e) =>
-                      update(
-                        "items",
-                        draft.items.map((r) =>
-                          r.id === it.id ? { ...r, location: e.target.value } : r
-                        )
-                      )
-                    }
-                  />
-
-                  <input
-                    className="h-10 w-full rounded-xl border px-3"
-                    placeholder="Item"
-                    value={it.item ?? ""}
-                    onChange={(e) =>
-                      update(
-                        "items",
-                        draft.items.map((r) =>
-                          r.id === it.id ? { ...r, item: e.target.value } : r
-                        )
-                      )
-                    }
-                  />
-
-                  <select
-                    className="h-10 w-full rounded-xl border px-3"
-                    value={it.target_key}
-                    onChange={(e) =>
-                      update(
-                        "items",
-                        draft.items.map((r) =>
-                          r.id === it.id ? { ...r, target_key: e.target.value } : r
-                        )
-                      )
-                    }
-                  >
-                    {targetOptions.map((opt) => (
-                      <option key={opt.key} value={opt.key}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-2">
+          {draft.items.map((it, idx) => (
+            <div key={it.id} className="rounded-lg border p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-xs font-medium text-gray-500">#{idx + 1}</div>
+                <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => moveItem(it.id, -1)}
-                    className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
+                    className="rounded-md px-2 py-1 text-xs hover:bg-gray-100 disabled:opacity-40"
+                    onClick={() => moveRow(it.id, -1)}
+                    disabled={idx === 0}
+                    title="Move up"
                   >
-                    ↑ Move up
+                    ↑
                   </button>
                   <button
                     type="button"
-                    onClick={() => moveItem(it.id, 1)}
-                    className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
+                    className="rounded-md px-2 py-1 text-xs hover:bg-gray-100 disabled:opacity-40"
+                    onClick={() => moveRow(it.id, +1)}
+                    disabled={idx === draft.items.length - 1}
+                    title="Move down"
                   >
-                    ↓ Move down
+                    ↓
                   </button>
                   <button
                     type="button"
-                    onClick={() => removeItem(it.id)}
-                    className="ml-auto rounded-md border px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+                    className="rounded-md px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+                    onClick={() => removeRow(it.id)}
+                    title="Remove"
                   >
                     Remove
                   </button>
                 </div>
               </div>
-            ))}
 
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Location</label>
+                  <input
+                    className="h-10 w-full rounded-xl border px-3"
+                    value={it.location}
+                    onChange={(e) => updateRow(it.id, { location: e.target.value })}
+                    placeholder="e.g., Kitchen"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Item</label>
+                  <input
+                    className="h-10 w-full rounded-xl border px-3"
+                    value={it.item}
+                    onChange={(e) => updateRow(it.id, { item: e.target.value })}
+                    placeholder="e.g., Chicken curry"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Target</label>
+                  <select
+                    className="h-10 w-full rounded-xl border px-3"
+                    value={it.target_key}
+                    onChange={(e) => updateRow(it.id, { target_key: e.target.value })}
+                  >
+                    {targetOptions.map((t) => (
+                      <option key={t.key} value={t.key}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          <div>
             <button
               type="button"
-              onClick={addItem}
-              className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+              onClick={addRow}
+              className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
             >
-              + Add step
+              + Add item
             </button>
           </div>
         </div>
 
         {/* Sticky footer */}
-        <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white px-4 py-3">
+        <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-white/75">
           <button
             type="button"
-            onClick={onClose}
             className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"
+            onClick={onClose}
           >
             Cancel
           </button>
           <button
-            type="submit"
-            className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
+            type="button"
+            disabled={!canSave || saving}
+            onClick={handleSave}
+            className={`rounded-xl px-3 py-1.5 text-sm font-medium text-white ${
+              !canSave || saving ? "bg-gray-400" : "bg-black hover:bg-gray-800"
+            }`}
           >
-            Save routine
+            {saving ? "Saving…" : "Save routine"}
           </button>
         </div>
-      </form>
+      </div>
     </div>
   );
 }
