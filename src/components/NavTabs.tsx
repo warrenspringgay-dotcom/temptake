@@ -1,15 +1,13 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Menu } from "lucide-react";
-import { supabase } from "@/lib/supabaseBrowser";
 
-type Tab = { href: string; label: string };
+type UserLike = { email?: string | null } | null | undefined;
 
-const TABS: Tab[] = [
+const TABS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/routines", label: "Routines" },
   { href: "/allergens", label: "Allergens" },
@@ -19,196 +17,145 @@ const TABS: Tab[] = [
   { href: "/reports", label: "Reports" },
 ];
 
-export default function NavTabs() {
+export default function NavTabs({ user }: { user?: UserLike }) {
   const pathname = usePathname();
 
-  // auth (client-side)
-  const [email, setEmail] = useState<string | null>(null);
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!mounted) return;
-      setEmail(data.user?.email ?? null);
-    })();
-    const { data: sub } = supabase.auth.onAuthStateChange(async () => {
-      const { data } = await supabase.auth.getUser();
-      setEmail(data.user?.email ?? null);
-    });
-    return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
-    };
-  }, []);
+  // unified mobile menu
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
-  // menu dropdown (top-right)
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
+  // Close on route change
+  useEffect(() => setOpen(false), [pathname]);
+
+  // Close on outside click / ESC
   useEffect(() => {
-    function onDown(e: MouseEvent) {
-      if (!menuRef.current) return;
-      if (!menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    }
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setMenuOpen(false);
+      if (e.key === "Escape") setOpen(false);
     }
-    if (menuOpen) {
-      document.addEventListener("mousedown", onDown);
+    function onClick(e: MouseEvent) {
+      if (!panelRef.current) return;
+      if (!panelRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) {
       document.addEventListener("keydown", onKey);
+      document.addEventListener("mousedown", onClick);
     }
     return () => {
-      document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
     };
-  }, [menuOpen]);
-
-  // mobile panel
-  const [mobileOpen, setMobileOpen] = useState(false);
+  }, [open]);
 
   return (
-    <header className="sticky top-0 z-50 border-b bg-white">
-      {/* Top bar: logo (left), centered brand, user/menu on right */}
-      <div className="mx-auto grid h-12 max-w-screen-2xl grid-cols-3 items-center px-3 sm:px-4">
-        {/* left: logo + brand (clickable) */}
-        <Link href="/dashboard" className="flex items-center gap-2">
-          {/* Your logo restored */}
-          <Image src="/logo.png" alt="TempTake" width={24} height={24} />
-          <span className="hidden sm:inline font-semibold">TempTake</span>
-        </Link>
-
-        {/* center spacer (keeps right pill aligned while logo stays left) */}
-        <div className="flex items-center justify-center">
-          {/* nothing needed here; tabs are on the second row */}
-        </div>
-
-        {/* right: account/menu */}
-        <div className="ml-auto flex items-center justify-end gap-2">
-          {/* Menu button (desktop & mobile) */}
-          <div className="relative" ref={menuRef}>
-            <button
-              onClick={() => setMenuOpen((v) => !v)}
-              className="inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-              aria-expanded={menuOpen}
-              aria-haspopup="menu"
+    <>
+      {/* Desktop / tablet tabs */}
+      <ul className="hidden md:flex flex-nowrap items-center justify-center gap-1">
+        {TABS.map((t) => {
+          const active =
+            pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
+        return (
+          <li key={t.href} className="shrink-0">
+            <Link
+              href={t.href}
+              className={[
+                "inline-flex h-9 items-center rounded-md px-3 text-sm transition-colors",
+                active ? "bg-black text-white" : "text-slate-700 hover:bg-gray-100",
+              ].join(" ")}
             >
-              <Menu className="h-4 w-4" />
-              {email ? (
-                <span className="hidden sm:block">{email}</span>
-              ) : (
-                <span className="hidden sm:block">Menu</span>
-              )}
-            </button>
+              {t.label}
+            </Link>
+          </li>
+        );
+        })}
+      </ul>
 
-            {menuOpen && (
-              <div
-                role="menu"
-                className="absolute right-0 mt-2 w-56 overflow-hidden rounded-xl border bg-white shadow-xl"
-              >
-                <Link
-                  href="/help"
-                  className="block px-3 py-2 text-sm hover:bg-gray-50"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Help
-                </Link>
-                <Link
-                  href="/settings"
-                  className="block px-3 py-2 text-sm hover:bg-gray-50"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Settings
-                </Link>
-                {email ? (
-                  <form
-                    action="/logout"
-                    method="post"
-                    className="border-t"
-                    onSubmit={() => setMenuOpen(false)}
-                  >
-                    <button className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-50">
-                      Sign out
-                    </button>
-                  </form>
-                ) : (
-                  <Link
-                    href="/login"
-                    className="block border-t px-3 py-2 text-sm hover:bg-gray-50"
-                    onClick={() => setMenuOpen(false)}
-                  >
-                    Sign in
-                  </Link>
-                )}
-              </div>
-            )}
-          </div>
+      {/* Mobile: single hamburger that includes tabs + help + settings + auth */}
+      <div className="md:hidden">
+        <button
+          type="button"
+          aria-label="Open menu"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-xl hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-black/20"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
 
-          {/* Mobile hamburger toggles tabs panel */}
+        {/* Backdrop */}
+        {open && (
           <button
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xl hover:bg-gray-100 md:hidden"
-            aria-label="Open tabs"
-            aria-expanded={mobileOpen}
-            onClick={() => setMobileOpen((v) => !v)}
-          >
-            <Menu className="h-5 w-5" />
-          </button>
-        </div>
-      </div>
+            aria-label="Close menu"
+            className="fixed inset-0 z-40 bg-black/25"
+            onClick={() => setOpen(false)}
+          />
+        )}
 
-      {/* Tabs row – centered */}
-      <div className="border-t bg-white">
-        <div className="mx-auto hidden max-w-screen-2xl px-3 sm:px-4 md:block">
-          <ul className="flex items-center justify-center gap-1 py-2">
-            {TABS.map((t) => {
-              const active =
-                pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
-              return (
-                <li key={t.href}>
-                  <Link
-                    href={t.href}
-                    className={[
-                      "inline-flex h-9 items-center rounded-md px-3 text-sm transition-colors",
-                      active ? "bg-black text-white" : "text-slate-700 hover:bg-gray-100",
-                    ].join(" ")}
-                  >
-                    {t.label}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        {/* Mobile tabs panel (slide/drop) */}
+        {/* Fixed dropdown panel */}
         <div
+          ref={panelRef}
           className={[
-            "md:hidden origin-top transition-transform duration-150 ease-out",
-            mobileOpen ? "scale-y-100 opacity-100" : "pointer-events-none scale-y-95 opacity-0",
+            "fixed left-3 right-3 top-14 z-50 origin-top",
+            open ? "scale-y-100 opacity-100" : "pointer-events-none scale-y-95 opacity-0",
+            "transition duration-150 ease-out",
           ].join(" ")}
         >
-          <nav className="mx-3 mb-2 mt-1 rounded-xl border bg-white shadow-sm">
-            <ul className="flex snap-x snap-mandatory gap-1 overflow-x-auto px-2 py-2">
-              {TABS.map((t) => {
-                const active =
-                  pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
-                return (
-                  <li key={t.href} className="snap-start shrink-0">
-                    <Link
-                      href={t.href}
-                      className={[
-                        "inline-flex h-9 items-center rounded-md px-3 text-sm transition-colors",
-                        active ? "bg-black text-white" : "text-slate-700 hover:bg-gray-100",
-                      ].join(" ")}
-                      onClick={() => setMobileOpen(false)}
-                    >
-                      {t.label}
+          <div className="rounded-xl border bg-white shadow-xl overflow-hidden">
+            {/* sticky header in panel */}
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-white/75">
+              <div className="text-sm font-semibold">Menu</div>
+              <div className="text-xs text-gray-600 truncate max-w-[60%]">
+                {user?.email ?? "Guest"}
+              </div>
+            </div>
+
+            {/* nav links */}
+            <nav className="max-h-[70vh] overflow-y-auto p-1">
+              <ul className="divide-y">
+                {TABS.map((t) => {
+                  const active =
+                    pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
+                  return (
+                    <li key={t.href}>
+                      <Link
+                        href={t.href}
+                        className={[
+                          "block px-4 py-3 text-sm",
+                          active ? "bg-black text-white" : "text-slate-700 hover:bg-gray-50",
+                        ].join(" ")}
+                      >
+                        {t.label}
+                      </Link>
+                    </li>
+                  );
+                })}
+
+                {/* extras */}
+                <li>
+                  <Link href="/help" className="block px-4 py-3 text-sm text-slate-700 hover:bg-gray-50">
+                    Help
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/settings" className="block px-4 py-3 text-sm text-slate-700 hover:bg-gray-50">
+                    Settings
+                  </Link>
+                </li>
+                <li>
+                  {user ? (
+                    <Link href="/logout" className="block px-4 py-3 text-sm text-slate-700 hover:bg-gray-50">
+                      Sign out
                     </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </nav>
+                  ) : (
+                    <Link href="/login" className="block px-4 py-3 text-sm text-slate-700 hover:bg-gray-50">
+                      Login
+                    </Link>
+                  )}
+                </li>
+              </ul>
+            </nav>
+          </div>
         </div>
       </div>
-    </header>
+    </>
   );
 }
