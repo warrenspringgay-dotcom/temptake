@@ -1,34 +1,76 @@
-// src/components/UserMenu.tsx
 "use client";
-import { useEffect, useState } from "react";
 
-export default function UserMenu() {
-  const [email, setEmail] = useState<string | null>(null);
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+
+type Props = {
+  user: { email?: string | null } | null;
+};
+
+export default function UserMenu({ user }: Props) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    (async () => {
-      // light client fetch of /api/me if you have it, or just hide for now
-      try {
-        const r = await fetch("/api/me").then((r) => (r.ok ? r.json() : null));
-        setEmail(r?.email ?? null);
-      } catch {}
-    })();
-  }, []);
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    function onClick(e: MouseEvent) {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) {
+      document.addEventListener("keydown", onKey);
+      document.addEventListener("mousedown", onClick);
+    }
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
+    };
+  }, [open]);
+
+  const initials = user?.email?.[0]?.toUpperCase() ?? "⋯";
 
   return (
-    <div className="flex items-center gap-3">
-      {email ? (
-        <>
-          <span className="text-sm text-gray-600">{email}</span>
-          <form action="/api/auth/signout" method="post">
-            <button className="rounded-md border px-3 py-1.5 text-sm">Sign out</button>
-          </form>
-        </>
-      ) : (
-        <a className="text-sm underline" href="/login?redirect=/">
-          Sign in
-        </a>
-      )}
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-white text-sm font-semibold hover:bg-gray-50"
+        title={user?.email ?? "Menu"}
+      >
+        {initials}
+      </button>
+
+      {/* Dropdown */}
+      <div
+        className={[
+          "absolute right-0 mt-2 w-48 origin-top-right rounded-xl border bg-white shadow-lg",
+          open ? "scale-100 opacity-100" : "pointer-events-none scale-95 opacity-0",
+          "transition",
+        ].join(" ")}
+        role="menu"
+      >
+        <div className="py-1 text-sm">
+          <Link href="/help" className="block px-3 py-2 hover:bg-gray-50" role="menuitem">
+            Help
+          </Link>
+          <Link href="/settings" className="block px-3 py-2 hover:bg-gray-50" role="menuitem">
+            Settings
+          </Link>
+          {user ? (
+            <Link href="/logout" className="block px-3 py-2 text-red-600 hover:bg-gray-50" role="menuitem">
+              Sign out
+            </Link>
+          ) : (
+            <Link href="/login" className="block px-3 py-2 hover:bg-gray-50" role="menuitem">
+              Login
+            </Link>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
