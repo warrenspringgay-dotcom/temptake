@@ -285,7 +285,7 @@ export default function RoutineManager() {
       {viewOpen && viewing && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
           <div
-            className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-2xl border bg-white"
+            className="mx-auto mt-16 w-full max-w-xl overflow-y-auto rounded-2xl border bg-white"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="bg-slate-800 px-4 py-3 text-white">

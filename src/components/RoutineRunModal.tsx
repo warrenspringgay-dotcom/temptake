@@ -94,7 +94,7 @@ export default function RoutineRunModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40" onClick={onClose}>
-      <div className="mx-auto mt-10 w-full max-w-3xl overflow-hidden rounded-2xl border bg-white"
+      <div className="mx-auto mt-10 w-full max-w-3xl overflow-y-auto rounded-2xl border bg-white"
            onClick={(e)=>e.stopPropagation()}>
         <div className="flex items-center justify-between bg-slate-800 px-4 py-3 text-white">
           <div>

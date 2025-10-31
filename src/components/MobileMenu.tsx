@@ -78,7 +78,7 @@ export default function MobileMenu({ user }: Props) {
           "transition duration-150 ease-out",
         ].join(" ")}
       >
-        <div className="rounded-xl border bg-white shadow-xl overflow-hidden">
+        <div className="rounded-xl border bg-white shadow-xl overflow-y-auto">
           <nav className="max-h-[70vh] overflow-y-auto">
             {LINKS.map((t) => {
               const active = pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
