@@ -22,15 +22,6 @@ type Run = {
   done_by: string | null;
 };
 
-type Draft = {
-  frequency: Frequency;
-  weekday: number | null;
-  month_day: number | null;
-  area: string;
-  task: string;
-};
-type EditDraft = Draft & { id: string };
-
 /* ========= Dates ========= */
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
@@ -55,6 +46,16 @@ const nice = (ymd: string) =>
 const cls = (...p: Array<string | false | null | undefined>) => p.filter(Boolean).join(" ");
 
 /* ========= Reusable Add/Edit modal (sticky header/footer, scroll middle) ========= */
+type DraftBase = {
+  frequency: Frequency;
+  weekday: number | null;
+  month_day: number | null;
+  area: string;
+  task: string;
+};
+type Draft = DraftBase;
+type EditDraft = DraftBase & { id: string };
+
 function TaskModal({
   open,
   title,
@@ -82,7 +83,7 @@ function TaskModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-[50] bg-black/30" onClick={onClose}>
       <form
         onSubmit={submit}
         onClick={(e) => e.stopPropagation()}
@@ -199,6 +200,9 @@ export default function CleaningRotaClient() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
+  // initials list from team
+  const [initialsList, setInitialsList] = useState<string[]>([]);
+
   const [showToday, setShowToday] = useState(false);
 
   const [openAdd, setOpenAdd] = useState(false);
@@ -234,6 +238,7 @@ export default function CleaningRotaClient() {
         return;
       }
 
+      // tasks
       const { data: tData, error: tErr } = await supabase
         .from("cleaning_tasks")
         .select("id,area,task,frequency,weekday,month_day")
@@ -251,6 +256,7 @@ export default function CleaningRotaClient() {
       }));
       setTasks(tRows);
 
+      // runs (this week)
       const { data: rData, error: rErr } = await supabase
         .from("cleaning_task_runs")
         .select("task_id,run_on,done_by")
@@ -267,7 +273,24 @@ export default function CleaningRotaClient() {
         })) || [];
       setRuns(rRows);
 
-      // open Today if anything due & incomplete
+      // initials (team)
+      const { data: tm } = await supabase
+        .from("team_members")
+        .select("initials,name,email")
+        .eq("org_id", orgId)
+        .order("initials");
+      const fromDb =
+        (tm ?? [])
+          .map(
+            (r: any) =>
+              (r.initials?.toString().toUpperCase() ||
+                (r.name || "").toString().trim().slice(0, 1).toUpperCase() ||
+                (r.email || "").toString().trim().slice(0, 1).toUpperCase())
+          )
+          .filter(Boolean) || [];
+      setInitialsList(Array.from(new Set(fromDb)));
+
+      // optionally auto-open Today if anything due
       const today = iso(new Date());
       const dueToday = tRows.filter((t) => isDueOn(t, today));
       if (dueToday.some((t) => !runsKey.has(`${t.id}|${today}`))) setShowToday(true);
@@ -429,6 +452,8 @@ export default function CleaningRotaClient() {
   }
 
   /* ----- render ----- */
+  const today = iso(new Date());
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -451,7 +476,8 @@ export default function CleaningRotaClient() {
       <div className="rounded-2xl border bg-white p-3">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
           {daysThisWeek.map((d) => {
-            const due = dueFilter(tasks, d);
+            // only show weekly & monthly in the weekly grid
+            const due = dueFilter(tasks, d).filter((t) => t.frequency !== "daily");
             const pending = due.filter((t) => !runsKey.has(`${t.id}|${d}`)).length;
             return (
               <div key={d} className="rounded-xl border p-3">
@@ -521,9 +547,9 @@ export default function CleaningRotaClient() {
         />
       )}
 
-      {/* Confirm initials */}
+      {/* Confirm initials — z-index above the Today popup */}
       {confirm && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setConfirm(null)}>
+        <div className="fixed inset-0 z-[60] bg-black/30" onClick={() => setConfirm(null)}>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -540,22 +566,47 @@ export default function CleaningRotaClient() {
                 {confirm.task.area && <div className="text-xs text-gray-600">{confirm.task.area}</div>}
                 <div className="mt-1 text-xs text-gray-500">For <strong>{nice(confirm.run_on)}</strong></div>
               </div>
+
               <label className="block text-sm">
                 <div className="mb-1 text-gray-600">Initials</div>
-                <input className="w-full rounded-xl border px-2 py-1.5 uppercase" value={initials} onChange={(e) => setInitials(e.target.value.toUpperCase())} maxLength={4} autoFocus required />
+                <div className="flex gap-2">
+                  <select
+                    className="h-10 w-32 rounded-xl border px-2 uppercase"
+                    value={initials}
+                    onChange={(e) => setInitials(e.target.value.toUpperCase())}
+                  >
+                    <option value="">Choose…</option>
+                    {initialsList.map((i) => (
+                      <option key={i} value={i}>
+                        {i}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="h-10 w-full rounded-xl border px-2 uppercase"
+                    placeholder="Or type"
+                    value={initials}
+                    onChange={(e) => setInitials(e.target.value.toUpperCase())}
+                    maxLength={4}
+                  />
+                </div>
               </label>
             </div>
             <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white px-4 py-3">
-              <button type="button" className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50" onClick={() => setConfirm(null)}>Cancel</button>
-              <button className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900">Confirm done</button>
+              <button type="button" className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50" onClick={() => setConfirm(null)}>
+                Cancel
+              </button>
+              <button className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900">
+                Confirm done
+              </button>
             </div>
           </form>
         </div>
       )}
 
-      {/* Today: show weekly/monthly individually, daily grouped */}
+      {/* Today: show daily grouped, weekly/monthly individually */}
       {showToday && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30">
+        <div className="fixed inset-0 z-[40] flex items-end sm:items-center justify-center bg-black/30">
           <div className="mx-auto w-full max-w-lg overflow-hidden rounded-t-2xl border bg-white shadow sm:rounded-2xl">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
               <div className="text-base font-semibold">Today’s Cleaning Tasks</div>
@@ -564,12 +615,10 @@ export default function CleaningRotaClient() {
 
             <div className="max-h-[70vh] overflow-y-auto px-4 py-3 space-y-5">
               {(() => {
-                const today = iso(new Date());
                 const all = dueFilter(tasks, today);
                 const daily = all.filter((t) => t.frequency === "daily");
                 const others = all.filter((t) => t.frequency !== "daily");
 
-                /* DAILY GROUP */
                 const dailyIncomplete = daily.filter((t) => !runsKey.has(`${t.id}|${today}`));
 
                 return (
@@ -580,7 +629,8 @@ export default function CleaningRotaClient() {
                         <button
                           disabled={dailyIncomplete.length === 0}
                           onClick={async () => {
-                            const ini = prompt("Initials to mark all daily tasks done:")?.trim() || "";
+                            const ini =
+                              prompt("Initials to mark all daily tasks done:")?.trim() || "";
                             if (!ini) return;
                             await completeAllDaily(today, ini);
                           }}
@@ -603,7 +653,10 @@ export default function CleaningRotaClient() {
                             const done = runsKey.has(key);
                             return (
                               <li key={key} className="flex items-center justify-between rounded border px-2 py-1 text-sm">
-                                <span className={done ? "text-gray-500 line-through" : ""}>{t.task}{t.area ? ` — ${t.area}` : ""}</span>
+                                <span className={done ? "text-gray-500 line-through" : ""}>
+                                  {t.task}
+                                  {t.area ? ` — ${t.area}` : ""}
+                                </span>
                                 {done ? (
                                   <button className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800" onClick={() => uncomplete(t, today)}>Done</button>
                                 ) : (

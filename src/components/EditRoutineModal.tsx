@@ -47,38 +47,37 @@ export default function EditRoutineModal({ open, initial, onClose, onSave }: Pro
       return { ...d, items: [...d.items, it] };
     });
   }
-
   function removeItem(id: string) {
     setDraft((d) => (!d ? d : { ...d, items: d.items.filter((i) => i.id !== id) }));
   }
-
   function updateItem(id: string, patch: Partial<RoutineItemDraft>) {
     setDraft((d) =>
-      !d ? d : { ...d, items: d.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) }
+      !d
+        ? d
+        : { ...d, items: d.items.map((i) => (i.id === id ? { ...i, ...patch } : i)) }
     );
   }
 
   async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!draft || !draft.name.trim()) {
-      alert("Routine name is required.");
-      return;
-    }
-    const prepared: RoutineDraft = {
-      ...draft,
-      items: draft.items
-        .map((i, idx) => ({ ...i, position: idx + 1 }))
-        .filter((i) => i.item.trim().length > 0),
-    };
-    await onSave(prepared);
-  }
+  e.preventDefault();
+  if (!draft) return; // added null guard
+  if (!draft.name.trim()) return alert("Routine name is required.");
+
+  await onSave({
+    ...draft,
+    items: draft.items
+      .map((i, idx) => ({ ...i, position: idx + 1 }))
+      .filter((i) => i.item.trim().length > 0),
+  });
+}
+
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-black/30" onClick={onClose}>
       <form
         onSubmit={submit}
         onClick={(e) => e.stopPropagation()}
-        className="mx-auto mt-3 flex h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-16 sm:h-[80vh] sm:rounded-2xl"
+        className="mx-auto mt-3 flex h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-16 sm:h-[84vh] sm:rounded-2xl"
       >
         {/* Sticky header */}
         <div className="sticky top-0 z-10 border-b bg-white px-4 py-3">
