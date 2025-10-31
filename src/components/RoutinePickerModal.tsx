@@ -76,7 +76,7 @@ export default function RoutinePickerModal({
 
       {/* Panel */}
       <div
-        className="absolute inset-x-0 top-[8vh] mx-auto w-[min(720px,92vw)] overflow-hidden rounded-2xl border bg-white shadow-xl"
+        className="absolute inset-x-0 top-[8vh] mx-auto w-[min(720px,92vw)] overflow-x-hidden rounded-2xl border bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Sticky header (helps on mobile) */}

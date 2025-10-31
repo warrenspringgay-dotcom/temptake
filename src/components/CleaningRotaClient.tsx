@@ -87,7 +87,7 @@ function TaskModal({
       <form
         onSubmit={submit}
         onClick={(e) => e.stopPropagation()}
-        className="mx-auto mt-6 flex h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-16 sm:h-auto sm:rounded-2xl"
+        className="mx-auto mt-6 flex h-[90vh] w-full max-w-lg flex-col overflow-x-hidden rounded-t-2xl border bg-white shadow sm:mt-16 sm:h-auto sm:rounded-2xl"
       >
         <div className="sticky top-0 z-10 border-b bg-white px-4 py-3 text-base font-semibold">
           {title}
@@ -557,7 +557,7 @@ export default function CleaningRotaClient() {
               complete(confirm.task, confirm.run_on, initials.trim());
             }}
             onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-6 flex h-[70vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-24 sm:h-auto sm:rounded-2xl"
+            className="mx-auto mt-6 flex h-[70vh] w-full max-w-sm flex-col overflow-x-hidden rounded-t-2xl border bg-white shadow sm:mt-24 sm:h-auto sm:rounded-2xl"
           >
             <div className="sticky top-0 z-10 border-b bg-white px-4 py-3 text-base font-semibold">Confirm completion</div>
             <div className="grow overflow-y-auto px-4 py-3 space-y-3">
@@ -607,7 +607,7 @@ export default function CleaningRotaClient() {
       {/* Today: show daily grouped, weekly/monthly individually */}
       {showToday && (
         <div className="fixed inset-0 z-[40] flex items-end sm:items-center justify-center bg-black/30">
-          <div className="mx-auto w-full max-w-lg overflow-hidden rounded-t-2xl border bg-white shadow sm:rounded-2xl">
+          <div className="mx-auto w-full max-w-lg overflow-x-hidden rounded-t-2xl border bg-white shadow sm:rounded-2xl">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
               <div className="text-base font-semibold">Today’s Cleaning Tasks</div>
               <button className="rounded-md px-2 py-1 text-sm hover:bg-gray-100" onClick={() => setShowToday(false)}>Close</button>

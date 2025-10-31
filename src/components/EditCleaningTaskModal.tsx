@@ -130,7 +130,7 @@ export default function EditCleaningTaskModal({
       {/* Sheet */}
       <form
         onSubmit={handleSave}
-        className="mx-auto mt-6 flex h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border bg-white shadow-xl"
+        className="mx-auto mt-6 flex h-[92vh] w-full max-w-xl flex-col overflow-x-hidden rounded-2xl border bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Sticky header */}
