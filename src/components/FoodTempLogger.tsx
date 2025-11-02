@@ -143,7 +143,6 @@ function isDueOn(t: CleanTask, ymd: string) {
       return false;
   }
 }
-
 function CategoryPill({
   title,
   total,
@@ -156,25 +155,24 @@ function CategoryPill({
   onClick: () => void;
 }) {
   const hasOpen = open > 0;
-  const color =
-    hasOpen
-      ? "bg-red-50 text-red-700 border-red-200"
-      : "bg-emerald-50 text-emerald-700 border-emerald-200";
+  const color = hasOpen
+    ? "bg-red-50 text-red-700 border-red-200"
+    : "bg-emerald-50 text-emerald-700 border-emerald-200";
+
   return (
     <button
       onClick={onClick}
-      className={`rounded-xl border px-3 py-2 text-left ${color}`}
+      className={`flex flex-col justify-between min-h-[64px] rounded-xl border px-3 py-2 text-left ${color}`}
     >
-      <div className="text-xs">{title}</div>
-      <div className="text-lg font-semibold">
+      <div className="text-[13px] leading-tight">{title}</div>
+      <div className="text-lg leading-none font-semibold mt-1">
         {total}
-        <span className="ml-1 text-[11px] opacity-75">
-          ({open} open)
-        </span>
+        <span className="ml-1 text-[11px] opacity-75">({open} open)</span>
       </div>
     </button>
   );
 }
+
 
 function Pill({
   done,

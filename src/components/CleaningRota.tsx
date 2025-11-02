@@ -7,195 +7,68 @@ import ManageCleaningTasksModal, {
   CLEANING_CATEGORIES,
 } from "@/components/ManageCleaningTasksModal";
 
-/* ================= Types ================= */
-type Frequency = "daily" | "weekly" | "monthly";
+const PAGE = "max-w-[1100px] mx-auto px-3 sm:px-4";
+const CARD = "rounded-2xl border border-gray-200 bg-white shadow-sm";
 
+type Frequency = "daily" | "weekly" | "monthly";
 type Task = {
-  id: string; // uuid
-  org_id: string; // uuid
+  id: string;
+  org_id: string;
   task: string;
   area: string | null;
   category: string | null;
   frequency: Frequency;
-  weekday: number | null; // 1..7
-  month_day: number | null; // 1..31
+  weekday: number | null;
+  month_day: number | null;
 };
+type Run = { task_id: string; run_on: string; done_by: string | null };
 
-type Run = {
-  task_id: string; // uuid
-  run_on: string; // yyyy-mm-dd
-  done_by: string | null;
-};
-
-/* ================= Helpers ================= */
-const CARD =
-  "rounded-2xl border border-gray-200 bg-white shadow-sm";
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const ISO_TODAY = () => iso(new Date());
-const nice = (ymd: string) =>
-  new Date(ymd).toLocaleDateString(undefined, {
+const getDow1to7 = (d: string) => ((new Date(d).getDay() + 6) % 7) + 1;
+const getDom = (d: string) => new Date(d).getDate();
+const isDueOn = (t: Task, y: string) =>
+  t.frequency === "daily"
+    ? true
+    : t.frequency === "weekly"
+    ? t.weekday === getDow1to7(y)
+    : t.month_day === getDom(y);
+const nice = (d: string) =>
+  new Date(d).toLocaleDateString(undefined, {
     weekday: "short",
     day: "2-digit",
     month: "short",
   });
-const getDow1to7 = (ymd: string) =>
-  ((new Date(ymd).getDay() + 6) % 7) + 1;
-const getDom = (ymd: string) => new Date(ymd).getDate();
-const isDueOn = (t: Task, ymd: string) =>
-  t.frequency === "daily"
-    ? true
-    : t.frequency === "weekly"
-    ? t.weekday === getDow1to7(ymd)
-    : t.month_day === getDom(ymd);
 
 function CategoryPill({
   title,
   total,
   open,
-  onClick,
 }: {
   title: string;
   total: number;
   open: number;
-  onClick: () => void;
 }) {
-  const hasOpen = open > 0;
   const color =
-    hasOpen
+    open > 0
       ? "bg-red-50 text-red-700 border-red-200"
       : "bg-emerald-50 text-emerald-700 border-emerald-200";
   return (
-    <button
-      onClick={onClick}
-      className={`rounded-xl border px-3 py-2 text-left ${color}`}
+    <div
+      className={`flex flex-col justify-between min-h-[64px] rounded-xl border px-3 py-2 text-left ${color}`}
     >
-      <div className="text-xs">{title}</div>
-      <div className="text-lg font-semibold">
+      <div className="text-[13px] leading-tight">{title}</div>
+      <div className="text-lg leading-none font-semibold mt-1">
         {total}
-        <span className="ml-1 text-[11px] opacity-75">
-          ({open} open)
-        </span>
-      </div>
-    </button>
-  );
-}
-
-function Pill({
-  done,
-  onClick,
-}: {
-  done: boolean;
-  onClick: () => void;
-}) {
-  return done ? (
-    <button
-      className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
-      onClick={onClick}
-      title="Mark incomplete"
-    >
-      Complete
-    </button>
-  ) : (
-    <button
-      className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"
-      onClick={onClick}
-      title="Mark complete"
-    >
-      Incomplete
-    </button>
-  );
-}
-
-/** Modal: list daily tasks within a category (for today) */
-function DailyCategoryModal({
-  open,
-  category,
-  tasks,
-  runsKey,
-  today,
-  initials,
-  onClose,
-  onCompleteOne,
-  onUncompleteOne,
-}: {
-  open: boolean;
-  category: string;
-  tasks: Task[];
-  runsKey: Map<string, Run>;
-  today: string;
-  initials: string;
-  onClose: () => void;
-  onCompleteOne: (id: string, initials: string) => Promise<void>;
-  onUncompleteOne: (id: string) => Promise<void>;
-}) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 bg-black/30" onClick={onClose}>
-      <div
-        className={`${CARD} mx-auto mt-10 w-full max-w-md overflow-hidden`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <div className="text-base font-semibold">
-            Today · {category}
-          </div>
-          <button
-            className="rounded-md px-2 py-1 text-sm hover:bg-gray-50"
-            onClick={onClose}
-          >
-            Close
-          </button>
-        </div>
-
-        <div className="max-h-[70vh] space-y-2 overflow-y-auto p-3">
-          {tasks.length === 0 ? (
-            <div className="rounded-xl border p-3 text-sm text-gray-500">
-              No tasks.
-            </div>
-          ) : (
-            tasks.map((t) => {
-              const key = `${t.id}|${today}`;
-              const done = runsKey.has(key);
-              const run = runsKey.get(key) || null;
-              return (
-                <div
-                  key={t.id}
-                  className="flex items-start justify-between gap-2 rounded-xl border px-2 py-2 text-sm"
-                >
-                  <div className={done ? "text-gray-500 line-through" : ""}>
-                    <div className="font-medium">{t.task}</div>
-                    <div className="text-xs text-gray-500">
-                      {t.area ?? "—"}
-                    </div>
-                    {run?.done_by && (
-                      <div className="text-[11px] text-gray-400">
-                        Done by {run.done_by}
-                      </div>
-                    )}
-                  </div>
-                  <Pill
-                    done={done}
-                    onClick={() =>
-                      done
-                        ? onUncompleteOne(t.id)
-                        : onCompleteOne(t.id, initials)
-                    }
-                  />
-                </div>
-              );
-            })
-          )}
-        </div>
+        <span className="ml-1 text-[11px] opacity-75">({open} open)</span>
       </div>
     </div>
   );
 }
 
-/* ================= Main ================= */
 export default function CleaningRota() {
   const today = ISO_TODAY();
 
-  // data
   const [tasks, setTasks] = useState<Task[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const runsKey = useMemo(() => {
@@ -204,20 +77,20 @@ export default function CleaningRota() {
     return m;
   }, [runs]);
 
-  // initials
   const [initials, setInitials] = useState<string[]>([]);
   const [ini, setIni] = useState<string>("");
 
-  // UI state
   const [manageOpen, setManageOpen] = useState(false);
-  const [catOpen, setCatOpen] = useState<string | null>(null);
 
-  /* load initials (org-scoped optional; simple list is fine) */
+  /** Load initials for the org */
   useEffect(() => {
     (async () => {
+      const orgId = await getActiveOrgIdClient();
+      if (!orgId) return;
       const { data } = await supabase
         .from("team_members")
         .select("initials")
+        .eq("org_id", orgId)
         .order("initials");
       const list = Array.from(
         new Set(
@@ -231,15 +104,20 @@ export default function CleaningRota() {
       setInitials(list);
       if (!ini && list[0]) setIni(list[0]);
     })();
-  }, [ini]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  /* load tasks + runs */
+  /** Load tasks + today's runs */
   async function loadAll() {
+    const orgId = await getActiveOrgIdClient();
+    if (!orgId) return;
+
     const { data: tData } = await supabase
       .from("cleaning_tasks")
       .select(
         "id, org_id, task, area, category, frequency, weekday, month_day"
-      );
+      )
+      .eq("org_id", orgId);
 
     setTasks(
       (tData ?? []).map((r: any) => ({
@@ -257,6 +135,7 @@ export default function CleaningRota() {
     const { data: rData } = await supabase
       .from("cleaning_task_runs")
       .select("task_id, run_on, done_by")
+      .eq("org_id", orgId)
       .eq("run_on", today);
 
     setRuns(
@@ -269,10 +148,9 @@ export default function CleaningRota() {
   }
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [today]);
 
-  /* derived: due today */
+  /** Derived: what’s due today */
   const dueToday = useMemo(
     () => tasks.filter((t) => isDueOn(t, today)),
     [tasks, today]
@@ -286,7 +164,7 @@ export default function CleaningRota() {
     [dueToday]
   );
 
-  // daily by category
+  /** Daily summary by category */
   const dailyByCat = useMemo(() => {
     const map = new Map<string, Task[]>();
     for (const c of CLEANING_CATEGORIES) map.set(c, []);
@@ -305,12 +183,12 @@ export default function CleaningRota() {
     [dueToday, runsKey, today]
   );
 
-  /* Upcoming 7 days — non-daily only */
+  /** Upcoming 7 days (weekly/monthly only) */
   const days7 = useMemo(() => {
     const arr: string[] = [];
     const d = new Date(today);
     for (let i = 0; i < 7; i++) {
-      arr.push(iso(new Date(d)));
+      arr.push(iso(d));
       d.setDate(d.getDate() + 1);
     }
     return arr;
@@ -320,100 +198,85 @@ export default function CleaningRota() {
     () =>
       days7.map((d) => ({
         day: d,
-        list: tasks.filter(
-          (t) => t.frequency !== "daily" && isDueOn(t, d)
-        ),
+        list: tasks.filter((t) => t.frequency !== "daily" && isDueOn(t, d)),
       })),
     [days7, tasks]
   );
 
-  /* complete / uncomplete – always use active org_id (fixes FK error) */
+  /** Complete helpers (always respect org_id for FK) */
   async function completeOne(id: string, initialsVal: string) {
-    try {
-      const org_id = await getActiveOrgIdClient();
-      if (!org_id) {
-        alert("No organisation found.");
-        return;
-      }
-      const payload = {
-        org_id,
-        task_id: id,
-        run_on: today,
-        done_by: initialsVal.toUpperCase(),
-      };
-      const { error } = await supabase
-        .from("cleaning_task_runs")
-        .insert(payload);
-      if (error) throw error;
-      setRuns((prev) => [
-        ...prev,
-        { task_id: id, run_on: today, done_by: payload.done_by },
-      ]);
-    } catch (e: any) {
-      alert(e?.message || "Failed to save completion.");
+    const orgId = await getActiveOrgIdClient();
+    if (!orgId) return;
+
+    const payload = {
+      org_id: orgId,
+      task_id: id,
+      run_on: today,
+      done_by: initialsVal.toUpperCase(),
+    };
+    const { error } = await supabase
+      .from("cleaning_task_runs")
+      .insert(payload);
+    if (error) {
+      alert(error.message);
+      return;
     }
+    setRuns((prev) => [
+      ...prev,
+      { task_id: id, run_on: today, done_by: payload.done_by },
+    ]);
   }
 
   async function uncompleteOne(id: string) {
-    try {
-      const org_id = await getActiveOrgIdClient();
-      if (!org_id) {
-        alert("No organisation found.");
-        return;
-      }
-      const { error } = await supabase
-        .from("cleaning_task_runs")
-        .delete()
-        .eq("org_id", org_id)
-        .eq("task_id", id)
-        .eq("run_on", today);
-      if (error) throw error;
-      setRuns((prev) =>
-        prev.filter((r) => !(r.task_id === id && r.run_on === today))
-      );
-    } catch (e: any) {
-      alert(e?.message || "Failed to undo completion.");
+    const orgId = await getActiveOrgIdClient();
+    if (!orgId) return;
+
+    const { error } = await supabase
+      .from("cleaning_task_runs")
+      .delete()
+      .eq("org_id", orgId)
+      .eq("task_id", id)
+      .eq("run_on", today);
+
+    if (error) {
+      alert(error.message);
+      return;
     }
+    setRuns((prev) => prev.filter((r) => !(r.task_id === id && r.run_on === today)));
   }
 
   async function completeMany(ids: string[], initialsVal: string) {
-    try {
-      if (!ids.length) return;
-      const org_id = await getActiveOrgIdClient();
-      if (!org_id) {
-        alert("No organisation found.");
-        return;
-      }
-      const payload = ids.map((id) => ({
-        org_id,
-        task_id: id,
-        run_on: today,
-        done_by: initialsVal.toUpperCase(),
-      }));
-      const { error } = await supabase
-        .from("cleaning_task_runs")
-        .insert(payload);
-      if (error) throw error;
-      setRuns((prev) => [
-        ...prev,
-        ...payload.map((p) => ({
-          task_id: p.task_id,
-          run_on: p.run_on,
-          done_by: p.done_by,
-        })),
-      ]);
-    } catch (e: any) {
-      alert(e?.message || "Failed to save completion.");
+    const orgId = await getActiveOrgIdClient();
+    if (!orgId || !ids.length) return;
+    const payload = ids.map((id) => ({
+      org_id: orgId,
+      task_id: id,
+      run_on: today,
+      done_by: initialsVal.toUpperCase(),
+    }));
+    const { error } = await supabase
+      .from("cleaning_task_runs")
+      .insert(payload);
+    if (error) {
+      alert(error.message);
+      return;
     }
+    setRuns((prev) => [
+      ...prev,
+      ...payload.map((p) => ({
+        task_id: p.task_id,
+        run_on: p.run_on,
+        done_by: p.done_by,
+      })),
+    ]);
   }
 
-  /* ================= Render ================= */
   return (
-    <div className="space-y-6">
-      {/* Today summary */}
-      <div className={`${CARD} p-4`}>
+    <div className={PAGE + " space-y-6"}>
+      {/* ===== Header / Actions ===== */}
+      <div className={CARD + " p-4"}>
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <div className="text-base font-semibold">Cleaning rota</div>
+          <h1 className="text-lg font-semibold leading-tight">Cleaning rota</h1>
 
           <div className="ml-auto flex items-center gap-2">
             <button
@@ -451,16 +314,14 @@ export default function CleaningRota() {
                   .map((t) => t.id);
                 completeMany(ids, ini);
               }}
-              disabled={
-                !ini || dueToday.every((t) => runsKey.has(`${t.id}|${today}`))
-              }
+              disabled={!ini || dueToday.every((t) => runsKey.has(`${t.id}|${today}`))}
             >
               Complete all today
             </button>
           </div>
         </div>
 
-        {/* Weekly / Monthly due today */}
+        {/* ===== Weekly / Monthly due today ===== */}
         <div className="space-y-2">
           <div className="text-[11px] font-semibold uppercase text-gray-500">
             Weekly / Monthly
@@ -491,48 +352,47 @@ export default function CleaningRota() {
                       </div>
                     )}
                   </div>
-                  <Pill
-                    done={done}
-                    onClick={() =>
-                      done ? uncompleteOne(t.id) : completeOne(t.id, ini)
-                    }
-                  />
+                  {done ? (
+                    <button
+                      className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
+                      onClick={() => uncompleteOne(t.id)}
+                    >
+                      Complete
+                    </button>
+                  ) : (
+                    <button
+                      className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"
+                      onClick={() => completeOne(t.id, ini)}
+                    >
+                      Incomplete
+                    </button>
+                  )}
                 </div>
               );
             })
           )}
         </div>
 
-        {/* Daily – category summary only (click to open modal) */}
-        <div className="mt-4 space-y-2">
+        {/* ===== Daily summary by category (pills) ===== */}
+        <div className="mt-4">
           <div className="text-[11px] font-semibold uppercase text-gray-500">
             Daily tasks (by category)
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 mt-2">
             {CLEANING_CATEGORIES.map((cat) => {
               const list = dailyByCat.get(cat) ?? [];
-              const open = list.filter(
-                (t) => !runsKey.has(`${t.id}|${today}`)
-              ).length;
+              const open = list.filter((t) => !runsKey.has(`${t.id}|${today}`)).length;
               return (
-                <CategoryPill
-                  key={cat}
-                  title={cat}
-                  total={list.length}
-                  open={open}
-                  onClick={() => setCatOpen(cat)}
-                />
+                <CategoryPill key={cat} title={cat} total={list.length} open={open} />
               );
             })}
           </div>
         </div>
       </div>
 
-      {/* Upcoming (7 days) – non-daily only */}
-      <div className={`${CARD} p-4`}>
-        <div className="mb-2 text-base font-semibold">
-          Upcoming (next 7 days)
-        </div>
+      {/* ===== Upcoming (7 days) — weekly/monthly only ===== */}
+      <div className={CARD + " p-4"}>
+        <div className="mb-2 text-base font-semibold">Upcoming (next 7 days)</div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-4">
           {upcoming.map(({ day, list }) => (
             <div key={day} className="rounded-xl border border-gray-200 p-3">
@@ -563,25 +423,13 @@ export default function CleaningRota() {
         </div>
       </div>
 
-      {/* Modals */}
+      {/* ===== Manage Tasks Modal ===== */}
       <ManageCleaningTasksModal
         open={manageOpen}
         onClose={() => setManageOpen(false)}
         onSaved={async () => {
           await loadAll();
         }}
-      />
-
-      <DailyCategoryModal
-        open={!!catOpen}
-        category={catOpen || ""}
-        tasks={(catOpen ? dailyByCat.get(catOpen) : []) || []}
-        today={today}
-        initials={ini}
-        runsKey={runsKey}
-        onClose={() => setCatOpen(null)}
-        onCompleteOne={completeOne}
-        onUncompleteOne={uncompleteOne}
       />
     </div>
   );
