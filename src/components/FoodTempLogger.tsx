@@ -13,13 +13,15 @@ import {
   TARGET_BY_KEY,
   type TargetPreset,
 } from "@/lib/temp-constants";
-import RoutinePickerModal, { type RoutineRow } from "@/components/RoutinePickerModal";
+import RoutinePickerModal, {
+  type RoutineRow,
+} from "@/components/RoutinePickerModal";
 import RoutineRunModal from "@/components/RoutineRunModal";
+import { CLEANING_CATEGORIES } from "@/components/ManageCleaningTasksModal";
 
-// Lazy-load rota to avoid SSR headaches (optional – used for the big modal)
-const CleaningRota = dynamic(() => import("@/components/CleaningRota"), { ssr: false });
+// (We no longer open CleaningRota inside; the dashboard shows a compact “today” card)
 
-/* ================== Types ================== */
+/* =============== Types =============== */
 type CanonRow = {
   id: string;
   date: string | null; // yyyy-mm-dd
@@ -36,25 +38,25 @@ type Props = {
   locations?: string[];
 };
 
-/* ---- Cleaning rota types ---- */
+/* cleaning rota types */
 type Frequency = "daily" | "weekly" | "monthly";
 type CleanTask = {
-  id: string; // uuid/bigint as string
-  org_id?: string | null;
+  id: string; // uuid
+  org_id: string; // uuid
   area: string | null;
   task: string;
   category: string | null;
   frequency: Frequency;
-  weekday: number | null; // 1..7 (Mon..Sun)
-  month_day: number | null; // 1..31
+  weekday: number | null;
+  month_day: number | null;
 };
 type CleanRun = {
   task_id: string;
-  run_on: string; // yyyy-mm-dd
+  run_on: string;
   done_by: string | null;
 };
 
-/* ================== Helpers ================== */
+/* =============== Helpers =============== */
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
 
@@ -81,7 +83,10 @@ function formatDDMMYYYY(iso: string | null) {
   return `${d}/${m}/${y}`;
 }
 
-function inferStatus(temp: number | null, preset?: TargetPreset): "pass" | "fail" | null {
+function inferStatus(
+  temp: number | null,
+  preset?: TargetPreset
+): "pass" | "fail" | null {
   if (temp == null || !preset) return null;
   const { minC, maxC } = preset;
   if (minC != null && temp < minC) return "fail";
@@ -101,7 +106,8 @@ function normalizeRowsFromFood(data: any[]): CanonRow[] {
     return {
       id: String(r.id ?? crypto.randomUUID()),
       date: toISODate(r.at ?? r.created_at ?? null),
-      staff_initials: (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
+      staff_initials:
+        (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
       location: (r.area ?? r.location ?? null)?.toString() ?? null,
       item: (r.note ?? r.item ?? null)?.toString() ?? null,
       target_key: r.target_key != null ? String(r.target_key) : null,
@@ -111,7 +117,7 @@ function normalizeRowsFromFood(data: any[]): CanonRow[] {
   });
 }
 
-/* ---- cleaning rota helpers ---- */
+/* cleaning rota helpers */
 const isoToday = () => new Date().toISOString().slice(0, 10);
 const nice = (yyyy_mm_dd: string) =>
   new Date(yyyy_mm_dd).toLocaleDateString(undefined, {
@@ -138,7 +144,38 @@ function isDueOn(t: CleanTask, ymd: string) {
   }
 }
 
-/* ========= UI bits for the daily category modal ========= */
+function CategoryPill({
+  title,
+  total,
+  open,
+  onClick,
+}: {
+  title: string;
+  total: number;
+  open: number;
+  onClick: () => void;
+}) {
+  const hasOpen = open > 0;
+  const color =
+    hasOpen
+      ? "bg-red-50 text-red-700 border-red-200"
+      : "bg-emerald-50 text-emerald-700 border-emerald-200";
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-xl border px-3 py-2 text-left ${color}`}
+    >
+      <div className="text-xs">{title}</div>
+      <div className="text-lg font-semibold">
+        {total}
+        <span className="ml-1 text-[11px] opacity-75">
+          ({open} open)
+        </span>
+      </div>
+    </button>
+  );
+}
+
 function Pill({
   done,
   onClick,
@@ -165,75 +202,7 @@ function Pill({
   );
 }
 
-function DailyCategoryModal({
-  open,
-  category,
-  tasks,
-  runsKey,
-  today,
-  initials,
-  onClose,
-  onCompleteOne,
-  onUncompleteOne,
-}: {
-  open: boolean;
-  category: string;
-  tasks: CleanTask[];
-  runsKey: Map<string, CleanRun>;
-  today: string;
-  initials: string;
-  onClose: () => void;
-  onCompleteOne: (id: string, initials: string) => Promise<void>;
-  onUncompleteOne: (id: string) => Promise<void>;
-}) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 bg-black/30" onClick={onClose}>
-      <div
-        className="mx-auto mt-10 w-full max-w-md overflow-hidden rounded-2xl border bg-white shadow-sm"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <div className="text-base font-semibold">Today · {category}</div>
-          <button className="rounded-md px-2 py-1 text-sm hover:bg-gray-100" onClick={onClose}>
-            Close
-          </button>
-        </div>
-        <div className="max-h-[70vh] space-y-2 overflow-y-auto p-3">
-          {tasks.length === 0 ? (
-            <div className="rounded-xl border p-3 text-sm text-gray-500">No tasks.</div>
-          ) : (
-            tasks.map((t) => {
-              const key = `${t.id}|${today}`;
-              const done = runsKey.has(key);
-              const run = runsKey.get(key) || null;
-              return (
-                <div
-                  key={t.id}
-                  className="flex items-start justify-between gap-2 rounded-xl border px-2 py-2 text-sm"
-                >
-                  <div className={done ? "text-gray-500 line-through" : ""}>
-                    <div className="font-medium">{t.task}</div>
-                    <div className="text-xs text-gray-500">{t.area ?? "—"}</div>
-                    {run?.done_by && (
-                      <div className="text-[11px] text-gray-400">Done by {run.done_by}</div>
-                    )}
-                  </div>
-                  <Pill
-                    done={done}
-                    onClick={() => (done ? onUncompleteOne(t.id) : onCompleteOne(t.id, initials))}
-                  />
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ================== Component ================== */
+/* =============== Component =============== */
 export default function FoodTempLogger({
   initials: initialsSeed = [],
   locations: locationsSeed = [],
@@ -243,12 +212,6 @@ export default function FoodTempLogger({
   // Modals
   const [showPicker, setShowPicker] = useState(false);
   const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
-
-  // “Daily category” modal
-  const [catOpen, setCatOpen] = useState<string | null>(null);
-
-  // Cleaning Rota modal (optional)
-  const [showRota, setShowRota] = useState(false);
 
   // DATA
   const [rows, setRows] = useState<CanonRow[]>([]);
@@ -278,9 +241,16 @@ export default function FoodTempLogger({
     return m;
   }, [runs]);
 
-  // Completion modal (legacy “complete all daily”)
-  const [confirm, setConfirm] = useState<{ ids: string[]; run_on: string } | null>(null);
-  const [confirmLabel, setConfirmLabel] = useState<string>("Confirm completion");
+  // initials selector (for task completion)
+  const [ini, setIni] = useState<string>("");
+
+  // Completion modal (single + “complete all”)
+  const [confirm, setConfirm] = useState<{
+    ids: string[];
+    run_on: string;
+  } | null>(null);
+  const [confirmLabel, setConfirmLabel] =
+    useState<string>("Confirm completion");
   const [confirmInitials, setConfirmInitials] = useState("");
 
   // ENTRY FORM
@@ -301,7 +271,7 @@ export default function FoodTempLogger({
     !!form.target_key &&
     form.temp_c.trim().length > 0;
 
-  /* ---------- prime from localStorage ---------- */
+  /* prime from localStorage */
   useEffect(() => {
     try {
       const lsIni = localStorage.getItem(LS_LAST_INITIALS) || "";
@@ -313,10 +283,11 @@ export default function FoodTempLogger({
       }));
       if (lsIni) setInitials((prev) => Array.from(new Set([lsIni, ...prev])));
       if (lsLoc) setLocations((prev) => Array.from(new Set([lsLoc, ...prev])));
+      if (lsIni) setIni(lsIni.toUpperCase());
     } catch {}
   }, []);
 
-  /* ---------- initials list (org-scoped) ---------- */
+  /* initials list (org-scoped) */
   useEffect(() => {
     (async () => {
       try {
@@ -343,13 +314,14 @@ export default function FoodTempLogger({
         if (merged.length) setInitials(merged);
         if (!form.staff_initials && merged[0]) {
           setForm((f) => ({ ...f, staff_initials: merged[0] }));
+          setIni(merged[0]);
         }
       } catch {}
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialsSeed]);
 
-  /* ---------- locations list (org-scoped) ---------- */
+  /* locations list (org-scoped) */
   useEffect(() => {
     (async () => {
       try {
@@ -357,7 +329,8 @@ export default function FoodTempLogger({
         if (!orgId) {
           const base = Array.from(new Set([...locationsSeed, ...LOCATION_PRESETS]));
           setLocations(base.length ? base : ["Kitchen"]);
-          if (!form.location) setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
+          if (!form.location)
+            setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
           return;
         }
 
@@ -377,17 +350,19 @@ export default function FoodTempLogger({
           new Set([...locationsSeed, ...LOCATION_PRESETS, ...fromAreas])
         );
         setLocations(merged.length ? merged : ["Kitchen"]);
-        if (!form.location) setForm((f) => ({ ...f, location: merged[0] || "Kitchen" }));
+        if (!form.location)
+          setForm((f) => ({ ...f, location: merged[0] || "Kitchen" }));
       } catch {
         const base = Array.from(new Set([...locationsSeed, ...LOCATION_PRESETS]));
         setLocations(base.length ? base : ["Kitchen"]);
-        if (!form.location) setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
+        if (!form.location)
+          setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationsSeed]);
 
-  /* ---------- KPI fetch (due vs overdue) ---------- */
+  /* KPI fetch */
   useEffect(() => {
     (async () => {
       try {
@@ -395,11 +370,8 @@ export default function FoodTempLogger({
         if (!orgId) return;
 
         const soon = new Date();
-        soon.setHours(0, 0, 0, 0);
         soon.setDate(soon.getDate() + 14);
-
-        const today0 = new Date();
-        today0.setHours(0, 0, 0, 0);
+        const todayD = new Date();
 
         let trainingDueSoon = 0;
         let trainingOver = 0;
@@ -413,11 +385,12 @@ export default function FoodTempLogger({
             .eq("org_id", orgId);
 
           (data ?? []).forEach((r: any) => {
-            const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
+            const raw =
+              r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
             if (!raw) return;
             const d = new Date(raw);
-            d.setHours(0, 0, 0, 0);
-            if (d <= today0) trainingOver++;
+            if (isNaN(d.getTime())) return;
+            if (d < todayD) trainingOver++;
             else if (d <= soon) trainingDueSoon++;
           });
         } catch {}
@@ -431,11 +404,10 @@ export default function FoodTempLogger({
           (data ?? []).forEach((r: any) => {
             const last = r.last_reviewed ? new Date(r.last_reviewed) : null;
             const interval = Number(r.interval_days ?? 0);
-            if (!last || !Number.isFinite(interval) || interval <= 0) return;
+            if (!last || !Number.isFinite(interval)) return;
             const due = new Date(last);
             due.setDate(due.getDate() + interval);
-            due.setHours(0, 0, 0, 0);
-            if (due <= today0) allergenOver++;
+            if (due < todayD) allergenOver++;
             else if (due <= soon) allergenDueSoon++;
           });
         } catch {}
@@ -445,7 +417,7 @@ export default function FoodTempLogger({
     })();
   }, []);
 
-  /* ---------- rows (org-scoped) ---------- */
+  /* rows (org-scoped) */
   async function loadRows() {
     setLoading(true);
     setErr(null);
@@ -481,7 +453,7 @@ export default function FoodTempLogger({
     await loadRows();
   }
 
-  /* ---------- Prefill first item via ?r= ---------- */
+  /* Prefill first item via ?r= */
   useEffect(() => {
     const rid = search.get("r");
     if (!rid) return;
@@ -516,7 +488,7 @@ export default function FoodTempLogger({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---------- NEW: open full Run modal via ?run=<routine_id> ---------- */
+  /* open full Run modal via ?run=<routine_id> */
   useEffect(() => {
     const runId = search.get("run");
     if (!runId) return;
@@ -560,10 +532,14 @@ export default function FoodTempLogger({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---------- saving one entry ---------- */
+  /* save one entry */
   async function handleAddQuick() {
-    const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
-    const preset = (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[form.target_key];
+    const tempNum = Number.isFinite(Number(form.temp_c))
+      ? Number(form.temp_c)
+      : null;
+    const preset = (
+      TARGET_BY_KEY as Record<string, TargetPreset | undefined>
+    )[form.target_key];
     const status: "pass" | "fail" | null = inferStatus(tempNum, preset);
 
     const org_id = await getActiveOrgIdClient();
@@ -577,7 +553,9 @@ export default function FoodTempLogger({
       at: form.date, // YYYY-MM-DD
       area: form.location || null,
       note: form.item || null,
-      staff_initials: form.staff_initials ? form.staff_initials.toUpperCase() : null,
+      staff_initials: form.staff_initials
+        ? form.staff_initials.toUpperCase()
+        : null,
       target_key: form.target_key || null,
       temp_c: tempNum,
       status,
@@ -590,7 +568,8 @@ export default function FoodTempLogger({
     }
 
     try {
-      if (form.staff_initials) localStorage.setItem(LS_LAST_INITIALS, form.staff_initials);
+      if (form.staff_initials)
+        localStorage.setItem(LS_LAST_INITIALS, form.staff_initials);
       if (form.location) localStorage.setItem(LS_LAST_LOCATION, form.location);
     } catch {}
 
@@ -605,7 +584,7 @@ export default function FoodTempLogger({
     }
   };
 
-  /* ---------- grouped rows by date ---------- */
+  /* grouped rows by date */
   const grouped = useMemo(() => {
     const map = new Map<string, CanonRow[]>();
     for (const r of rows) {
@@ -618,7 +597,7 @@ export default function FoodTempLogger({
       .map(([date, list]) => ({ date, list }));
   }, [rows]);
 
-  /* ---------- Cleaning rota: load today's due + runs (ORG SCOPED) ---------- */
+  /* Cleaning rota: load today's due + runs */
   async function loadRotaToday() {
     try {
       const org_id = await getActiveOrgIdClient();
@@ -628,13 +607,15 @@ export default function FoodTempLogger({
 
       const { data: tData } = await supabase
         .from("cleaning_tasks")
-        .select("id,org_id,area,task,category,frequency,weekday,month_day")
+        .select(
+          "id, org_id, area, task, category, frequency, weekday, month_day"
+        )
         .eq("org_id", org_id);
 
       const all: CleanTask[] =
         (tData ?? []).map((r: any) => ({
           id: String(r.id),
-          org_id: r.org_id ? String(r.org_id) : null,
+          org_id: String(r.org_id),
           area: r.area ?? null,
           task: r.task ?? r.name ?? "",
           category: r.category ?? null,
@@ -665,7 +646,10 @@ export default function FoodTempLogger({
   }, []);
 
   const today = isoToday();
-  const dueTodayAll = useMemo(() => tasks.filter((t) => isDueOn(t, today)), [tasks, today]);
+  const dueTodayAll = useMemo(
+    () => tasks.filter((t) => isDueOn(t, today)),
+    [tasks, today]
+  );
   const dueDaily = useMemo(
     () => dueTodayAll.filter((t) => t.frequency === "daily"),
     [dueTodayAll]
@@ -679,57 +663,58 @@ export default function FoodTempLogger({
     [dueTodayAll, runsKey, today]
   );
 
-  // Daily by category (chips)
-  const CATEGORIES = [
-    "Opening checks",
-    "Preparation",
-    "Mid shift",
-    "Cleaning down",
-    "Closing down",
-    "Admin",
-  ];
+  // daily by category for dashboard
   const dailyByCat = useMemo(() => {
     const map = new Map<string, CleanTask[]>();
-    for (const c of CATEGORIES) map.set(c, []);
+    for (const c of CLEANING_CATEGORIES) map.set(c, []);
     for (const t of dueDaily) {
       const key = t.category ?? "Opening checks";
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(t);
     }
-    for (const [k, list] of map) map.set(k, list.sort((a, b) => a.task.localeCompare(b.task)));
     return map;
   }, [dueDaily]);
 
-  /* ---------- Complete / Uncomplete (ORG SCOPED + UPSERT) ---------- */
-  async function completeOne(id: string, initialsVal: string) {
-    const org_id = await getActiveOrgIdClient();
-    if (!org_id) {
-      alert("No organisation found.");
-      return;
-    }
-    if (!initialsVal) {
-      alert("Select initials first.");
-      return;
-    }
+  /* complete api (active org_id) */
+  async function completeTasks(ids: string[], ini: string) {
     try {
-      const payload = [{ org_id, task_id: id, run_on: today, done_by: initialsVal.toUpperCase() }];
+      const org_id = await getActiveOrgIdClient();
+      if (!org_id) {
+        alert("No organisation found.");
+        return;
+      }
+      const run_on = today;
+      const payload = ids.map((id) => ({
+        org_id,
+        task_id: id,
+        run_on,
+        done_by: ini.toUpperCase(),
+      }));
       const { error } = await supabase
         .from("cleaning_task_runs")
-        .upsert(payload, { onConflict: "org_id,task_id,run_on" });
+        .insert(payload);
       if (error) throw error;
-      setRuns((prev) => [...prev, { task_id: id, run_on: today, done_by: initialsVal.toUpperCase() }]);
+
+      setRuns((prev) => [
+        ...prev,
+        ...ids.map((id) => ({
+          task_id: id,
+          run_on,
+          done_by: ini.toUpperCase(),
+        })),
+      ]);
     } catch (e: any) {
       alert(e?.message || "Failed to save completion.");
+    } finally {
+      setConfirm(null);
+      setConfirmInitials("");
     }
   }
 
-  async function uncompleteOne(id: string) {
-    const org_id = await getActiveOrgIdClient();
-    if (!org_id) {
-      alert("No organisation found.");
-      return;
-    }
+  async function uncompleteTask(id: string) {
     try {
+      const org_id = await getActiveOrgIdClient();
+      if (!org_id) return;
       const { error } = await supabase
         .from("cleaning_task_runs")
         .delete()
@@ -743,41 +728,7 @@ export default function FoodTempLogger({
     }
   }
 
-  async function completeMany(ids: string[], initialsVal: string) {
-    const org_id = await getActiveOrgIdClient();
-    if (!org_id) {
-      alert("No organisation found.");
-      return;
-    }
-    if (!ids.length) return;
-    if (!initialsVal) {
-      alert("Select initials first.");
-      return;
-    }
-    try {
-      const payload = ids.map((task_id) => ({
-        org_id,
-        task_id,
-        run_on: today,
-        done_by: initialsVal.toUpperCase(),
-      }));
-      const { error } = await supabase
-        .from("cleaning_task_runs")
-        .upsert(payload, { onConflict: "org_id,task_id,run_on" });
-      if (error) throw error;
-      setRuns((prev) => [
-        ...prev,
-        ...payload.map((p) => ({ task_id: p.task_id, run_on: p.run_on, done_by: p.done_by })),
-      ]);
-    } catch (e: any) {
-      alert(e?.message || "Failed to complete all tasks.");
-    } finally {
-      setConfirm(null);
-      setConfirmInitials("");
-    }
-  }
-
-  /* ================== Render ================== */
+  /* =============== Render =============== */
   return (
     <div className="space-y-6">
       {/* KPI grid + pills */}
@@ -785,12 +736,13 @@ export default function FoodTempLogger({
         {(() => {
           const todayISO = new Date().toISOString().slice(0, 10);
           const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-          since.setHours(0, 0, 0, 0);
-          const in7d = (d: string | null) => (d ? new Date(d) >= since : false);
+          const in7d = (d: string | null) =>
+            d ? new Date(d) >= since : false;
 
           const entriesToday = rows.filter((r) => r.date === todayISO).length;
           const last7 = rows.filter((r) => in7d(r.date)).length;
-          const fails7 = rows.filter((r) => in7d(r.date) && r.status === "fail").length;
+          const fails7 = rows.filter((r) => in7d(r.date) && r.status === "fail")
+            .length;
 
           return (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
@@ -814,32 +766,71 @@ export default function FoodTempLogger({
                     rows
                       .filter((r) => in7d(r.date) && r.staff_initials)
                       .forEach((r) =>
-                        freq.set(r.staff_initials!, (freq.get(r.staff_initials!) ?? 0) + 1)
+                        freq.set(
+                          r.staff_initials!,
+                          (freq.get(r.staff_initials!) ?? 0) + 1
+                        )
                       );
-                    const best = Array.from(freq.entries()).sort((a, b) => b[1] - a[1])[0];
+                    const best = Array.from(freq.entries()).sort(
+                      (a, b) => b[1] - a[1]
+                    )[0];
                     return best ? best[0] : "—";
                   })()}
                 </div>
               </div>
 
-              {/* Cleaning tile – opens Today view (modal) */}
+              {/* Cleaning tile – opens confirm all modal for today */}
               <button
                 type="button"
-                onClick={() => setShowRota(true)}
+                onClick={() => {
+                  const ids = dueTodayAll
+                    .filter((t) => !runsKey.has(`${t.id}|${today}`))
+                    .map((t) => t.id);
+                  setConfirm({ ids, run_on: today });
+                  setConfirmLabel("Complete all today");
+                  setConfirmInitials(
+                    form.staff_initials || ini || initials[0] || ""
+                  );
+                }}
                 className="rounded-xl border bg-white p-3 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black/10"
-                title="Open today’s cleaning tasks"
+                title="Complete all today"
               >
                 <div className="text-xs text-gray-500">Cleaning (today)</div>
                 <div className="text-2xl font-semibold">
                   {doneCount}/{dueTodayAll.length}
                 </div>
-                <div className="mt-1 text-[11px] text-gray-500 underline">View / complete</div>
+                <div className="mt-1 text-[11px] text-gray-500 underline">
+                  View / complete
+                </div>
               </button>
             </div>
           );
         })()}
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 ml-auto">
+            <label className="text-xs text-gray-600">Initials</label>
+            <select
+              value={ini || form.staff_initials}
+              onChange={(e) => {
+                const v = e.target.value.toUpperCase();
+                setIni(v);
+                setForm((f) => ({ ...f, staff_initials: v }));
+                try {
+                  localStorage.setItem(LS_LAST_INITIALS, v);
+                } catch {}
+              }}
+              className="h-8 rounded-xl border border-gray-200 px-2 py-1 uppercase"
+            >
+              {initials.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Training */}
           <a
             href="/team"
             className={cls(
@@ -862,6 +853,7 @@ export default function FoodTempLogger({
             </span>
           </a>
 
+          {/* Allergen */}
           <a
             href="/allergens"
             className={cls(
@@ -892,93 +884,107 @@ export default function FoodTempLogger({
         )}
       </div>
 
-      {/* ======= Cleaning rota: Today’s Tasks (quick view) ======= */}
+      {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-2 flex items-center gap-2">
           <h2 className="text-lg font-semibold">Today’s Cleaning Tasks</h2>
 
           <div className="ml-auto flex items-center gap-2">
-            {dueTodayAll.some((t) => !runsKey.has(`${t.id}|${today}`)) && (
-              <button
-                className="rounded-full border px-3 py-1.5 text-xs hover:bg-gray-50"
-                onClick={() => {
-                  const ids = dueTodayAll
-                    .filter((t) => !runsKey.has(`${t.id}|${today}`))
-                    .map((t) => t.id);
-                  setConfirm({ ids, run_on: today });
-                  setConfirmLabel("Complete all due today");
-                  setConfirmInitials(form.staff_initials || initials[0] || "");
-                }}
-              >
-                Complete all today
-              </button>
-            )}
+            <div className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm">
+              {doneCount}/{dueTodayAll.length}
+            </div>
+            <button
+              className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              onClick={() => {
+                const ids = dueTodayAll
+                  .filter((t) => !runsKey.has(`${t.id}|${today}`))
+                  .map((t) => t.id);
+                setConfirm({ ids, run_on: today });
+                setConfirmLabel("Complete all today");
+                setConfirmInitials(ini || form.staff_initials || initials[0] || "");
+              }}
+            >
+              Complete all today
+            </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {/* Weekly/Monthly */}
-          <div className="space-y-2">
-            <div className="text-xs font-medium uppercase text-gray-500">Weekly / Monthly</div>
-            {dueNonDaily.length === 0 && (
-              <div className="rounded border p-3 text-sm text-gray-500">No tasks.</div>
-            )}
-            {dueNonDaily.map((t) => {
+        {/* Weekly/Monthly only */}
+        <div className="space-y-2">
+          <div className="text-[11px] font-semibold uppercase text-gray-500">
+            Weekly / Monthly
+          </div>
+          {dueNonDaily.length === 0 ? (
+            <div className="rounded-xl border border-gray-200 p-3 text-sm text-gray-500">
+              No tasks.
+            </div>
+          ) : (
+            dueNonDaily.map((t) => {
               const key = `${t.id}|${today}`;
               const done = runsKey.has(key);
               const run = runsKey.get(key) || null;
               return (
                 <div
-                  key={key}
-                  className="flex items-start justify-between gap-2 rounded border px-2 py-2 text-sm"
+                  key={t.id}
+                  className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 px-2 py-2 text-sm"
                 >
                   <div className={done ? "text-gray-500 line-through" : ""}>
                     <div className="font-medium">{t.task}</div>
-                    {(t.area || t.category) && (
-                      <div className="text-xs text-gray-500">
-                        {(t.category ?? t.area) || "—"} • {t.frequency === "weekly" ? "Weekly" : "Monthly"}
+                    <div className="text-xs text-gray-500">
+                      {t.category ?? t.area ?? "—"} •{" "}
+                      {t.frequency === "weekly" ? "Weekly" : "Monthly"}
+                    </div>
+                    {run?.done_by && (
+                      <div className="text-[11px] text-gray-400">
+                        Done by {run.done_by}
                       </div>
                     )}
-                    {run?.done_by ? (
-                      <div className="text-xs text-gray-400">Done by {run.done_by}</div>
-                    ) : null}
                   </div>
-
                   <Pill
                     done={done}
-                    onClick={() => (done ? uncompleteOne(t.id) : completeOne(t.id, form.staff_initials || initials[0] || ""))}
+                    onClick={() =>
+                      done
+                        ? uncompleteTask(t.id)
+                        : completeTasks([t.id], ini || form.staff_initials || "")
+                    }
                   />
                 </div>
               );
-            })}
-          </div>
+            })
+          )}
+        </div>
 
-          {/* Daily: category chips only; click to open modal */}
-          <div className="space-y-2">
-            <div className="text-xs font-medium uppercase text-gray-500">Daily (by category)</div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {CATEGORIES.map((cat) => {
-                const list = dailyByCat.get(cat) ?? [];
-                const open = list.filter((t) => !runsKey.has(`${t.id}|${today}`)).length;
-                const doneAll = list.length > 0 && open === 0;
-                const chipClass = doneAll
-                  ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                  : "bg-red-50 border-red-200 text-red-800";
-                return (
-                  <button
-                    key={cat}
-                    className={`rounded-xl border px-3 py-2 text-left hover:bg-gray-50 ${chipClass}`}
-                    onClick={() => setCatOpen(cat)}
-                  >
-                    <div className="text-xs">{cat}</div>
-                    <div className="text-lg font-semibold">
-                      {list.length}
-                      <span className="ml-1 text-[11px] opacity-70">({open} open)</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+        {/* Daily – category summary only */}
+        <div className="mt-4 space-y-2">
+          <div className="text-[11px] font-semibold uppercase text-gray-500">
+            Daily tasks (by category)
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {CLEANING_CATEGORIES.map((cat) => {
+              const list = dailyByCat.get(cat) ?? [];
+              const open = list.filter(
+                (t) => !runsKey.has(`${t.id}|${today}`)
+              ).length;
+              return (
+                <CategoryPill
+                  key={cat}
+                  title={cat}
+                  total={list.length}
+                  open={open}
+                  onClick={() => {
+                    // Open a lightweight confirm for the category: complete all in this cat
+                    const ids = list
+                      .filter((t) => !runsKey.has(`${t.id}|${today}`))
+                      .map((t) => t.id);
+                    setConfirm({ ids, run_on: today });
+                    setConfirmLabel(`Complete: ${cat}`);
+                    setConfirmInitials(
+                      ini || form.staff_initials || initials[0] || ""
+                    );
+                  }}
+                />
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1005,7 +1011,11 @@ export default function FoodTempLogger({
               aria-expanded={formOpen}
             >
               {formOpen ? "Hide" : "Show"}
-              <span className={`transition-transform ${formOpen ? "rotate-180" : ""}`}>▾</span>
+              <span
+                className={`transition-transform ${formOpen ? "rotate-180" : ""}`}
+              >
+                ▾
+              </span>
             </button>
           </div>
         </div>
@@ -1023,12 +1033,15 @@ export default function FoodTempLogger({
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-gray-500">Initials</label>
+              <label className="mb-1 block text-xs text-gray-500">
+                Initials
+              </label>
               <select
                 value={form.staff_initials}
                 onChange={(e) => {
                   const v = e.target.value.toUpperCase();
                   setForm((f) => ({ ...f, staff_initials: v }));
+                  setIni(v);
                   try {
                     localStorage.setItem(LS_LAST_INITIALS, v);
                   } catch {}
@@ -1040,16 +1053,18 @@ export default function FoodTempLogger({
                     Loading initials…
                   </option>
                 )}
-                {initials.map((ini) => (
-                  <option key={ini} value={ini}>
-                    {ini}
+                {initials.map((iniVal) => (
+                  <option key={iniVal} value={iniVal}>
+                    {iniVal}
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-gray-500">Location</label>
+              <label className="mb-1 block text-xs text-gray-500">
+                Location
+              </label>
               <select
                 value={form.location}
                 onChange={(e) => {
@@ -1103,7 +1118,9 @@ export default function FoodTempLogger({
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-gray-500">Temp (°C)</label>
+              <label className="mb-1 block text-xs text-gray-500">
+                Temp (°C)
+              </label>
               <input
                 value={form.temp_c}
                 onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
@@ -1152,7 +1169,7 @@ export default function FoodTempLogger({
         }}
       />
 
-      {/* ======= LOGS: table (desktop) + cards (mobile) ======= */}
+      {/* ======= LOGS ======= */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Temperature Logs</h2>
@@ -1181,7 +1198,9 @@ export default function FoodTempLogger({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">Loading…</td>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">
+                    Loading…
+                  </td>
                 </tr>
               ) : rows.length ? (
                 rows.map((r) => {
@@ -1190,8 +1209,12 @@ export default function FoodTempLogger({
                   const st = r.status ?? inferStatus(r.temp_c, preset);
                   return (
                     <tr key={r.id} className="border-t">
-                      <td className="px-3 py-2">{formatDDMMYYYY(r.date)}</td>
-                      <td className="px-3 py-2 font-medium uppercase">{r.staff_initials ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {formatDDMMYYYY(r.date)}
+                      </td>
+                      <td className="px-3 py-2 font-medium uppercase">
+                        {r.staff_initials ?? "—"}
+                      </td>
                       <td className="px-3 py-2">{r.location ?? "—"}</td>
                       <td className="px-3 py-2">{r.item ?? "—"}</td>
                       <td className="px-3 py-2">
@@ -1225,7 +1248,9 @@ export default function FoodTempLogger({
                 })
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">No entries</td>
+                  <td colSpan={7} className="py-6 text-center text-gray-500">
+                    No entries
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -1235,7 +1260,9 @@ export default function FoodTempLogger({
         {/* Mobile cards */}
         <div className="md:hidden space-y-2">
           {loading ? (
-            <div className="text-center text-sm text-gray-500 py-4">Loading…</div>
+            <div className="text-center text-sm text-gray-500 py-4">
+              Loading…
+            </div>
           ) : grouped.length ? (
             grouped.map((g) => (
               <div key={g.date}>
@@ -1245,12 +1272,16 @@ export default function FoodTempLogger({
                 <div className="space-y-2">
                   {g.list.map((r) => {
                     const preset: TargetPreset | undefined =
-                      r.target_key ? (TARGET_BY_KEY as any)[r.target_key] : undefined;
+                      r.target_key
+                        ? (TARGET_BY_KEY as any)[r.target_key]
+                        : undefined;
                     const st = r.status ?? inferStatus(r.temp_c, preset);
                     return (
                       <div key={r.id} className="rounded-xl border p-3">
                         <div className="flex items-center justify-between">
-                          <div className="text-sm font-medium">{r.item ?? "—"}</div>
+                          <div className="text-sm font-medium">
+                            {r.item ?? "—"}
+                          </div>
                           {st && (
                             <span
                               className={
@@ -1265,7 +1296,8 @@ export default function FoodTempLogger({
                           )}
                         </div>
                         <div className="mt-1 text-xs text-gray-600">
-                          {r.location ?? "—"} • {r.staff_initials ?? "—"} • {r.temp_c ?? "—"}°C
+                          {r.location ?? "—"} • {r.staff_initials ?? "—"} •{" "}
+                          {r.temp_c ?? "—"}°C
                         </div>
                         <div className="mt-1 text-[11px] text-gray-500">
                           Target:{" "}
@@ -1284,19 +1316,24 @@ export default function FoodTempLogger({
               </div>
             ))
           ) : (
-            <div className="text-center text-sm text-gray-500 py-4">No entries</div>
+            <div className="text-center text-sm text-gray-500 py-4">
+              No entries
+            </div>
           )}
         </div>
       </div>
 
-      {/* Cleaning completion modal (confirm all) */}
+      {/* Cleaning completion modal */}
       {confirm && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setConfirm(null)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setConfirm(null)}
+        >
           <form
             onSubmit={(e) => {
               e.preventDefault();
               if (!confirmInitials.trim()) return;
-              completeMany(confirm.ids, confirmInitials.trim());
+              completeTasks(confirm.ids, confirmInitials.trim());
             }}
             onClick={(e) => e.stopPropagation()}
             className="mx-auto mt-6 flex h-[70vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-24 sm:h-auto sm:rounded-2xl"
@@ -1307,7 +1344,7 @@ export default function FoodTempLogger({
             <div className="grow overflow-y-auto px-4 py-3 space-y-3">
               <div className="rounded border bg-gray-50 p-2 text-sm">
                 <div className="font-medium">
-                  {confirm.ids.length} tasks
+                  {confirm.ids.length} task(s)
                 </div>
                 <div className="mt-1 text-xs text-gray-500">
                   For <strong>{nice(confirm.run_on)}</strong>
@@ -1319,7 +1356,9 @@ export default function FoodTempLogger({
                 <select
                   className="w-full rounded-xl border px-2 py-1.5 uppercase"
                   value={confirmInitials}
-                  onChange={(e) => setConfirmInitials(e.target.value.toUpperCase())}
+                  onChange={(e) =>
+                    setConfirmInitials(e.target.value.toUpperCase())
+                  }
                   required
                 >
                   <option value="" disabled>
@@ -1349,45 +1388,6 @@ export default function FoodTempLogger({
               </button>
             </div>
           </form>
-        </div>
-      )}
-
-      {/* Daily category modal */}
-      <DailyCategoryModal
-        open={!!catOpen}
-        category={catOpen || ""}
-        tasks={(catOpen ? dailyByCat.get(catOpen) : []) || []}
-        runsKey={runsKey}
-        today={today}
-        initials={form.staff_initials || initials[0] || ""}
-        onClose={() => setCatOpen(null)}
-        onCompleteOne={completeOne}
-        onUncompleteOne={uncompleteOne}
-      />
-
-      {/* Optional: full Cleaning Rota modal */}
-      {showRota && (
-        <div
-          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/30"
-          onClick={() => setShowRota(false)}
-        >
-          <div
-            className="mx-auto w-full max-w-5xl overflow-hidden rounded-t-2xl border bg-white shadow sm:rounded-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
-              <div className="text-base font-semibold">Today’s Cleaning Tasks</div>
-              <button
-                className="rounded-md px-2 py-1 text-sm hover:bg-gray-100"
-                onClick={() => setShowRota(false)}
-              >
-                Close
-              </button>
-            </div>
-            <div className="max-h-[80vh] overflow-y-auto p-4">
-              <CleaningRota />
-            </div>
-          </div>
         </div>
       )}
     </div>

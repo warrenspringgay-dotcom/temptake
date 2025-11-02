@@ -3,13 +3,8 @@
 
 import dynamic from "next/dynamic";
 
-// Force using the module's default export
-const CleaningRota = dynamic(
-  () => import("@/components/CleaningRota").then(m => m.default),
-  { ssr: false }
-);
+import CleaningRota from "@/components/CleaningRota";
 
 export default function CleaningRotaPage() {
-  // choose "manage" or "today"
-  return <CleaningRota mode="manage" />;
+  return <CleaningRota />; // no props
 }
