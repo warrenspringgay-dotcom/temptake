@@ -9,6 +9,8 @@ import { emptyFlags, draftFromRow, type MatrixDraft } from "@/lib/allergens";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 
+
+
 /* ---------- Types & Constants ---------- */
 type AllergenKey =
   | "gluten"
