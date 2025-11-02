@@ -4,10 +4,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { uid } from "@/lib/uid";
 import ActionMenu from "@/components/ActionMenu";
-
-import { parseCSV } from "@/lib/csv";
-import { emptyFlags, draftFromRow, type MatrixDraft } from "@/lib/allergens";
-import { supabase } from "@/lib/supabaseBrowser";
+import { emptyFlags as libEmptyFlags } from "@/lib/allergens";
+import { supabase } from "@/lib/supabaseClient";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 
 /* ---------- Types & Constants ---------- */
@@ -70,6 +68,9 @@ const LS_ROWS = "tt_allergens_rows_v3";
 const LS_REVIEW = "tt_allergens_review_v2";
 
 /* ---------- Helpers ---------- */
+const emptyFlags = (): Flags =>
+  Object.fromEntries(ALLERGENS.map((a) => [a.key, false])) as Flags;
+
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const overdue = (info: ReviewInfo): boolean => {
@@ -81,12 +82,7 @@ const overdue = (info: ReviewInfo): boolean => {
 
 /* ---------- Component ---------- */
 export default function AllergenManager() {
-  // Hydration guard
   const [hydrated, setHydrated] = useState(false);
-
-  // File import
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [importTarget, setImportTarget] = useState<"local" | "supabase" | null>(null);
 
   // Cloud context
   const [orgId, setOrgId] = useState<string | null>(null);
@@ -104,22 +100,17 @@ export default function AllergenManager() {
   /* ---------- boot: get org id, load from supabase (fallback to LS) ---------- */
   useEffect(() => {
     setHydrated(true);
-
     (async () => {
       try {
         const id = await getActiveOrgIdClient();
         setOrgId(id ?? null);
-
         if (!id) {
-          // no org – use local cache / seed so UI still works
           primeLocal();
           return;
         }
-
         await Promise.all([loadFromSupabase(id), loadReviewFromSupabase(id)]);
       } catch (e: any) {
         setLoadErr(e?.message ?? "Failed to load allergens.");
-        // still prime with local so the page isn't empty
         primeLocal();
       }
     })();
@@ -139,7 +130,6 @@ export default function AllergenManager() {
           }))
         );
       } else {
-        // Seed demo rows once
         setRows([
           {
             id: uid(),
@@ -178,35 +168,64 @@ export default function AllergenManager() {
     } catch {}
   }
 
+  /** Load items and flags from cloud (two queries, then merge) */
   async function loadFromSupabase(id = orgId) {
     if (!id) return;
     setCloudBusy(true);
     setLoadErr(null);
-    const { data, error } = await supabase
+
+    // 1) Items
+    const { data: items, error: itemsErr } = await supabase
       .from("allergen_items")
-      .select("id,item,category,notes,flags,locked")
-      .eq("org_id", id)
+      .select("id,item,category,notes,locked,organisation_id,org_id")
+      .or(`organisation_id.eq.${id},org_id.eq.${id}`)
       .order("item", { ascending: true });
 
-    setCloudBusy(false);
-
-    if (error) {
-      setLoadErr(error.message);
+    if (itemsErr) {
+      setCloudBusy(false);
+      setLoadErr(itemsErr.message);
       return;
     }
 
-    const list: MatrixRow[] = (data ?? []).map((r: any) => ({
+    const ids = (items ?? []).map((r: any) => r.id);
+    let flagsByItem: Record<string, Flags> = {};
+
+    if (ids.length) {
+      // 2) Flags for these items
+      const { data: flags, error: flagsErr } = await supabase
+        .from("allergen_flags")
+        .select("item_id,key,value")
+        .in("item_id", ids);
+
+      if (flagsErr) {
+        setCloudBusy(false);
+        setLoadErr(flagsErr.message);
+        return;
+      }
+
+      // Build map
+      for (const id of ids) flagsByItem[id] = emptyFlags();
+      for (const f of flags ?? []) {
+        const k = (f.key as AllergenKey) ?? null;
+        if (!k) continue;
+        if (!flagsByItem[f.item_id]) flagsByItem[f.item_id] = emptyFlags();
+        flagsByItem[f.item_id][k] = !!f.value;
+      }
+    }
+
+    const list: MatrixRow[] = (items ?? []).map((r: any) => ({
       id: String(r.id),
       item: r.item,
       category: (r.category ?? undefined) as Category | undefined,
-      flags: { ...emptyFlags(), ...(r.flags ?? {}) },
+      flags: flagsByItem[r.id] ?? emptyFlags(),
       notes: r.notes ?? undefined,
       locked: !!r.locked,
     }));
 
     setRows(list);
+    setCloudBusy(false);
 
-    // keep a local shadow cache for snappy reloads/offline
+    // local shadow
     try {
       localStorage.setItem(LS_ROWS, JSON.stringify(list));
     } catch {}
@@ -217,7 +236,7 @@ export default function AllergenManager() {
     const { data, error } = await supabase
       .from("allergen_reviews")
       .select("last_reviewed_on,last_reviewed_by,interval_days")
-      .eq("org_id", id)
+      .eq("organisation_id", id)
       .maybeSingle();
 
     if (error) return; // non-fatal
@@ -228,8 +247,6 @@ export default function AllergenManager() {
         lastReviewedOn: data.last_reviewed_on ?? undefined,
         lastReviewedBy: data.last_reviewed_by ?? undefined,
       });
-
-      // mirror locally
       try {
         localStorage.setItem(
           LS_REVIEW,
@@ -240,12 +257,10 @@ export default function AllergenManager() {
           })
         );
       } catch {}
-    } else {
-      // no row yet; keep defaults
     }
   }
 
-  /* ---------- persist local shadows for quick load ---------- */
+  /* ---------- persist local shadows ---------- */
   useEffect(() => {
     if (!hydrated) return;
     try {
@@ -260,108 +275,45 @@ export default function AllergenManager() {
     } catch {}
   }, [review, hydrated]);
 
-  /* ---------- file import handlers ---------- */
-  function triggerImport(target: "local" | "supabase") {
-    setImportTarget(target);
-    fileInputRef.current?.click();
-  }
-
-  async function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // reset input
-    if (!file) return;
-
-    const text = await file.text();
-    const csvRows = parseCSV(text);
-    const drafts: MatrixDraft[] = csvRows.map(draftFromRow).filter(Boolean) as MatrixDraft[];
-
-    if (drafts.length === 0) {
-      alert("No valid rows found in CSV.");
-      return;
-    }
-
-    if (importTarget === "local") {
-      setRows((prev) => [
-        ...prev,
-        ...drafts.map((d) => ({
-          id: uid(),
-          item: d.item,
-          category: d.category as Category | undefined,
-          flags: d.flags,
-          notes: d.notes,
-          locked: true,
-        })),
-      ]);
-      alert(`Imported ${drafts.length} items into this device.`);
-    }
-
-    if (importTarget === "supabase") {
-      const id = orgId ?? (await getActiveOrgIdClient());
-      if (!id) return alert("No organisation found.");
-
-      const payload = drafts.map((d) => ({
-        org_id: id,
-        item: d.item,
-        category: d.category ?? null,
-        notes: d.notes ?? null,
-        flags: d.flags, // JSONB
-        locked: true,
-      }));
-
-      const { error } = await supabase.from("allergen_items").insert(payload);
-      if (error) {
-        alert(`Supabase import failed: ${error.message}`);
-        return;
-      }
-      await loadFromSupabase(id);
-      alert(`Imported ${drafts.length} items to Supabase.`);
-    }
-
-    setImportTarget(null);
-  }
-
-  /* ---------- CRUD (cloud-first) ---------- */
+  /* ---------- CRUD (cloud-first, flags in separate table) ---------- */
   async function upsertItem(d: { id?: string; item: string; category?: Category; notes?: string; flags: Flags }) {
     const id = orgId ?? (await getActiveOrgIdClient());
+
+    // local fallback if no org
     if (!id) {
-      // fallback to local if no org (keeps current behaviour)
       setRows((rs) => {
-        if (d.id) {
-          return rs.map((r) => (r.id === d.id ? { ...r, ...d, locked: true } : r));
-        }
+        if (d.id) return rs.map((r) => (r.id === d.id ? { ...r, ...d, locked: true } : r));
         return [...rs, { id: uid(), ...d, locked: true }];
       });
       return;
     }
 
-    if (d.id) {
-      // update
+    let rowId = d.id as string | undefined;
+
+    if (rowId) {
       const { error } = await supabase
         .from("allergen_items")
         .update({
           item: d.item,
           category: d.category ?? null,
           notes: d.notes ?? null,
-          flags: d.flags,
           locked: true,
+          organisation_id: id,
         })
-        .eq("id", d.id)
-        .eq("org_id", id);
+        .eq("id", rowId);
       if (error) {
         alert(`Save failed: ${error.message}`);
         return;
       }
     } else {
-      // insert
       const { data, error } = await supabase
         .from("allergen_items")
         .insert({
-          org_id: id,
           item: d.item,
           category: d.category ?? null,
           notes: d.notes ?? null,
-          flags: d.flags,
           locked: true,
+          organisation_id: id,
         })
         .select("id")
         .single();
@@ -369,25 +321,43 @@ export default function AllergenManager() {
         alert(`Save failed: ${error.message}`);
         return;
       }
-      d.id = String(data?.id);
+      rowId = String(data?.id);
     }
 
-    // reflect in UI and local cache
+    // Replace flags for this item
+    if (rowId) {
+      await supabase.from("allergen_flags").delete().eq("item_id", rowId);
+      const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
+        item_id: rowId!,
+        key: k,
+        value: !!d.flags[k],
+      }));
+      if (payload.length) {
+        const { error: flagsErr } = await supabase.from("allergen_flags").insert(payload);
+        if (flagsErr) {
+          alert(`Saving flags failed: ${flagsErr.message}`);
+        }
+      }
+    }
+
+    // reflect in UI
+    const finalId = rowId ?? uid();
     setRows((rs) => {
-      const exists = rs.some((r) => r.id === d.id);
-      if (exists) return rs.map((r) => (r.id === d.id ? { ...r, ...d, locked: true } as MatrixRow : r));
-      return [...rs, { id: d.id!, item: d.item, category: d.category, flags: d.flags, notes: d.notes, locked: true }];
+      const exists = rs.some((r) => r.id === finalId);
+      const patch = { id: finalId, item: d.item, category: d.category, flags: d.flags, notes: d.notes, locked: true };
+      return exists ? rs.map((r) => (r.id === finalId ? { ...r, ...patch } : r)) : [...rs, patch as MatrixRow];
     });
   }
 
   async function deleteItem(idToDelete: string) {
     const id = orgId ?? (await getActiveOrgIdClient());
     if (!id) {
-      // local only
       setRows((rs) => rs.filter((r) => r.id !== idToDelete));
       return;
     }
-    const { error } = await supabase.from("allergen_items").delete().eq("id", idToDelete).eq("org_id", id);
+    // delete flags first, then item
+    await supabase.from("allergen_flags").delete().eq("item_id", idToDelete);
+    const { error } = await supabase.from("allergen_items").delete().eq("id", idToDelete);
     if (error) {
       alert(`Delete failed: ${error.message}`);
       return;
@@ -395,30 +365,27 @@ export default function AllergenManager() {
     setRows((rs) => rs.filter((r) => r.id !== idToDelete));
   }
 
-  /* ---------- review save (cloud-first) ---------- */
+  /* ---------- review save ---------- */
   async function markReviewedToday() {
     const id = orgId ?? (await getActiveOrgIdClient());
-    const payload = {
-      last_reviewed_on: todayISO(),
-      last_reviewed_by: "Manager",
-      interval_days: review.intervalDays,
-      // derive next due (so your KPI query that looks at next_due can work)
-      next_due: new Date(Date.now() + review.intervalDays * 86_400_000).toISOString().slice(0, 10),
-    };
-
     setReview((r) => ({
       ...r,
-      lastReviewedOn: payload.last_reviewed_on,
-      lastReviewedBy: payload.last_reviewed_by,
+      lastReviewedOn: todayISO(),
+      lastReviewedBy: "Manager",
     }));
-
     if (!id) return; // local only if no org
 
-    // Upsert (one row per org)
-    const { error } = await supabase
-      .from("allergen_reviews")
-      .upsert({ org_id: id, ...payload }, { onConflict: "org_id" });
-
+    // upsert on organisation_id
+    const { error } = await supabase.from("allergen_reviews").upsert(
+      {
+        organisation_id: id,
+        last_reviewed_on: todayISO(),
+        last_reviewed_by: "Manager",
+        interval_days: review.intervalDays,
+        next_due: new Date(Date.now() + review.intervalDays * 86_400_000).toISOString().slice(0, 10),
+      },
+      { onConflict: "organisation_id" }
+    );
     if (error) {
       alert(`Failed to save review: ${error.message}`);
     }
@@ -447,7 +414,6 @@ export default function AllergenManager() {
     setDraft({ item: "", category: "Starter", flags: emptyFlags(), notes: "" });
     setModalOpen(true);
   };
-
   const openEdit = (row: MatrixRow) => {
     setDraft({
       id: row.id,
@@ -458,14 +424,11 @@ export default function AllergenManager() {
     });
     setModalOpen(true);
   };
-
   const closeModal = () => setModalOpen(false);
 
   const saveDraft = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!draft || !draft.item.trim()) return;
-
-    // cloud-first upsert
     await upsertItem({
       id: draft.id,
       item: draft.item.trim(),
@@ -473,7 +436,6 @@ export default function AllergenManager() {
       flags: draft.flags,
       notes: (draft.notes ?? "").trim(),
     });
-
     setModalOpen(false);
   };
 
@@ -492,20 +454,15 @@ export default function AllergenManager() {
             <div className="font-medium">Allergen register review</div>
             <div className="text-xs text-gray-600">
               Last reviewed:{" "}
-              {review.lastReviewedOn ? (
-                <span className="font-medium">{review.lastReviewedOn}</span>
-              ) : (
-                <span className="italic">never</span>
-              )}
-              {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} · Interval (days):{" "}
-              {review.intervalDays}
+              {review.lastReviewedOn ? <span className="font-medium">{review.lastReviewedOn}</span> : <span className="italic">never</span>}
+              {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} · Interval (days): {review.intervalDays}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full max-w-[360px] items-center gap-2 sm:max-w-none sm:w-auto">
             <input
               type="number"
               min={7}
-              className="w-24 rounded-xl border border-gray-300 px-2 py-1 text-sm"
+              className="w-24 flex-1 rounded-xl border border-gray-300 px-2 py-1 text-sm"
               value={review.intervalDays}
               onChange={(e) =>
                 setReview((r) => ({
@@ -515,7 +472,7 @@ export default function AllergenManager() {
               }
             />
             <button
-              className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+              className="shrink-0 rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
               onClick={markReviewedToday}
             >
               Mark reviewed today
@@ -524,7 +481,7 @@ export default function AllergenManager() {
         </div>
       </div>
 
-      {/* Safe foods query */}
+      {/* QUERY – SAFE FOODS */}
       <details className="mb-4 rounded-xl border border-gray-200 bg-white p-3">
         <summary className="cursor-pointer select-none font-medium">Allergen Query (safe foods)</summary>
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -542,9 +499,7 @@ export default function AllergenManager() {
                 </option>
               ))}
             </select>
-            <p className="mt-2 text-xs text-gray-600">
-              Only items <strong>without</strong> the selected allergens appear below.
-            </p>
+            <p className="mt-2 text-xs text-gray-600">Only items <strong>without</strong> the selected allergens appear below.</p>
           </div>
 
           <div className="md:col-span-2 rounded-md border border-gray-200 bg-gray-50 p-3">
@@ -564,15 +519,10 @@ export default function AllergenManager() {
               ))}
             </div>
             <div className="mt-3 flex items-center gap-2">
-              <button
-                className="rounded border px-2 py-1 text-xs hover:bg-white"
-                onClick={() => setQFlags(emptyFlags())}
-              >
+              <button className="rounded border px-2 py-1 text-xs hover:bg-white" onClick={() => setQFlags(emptyFlags())}>
                 Clear selection
               </button>
-              <span className="text-xs text-gray-600">
-                Selected: {Object.values(qFlags).filter(Boolean).length}
-              </span>
+              <span className="text-xs text-gray-600">Selected: {Object.values(qFlags).filter(Boolean).length}</span>
             </div>
           </div>
         </div>
@@ -593,9 +543,7 @@ export default function AllergenManager() {
                 <tbody>
                   {safeFoods.length === 0 && (
                     <tr>
-                      <td colSpan={3} className="px-3 py-6 text-center text-gray-500">
-                        No safe items for this selection.
-                      </td>
+                      <td colSpan={3} className="px-3 py-6 text-center text-gray-500">No safe items for this selection.</td>
                     </tr>
                   )}
                   {safeFoods.map((r) => (
@@ -613,7 +561,7 @@ export default function AllergenManager() {
       </details>
 
       {/* Top actions */}
-      <div className="mb-3 flex flex-wrap gap-2">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row">
         <button
           className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
           onClick={openAdd}
@@ -625,35 +573,10 @@ export default function AllergenManager() {
           className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
           onClick={() => loadFromSupabase()}
           disabled={cloudBusy || !orgId}
-          title={orgId ? "Reload from Supabase" : "No organisation (local only)"}
+          title={orgId ? "Reload from cloud" : "No organisation (local only)"}
         >
           {cloudBusy ? "Loading…" : "Refresh from cloud"}
         </button>
-
-        <button
-          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-          onClick={() => triggerImport("supabase")}
-          disabled={!orgId}
-          title={orgId ? "Bulk import CSV → Supabase" : "No organisation"}
-        >
-          Import CSV → Cloud
-        </button>
-
-        <button
-          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
-          onClick={() => triggerImport("local")}
-          title="Bulk import CSV into this device only"
-        >
-          Import CSV → Local
-        </button>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".csv,text/csv"
-          className="hidden"
-          onChange={handleFileChosen}
-        />
       </div>
 
       {/* MATRIX – Desktop table */}
@@ -702,11 +625,7 @@ export default function AllergenManager() {
                     <ActionMenu
                       items={[
                         { label: "Edit", onClick: () => openEdit(row) },
-                        {
-                          label: "Delete",
-                          onClick: () => void deleteItem(row.id),
-                          variant: "danger",
-                        },
+                        { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
                       ]}
                     />
                   </td>
@@ -767,7 +686,7 @@ export default function AllergenManager() {
         )}
       </div>
 
-      {/* Modal (single, sticky header/footer) */}
+      {/* Modal */}
       {modalOpen && draft && (
         <div className="fixed inset-0 z-50 bg-black/30" onClick={closeModal}>
           <form
@@ -775,12 +694,10 @@ export default function AllergenManager() {
             onClick={(e) => e.stopPropagation()}
             className="mx-auto mt-3 flex h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-16 sm:h-[80vh] sm:rounded-2xl"
           >
-            {/* Sticky header */}
             <div className="sticky top-0 z-10 border-b bg-white px-4 py-3 text-base font-semibold">
               Allergen item
             </div>
 
-            {/* Scrollable content */}
             <div className="grow overflow-y-auto px-4 py-3">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="text-sm">
@@ -809,7 +726,6 @@ export default function AllergenManager() {
                 </label>
               </div>
 
-              {/* Yes/No toggles */}
               <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {ALLERGENS.map((a) => {
                   const val = draft.flags[a.key];
@@ -858,19 +774,11 @@ export default function AllergenManager() {
               </p>
             </div>
 
-            {/* Sticky footer */}
             <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white px-4 py-3">
-              <button
-                type="button"
-                className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"
-                onClick={closeModal}
-              >
+              <button type="button" className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50" onClick={closeModal}>
                 Cancel
               </button>
-              <button
-                type="submit"
-                className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
-              >
+              <button className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800">
                 Save &amp; lock
               </button>
             </div>
