@@ -1,7 +1,10 @@
+// src/components/FoodTempLogger.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
+
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import {
@@ -12,6 +15,20 @@ import {
 } from "@/lib/temp-constants";
 import RoutinePickerModal, { type RoutineRow } from "@/components/RoutinePickerModal";
 import RoutineRunModal from "@/components/RoutineRunModal";
+
+// Lazy-load rota to avoid SSR headaches
+const CleaningRota = dynamic(() => import("@/components/CleaningRota"), { ssr: false });
+
+/* ================== Cleaning categories ================== */
+const CLEANING_CATEGORIES = [
+  "Opening checks",
+  "Preparation",
+  "Mid shift",
+  "Cleaning down",
+  "Closing down",
+  "Admin",
+] as const;
+type CleaningCategory = typeof CLEANING_CATEGORIES[number];
 
 /* ================== Types ================== */
 type CanonRow = {
@@ -33,9 +50,11 @@ type Props = {
 /* ---- Cleaning rota types ---- */
 type Frequency = "daily" | "weekly" | "monthly";
 type CleanTask = {
-  id: string; // bigint in DB; keep as string and cast when writing
+  id: string;            // uuid in DB
+  org_id: string;        // uuid
   area: string | null;
   task: string;
+  category: CleaningCategory | null;
   frequency: Frequency;
   weekday: number | null;   // 1..7 (Mon..Sun)
   month_day: number | null; // 1..31
@@ -130,6 +149,92 @@ function isDueOn(t: CleanTask, ymd: string) {
   }
 }
 
+/* ===== UI bits ===== */
+function StatusPill({ done, onClick }: { done: boolean; onClick: () => void }) {
+  return done ? (
+    <button
+      className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
+      onClick={onClick}
+      title="Mark incomplete"
+    >
+      Complete
+    </button>
+  ) : (
+    <button
+      className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"
+      onClick={onClick}
+      title="Mark complete"
+    >
+      Incomplete
+    </button>
+  );
+}
+
+/** Modal: show all daily tasks for a category (today) */
+function DailyCategoryModal({
+  open,
+  category,
+  tasks,
+  runsKey,
+  today,
+  initials,
+  onClose,
+  onCompleteOne,
+  onUncompleteOne,
+}: {
+  open: boolean;
+  category: string;
+  tasks: CleanTask[];
+  runsKey: Map<string, CleanRun>;
+  today: string;
+  initials: string;
+  onClose: () => void;
+  onCompleteOne: (id: string, initials: string) => Promise<void>;
+  onUncompleteOne: (id: string) => Promise<void>;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/30" onClick={onClose}>
+      <div
+        className="mx-auto mt-10 w-full max-w-md overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <div className="text-base font-semibold">Today · {category}</div>
+          <button className="rounded-md px-2 py-1 text-sm hover:bg-gray-50" onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        <div className="max-h-[70vh] space-y-2 overflow-y-auto p-3">
+          {tasks.length === 0 ? (
+            <div className="rounded-xl border border-gray-200 p-3 text-sm text-gray-500">No tasks.</div>
+          ) : (
+            tasks.map((t) => {
+              const key = `${t.id}|${today}`;
+              const done = runsKey.has(key);
+              const run = runsKey.get(key) || null;
+              return (
+                <div key={t.id} className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 px-2 py-2 text-sm">
+                  <div className={done ? "text-gray-500 line-through" : ""}>
+                    <div className="font-medium">{t.task}</div>
+                    <div className="text-xs text-gray-500">{t.area ?? "—"}</div>
+                    {run?.done_by && <div className="text-[11px] text-gray-400">Done by {run.done_by}</div>}
+                  </div>
+                  <StatusPill
+                    done={done}
+                    onClick={() => (done ? onUncompleteOne(t.id) : onCompleteOne(t.id, initials))}
+                  />
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ================== Component ================== */
 export default function FoodTempLogger({
   initials: initialsSeed = [],
@@ -140,6 +245,10 @@ export default function FoodTempLogger({
   // Modals
   const [showPicker, setShowPicker] = useState(false);
   const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
+
+  // Cleaning rota modal control
+  const [showRota, setShowRota] = useState(false);
+  const [rotaMode, setRotaMode] = useState<"today" | "manage">("today");
 
   // DATA
   const [rows, setRows] = useState<CanonRow[]>([]);
@@ -169,10 +278,16 @@ export default function FoodTempLogger({
     return m;
   }, [runs]);
 
-  // Completion modal (single + “complete all daily”)
+  // For pills / complete-all
+  const [ini, setIni] = useState("");
+
+  // Completion modal (legacy “complete all daily”)
   const [confirm, setConfirm] = useState<{ ids: string[]; run_on: string } | null>(null);
   const [confirmLabel, setConfirmLabel] = useState<string>("Confirm completion");
   const [confirmInitials, setConfirmInitials] = useState("");
+
+  // Daily category modal
+  const [catOpen, setCatOpen] = useState<string | null>(null);
 
   // ENTRY FORM
   const [formOpen, setFormOpen] = useState(true);
@@ -202,10 +317,11 @@ export default function FoodTempLogger({
         staff_initials: lsIni || f.staff_initials,
         location: lsLoc || f.location,
       }));
+      if (!ini && lsIni) setIni(lsIni);
       if (lsIni) setInitials((prev) => Array.from(new Set([lsIni, ...prev])));
       if (lsLoc) setLocations((prev) => Array.from(new Set([lsLoc, ...prev])));
     } catch {}
-  }, []);
+  }, [ini]);
 
   /* ---------- initials list (org-scoped) ---------- */
   useEffect(() => {
@@ -232,6 +348,7 @@ export default function FoodTempLogger({
 
         const merged = Array.from(new Set([...initialsSeed, ...fromDb]));
         if (merged.length) setInitials(merged);
+        if (!ini && merged[0]) setIni(merged[0]);
         if (!form.staff_initials && merged[0]) {
           setForm((f) => ({ ...f, staff_initials: merged[0] }));
         }
@@ -515,14 +632,16 @@ export default function FoodTempLogger({
 
       const { data: tData } = await supabase
         .from("cleaning_tasks")
-        .select("id,area,task,frequency,weekday,month_day")
+        .select("id,org_id,area,task,category,frequency,weekday,month_day")
         .eq("org_id", org_id);
 
       const all: CleanTask[] =
         (tData ?? []).map((r: any) => ({
           id: String(r.id),
+          org_id: String(r.org_id),
           area: r.area ?? null,
           task: r.task ?? r.name ?? "",
+          category: (r.category ?? null) as CleaningCategory | null,
           frequency: (r.frequency ?? "daily") as Frequency,
           weekday: r.weekday ? Number(r.weekday) : null,
           month_day: r.month_day ? Number(r.month_day) : null,
@@ -564,56 +683,121 @@ export default function FoodTempLogger({
     [dueTodayAll, runsKey, today]
   );
 
-  async function completeTasks(ids: string[], ini: string) {
-    try {
-      const org_id = await getActiveOrgIdClient();
-      if (!org_id) return;
-      const run_on = today;
-
-      const payload = ids.map((id) => ({
-        org_id,
-        task_id: Number(id), // DB uses bigint
-        run_on,
-        done_by: ini.toUpperCase(),
-      }));
-
-      const { error } = await supabase.from("cleaning_task_runs").insert(payload);
-      if (error) throw error;
-
-      setRuns((prev) => [
-        ...prev,
-        ...ids.map((id) => ({ task_id: id, run_on, done_by: ini.toUpperCase() })),
-      ]);
-    } catch (e: any) {
-      alert(e?.message || "Failed to save completion.");
-    } finally {
-      setConfirm(null);
-      setConfirmInitials("");
+  // Daily grouped by category
+  const dailyByCat = useMemo(() => {
+    const map = new Map<string, CleanTask[]>();
+    for (const c of CLEANING_CATEGORIES) map.set(c, []);
+    for (const t of dueDaily) {
+      const key = t.category ?? "Opening checks";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(t);
     }
+    for (const [k, list] of map) map.set(k, list.sort((a, b) => a.task.localeCompare(b.task)));
+    return map;
+  }, [dueDaily]);
+
+  /* ---------- complete / uncomplete ---------- */
+ async function completeOne(id: string, initialsVal: string) {
+  const org_id = await getActiveOrgIdClient();
+  if (!org_id) { alert("No organisation found."); return; }
+  if (!initialsVal) { alert("Select initials first."); return; }
+
+  try {
+    const payload = { org_id, task_id: id, run_on: today, done_by: initialsVal.toUpperCase() };
+    const { error } = await supabase.from("cleaning_task_runs").insert(payload);
+    if (error) throw error;
+
+    setRuns((prev) => [...prev, { task_id: id, run_on: today, done_by: payload.done_by }]);
+  } catch (e: any) {
+    alert(e?.message || "Failed to save completion.");
   }
+}
 
-  async function uncompleteTask(id: string) {
-    try {
-      const org_id = await getActiveOrgIdClient();
-      if (!org_id) return;
-      const { error } = await supabase
-        .from("cleaning_task_runs")
-        .delete()
-        .eq("org_id", org_id)
-        .eq("task_id", Number(id))
-        .eq("run_on", today);
-      if (error) throw error;
-      setRuns((prev) => prev.filter((r) => !(r.task_id === id && r.run_on === today)));
-    } catch (e: any) {
-      alert(e?.message || "Failed to undo completion.");
+async function uncompleteOne(id: string) {
+  const org_id = await getActiveOrgIdClient();
+  if (!org_id) { alert("No organisation found."); return; }
+
+  try {
+    const { error } = await supabase
+      .from("cleaning_task_runs")
+      .delete()
+      .eq("org_id", org_id)
+      .eq("task_id", id)
+      .eq("run_on", today);
+
+    if (error) throw error;
+
+    setRuns((prev) => prev.filter((r) => !(r.task_id === id && r.run_on === today)));
+  } catch (e: any) {
+    alert(e?.message || "Failed to undo completion.");
+  }
+}
+
+async function completeMany(ids: string[], initialsVal: string) {
+  const org_id = await getActiveOrgIdClient();
+  if (!org_id) { alert("No organisation found."); return; }
+  if (!ids.length) return;
+  if (!initialsVal) { alert("Select initials first."); return; }
+
+  try {
+    const payload = ids.map((task_id) => ({
+      org_id,
+      task_id,
+      run_on: today,
+      done_by: initialsVal.toUpperCase(),
+    }));
+    const { error } = await supabase.from("cleaning_task_runs").insert(payload);
+    if (error) throw error;
+
+    setRuns((prev) => [
+      ...prev,
+      ...payload.map((p) => ({ task_id: p.task_id, run_on: p.run_on, done_by: p.done_by })),
+    ]);
+  } catch (e: any) {
+    alert(e?.message || "Failed to complete all tasks.");
+  }
+}
+
+
+  
+
+  async function completeAllToday() {
+    const ids = dueTodayAll.filter((t) => !runsKey.has(`${t.id}|${today}`)).map((t) => t.id);
+    if (!ids.length || !ini) return;
+
+    const { data: tRows, error: tErr } = await supabase
+      .from("cleaning_tasks")
+      .select("id,org_id")
+      .in("id", ids);
+    if (tErr) {
+      alert(tErr.message);
+      return;
     }
+
+    const payload = (tRows ?? []).map((r: any) => ({
+      org_id: String(r.org_id),
+      task_id: String(r.id),
+      run_on: today,
+      done_by: ini.toUpperCase(),
+    }));
+
+    const { error } = await supabase.from("cleaning_task_runs").insert(payload);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setRuns((prev) => [
+      ...prev,
+      ...payload.map((p) => ({ task_id: p.task_id, run_on: p.run_on, done_by: p.done_by })),
+    ]);
   }
 
   /* ================== Render ================== */
   return (
     <div className="space-y-6">
       {/* KPI grid + pills */}
-      <div className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
+      <div className="space-y-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         {(() => {
           const todayISO = new Date().toISOString().slice(0, 10);
           const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
@@ -625,19 +809,19 @@ export default function FoodTempLogger({
 
           return (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              <div className="rounded-xl border bg-white p-3">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
                 <div className="text-xs text-gray-500">Entries today</div>
                 <div className="text-2xl font-semibold">{entriesToday}</div>
               </div>
-              <div className="rounded-xl border bg-white p-3">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
                 <div className="text-xs text-gray-500">Last 7 days</div>
                 <div className="text-2xl font-semibold">{last7}</div>
               </div>
-              <div className="rounded-xl border bg-white p-3">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
                 <div className="text-xs text-gray-500">Failures (7d)</div>
                 <div className="text-2xl font-semibold">{fails7}</div>
               </div>
-              <div className="rounded-xl border bg-white p-3">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
                 <div className="text-xs text-gray-500">Top logger</div>
                 <div className="text-2xl font-semibold">
                   {(() => {
@@ -652,12 +836,23 @@ export default function FoodTempLogger({
                   })()}
                 </div>
               </div>
-              <div className="rounded-xl border bg-white p-3">
+
+              {/* Cleaning tile – opens Today view */}
+              <button
+                type="button"
+                onClick={() => {
+                  setRotaMode("today");
+                  setShowRota(true);
+                }}
+                className="rounded-xl border border-gray-200 bg-white p-3 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black/10"
+                title="Open today’s cleaning tasks"
+              >
                 <div className="text-xs text-gray-500">Cleaning (today)</div>
                 <div className="text-2xl font-semibold">
                   {doneCount}/{dueTodayAll.length}
                 </div>
-              </div>
+                <div className="mt-1 text-[11px] text-gray-500 underline">View / complete</div>
+              </button>
             </div>
           );
         })()}
@@ -706,6 +901,8 @@ export default function FoodTempLogger({
                 : "OK"}
             </span>
           </a>
+
+      
         </div>
 
         {err && (
@@ -715,35 +912,46 @@ export default function FoodTempLogger({
         )}
       </div>
 
-      {/* ======= Cleaning rota: Today’s Tasks ======= */}
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="mb-2 flex items-center gap-2">
-          <h2 className="text-lg font-semibold">Today’s Cleaning Tasks</h2>
+      {/* ======= Cleaning rota: Today’s Tasks (quick view on dashboard) ======= */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold">Today’s Cleaning</h2>
+
           <div className="ml-auto flex items-center gap-2">
-            {dueDaily.some((t) => !runsKey.has(`${t.id}|${today}`)) && (
-              <button
-                className="rounded-full border px-3 py-1.5 text-xs hover:bg-gray-50"
-                onClick={() => {
-                  const ids = dueDaily
-                    .filter((t) => !runsKey.has(`${t.id}|${today}`))
-                    .map((t) => t.id);
-                  setConfirm({ ids, run_on: today });
-                  setConfirmLabel("Complete all daily");
-                  setConfirmInitials(form.staff_initials || initials[0] || "");
-                }}
-              >
-                Complete all daily
-              </button>
-            )}
+            <label className="text-xs text-gray-600">Initials</label>
+            <select
+              value={ini}
+              onChange={(e) => setIni(e.target.value.toUpperCase())}
+              className="h-9 rounded-xl border border-gray-200 px-2 py-1.5 uppercase"
+            >
+              {initials.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+
+            <div className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm">
+              {doneCount}/{dueTodayAll.length}
+            </div>
+
+            <button
+              className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              onClick={completeAllToday}
+              disabled={!ini || dueTodayAll.every((t) => runsKey.has(`${t.id}|${today}`))}
+              title="Mark all due tasks complete"
+            >
+              Complete all today
+            </button>
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {/* Weekly/Monthly */}
+          {/* Weekly/Monthly (full list) */}
           <div className="space-y-2">
             <div className="text-xs font-medium uppercase text-gray-500">Weekly / Monthly</div>
             {dueNonDaily.length === 0 && (
-              <div className="rounded border p-3 text-sm text-gray-500">No tasks.</div>
+              <div className="rounded border border-gray-200 p-3 text-sm text-gray-500">No tasks.</div>
             )}
             {dueNonDaily.map((t) => {
               const key = `${t.id}|${today}`;
@@ -752,99 +960,62 @@ export default function FoodTempLogger({
               return (
                 <div
                   key={key}
-                  className="flex items-start justify-between gap-2 rounded border px-2 py-2 text-sm"
+                  className="flex items-start justify-between gap-2 rounded border border-gray-200 px-2 py-2 text-sm"
                 >
                   <div className={done ? "text-gray-500 line-through" : ""}>
                     <div className="font-medium">{t.task}</div>
-                    {t.area && <div className="text-xs text-gray-500">{t.area}</div>}
-                    <div className="text-xs text-gray-400">
-                      {t.frequency === "weekly" ? "Weekly" : "Monthly"}
-                      {run?.done_by ? ` • Done by ${run.done_by}` : ""}
+                    <div className="text-xs text-gray-500">
+                      {(t.category ?? t.area ?? "—")} • {t.frequency === "weekly" ? "Weekly" : "Monthly"}
                     </div>
+                    {run?.done_by && (
+                      <div className="text-[11px] text-gray-400">Done by {run.done_by}</div>
+                    )}
                   </div>
 
-                  {done ? (
-                    <button
-                      className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
-                      onClick={() => uncompleteTask(t.id)}
-                    >
-                      Done
-                    </button>
-                  ) : (
-                    <button
-                      className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-800"
-                      onClick={() => {
-                        setConfirm({ ids: [t.id], run_on: today });
-                        setConfirmLabel("Confirm completion");
-                        setConfirmInitials(form.staff_initials || initials[0] || "");
-                      }}
-                    >
-                      Complete
-                    </button>
-                  )}
+                  <StatusPill
+                    done={done}
+                    onClick={() => (done ? uncompleteOne(t.id) : completeOne(t.id, ini))}
+                  />
                 </div>
               );
             })}
           </div>
 
-          {/* Daily */}
+          {/* Daily (by category tiles) */}
           <div className="space-y-2">
-            <div className="text-xs font-medium uppercase text-gray-500">Daily</div>
-            {dueDaily.length === 0 && (
-              <div className="rounded border p-3 text-sm text-gray-500">No tasks.</div>
-            )}
-            {dueDaily.map((t) => {
-              const key = `${t.id}|${today}`;
-              const done = runsKey.has(key);
-              const run = runsKey.get(key) || null;
-              return (
-                <div
-                  key={key}
-                  className="flex items-start justify-between gap-2 rounded border px-2 py-2 text-sm"
-                >
-                  <div className={done ? "text-gray-500 line-through" : ""}>
-                    <div className="font-medium">{t.task}</div>
-                    {t.area && <div className="text-xs text-gray-500">{t.area}</div>}
-                    {run?.done_by && (
-                      <div className="text-xs text-gray-400">Done by {run.done_by}</div>
-                    )}
-                  </div>
+            <div className="text-xs font-medium uppercase text-gray-500">Daily (by category)</div>
 
-                  {done ? (
-                    <button
-                      className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
-                      onClick={() => uncompleteTask(t.id)}
-                    >
-                      Done
-                    </button>
-                  ) : (
-                    <button
-                      className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-800"
-                      onClick={() => {
-                        setConfirm({ ids: [t.id], run_on: today });
-                        setConfirmLabel("Confirm completion");
-                        setConfirmInitials(form.staff_initials || initials[0] || "");
-                      }}
-                    >
-                      Complete
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {CLEANING_CATEGORIES.map((cat) => {
+                const list = dailyByCat.get(cat) ?? [];
+                const incomplete = list.filter((t) => !runsKey.has(`${t.id}|${today}`)).length;
+                return (
+                  <button
+                    key={cat}
+                    className="rounded-xl border border-gray-200 px-3 py-2 text-left hover:bg-gray-50"
+                    onClick={() => setCatOpen(cat)}
+                  >
+                    <div className="text-xs text-gray-500">{cat}</div>
+                    <div className="text-lg font-semibold">
+                      {list.length} <span className="ml-1 text-[11px] text-gray-500">({incomplete} open)</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
 
       {/* ======= ENTRY FORM ======= */}
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">Enter Temperature Log</h2>
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
               onClick={() => setShowPicker(true)}
-              className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
               title="Pick a routine"
             >
               Use routine
@@ -853,7 +1024,7 @@ export default function FoodTempLogger({
             <button
               type="button"
               onClick={() => setFormOpen((v) => !v)}
-              className="flex items-center gap-1 rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="flex items-center gap-1 rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
               title="Hide or show entry form"
               aria-expanded={formOpen}
             >
@@ -871,7 +1042,7 @@ export default function FoodTempLogger({
                 type="date"
                 value={form.date}
                 onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2"
               />
             </div>
 
@@ -886,7 +1057,7 @@ export default function FoodTempLogger({
                     localStorage.setItem(LS_LAST_INITIALS, v);
                   } catch {}
                 }}
-                className="h-10 w-full rounded-xl border px-3 py-2 uppercase"
+                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2 uppercase"
               >
                 {!form.staff_initials && initials.length === 0 && (
                   <option value="" disabled>
@@ -912,7 +1083,7 @@ export default function FoodTempLogger({
                     localStorage.setItem(LS_LAST_LOCATION, v);
                   } catch {}
                 }}
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2"
               >
                 {!form.location && locations.length === 0 && (
                   <option value="" disabled>
@@ -932,7 +1103,7 @@ export default function FoodTempLogger({
               <input
                 value={form.item}
                 onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2"
                 placeholder="e.g., Chicken curry"
               />
             </div>
@@ -942,7 +1113,7 @@ export default function FoodTempLogger({
               <select
                 value={form.target_key}
                 onChange={(e) => setForm((f) => ({ ...f, target_key: e.target.value }))}
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2"
               >
                 {TARGET_PRESETS.map((p) => (
                   <option key={p.key} value={p.key}>
@@ -961,7 +1132,7 @@ export default function FoodTempLogger({
                 value={form.temp_c}
                 onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
                 onKeyDown={onTempKeyDown}
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2"
                 inputMode="decimal"
                 placeholder="e.g., 5.0"
               />
@@ -1006,12 +1177,12 @@ export default function FoodTempLogger({
       />
 
       {/* ======= LOGS: table (desktop) + cards (mobile) ======= */}
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Temperature Logs</h2>
           <button
             onClick={refreshRows}
-            className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+            className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
           >
             Refresh
           </button>
@@ -1038,7 +1209,8 @@ export default function FoodTempLogger({
                 </tr>
               ) : rows.length ? (
                 rows.map((r) => {
-                  const preset = r.target_key ? (TARGET_BY_KEY as any)[r.target_key] : undefined;
+                  const preset =
+                    r.target_key ? (TARGET_BY_KEY as any)[r.target_key] : undefined;
                   const st = r.status ?? inferStatus(r.temp_c, preset);
                   return (
                     <tr key={r.id} className="border-t">
@@ -1100,7 +1272,7 @@ export default function FoodTempLogger({
                       r.target_key ? (TARGET_BY_KEY as any)[r.target_key] : undefined;
                     const st = r.status ?? inferStatus(r.temp_c, preset);
                     return (
-                      <div key={r.id} className="rounded-xl border p-3">
+                      <div key={r.id} className="rounded-xl border border-gray-200 p-3">
                         <div className="flex items-center justify-between">
                           <div className="text-sm font-medium">{r.item ?? "—"}</div>
                           {st && (
@@ -1141,23 +1313,30 @@ export default function FoodTempLogger({
         </div>
       </div>
 
-      {/* Cleaning completion modal (z-50 to sit above anything) */}
+      {/* Cleaning completion modal (legacy) */}
       {confirm && (
         <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setConfirm(null)}>
           <form
             onSubmit={(e) => {
               e.preventDefault();
               if (!confirmInitials.trim()) return;
-              completeTasks(confirm.ids, confirmInitials.trim());
+              // use new flow: complete each with fetched org_id
+              (async () => {
+                for (const id of confirm.ids) {
+                  await completeOne(id, confirmInitials.trim());
+                }
+                setConfirm(null);
+                setConfirmInitials("");
+              })();
             }}
             onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-6 flex h-[70vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-24 sm:h-auto sm:rounded-2xl"
+            className="mx-auto mt-6 flex h-[70vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow sm:mt-24 sm:h-auto sm:rounded-2xl"
           >
             <div className="sticky top-0 z-10 border-b bg-white px-4 py-3 text-base font-semibold">
               {confirmLabel}
             </div>
             <div className="grow overflow-y-auto px-4 py-3 space-y-3">
-              <div className="rounded border bg-gray-50 p-2 text-sm">
+              <div className="rounded border border-gray-200 bg-gray-50 p-2 text-sm">
                 <div className="font-medium">
                   {confirm.ids.length === 1
                     ? (tasks.find((t) => t.id === confirm.ids[0])?.task ?? "Task")
@@ -1171,7 +1350,7 @@ export default function FoodTempLogger({
               <label className="block text-sm">
                 <div className="mb-1 text-gray-600">Initials</div>
                 <select
-                  className="w-full rounded-xl border px-2 py-1.5 uppercase"
+                  className="w-full rounded-xl border border-gray-200 px-2 py-1.5 uppercase"
                   value={confirmInitials}
                   onChange={(e) => setConfirmInitials(e.target.value.toUpperCase())}
                   required
@@ -1203,6 +1382,48 @@ export default function FoodTempLogger({
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Daily category modal */}
+      <DailyCategoryModal
+        open={!!catOpen}
+        category={catOpen || ""}
+        tasks={(catOpen ? dailyByCat.get(catOpen) : []) || []}
+        today={today}
+        initials={ini}
+        runsKey={runsKey}
+        onClose={() => setCatOpen(null)}
+        onCompleteOne={completeOne}
+        onUncompleteOne={uncompleteOne}
+      />
+
+      {/* Cleaning Rota modal (Today or Manage) */}
+      {showRota && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/30"
+          onClick={() => setShowRota(false)}
+        >
+          <div
+            className="mx-auto w-full max-w-5xl overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow sm:rounded-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
+              <div className="text-base font-semibold">
+                {rotaMode === "manage" ? "Manage Cleaning Rota" : "Today’s Cleaning Tasks"}
+              </div>
+              <button
+                className="rounded-md px-2 py-1 text-sm hover:bg-gray-100"
+                onClick={() => setShowRota(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="max-h-[80vh] overflow-y-auto p-4">
+              <CleaningRota mode={rotaMode} />
+            </div>
+          </div>
         </div>
       )}
     </div>

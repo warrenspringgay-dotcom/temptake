@@ -11,7 +11,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
   return (
     <html lang="en">
-      <body className="min-h-screen bg-slate-50">
+      <body className="bg-gray-100 text-gray-900">
         {/* STICKY TOP BAR */}
         <header className="sticky top-0 z-50 border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/70">
           <div className="mx-auto max-w-6xl px-4">
