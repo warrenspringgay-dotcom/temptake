@@ -16,19 +16,8 @@ import {
 import RoutinePickerModal, { type RoutineRow } from "@/components/RoutinePickerModal";
 import RoutineRunModal from "@/components/RoutineRunModal";
 
-// Lazy-load rota to avoid SSR headaches
+// Lazy-load rota to avoid SSR headaches (optional – used for the big modal)
 const CleaningRota = dynamic(() => import("@/components/CleaningRota"), { ssr: false });
-
-/* ================== Cleaning categories ================== */
-const CLEANING_CATEGORIES = [
-  "Opening checks",
-  "Preparation",
-  "Mid shift",
-  "Cleaning down",
-  "Closing down",
-  "Admin",
-] as const;
-type CleaningCategory = typeof CLEANING_CATEGORIES[number];
 
 /* ================== Types ================== */
 type CanonRow = {
@@ -50,13 +39,13 @@ type Props = {
 /* ---- Cleaning rota types ---- */
 type Frequency = "daily" | "weekly" | "monthly";
 type CleanTask = {
-  id: string;            // uuid in DB
-  org_id: string;        // uuid
+  id: string; // uuid/bigint as string
+  org_id?: string | null;
   area: string | null;
   task: string;
-  category: CleaningCategory | null;
+  category: string | null;
   frequency: Frequency;
-  weekday: number | null;   // 1..7 (Mon..Sun)
+  weekday: number | null; // 1..7 (Mon..Sun)
   month_day: number | null; // 1..31
 };
 type CleanRun = {
@@ -149,8 +138,14 @@ function isDueOn(t: CleanTask, ymd: string) {
   }
 }
 
-/* ===== UI bits ===== */
-function StatusPill({ done, onClick }: { done: boolean; onClick: () => void }) {
+/* ========= UI bits for the daily category modal ========= */
+function Pill({
+  done,
+  onClick,
+}: {
+  done: boolean;
+  onClick: () => void;
+}) {
   return done ? (
     <button
       className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
@@ -170,7 +165,6 @@ function StatusPill({ done, onClick }: { done: boolean; onClick: () => void }) {
   );
 }
 
-/** Modal: show all daily tasks for a category (today) */
 function DailyCategoryModal({
   open,
   category,
@@ -196,32 +190,36 @@ function DailyCategoryModal({
   return (
     <div className="fixed inset-0 z-50 bg-black/30" onClick={onClose}>
       <div
-        className="mx-auto mt-10 w-full max-w-md overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
+        className="mx-auto mt-10 w-full max-w-md overflow-hidden rounded-2xl border bg-white shadow-sm"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="text-base font-semibold">Today · {category}</div>
-          <button className="rounded-md px-2 py-1 text-sm hover:bg-gray-50" onClick={onClose}>
+          <button className="rounded-md px-2 py-1 text-sm hover:bg-gray-100" onClick={onClose}>
             Close
           </button>
         </div>
-
         <div className="max-h-[70vh] space-y-2 overflow-y-auto p-3">
           {tasks.length === 0 ? (
-            <div className="rounded-xl border border-gray-200 p-3 text-sm text-gray-500">No tasks.</div>
+            <div className="rounded-xl border p-3 text-sm text-gray-500">No tasks.</div>
           ) : (
             tasks.map((t) => {
               const key = `${t.id}|${today}`;
               const done = runsKey.has(key);
               const run = runsKey.get(key) || null;
               return (
-                <div key={t.id} className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 px-2 py-2 text-sm">
+                <div
+                  key={t.id}
+                  className="flex items-start justify-between gap-2 rounded-xl border px-2 py-2 text-sm"
+                >
                   <div className={done ? "text-gray-500 line-through" : ""}>
                     <div className="font-medium">{t.task}</div>
                     <div className="text-xs text-gray-500">{t.area ?? "—"}</div>
-                    {run?.done_by && <div className="text-[11px] text-gray-400">Done by {run.done_by}</div>}
+                    {run?.done_by && (
+                      <div className="text-[11px] text-gray-400">Done by {run.done_by}</div>
+                    )}
                   </div>
-                  <StatusPill
+                  <Pill
                     done={done}
                     onClick={() => (done ? onUncompleteOne(t.id) : onCompleteOne(t.id, initials))}
                   />
@@ -246,9 +244,11 @@ export default function FoodTempLogger({
   const [showPicker, setShowPicker] = useState(false);
   const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
 
-  // Cleaning rota modal control
+  // “Daily category” modal
+  const [catOpen, setCatOpen] = useState<string | null>(null);
+
+  // Cleaning Rota modal (optional)
   const [showRota, setShowRota] = useState(false);
-  const [rotaMode, setRotaMode] = useState<"today" | "manage">("today");
 
   // DATA
   const [rows, setRows] = useState<CanonRow[]>([]);
@@ -278,16 +278,10 @@ export default function FoodTempLogger({
     return m;
   }, [runs]);
 
-  // For pills / complete-all
-  const [ini, setIni] = useState("");
-
   // Completion modal (legacy “complete all daily”)
   const [confirm, setConfirm] = useState<{ ids: string[]; run_on: string } | null>(null);
   const [confirmLabel, setConfirmLabel] = useState<string>("Confirm completion");
   const [confirmInitials, setConfirmInitials] = useState("");
-
-  // Daily category modal
-  const [catOpen, setCatOpen] = useState<string | null>(null);
 
   // ENTRY FORM
   const [formOpen, setFormOpen] = useState(true);
@@ -317,11 +311,10 @@ export default function FoodTempLogger({
         staff_initials: lsIni || f.staff_initials,
         location: lsLoc || f.location,
       }));
-      if (!ini && lsIni) setIni(lsIni);
       if (lsIni) setInitials((prev) => Array.from(new Set([lsIni, ...prev])));
       if (lsLoc) setLocations((prev) => Array.from(new Set([lsLoc, ...prev])));
     } catch {}
-  }, [ini]);
+  }, []);
 
   /* ---------- initials list (org-scoped) ---------- */
   useEffect(() => {
@@ -348,7 +341,6 @@ export default function FoodTempLogger({
 
         const merged = Array.from(new Set([...initialsSeed, ...fromDb]));
         if (merged.length) setInitials(merged);
-        if (!ini && merged[0]) setIni(merged[0]);
         if (!form.staff_initials && merged[0]) {
           setForm((f) => ({ ...f, staff_initials: merged[0] }));
         }
@@ -403,8 +395,11 @@ export default function FoodTempLogger({
         if (!orgId) return;
 
         const soon = new Date();
+        soon.setHours(0, 0, 0, 0);
         soon.setDate(soon.getDate() + 14);
-        const today = new Date();
+
+        const today0 = new Date();
+        today0.setHours(0, 0, 0, 0);
 
         let trainingDueSoon = 0;
         let trainingOver = 0;
@@ -421,8 +416,8 @@ export default function FoodTempLogger({
             const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
             if (!raw) return;
             const d = new Date(raw);
-            if (isNaN(d.getTime())) return;
-            if (d < today) trainingOver++;
+            d.setHours(0, 0, 0, 0);
+            if (d <= today0) trainingOver++;
             else if (d <= soon) trainingDueSoon++;
           });
         } catch {}
@@ -436,10 +431,11 @@ export default function FoodTempLogger({
           (data ?? []).forEach((r: any) => {
             const last = r.last_reviewed ? new Date(r.last_reviewed) : null;
             const interval = Number(r.interval_days ?? 0);
-            if (!last || !Number.isFinite(interval)) return;
+            if (!last || !Number.isFinite(interval) || interval <= 0) return;
             const due = new Date(last);
             due.setDate(due.getDate() + interval);
-            if (due < today) allergenOver++;
+            due.setHours(0, 0, 0, 0);
+            if (due <= today0) allergenOver++;
             else if (due <= soon) allergenDueSoon++;
           });
         } catch {}
@@ -622,7 +618,7 @@ export default function FoodTempLogger({
       .map(([date, list]) => ({ date, list }));
   }, [rows]);
 
-  /* ---------- Cleaning rota: load today's due + runs ---------- */
+  /* ---------- Cleaning rota: load today's due + runs (ORG SCOPED) ---------- */
   async function loadRotaToday() {
     try {
       const org_id = await getActiveOrgIdClient();
@@ -638,10 +634,10 @@ export default function FoodTempLogger({
       const all: CleanTask[] =
         (tData ?? []).map((r: any) => ({
           id: String(r.id),
-          org_id: String(r.org_id),
+          org_id: r.org_id ? String(r.org_id) : null,
           area: r.area ?? null,
           task: r.task ?? r.name ?? "",
-          category: (r.category ?? null) as CleaningCategory | null,
+          category: r.category ?? null,
           frequency: (r.frequency ?? "daily") as Frequency,
           weekday: r.weekday ? Number(r.weekday) : null,
           month_day: r.month_day ? Number(r.month_day) : null,
@@ -683,10 +679,18 @@ export default function FoodTempLogger({
     [dueTodayAll, runsKey, today]
   );
 
-  // Daily grouped by category
+  // Daily by category (chips)
+  const CATEGORIES = [
+    "Opening checks",
+    "Preparation",
+    "Mid shift",
+    "Cleaning down",
+    "Closing down",
+    "Admin",
+  ];
   const dailyByCat = useMemo(() => {
     const map = new Map<string, CleanTask[]>();
-    for (const c of CLEANING_CATEGORIES) map.set(c, []);
+    for (const c of CATEGORIES) map.set(c, []);
     for (const t of dueDaily) {
       const key = t.category ?? "Opening checks";
       if (!map.has(key)) map.set(key, []);
@@ -696,111 +700,92 @@ export default function FoodTempLogger({
     return map;
   }, [dueDaily]);
 
-  /* ---------- complete / uncomplete ---------- */
- async function completeOne(id: string, initialsVal: string) {
-  const org_id = await getActiveOrgIdClient();
-  if (!org_id) { alert("No organisation found."); return; }
-  if (!initialsVal) { alert("Select initials first."); return; }
-
-  try {
-    const payload = { org_id, task_id: id, run_on: today, done_by: initialsVal.toUpperCase() };
-    const { error } = await supabase.from("cleaning_task_runs").insert(payload);
-    if (error) throw error;
-
-    setRuns((prev) => [...prev, { task_id: id, run_on: today, done_by: payload.done_by }]);
-  } catch (e: any) {
-    alert(e?.message || "Failed to save completion.");
-  }
-}
-
-async function uncompleteOne(id: string) {
-  const org_id = await getActiveOrgIdClient();
-  if (!org_id) { alert("No organisation found."); return; }
-
-  try {
-    const { error } = await supabase
-      .from("cleaning_task_runs")
-      .delete()
-      .eq("org_id", org_id)
-      .eq("task_id", id)
-      .eq("run_on", today);
-
-    if (error) throw error;
-
-    setRuns((prev) => prev.filter((r) => !(r.task_id === id && r.run_on === today)));
-  } catch (e: any) {
-    alert(e?.message || "Failed to undo completion.");
-  }
-}
-
-async function completeMany(ids: string[], initialsVal: string) {
-  const org_id = await getActiveOrgIdClient();
-  if (!org_id) { alert("No organisation found."); return; }
-  if (!ids.length) return;
-  if (!initialsVal) { alert("Select initials first."); return; }
-
-  try {
-    const payload = ids.map((task_id) => ({
-      org_id,
-      task_id,
-      run_on: today,
-      done_by: initialsVal.toUpperCase(),
-    }));
-    const { error } = await supabase.from("cleaning_task_runs").insert(payload);
-    if (error) throw error;
-
-    setRuns((prev) => [
-      ...prev,
-      ...payload.map((p) => ({ task_id: p.task_id, run_on: p.run_on, done_by: p.done_by })),
-    ]);
-  } catch (e: any) {
-    alert(e?.message || "Failed to complete all tasks.");
-  }
-}
-
-
-  
-
-  async function completeAllToday() {
-    const ids = dueTodayAll.filter((t) => !runsKey.has(`${t.id}|${today}`)).map((t) => t.id);
-    if (!ids.length || !ini) return;
-
-    const { data: tRows, error: tErr } = await supabase
-      .from("cleaning_tasks")
-      .select("id,org_id")
-      .in("id", ids);
-    if (tErr) {
-      alert(tErr.message);
+  /* ---------- Complete / Uncomplete (ORG SCOPED + UPSERT) ---------- */
+  async function completeOne(id: string, initialsVal: string) {
+    const org_id = await getActiveOrgIdClient();
+    if (!org_id) {
+      alert("No organisation found.");
       return;
     }
-
-    const payload = (tRows ?? []).map((r: any) => ({
-      org_id: String(r.org_id),
-      task_id: String(r.id),
-      run_on: today,
-      done_by: ini.toUpperCase(),
-    }));
-
-    const { error } = await supabase.from("cleaning_task_runs").insert(payload);
-    if (error) {
-      alert(error.message);
+    if (!initialsVal) {
+      alert("Select initials first.");
       return;
     }
+    try {
+      const payload = [{ org_id, task_id: id, run_on: today, done_by: initialsVal.toUpperCase() }];
+      const { error } = await supabase
+        .from("cleaning_task_runs")
+        .upsert(payload, { onConflict: "org_id,task_id,run_on" });
+      if (error) throw error;
+      setRuns((prev) => [...prev, { task_id: id, run_on: today, done_by: initialsVal.toUpperCase() }]);
+    } catch (e: any) {
+      alert(e?.message || "Failed to save completion.");
+    }
+  }
 
-    setRuns((prev) => [
-      ...prev,
-      ...payload.map((p) => ({ task_id: p.task_id, run_on: p.run_on, done_by: p.done_by })),
-    ]);
+  async function uncompleteOne(id: string) {
+    const org_id = await getActiveOrgIdClient();
+    if (!org_id) {
+      alert("No organisation found.");
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from("cleaning_task_runs")
+        .delete()
+        .eq("org_id", org_id)
+        .eq("task_id", id)
+        .eq("run_on", today);
+      if (error) throw error;
+      setRuns((prev) => prev.filter((r) => !(r.task_id === id && r.run_on === today)));
+    } catch (e: any) {
+      alert(e?.message || "Failed to undo completion.");
+    }
+  }
+
+  async function completeMany(ids: string[], initialsVal: string) {
+    const org_id = await getActiveOrgIdClient();
+    if (!org_id) {
+      alert("No organisation found.");
+      return;
+    }
+    if (!ids.length) return;
+    if (!initialsVal) {
+      alert("Select initials first.");
+      return;
+    }
+    try {
+      const payload = ids.map((task_id) => ({
+        org_id,
+        task_id,
+        run_on: today,
+        done_by: initialsVal.toUpperCase(),
+      }));
+      const { error } = await supabase
+        .from("cleaning_task_runs")
+        .upsert(payload, { onConflict: "org_id,task_id,run_on" });
+      if (error) throw error;
+      setRuns((prev) => [
+        ...prev,
+        ...payload.map((p) => ({ task_id: p.task_id, run_on: p.run_on, done_by: p.done_by })),
+      ]);
+    } catch (e: any) {
+      alert(e?.message || "Failed to complete all tasks.");
+    } finally {
+      setConfirm(null);
+      setConfirmInitials("");
+    }
   }
 
   /* ================== Render ================== */
   return (
     <div className="space-y-6">
       {/* KPI grid + pills */}
-      <div className="space-y-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
         {(() => {
           const todayISO = new Date().toISOString().slice(0, 10);
           const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+          since.setHours(0, 0, 0, 0);
           const in7d = (d: string | null) => (d ? new Date(d) >= since : false);
 
           const entriesToday = rows.filter((r) => r.date === todayISO).length;
@@ -809,19 +794,19 @@ async function completeMany(ids: string[], initialsVal: string) {
 
           return (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              <div className="rounded-xl border border-gray-200 bg-white p-3">
+              <div className="rounded-xl border bg-white p-3">
                 <div className="text-xs text-gray-500">Entries today</div>
                 <div className="text-2xl font-semibold">{entriesToday}</div>
               </div>
-              <div className="rounded-xl border border-gray-200 bg-white p-3">
+              <div className="rounded-xl border bg-white p-3">
                 <div className="text-xs text-gray-500">Last 7 days</div>
                 <div className="text-2xl font-semibold">{last7}</div>
               </div>
-              <div className="rounded-xl border border-gray-200 bg-white p-3">
+              <div className="rounded-xl border bg-white p-3">
                 <div className="text-xs text-gray-500">Failures (7d)</div>
                 <div className="text-2xl font-semibold">{fails7}</div>
               </div>
-              <div className="rounded-xl border border-gray-200 bg-white p-3">
+              <div className="rounded-xl border bg-white p-3">
                 <div className="text-xs text-gray-500">Top logger</div>
                 <div className="text-2xl font-semibold">
                   {(() => {
@@ -837,14 +822,11 @@ async function completeMany(ids: string[], initialsVal: string) {
                 </div>
               </div>
 
-              {/* Cleaning tile – opens Today view */}
+              {/* Cleaning tile – opens Today view (modal) */}
               <button
                 type="button"
-                onClick={() => {
-                  setRotaMode("today");
-                  setShowRota(true);
-                }}
-                className="rounded-xl border border-gray-200 bg-white p-3 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black/10"
+                onClick={() => setShowRota(true)}
+                className="rounded-xl border bg-white p-3 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black/10"
                 title="Open today’s cleaning tasks"
               >
                 <div className="text-xs text-gray-500">Cleaning (today)</div>
@@ -901,8 +883,6 @@ async function completeMany(ids: string[], initialsVal: string) {
                 : "OK"}
             </span>
           </a>
-
-      
         </div>
 
         {err && (
@@ -912,46 +892,36 @@ async function completeMany(ids: string[], initialsVal: string) {
         )}
       </div>
 
-      {/* ======= Cleaning rota: Today’s Tasks (quick view on dashboard) ======= */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <h2 className="text-lg font-semibold">Today’s Cleaning</h2>
+      {/* ======= Cleaning rota: Today’s Tasks (quick view) ======= */}
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center gap-2">
+          <h2 className="text-lg font-semibold">Today’s Cleaning Tasks</h2>
 
           <div className="ml-auto flex items-center gap-2">
-            <label className="text-xs text-gray-600">Initials</label>
-            <select
-              value={ini}
-              onChange={(e) => setIni(e.target.value.toUpperCase())}
-              className="h-9 rounded-xl border border-gray-200 px-2 py-1.5 uppercase"
-            >
-              {initials.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-
-            <div className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm">
-              {doneCount}/{dueTodayAll.length}
-            </div>
-
-            <button
-              className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
-              onClick={completeAllToday}
-              disabled={!ini || dueTodayAll.every((t) => runsKey.has(`${t.id}|${today}`))}
-              title="Mark all due tasks complete"
-            >
-              Complete all today
-            </button>
+            {dueTodayAll.some((t) => !runsKey.has(`${t.id}|${today}`)) && (
+              <button
+                className="rounded-full border px-3 py-1.5 text-xs hover:bg-gray-50"
+                onClick={() => {
+                  const ids = dueTodayAll
+                    .filter((t) => !runsKey.has(`${t.id}|${today}`))
+                    .map((t) => t.id);
+                  setConfirm({ ids, run_on: today });
+                  setConfirmLabel("Complete all due today");
+                  setConfirmInitials(form.staff_initials || initials[0] || "");
+                }}
+              >
+                Complete all today
+              </button>
+            )}
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {/* Weekly/Monthly (full list) */}
+          {/* Weekly/Monthly */}
           <div className="space-y-2">
             <div className="text-xs font-medium uppercase text-gray-500">Weekly / Monthly</div>
             {dueNonDaily.length === 0 && (
-              <div className="rounded border border-gray-200 p-3 text-sm text-gray-500">No tasks.</div>
+              <div className="rounded border p-3 text-sm text-gray-500">No tasks.</div>
             )}
             {dueNonDaily.map((t) => {
               const key = `${t.id}|${today}`;
@@ -960,44 +930,50 @@ async function completeMany(ids: string[], initialsVal: string) {
               return (
                 <div
                   key={key}
-                  className="flex items-start justify-between gap-2 rounded border border-gray-200 px-2 py-2 text-sm"
+                  className="flex items-start justify-between gap-2 rounded border px-2 py-2 text-sm"
                 >
                   <div className={done ? "text-gray-500 line-through" : ""}>
                     <div className="font-medium">{t.task}</div>
-                    <div className="text-xs text-gray-500">
-                      {(t.category ?? t.area ?? "—")} • {t.frequency === "weekly" ? "Weekly" : "Monthly"}
-                    </div>
-                    {run?.done_by && (
-                      <div className="text-[11px] text-gray-400">Done by {run.done_by}</div>
+                    {(t.area || t.category) && (
+                      <div className="text-xs text-gray-500">
+                        {(t.category ?? t.area) || "—"} • {t.frequency === "weekly" ? "Weekly" : "Monthly"}
+                      </div>
                     )}
+                    {run?.done_by ? (
+                      <div className="text-xs text-gray-400">Done by {run.done_by}</div>
+                    ) : null}
                   </div>
 
-                  <StatusPill
+                  <Pill
                     done={done}
-                    onClick={() => (done ? uncompleteOne(t.id) : completeOne(t.id, ini))}
+                    onClick={() => (done ? uncompleteOne(t.id) : completeOne(t.id, form.staff_initials || initials[0] || ""))}
                   />
                 </div>
               );
             })}
           </div>
 
-          {/* Daily (by category tiles) */}
+          {/* Daily: category chips only; click to open modal */}
           <div className="space-y-2">
             <div className="text-xs font-medium uppercase text-gray-500">Daily (by category)</div>
-
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {CLEANING_CATEGORIES.map((cat) => {
+              {CATEGORIES.map((cat) => {
                 const list = dailyByCat.get(cat) ?? [];
-                const incomplete = list.filter((t) => !runsKey.has(`${t.id}|${today}`)).length;
+                const open = list.filter((t) => !runsKey.has(`${t.id}|${today}`)).length;
+                const doneAll = list.length > 0 && open === 0;
+                const chipClass = doneAll
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                  : "bg-red-50 border-red-200 text-red-800";
                 return (
                   <button
                     key={cat}
-                    className="rounded-xl border border-gray-200 px-3 py-2 text-left hover:bg-gray-50"
+                    className={`rounded-xl border px-3 py-2 text-left hover:bg-gray-50 ${chipClass}`}
                     onClick={() => setCatOpen(cat)}
                   >
-                    <div className="text-xs text-gray-500">{cat}</div>
+                    <div className="text-xs">{cat}</div>
                     <div className="text-lg font-semibold">
-                      {list.length} <span className="ml-1 text-[11px] text-gray-500">({incomplete} open)</span>
+                      {list.length}
+                      <span className="ml-1 text-[11px] opacity-70">({open} open)</span>
                     </div>
                   </button>
                 );
@@ -1008,14 +984,14 @@ async function completeMany(ids: string[], initialsVal: string) {
       </div>
 
       {/* ======= ENTRY FORM ======= */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">Enter Temperature Log</h2>
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
               onClick={() => setShowPicker(true)}
-              className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
               title="Pick a routine"
             >
               Use routine
@@ -1024,7 +1000,7 @@ async function completeMany(ids: string[], initialsVal: string) {
             <button
               type="button"
               onClick={() => setFormOpen((v) => !v)}
-              className="flex items-center gap-1 rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="flex items-center gap-1 rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
               title="Hide or show entry form"
               aria-expanded={formOpen}
             >
@@ -1042,7 +1018,7 @@ async function completeMany(ids: string[], initialsVal: string) {
                 type="date"
                 value={form.date}
                 onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
-                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2"
+                className="h-10 w-full rounded-xl border px-3 py-2"
               />
             </div>
 
@@ -1057,7 +1033,7 @@ async function completeMany(ids: string[], initialsVal: string) {
                     localStorage.setItem(LS_LAST_INITIALS, v);
                   } catch {}
                 }}
-                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2 uppercase"
+                className="h-10 w-full rounded-xl border px-3 py-2 uppercase"
               >
                 {!form.staff_initials && initials.length === 0 && (
                   <option value="" disabled>
@@ -1083,7 +1059,7 @@ async function completeMany(ids: string[], initialsVal: string) {
                     localStorage.setItem(LS_LAST_LOCATION, v);
                   } catch {}
                 }}
-                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2"
+                className="h-10 w-full rounded-xl border px-3 py-2"
               >
                 {!form.location && locations.length === 0 && (
                   <option value="" disabled>
@@ -1103,7 +1079,7 @@ async function completeMany(ids: string[], initialsVal: string) {
               <input
                 value={form.item}
                 onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
-                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2"
+                className="h-10 w-full rounded-xl border px-3 py-2"
                 placeholder="e.g., Chicken curry"
               />
             </div>
@@ -1113,7 +1089,7 @@ async function completeMany(ids: string[], initialsVal: string) {
               <select
                 value={form.target_key}
                 onChange={(e) => setForm((f) => ({ ...f, target_key: e.target.value }))}
-                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2"
+                className="h-10 w-full rounded-xl border px-3 py-2"
               >
                 {TARGET_PRESETS.map((p) => (
                   <option key={p.key} value={p.key}>
@@ -1132,7 +1108,7 @@ async function completeMany(ids: string[], initialsVal: string) {
                 value={form.temp_c}
                 onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
                 onKeyDown={onTempKeyDown}
-                className="h-10 w-full rounded-xl border border-gray-200 px-3 py-2"
+                className="h-10 w-full rounded-xl border px-3 py-2"
                 inputMode="decimal"
                 placeholder="e.g., 5.0"
               />
@@ -1177,12 +1153,12 @@ async function completeMany(ids: string[], initialsVal: string) {
       />
 
       {/* ======= LOGS: table (desktop) + cards (mobile) ======= */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Temperature Logs</h2>
           <button
             onClick={refreshRows}
-            className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+            className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
           >
             Refresh
           </button>
@@ -1272,7 +1248,7 @@ async function completeMany(ids: string[], initialsVal: string) {
                       r.target_key ? (TARGET_BY_KEY as any)[r.target_key] : undefined;
                     const st = r.status ?? inferStatus(r.temp_c, preset);
                     return (
-                      <div key={r.id} className="rounded-xl border border-gray-200 p-3">
+                      <div key={r.id} className="rounded-xl border p-3">
                         <div className="flex items-center justify-between">
                           <div className="text-sm font-medium">{r.item ?? "—"}</div>
                           {st && (
@@ -1313,34 +1289,25 @@ async function completeMany(ids: string[], initialsVal: string) {
         </div>
       </div>
 
-      {/* Cleaning completion modal (legacy) */}
+      {/* Cleaning completion modal (confirm all) */}
       {confirm && (
         <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setConfirm(null)}>
           <form
             onSubmit={(e) => {
               e.preventDefault();
               if (!confirmInitials.trim()) return;
-              // use new flow: complete each with fetched org_id
-              (async () => {
-                for (const id of confirm.ids) {
-                  await completeOne(id, confirmInitials.trim());
-                }
-                setConfirm(null);
-                setConfirmInitials("");
-              })();
+              completeMany(confirm.ids, confirmInitials.trim());
             }}
             onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-6 flex h-[70vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow sm:mt-24 sm:h-auto sm:rounded-2xl"
+            className="mx-auto mt-6 flex h-[70vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-24 sm:h-auto sm:rounded-2xl"
           >
             <div className="sticky top-0 z-10 border-b bg-white px-4 py-3 text-base font-semibold">
               {confirmLabel}
             </div>
             <div className="grow overflow-y-auto px-4 py-3 space-y-3">
-              <div className="rounded border border-gray-200 bg-gray-50 p-2 text-sm">
+              <div className="rounded border bg-gray-50 p-2 text-sm">
                 <div className="font-medium">
-                  {confirm.ids.length === 1
-                    ? (tasks.find((t) => t.id === confirm.ids[0])?.task ?? "Task")
-                    : `${confirm.ids.length} tasks`}
+                  {confirm.ids.length} tasks
                 </div>
                 <div className="mt-1 text-xs text-gray-500">
                   For <strong>{nice(confirm.run_on)}</strong>
@@ -1350,7 +1317,7 @@ async function completeMany(ids: string[], initialsVal: string) {
               <label className="block text-sm">
                 <div className="mb-1 text-gray-600">Initials</div>
                 <select
-                  className="w-full rounded-xl border border-gray-200 px-2 py-1.5 uppercase"
+                  className="w-full rounded-xl border px-2 py-1.5 uppercase"
                   value={confirmInitials}
                   onChange={(e) => setConfirmInitials(e.target.value.toUpperCase())}
                   required
@@ -1390,28 +1357,26 @@ async function completeMany(ids: string[], initialsVal: string) {
         open={!!catOpen}
         category={catOpen || ""}
         tasks={(catOpen ? dailyByCat.get(catOpen) : []) || []}
-        today={today}
-        initials={ini}
         runsKey={runsKey}
+        today={today}
+        initials={form.staff_initials || initials[0] || ""}
         onClose={() => setCatOpen(null)}
         onCompleteOne={completeOne}
         onUncompleteOne={uncompleteOne}
       />
 
-      {/* Cleaning Rota modal (Today or Manage) */}
+      {/* Optional: full Cleaning Rota modal */}
       {showRota && (
         <div
           className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/30"
           onClick={() => setShowRota(false)}
         >
           <div
-            className="mx-auto w-full max-w-5xl overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow sm:rounded-2xl"
+            className="mx-auto w-full max-w-5xl overflow-hidden rounded-t-2xl border bg-white shadow sm:rounded-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
-              <div className="text-base font-semibold">
-                {rotaMode === "manage" ? "Manage Cleaning Rota" : "Today’s Cleaning Tasks"}
-              </div>
+              <div className="text-base font-semibold">Today’s Cleaning Tasks</div>
               <button
                 className="rounded-md px-2 py-1 text-sm hover:bg-gray-100"
                 onClick={() => setShowRota(false)}
@@ -1419,9 +1384,8 @@ async function completeMany(ids: string[], initialsVal: string) {
                 Close
               </button>
             </div>
-
             <div className="max-h-[80vh] overflow-y-auto p-4">
-              <CleaningRota mode={rotaMode} />
+              <CleaningRota />
             </div>
           </div>
         </div>
