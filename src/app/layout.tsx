@@ -6,6 +6,11 @@ import MobileMenu from "@/components/MobileMenu";
 import UserMenu from "@/components/UserMenu";
 import { getUserOrNull } from "@/app/actions/auth";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister"; // ← added
+import Pwa from "@/components/Pwa";
+
+
+
+
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const user = await getUserOrNull();
@@ -14,6 +19,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en">
       <head>
         {/* PWA-friendly meta (safe even if you ignore PWA) */}
+        <link rel="manifest" href="/manifest.webmanifest" />
         <meta name="theme-color" content="#111111" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -52,7 +58,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </div>
           </div>
         </header>
-
+ <Pwa />
         {/* Page container */}
         <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
 
