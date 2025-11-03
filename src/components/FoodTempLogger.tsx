@@ -831,13 +831,6 @@ export default function FoodTempLogger({
     }
   }
 
-  /* =============== Render =============== */
-// src/components/FoodTempLogger.tsx
-// …imports and code above unchanged…
-
-export default function FoodTempLogger({ initials: initialsSeed = [], locations: locationsSeed = [] }: Props) {
-  // …state + effects unchanged…
-
   return (
     <div className="space-y-6">
       {/* KPI grid + pills */}
