@@ -51,8 +51,8 @@ function CategoryPill({
 }) {
   const color =
     open > 0
-      ? "bg-red-50 text-red-700 border-red-300"
-      : "bg-emerald-50 text-emerald-700 border-emerald-300";
+      ? "bg-red-50 text-red-700 border-red-200"
+      : "bg-emerald-50 text-emerald-700 border-emerald-200";
   return (
     <div
       className={`flex flex-col justify-between min-h-[64px] rounded-xl border px-3 py-2 text-left ${color}`}
@@ -214,7 +214,9 @@ export default function CleaningRota() {
       run_on: today,
       done_by: initialsVal.toUpperCase(),
     };
-    const { error } = await supabase.from("cleaning_task_runs").insert(payload);
+    const { error } = await supabase
+      .from("cleaning_task_runs")
+      .insert(payload);
     if (error) {
       alert(error.message);
       return;
@@ -240,9 +242,7 @@ export default function CleaningRota() {
       alert(error.message);
       return;
     }
-    setRuns((prev) =>
-      prev.filter((r) => !(r.task_id === id && r.run_on === today))
-    );
+    setRuns((prev) => prev.filter((r) => !(r.task_id === id && r.run_on === today)));
   }
 
   async function completeMany(ids: string[], initialsVal: string) {
@@ -254,7 +254,9 @@ export default function CleaningRota() {
       run_on: today,
       done_by: initialsVal.toUpperCase(),
     }));
-    const { error } = await supabase.from("cleaning_task_runs").insert(payload);
+    const { error } = await supabase
+      .from("cleaning_task_runs")
+      .insert(payload);
     if (error) {
       alert(error.message);
       return;
@@ -271,26 +273,25 @@ export default function CleaningRota() {
 
   return (
     <div className={PAGE + " space-y-6"}>
-      {/* ===== Header / Weekly/Monthly + Daily Pills (same card) ===== */}
+      {/* ===== Header / Actions ===== */}
       <div className={CARD + " p-4"}>
-        {/* Header / Actions */}
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <h1 className="text-lg font-semibold leading-tight">Cleaning rota</h1>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="inline-flex items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="shrink-0 rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
               onClick={() => setManageOpen(true)}
             >
               Manage tasks
             </button>
 
-            <label className="text-xs text-gray-600">Initials</label>
+            <label className="shrink-0 text-xs text-gray-600">Initials</label>
             <select
               value={ini}
               onChange={(e) => setIni(e.target.value.toUpperCase())}
-              className="h-9 rounded-xl border border-gray-200 px-2 py-1.5 uppercase"
+              className="shrink-0 h-9 rounded-xl border border-gray-300 px-2 py-1.5 uppercase"
             >
               {initials.map((v) => (
                 <option key={v} value={v}>
@@ -299,13 +300,13 @@ export default function CleaningRota() {
               ))}
             </select>
 
-            <div className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm">
+            <div className="shrink-0 rounded-xl border border-gray-300 px-3 py-1.5 text-sm">
               {doneCount}/{dueToday.length}
             </div>
 
             <button
               type="button"
-              className="inline-flex items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="shrink-0 rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
               title="Complete everything due today"
               onClick={() => {
                 const ids = dueToday
@@ -313,16 +314,14 @@ export default function CleaningRota() {
                   .map((t) => t.id);
                 completeMany(ids, ini);
               }}
-              disabled={
-                !ini || dueToday.every((t) => runsKey.has(`${t.id}|${today}`))
-              }
+              disabled={!ini || dueToday.every((t) => runsKey.has(`${t.id}|${today}`))}
             >
               Complete all today
             </button>
           </div>
         </div>
 
-        {/* Weekly / Monthly due today */}
+        {/* ===== Weekly / Monthly due today ===== */}
         <div className="space-y-2">
           <div className="text-[11px] font-semibold uppercase text-gray-500">
             Weekly / Monthly
@@ -374,7 +373,7 @@ export default function CleaningRota() {
           )}
         </div>
 
-        {/* Daily summary by category (pills) */}
+        {/* ===== Daily summary by category (pills) ===== */}
         <div className="mt-4">
           <div className="text-[11px] font-semibold uppercase text-gray-500">
             Daily tasks (by category)
@@ -382,8 +381,7 @@ export default function CleaningRota() {
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 mt-2">
             {CLEANING_CATEGORIES.map((cat) => {
               const list = dailyByCat.get(cat) ?? [];
-              const open = list.filter((t) => !runsKey.has(`${t.id}|${today}`))
-                .length;
+              const open = list.filter((t) => !runsKey.has(`${t.id}|${today}`)).length;
               return (
                 <CategoryPill key={cat} title={cat} total={list.length} open={open} />
               );
@@ -392,7 +390,7 @@ export default function CleaningRota() {
         </div>
       </div>
 
-      {/* Upcoming (7 days) — weekly/monthly only */}
+      {/* ===== Upcoming (7 days) — weekly/monthly only ===== */}
       <div className={CARD + " p-4"}>
         <div className="mb-2 text-base font-semibold">Upcoming (next 7 days)</div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-4">
@@ -425,7 +423,7 @@ export default function CleaningRota() {
         </div>
       </div>
 
-      {/* Manage Tasks Modal */}
+      {/* ===== Manage Tasks Modal ===== */}
       <ManageCleaningTasksModal
         open={manageOpen}
         onClose={() => setManageOpen(false)}
