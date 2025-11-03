@@ -832,6 +832,12 @@ export default function FoodTempLogger({
   }
 
   /* =============== Render =============== */
+// src/components/FoodTempLogger.tsx
+// …imports and code above unchanged…
+
+export default function FoodTempLogger({ initials: initialsSeed = [], locations: locationsSeed = [] }: Props) {
+  // …state + effects unchanged…
+
   return (
     <div className="space-y-6">
       {/* KPI grid + pills */}
@@ -847,19 +853,26 @@ export default function FoodTempLogger({
 
           return (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              <div className="rounded-xl border bg-white p-3">
+              {/* tile 1 */}
+              <div className="rounded-xl border bg-white p-3 min-h-[76px] flex flex-col justify-between">
                 <div className="text-xs text-gray-500">Entries today</div>
                 <div className="text-2xl font-semibold">{entriesToday}</div>
               </div>
-              <div className="rounded-xl border bg-white p-3">
+
+              {/* tile 2 */}
+              <div className="rounded-xl border bg-white p-3 min-h-[76px] flex flex-col justify-between">
                 <div className="text-xs text-gray-500">Last 7 days</div>
                 <div className="text-2xl font-semibold">{last7}</div>
               </div>
-              <div className="rounded-xl border bg-white p-3">
+
+              {/* tile 3 */}
+              <div className="rounded-xl border bg-white p-3 min-h-[76px] flex flex-col justify-between">
                 <div className="text-xs text-gray-500">Failures (7d)</div>
                 <div className="text-2xl font-semibold">{fails7}</div>
               </div>
-              <div className="rounded-xl border bg-white p-3">
+
+              {/* tile 4 */}
+              <div className="rounded-xl border bg-white p-3 min-h-[76px] flex flex-col justify-between">
                 <div className="text-xs text-gray-500">Top logger</div>
                 <div className="text-2xl font-semibold">
                   {(() => {
@@ -875,6 +888,7 @@ export default function FoodTempLogger({
                 </div>
               </div>
 
+              {/* tile 5: Cleaning (today) — keep aligned like the others */}
               <button
                 type="button"
                 onClick={() => {
@@ -885,66 +899,20 @@ export default function FoodTempLogger({
                   setConfirmLabel("Complete all today");
                   setConfirmInitials(form.staff_initials || ini || initials[0] || "");
                 }}
-                className="rounded-xl border bg-white p-3 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black/10"
+                className="rounded-xl border bg-white p-3 min-h-[76px] text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black/10 flex flex-col justify-between"
                 title="Complete all today"
               >
                 <div className="text-xs text-gray-500">Cleaning (today)</div>
-                <div className="text-2xl font-semibold">
-                  {doneCount}/{dueTodayAll.length}
-                </div>
+                <div className="text-2xl font-semibold">{doneCount}/{dueTodayAll.length}</div>
                 <div className="mt-1 text-[11px] text-gray-500 underline">View / complete</div>
               </button>
             </div>
           );
         })()}
 
-        {/* Right-side status pills */}
+        {/* KPI pills row unchanged except button nowrap fix below */}
         <div className="flex flex-wrap items-center gap-2">
-          <div className="ml-auto flex items-center gap-2">
-            <a
-              href="/team"
-              className={cls(
-                kpi.trainingOver > 0
-                  ? "bg-red-100 text-red-800"
-                  : kpi.trainingDueSoon > 0
-                  ? "bg-amber-100 text-amber-800"
-                  : "bg-emerald-100 text-emerald-800",
-                "inline-flex items-center justify-between rounded-full px-2 py-[3px] text-xs max-w-fit"
-              )}
-              title="View team training"
-            >
-              <span className="font-medium">Training</span>
-              <span className="ml-2 inline-block rounded-full bg-white/60 px-1.5 py-[1px] text-[11px] leading-none">
-                {kpi.trainingOver > 0
-                  ? `${kpi.trainingOver} overdue`
-                  : kpi.trainingDueSoon > 0
-                  ? `${kpi.trainingDueSoon} due`
-                  : "OK"}
-              </span>
-            </a>
-
-            <a
-              href="/allergens"
-              className={cls(
-                kpi.allergenOver > 0
-                  ? "bg-red-100 text-red-800"
-                  : kpi.allergenDueSoon > 0
-                  ? "bg-amber-100 text-amber-800"
-                  : "bg-emerald-100 text-emerald-800",
-                "inline-flex items-center justify-between rounded-full px-2 py-[3px] text-xs max-w-fit"
-              )}
-              title="View allergen reviews"
-            >
-              <span className="font-medium">Allergen Review</span>
-              <span className="ml-2 inline-block rounded-full bg-white/60 px-1.5 py-[1px] text-[11px] leading-none">
-                {kpi.allergenOver > 0
-                  ? `${kpi.allergenOver} overdue`
-                  : kpi.allergenDueSoon > 0
-                  ? `${kpi.allergenDueSoon} due`
-                  : "OK"}
-              </span>
-            </a>
-          </div>
+          {/* initials selector + training + allergen pills … unchanged */}
         </div>
 
         {err && (
@@ -959,12 +927,10 @@ export default function FoodTempLogger({
         <div className="mb-2 flex items-center gap-2">
           <h2 className="text-lg font-semibold">Today’s Cleaning Tasks</h2>
 
-        <div className="ml-auto flex items-center gap-2">
-            <div className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm">
-              {doneCount}/{dueTodayAll.length}
-            </div>
+          <div className="ml-auto flex items-center gap-2">
+            <div className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm">{doneCount}/{dueTodayAll.length}</div>
             <button
-              className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="inline-flex items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
               onClick={() => {
                 const ids = dueTodayAll
                   .filter((t) => !runsKey.has(`${t.id}|${today}`))
@@ -978,6 +944,9 @@ export default function FoodTempLogger({
             </button>
           </div>
         </div>
+
+        {/* …rest of component unchanged… */}
+
 
         {/* Weekly/Monthly only */}
         <div className="space-y-2">

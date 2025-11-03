@@ -781,6 +781,35 @@ export default function AllergenManager() {
               <button className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800">
                 Save &amp; lock
               </button>
+              // src/components/AllergenManager.tsx
+// …everything above unchanged…
+
+export default function AllergenManager() {
+  // …state, effects, handlers unchanged…
+
+  return (
+    <div className="px-4 py-6">
+      {/* review + query + matrix + mobile cards … unchanged */}
+
+      {/* Legend — NEW */}
+      <div className="mt-8 rounded-xl border border-gray-300 bg-white p-3">
+        <div className="mb-2 text-sm font-semibold text-gray-700">Allergen legend</div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-4 gap-y-2 text-sm text-gray-700">
+          {ALLERGENS.map((a) => (
+            <div key={a.key} className="flex items-center gap-2">
+              <span className="text-base leading-none">{a.icon}</span>
+              <span>{a.label}</span>
+              <span className="ml-1 font-mono text-[11px] text-gray-500">{a.short}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* modal … unchanged */}
+    </div>
+  );
+}
+
             </div>
           </form>
         </div>

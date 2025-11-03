@@ -271,6 +271,11 @@ export default function CleaningRota() {
     ]);
   }
 
+  // src/components/CleaningRota.tsx
+// …imports & helpers unchanged…
+
+
+
   return (
     <div className={PAGE + " space-y-6"}>
       {/* ===== Header / Actions ===== */}
@@ -281,7 +286,7 @@ export default function CleaningRota() {
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
-              className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="inline-flex items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
               onClick={() => setManageOpen(true)}
             >
               Manage tasks
@@ -291,22 +296,20 @@ export default function CleaningRota() {
             <select
               value={ini}
               onChange={(e) => setIni(e.target.value.toUpperCase())}
-              className="h-9 rounded-xl border border-gray-300 px-2 py-1.5 uppercase"
+              className="h-9 rounded-xl border border-gray-200 px-2 py-1.5 uppercase"
             >
               {initials.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
+                <option key={v} value={v}>{v}</option>
               ))}
             </select>
 
-            <div className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm">
+            <div className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm">
               {doneCount}/{dueToday.length}
             </div>
 
             <button
               type="button"
-              className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="inline-flex items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
               title="Complete everything due today"
               onClick={() => {
                 const ids = dueToday
@@ -321,6 +324,11 @@ export default function CleaningRota() {
           </div>
         </div>
 
+        {/* …rest of component unchanged… */}
+
+          </div>
+        </div>
+  )
         {/* ===== Weekly / Monthly due today ===== */}
         <div className="space-y-2">
           <div className="text-[11px] font-semibold uppercase text-gray-500">
@@ -388,7 +396,7 @@ export default function CleaningRota() {
             })}
           </div>
         </div>
-      </div>
+      
 
       {/* ===== Upcoming (7 days) — weekly/monthly only ===== */}
       <div className={CARD + " p-4"}>
@@ -431,6 +439,6 @@ export default function CleaningRota() {
           await loadAll();
         }}
       />
-    </div>
+  
   );
 }
