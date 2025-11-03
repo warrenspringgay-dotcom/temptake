@@ -441,9 +441,9 @@ export default function AllergenManager() {
 
   const reviewPanelTone = hydrated
     ? overdue(review)
-      ? "border-red-200 bg-red-50"
-      : "border-emerald-200 bg-emerald-50"
-    : "border-gray-200 bg-white";
+      ? "border-red-300 bg-red-50"
+      : "border-emerald-300 bg-emerald-50"
+    : "border-gray-300 bg-white";
 
   return (
     <div className="px-4 py-6">
@@ -462,7 +462,7 @@ export default function AllergenManager() {
             <input
               type="number"
               min={7}
-              className="w-24 flex-1 rounded-xl border border-gray-300 px-2 py-1 text-sm"
+              className="w-24 flex-1 rounded-xl border border-gray-600 px-2 py-1 text-sm"
               value={review.intervalDays}
               onChange={(e) =>
                 setReview((r) => ({
@@ -482,13 +482,13 @@ export default function AllergenManager() {
       </div>
 
       {/* QUERY – SAFE FOODS */}
-      <details className="mb-4 rounded-xl border border-gray-200 bg-white p-3">
+      <details className="mb-4 rounded-xl border border-gray-600 bg-white p-3">
         <summary className="cursor-pointer select-none font-medium">Allergen Query (safe foods)</summary>
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+          <div className="rounded-xl border border-gray-300 bg-gray-50 p-3">
             <div className="mb-2 text-sm font-medium">Category</div>
             <select
-              className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              className="w-full rounded-md border border-gray-600 px-2 py-1.5 text-sm"
               value={qCat}
               onChange={(e) => setQCat(e.target.value as "All" | Category)}
             >
@@ -502,7 +502,7 @@ export default function AllergenManager() {
             <p className="mt-2 text-xs text-gray-600">Only items <strong>without</strong> the selected allergens appear below.</p>
           </div>
 
-          <div className="md:col-span-2 rounded-md border border-gray-200 bg-gray-50 p-3">
+          <div className="md:col-span-2 rounded-md border border-gray-300 bg-gray-50 p-3">
             <div className="mb-2 text-sm font-medium">Select allergens to exclude</div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
               {ALLERGENS.map((a) => (
@@ -519,7 +519,7 @@ export default function AllergenManager() {
               ))}
             </div>
             <div className="mt-3 flex items-center gap-2">
-              <button className="rounded border px-2 py-1 text-xs hover:bg-white" onClick={() => setQFlags(emptyFlags())}>
+              <button className="rounded border border-gray-600 px-2 py-1 text-xs hover:bg-white" onClick={() => setQFlags(emptyFlags())}>
                 Clear selection
               </button>
               <span className="text-xs text-gray-600">Selected: {Object.values(qFlags).filter(Boolean).length}</span>
@@ -531,7 +531,7 @@ export default function AllergenManager() {
         {hydrated && selectedAllergenKeys.length > 0 && (
           <div className="mt-4">
             <div className="mb-2 text-sm font-semibold">Safe foods ({safeFoods.length})</div>
-            <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+            <div className="overflow-x-auto rounded-lg border border-gray-300 bg-white">
               <table className="min-w-[640px] w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr className="text-left text-gray-600">
@@ -547,7 +547,7 @@ export default function AllergenManager() {
                     </tr>
                   )}
                   {safeFoods.map((r) => (
-                    <tr key={r.id} className="border-t">
+                    <tr key={r.id} className="border-t border-gray-300">
                       <td className="px-3 py-2">{r.item}</td>
                       <td className="px-3 py-2">{r.category ?? ""}</td>
                       <td className="px-3 py-2">{r.notes ?? ""}</td>
@@ -570,7 +570,7 @@ export default function AllergenManager() {
         </button>
 
         <button
-          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+          className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
           onClick={() => loadFromSupabase()}
           disabled={cloudBusy || !orgId}
           title={orgId ? "Reload from cloud" : "No organisation (local only)"}
@@ -581,7 +581,7 @@ export default function AllergenManager() {
 
       {/* MATRIX – Desktop table */}
       <div className="mb-2 hidden text-sm font-semibold md:block">Allergen matrix</div>
-      <div className="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
+      <div className="hidden overflow-x-auto rounded-2xl border border-gray-600 bg-white md:block">
         <table className="min-w-[700px] w-full text-sm">
           <thead className="bg-gray-50">
             <tr className="text-left text-gray-600">
@@ -604,7 +604,7 @@ export default function AllergenManager() {
               </tr>
             ) : (
               rows.map((row) => (
-                <tr key={row.id} className="border-t">
+                <tr key={row.id} className="border-t border-gray-300">
                   <td className="px-3 py-2">{row.item}</td>
                   <td className="px-3 py-2">{row.category ?? ""}</td>
                   {ALLERGENS.map((a) => {
@@ -639,13 +639,13 @@ export default function AllergenManager() {
       {/* MOBILE – Cards */}
       <div className="md:hidden">
         {rows.length === 0 ? (
-          <div className="rounded-lg border border-gray-200 bg-white p-4 text-center text-gray-500">
+          <div className="rounded-lg border border-gray-300 bg-white p-4 text-center text-gray-500">
             {loadErr ? `Error: ${loadErr}` : "No items."}
           </div>
         ) : (
           <div className="space-y-3">
             {rows.map((row) => (
-              <div key={row.id} className="rounded-lg border border-gray-200 bg-white p-3">
+              <div key={row.id} className="rounded-lg border border-gray-300 bg-white p-3">
                 <div className="mb-2 flex items-start justify-between gap-2">
                   <div>
                     <div className="font-medium">{row.item}</div>
@@ -666,7 +666,7 @@ export default function AllergenManager() {
                       <div
                         key={a.key}
                         className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
-                          yes ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"
+                          yes ? "bg-red-50 text-red-800 border border-red-300" : "bg-emerald-50 text-emerald-800 border border-emerald-300"
                         }`}
                       >
                         <span className="flex items-center gap-1">
@@ -692,9 +692,9 @@ export default function AllergenManager() {
           <form
             onSubmit={saveDraft}
             onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-3 flex h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-16 sm:h-[80vh] sm:rounded-2xl"
+            className="mx-auto mt-3 flex h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-gray-300 bg-white shadow sm:mt-16 sm:h-[80vh] sm:rounded-2xl"
           >
-            <div className="sticky top-0 z-10 border-b bg-white px-4 py-3 text-base font-semibold">
+            <div className="sticky top-0 z-10 border-b border-gray-300 bg-white px-4 py-3 text-base font-semibold">
               Allergen item
             </div>
 
@@ -730,11 +730,11 @@ export default function AllergenManager() {
                 {ALLERGENS.map((a) => {
                   const val = draft.flags[a.key];
                   return (
-                    <div key={a.key} className="flex items-center justify-between rounded border p-2">
+                    <div key={a.key} className="flex items-center justify-between rounded border border-gray-300 p-2">
                       <span title={a.label} className="text-sm">
                         {a.icon} <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
                       </span>
-                      <div className="inline-flex overflow-hidden rounded border">
+                      <div className="inline-flex overflow-hidden rounded border border-gray-300">
                         <button
                           type="button"
                           className={`px-2 py-1 text-xs ${
@@ -774,7 +774,7 @@ export default function AllergenManager() {
               </p>
             </div>
 
-            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white px-4 py-3">
+            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t border-gray-300 bg-white px-4 py-3">
               <button type="button" className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50" onClick={closeModal}>
                 Cancel
               </button>

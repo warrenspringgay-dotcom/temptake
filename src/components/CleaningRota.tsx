@@ -8,7 +8,7 @@ import ManageCleaningTasksModal, {
 } from "@/components/ManageCleaningTasksModal";
 
 const PAGE = "max-w-[1100px] mx-auto px-3 sm:px-4";
-const CARD = "rounded-2xl border border-gray-200 bg-white shadow-sm";
+const CARD = "rounded-2xl border border-gray-600 bg-white shadow-sm";
 
 type Frequency = "daily" | "weekly" | "monthly";
 type Task = {
@@ -51,8 +51,8 @@ function CategoryPill({
 }) {
   const color =
     open > 0
-      ? "bg-red-50 text-red-700 border-red-200"
-      : "bg-emerald-50 text-emerald-700 border-emerald-200";
+      ? "bg-red-50 text-red-700 border-red-300"
+      : "bg-emerald-50 text-emerald-700 border-emerald-300";
   return (
     <div
       className={`flex flex-col justify-between min-h-[64px] rounded-xl border px-3 py-2 text-left ${color}`}
@@ -281,7 +281,7 @@ export default function CleaningRota() {
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
-              className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
               onClick={() => setManageOpen(true)}
             >
               Manage tasks
@@ -291,7 +291,7 @@ export default function CleaningRota() {
             <select
               value={ini}
               onChange={(e) => setIni(e.target.value.toUpperCase())}
-              className="h-9 rounded-xl border border-gray-200 px-2 py-1.5 uppercase"
+              className="h-9 rounded-xl border border-gray-300 px-2 py-1.5 uppercase"
             >
               {initials.map((v) => (
                 <option key={v} value={v}>
@@ -300,13 +300,13 @@ export default function CleaningRota() {
               ))}
             </select>
 
-            <div className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm">
+            <div className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm">
               {doneCount}/{dueToday.length}
             </div>
 
             <button
               type="button"
-              className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
               title="Complete everything due today"
               onClick={() => {
                 const ids = dueToday
@@ -327,7 +327,7 @@ export default function CleaningRota() {
             Weekly / Monthly
           </div>
           {nonDailyToday.length === 0 ? (
-            <div className="rounded-xl border border-gray-200 p-3 text-sm text-gray-500">
+            <div className="rounded-xl border border-gray-300 p-3 text-sm text-gray-500">
               No tasks.
             </div>
           ) : (
@@ -338,7 +338,7 @@ export default function CleaningRota() {
               return (
                 <div
                   key={t.id}
-                  className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 px-2 py-2 text-sm"
+                  className="flex items-start justify-between gap-2 rounded-xl border border-gray-300 px-2 py-2 text-sm"
                 >
                   <div className={done ? "text-gray-500 line-through" : ""}>
                     <div className="font-medium">{t.task}</div>
@@ -395,7 +395,7 @@ export default function CleaningRota() {
         <div className="mb-2 text-base font-semibold">Upcoming (next 7 days)</div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-4">
           {upcoming.map(({ day, list }) => (
-            <div key={day} className="rounded-xl border border-gray-200 p-3">
+            <div key={day} className="rounded-xl border border-gray-300 p-3">
               <div className="mb-1 flex items-center justify-between">
                 <div className="font-medium">{nice(day)}</div>
                 <div className="text-xs text-gray-500">{list.length} due</div>
@@ -407,7 +407,7 @@ export default function CleaningRota() {
                   {list.map((t) => (
                     <li
                       key={t.id}
-                      className="rounded border border-gray-200 px-2 py-1.5 text-sm"
+                      className="rounded border border-gray-300 px-2 py-1.5 text-sm"
                     >
                       <div className="font-medium">{t.task}</div>
                       <div className="text-xs text-gray-500">
