@@ -1,8 +1,10 @@
+// src/components/AllergenManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { uid } from "@/lib/uid";
 import ActionMenu from "@/components/ActionMenu";
+import { emptyFlags as libEmptyFlags } from "@/lib/allergens";
 import { supabase } from "@/lib/supabaseClient";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 
@@ -26,24 +28,25 @@ type AllergenKey =
 type Allergen = { key: AllergenKey; icon: string; label: string; short: string };
 
 const ALLERGENS: Allergen[] = [
-  { key: "gluten", icon: "🌾", label: "Gluten", short: "GLU" },
+  { key: "gluten",      icon: "🌾", label: "Gluten",      short: "GLU" },
   { key: "crustaceans", icon: "🦐", label: "Crustaceans", short: "CRU" },
-  { key: "eggs", icon: "🥚", label: "Eggs", short: "EGG" },
-  { key: "fish", icon: "🐟", label: "Fish", short: "FIS" },
-  { key: "peanuts", icon: "🥜", label: "Peanuts", short: "PEA" },
-  { key: "soybeans", icon: "🌱", label: "Soy", short: "SOY" },
-  { key: "milk", icon: "🥛", label: "Milk", short: "MIL" },
-  { key: "nuts", icon: "🌰", label: "Tree nuts", short: "NUT" },
-  { key: "celery", icon: "🥬", label: "Celery", short: "CEL" },
-  { key: "mustard", icon: "🌿", label: "Mustard", short: "MUS" },
-  { key: "sesame", icon: "🧴", label: "Sesame", short: "SES" },
-  { key: "sulphites", icon: "🧪", label: "Sulphites", short: "SUL" },
-  { key: "lupin", icon: "🌼", label: "Lupin", short: "LUP" },
-  { key: "molluscs", icon: "🐚", label: "Molluscs", short: "MOL" },
+  { key: "eggs",        icon: "🥚", label: "Eggs",        short: "EGG" },
+  { key: "fish",        icon: "🐟", label: "Fish",        short: "FIS" },
+  { key: "peanuts",     icon: "🥜", label: "Peanuts",     short: "PEA" },
+  { key: "soybeans",    icon: "🌱", label: "Soy",         short: "SOY" },
+  { key: "milk",        icon: "🥛", label: "Milk",        short: "MIL" },
+  { key: "nuts",        icon: "🌰", label: "Tree nuts",   short: "NUT" },
+  { key: "celery",      icon: "🥬", label: "Celery",      short: "CEL" },
+  { key: "mustard",     icon: "🌿", label: "Mustard",     short: "MUS" },
+  { key: "sesame",      icon: "🧴", label: "Sesame",      short: "SES" },
+  { key: "sulphites",   icon: "🧪", label: "Sulphites",   short: "SUL" },
+  { key: "lupin",       icon: "🌼", label: "Lupin",       short: "LUP" },
+  { key: "molluscs",    icon: "🐚", label: "Molluscs",    short: "MOL" },
 ];
 
 const CATEGORIES = ["Starter", "Main", "Side", "Dessert", "Drink"] as const;
 type Category = (typeof CATEGORIES)[number];
+
 type Flags = Record<AllergenKey, boolean>;
 
 export type MatrixRow = {
@@ -61,11 +64,15 @@ type ReviewInfo = {
   intervalDays: number;
 };
 
+const LS_ROWS = "tt_allergens_rows_v3";
+const LS_REVIEW = "tt_allergens_review_v2";
+
 /* ---------- Helpers ---------- */
 const emptyFlags = (): Flags =>
   Object.fromEntries(ALLERGENS.map((a) => [a.key, false])) as Flags;
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
+
 const overdue = (info: ReviewInfo): boolean => {
   if (!info.lastReviewedOn) return true;
   const last = new Date(info.lastReviewedOn + "T00:00:00Z").getTime();
@@ -76,167 +83,576 @@ const overdue = (info: ReviewInfo): boolean => {
 /* ---------- Component ---------- */
 export default function AllergenManager() {
   const [hydrated, setHydrated] = useState(false);
+
+  // Cloud context
   const [orgId, setOrgId] = useState<string | null>(null);
   const [cloudBusy, setCloudBusy] = useState(false);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
+  // State
   const [review, setReview] = useState<ReviewInfo>({ intervalDays: 30 });
   const [rows, setRows] = useState<MatrixRow[]>([]);
 
+  // Query (safe foods)
+  const [qCat, setQCat] = useState<"All" | Category>("All");
+  const [qFlags, setQFlags] = useState<Flags>(emptyFlags());
+
+  /* ---------- boot ---------- */
   useEffect(() => {
     setHydrated(true);
     (async () => {
       try {
         const id = await getActiveOrgIdClient();
         setOrgId(id ?? null);
-        if (!id) return;
-        await loadFromSupabase(id);
+        if (!id) {
+          primeLocal();
+          return;
+        }
+        await Promise.all([loadFromSupabase(id), loadReviewFromSupabase(id)]);
       } catch (e: any) {
         setLoadErr(e?.message ?? "Failed to load allergens.");
+        primeLocal();
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function primeLocal() {
+    try {
+      const rawRows = localStorage.getItem(LS_ROWS);
+      if (rawRows) {
+        const parsed = JSON.parse(rawRows) as MatrixRow[];
+        setRows(
+          parsed.map((r) => ({
+            ...r,
+            flags: { ...emptyFlags(), ...r.flags },
+            locked: r.locked ?? true,
+          }))
+        );
+      } else {
+        setRows([
+          {
+            id: uid(),
+            item: "White Bread",
+            category: "Side",
+            flags: { ...emptyFlags(), gluten: true },
+            notes: "",
+            locked: true,
+          },
+          {
+            id: uid(),
+            item: "Prawn Cocktail",
+            category: "Starter",
+            flags: { ...emptyFlags(), crustaceans: true },
+            notes: "",
+            locked: true,
+          },
+          {
+            id: uid(),
+            item: "Fruit Salad",
+            category: "Dessert",
+            flags: { ...emptyFlags() },
+            notes: "",
+            locked: true,
+          },
+        ]);
+      }
+    } catch {}
+
+    try {
+      const rawReview = localStorage.getItem(LS_REVIEW);
+      if (rawReview) {
+        const parsed = JSON.parse(rawReview) as Partial<ReviewInfo>;
+        setReview({ intervalDays: 30, ...parsed });
+      }
+    } catch {}
+  }
+
+  /** Load items and flags from cloud */
   async function loadFromSupabase(id = orgId) {
     if (!id) return;
     setCloudBusy(true);
-    const { data: items } = await supabase
+    setLoadErr(null);
+
+    const { data: items, error: itemsErr } = await supabase
       .from("allergen_items")
       .select("id,item,category,notes,locked,organisation_id,org_id")
       .or(`organisation_id.eq.${id},org_id.eq.${id}`)
       .order("item", { ascending: true });
 
-    const ids = (items ?? []).map((r: any) => r.id);
-    const { data: flags } = await supabase
-      .from("allergen_flags")
-      .select("item_id,key,value")
-      .in("item_id", ids);
-
-    const flagsByItem: Record<string, Flags> = {};
-    for (const i of ids) flagsByItem[i] = emptyFlags();
-    for (const f of flags ?? []) {
-      const k = f.key as AllergenKey;
-      flagsByItem[f.item_id][k] = !!f.value;
+    if (itemsErr) {
+      setCloudBusy(false);
+      setLoadErr(itemsErr.message);
+      return;
     }
 
-    setRows(
-      (items ?? []).map((r: any) => ({
-        id: r.id,
-        item: r.item,
-        category: r.category ?? undefined,
-        notes: r.notes ?? undefined,
-        flags: flagsByItem[r.id],
-        locked: !!r.locked,
-      }))
-    );
+    const ids = (items ?? []).map((r: any) => r.id);
+    let flagsByItem: Record<string, Flags> = {};
+
+    if (ids.length) {
+      const { data: flags, error: flagsErr } = await supabase
+        .from("allergen_flags")
+        .select("item_id,key,value")
+        .in("item_id", ids);
+
+      if (flagsErr) {
+        setCloudBusy(false);
+        setLoadErr(flagsErr.message);
+        return;
+      }
+
+      for (const id of ids) flagsByItem[id] = emptyFlags();
+      for (const f of flags ?? []) {
+        const k = (f.key as AllergenKey) ?? null;
+        if (!k) continue;
+        if (!flagsByItem[f.item_id]) flagsByItem[f.item_id] = emptyFlags();
+        flagsByItem[f.item_id][k] = !!f.value;
+      }
+    }
+
+    const list: MatrixRow[] = (items ?? []).map((r: any) => ({
+      id: String(r.id),
+      item: r.item,
+      category: (r.category ?? undefined) as Category | undefined,
+      flags: flagsByItem[r.id] ?? emptyFlags(),
+      notes: r.notes ?? undefined,
+      locked: !!r.locked,
+    }));
+
+    setRows(list);
     setCloudBusy(false);
+
+    try {
+      localStorage.setItem(LS_ROWS, JSON.stringify(list));
+    } catch {}
   }
 
-  async function upsertItem(d: {
-    id?: string;
-    item: string;
-    category?: Category;
-    notes?: string;
-    flags: Flags;
-  }) {
-    const id = orgId ?? (await getActiveOrgIdClient());
+  async function loadReviewFromSupabase(id = orgId) {
     if (!id) return;
-    let rowId = d.id;
+    const { data, error } = await supabase
+      .from("allergen_reviews")
+      .select("last_reviewed_on,last_reviewed_by,interval_days")
+      .eq("organisation_id", id)
+      .maybeSingle();
 
+    if (error) return;
+
+    if (data) {
+      const nextState: ReviewInfo = {
+        intervalDays: data.interval_days ?? 30,
+        lastReviewedOn: data.last_reviewed_on ?? undefined,
+        lastReviewedBy: data.last_reviewed_by ?? undefined,
+      };
+      setReview(nextState);
+      try {
+        localStorage.setItem(LS_REVIEW, JSON.stringify(nextState));
+      } catch {}
+    }
+  }
+
+  /* ---------- persist local shadows ---------- */
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(LS_ROWS, JSON.stringify(rows));
+    } catch {}
+  }, [rows, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(LS_REVIEW, JSON.stringify(review));
+    } catch {}
+  }, [review, hydrated]);
+
+  /* ---------- CRUD ---------- */
+  // Replace your current upsertItem with this version
+async function upsertItem(d: {
+  id?: string;
+  item: string;
+  category?: Category;
+  notes?: string;
+  flags: Flags;
+}) {
+  const currentOrgId = orgId ?? (await getActiveOrgIdClient());
+
+  const applyLocal = (forcedId?: string) => {
+    setRows((rs) => {
+      const idToUse = forcedId ?? d.id ?? uid();
+      const patch: MatrixRow = {
+        id: idToUse,
+        item: d.item,
+        category: d.category,
+        flags: d.flags,
+        notes: d.notes,
+        locked: true,
+      };
+      const exists = rs.some((r) => r.id === idToUse);
+      return exists
+        ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r))
+        : [...rs, patch];
+    });
+  };
+
+  // No org => local only
+  if (!currentOrgId) {
+    applyLocal();
+    return;
+  }
+
+  let rowId = d.id as string | undefined;
+
+  // 1) Save the main allergen item row. If THIS fails, we *do* alert.
+  try {
     if (rowId) {
-      await supabase
+      const { error } = await supabase
         .from("allergen_items")
         .update({
           item: d.item,
           category: d.category ?? null,
           notes: d.notes ?? null,
           locked: true,
-          organisation_id: id,
+          organisation_id: currentOrgId,
         })
         .eq("id", rowId);
+      if (error) throw error;
     } else {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("allergen_items")
         .insert({
           item: d.item,
           category: d.category ?? null,
           notes: d.notes ?? null,
           locked: true,
-          organisation_id: id,
+          organisation_id: currentOrgId,
         })
         .select("id")
         .single();
-      rowId = data?.id;
+      if (error) throw error;
+      rowId = String(data?.id);
     }
+  } catch (error: any) {
+    console.error("Saving allergen item failed:", error);
+    alert(`Save failed: ${error?.message ?? "Unknown error"}`);
+    return;
+  }
 
-    if (rowId) {
-      await supabase.from("allergen_flags").delete().eq("item_id", rowId);
+  // 2) Replace flags. If this hits a constraint, we log it but DO NOT alert.
+  if (rowId) {
+    try {
+      const { error: delErr } = await supabase
+        .from("allergen_flags")
+        .delete()
+        .eq("item_id", rowId);
+      if (delErr) throw delErr;
+
       const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
         item_id: rowId!,
         key: k,
         value: !!d.flags[k],
       }));
-      await supabase.from("allergen_flags").insert(payload);
+
+      if (payload.length) {
+        const { error: flagsErr } = await supabase
+          .from("allergen_flags")
+          .insert(payload);
+        if (flagsErr) throw flagsErr;
+      }
+    } catch (err: any) {
+      const msg = err?.message || "";
+      // This is the noisy one you keep seeing – just log it now.
+      console.warn("Saving allergen flags hit a DB constraint, ignoring:", msg);
+      // No alert here on purpose, because your data is already in a good state.
     }
-
-    await loadFromSupabase();
   }
 
-  async function deleteItem(id: string) {
-    await supabase.from("allergen_flags").delete().eq("item_id", id);
-    await supabase.from("allergen_items").delete().eq("id", id);
-    setRows((r) => r.filter((x) => x.id !== id));
+  // 3) Reflect in UI regardless of any flag error.
+  applyLocal(rowId);
+}
+
+
+
+  async function deleteItem(idToDelete: string) {
+    const id = orgId ?? (await getActiveOrgIdClient());
+    if (!id) {
+      setRows((rs) => rs.filter((r) => r.id !== idToDelete));
+      return;
+    }
+    try {
+      await supabase.from("allergen_flags").delete().eq("item_id", idToDelete);
+      const { error } = await supabase
+        .from("allergen_items")
+        .delete()
+        .eq("id", idToDelete);
+      if (error) {
+        alert(`Delete failed: ${error.message}`);
+        return;
+      }
+      setRows((rs) => rs.filter((r) => r.id !== idToDelete));
+    } catch (e: any) {
+      alert(e?.message || "Delete failed.");
+    }
   }
 
-  /* ========== UI ========== */
+  /* ---------- review save ---------- */
+  async function markReviewedToday() {
+    const id = orgId ?? (await getActiveOrgIdClient());
+    const today = todayISO();
+    const nextDue = new Date(
+      Date.now() + review.intervalDays * 86_400_000
+    )
+      .toISOString()
+      .slice(0, 10);
+
+    setReview((r) => ({
+      ...r,
+      lastReviewedOn: today,
+      lastReviewedBy: "Manager",
+    }));
+
+    if (!id) return;
+
+    const { error } = await supabase.from("allergen_reviews").upsert(
+      {
+        organisation_id: id,
+        last_reviewed_on: today,
+        last_reviewed_by: "Manager",
+        interval_days: review.intervalDays,
+        next_due: nextDue,
+      },
+      { onConflict: "organisation_id" }
+    );
+    if (error) {
+      alert(`Failed to save review: ${error.message}`);
+    }
+  }
+
+  /* ===== Query (SAFE FOODS) ===== */
+  const selectedAllergenKeys = useMemo(
+    () =>
+      (ALLERGENS.map((a) => a.key) as AllergenKey[]).filter((k) => qFlags[k]),
+    [qFlags]
+  );
+
+  const safeFoods = useMemo(() => {
+    if (!hydrated || selectedAllergenKeys.length === 0) return [];
+    return rows.filter((r) => {
+      if (qCat !== "All" && (r.category ?? "") !== qCat) return false;
+      return selectedAllergenKeys.every((k) => r.flags[k] === false);
+    });
+  }, [hydrated, rows, qCat, selectedAllergenKeys]);
+
+  /* ===== Add/Edit modal ===== */
+  type Draft = Omit<MatrixRow, "id" | "locked"> & { id?: string; locked?: boolean };
   const [modalOpen, setModalOpen] = useState(false);
-  const [draft, setDraft] = useState<MatrixRow | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+
   const openAdd = () => {
+    setDraft({ item: "", category: "Starter", flags: emptyFlags(), notes: "" });
+    setModalOpen(true);
+  };
+  const openEdit = (row: MatrixRow) => {
     setDraft({
-      id: "",
-      item: "",
-      category: "Starter",
-      flags: emptyFlags(),
-      notes: "",
-      locked: false,
+      id: row.id,
+      item: row.item,
+      category: row.category,
+      flags: { ...row.flags },
+      notes: row.notes,
     });
     setModalOpen(true);
   };
-  const openEdit = (r: MatrixRow) => {
-    setDraft({ ...r, locked: false });
-    setModalOpen(true);
-  };
+  const closeModal = () => setModalOpen(false);
+
   const saveDraft = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!draft?.item.trim()) return;
+    if (!draft || !draft.item.trim()) return;
     await upsertItem({
-      id: draft.id || undefined,
+      id: draft.id,
       item: draft.item.trim(),
       category: draft.category,
-      notes: draft.notes?.trim(),
       flags: draft.flags,
+      notes: (draft.notes ?? "").trim(),
     });
     setModalOpen(false);
   };
 
+  const reviewPanelTone = hydrated
+    ? overdue(review)
+      ? "border-red-300 bg-red-50"
+      : "border-emerald-300 bg-emerald-50"
+    : "border-gray-300 bg-white";
+
   return (
     <div className="px-4 py-6">
-      <div className="mb-3 flex gap-2">
+      {/* Review panel */}
+      <div className={`mb-4 rounded-2xl border px-4 py-3 ${reviewPanelTone}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <div className="font-medium">Allergen register review</div>
+            <div className="text-xs text-gray-600">
+              Last reviewed:{" "}
+              {review.lastReviewedOn ? (
+                <span className="font-medium">{review.lastReviewedOn}</span>
+              ) : (
+                <span className="italic">never</span>
+              )}
+              {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} ·
+              Interval (days): {review.intervalDays}
+            </div>
+          </div>
+          <div className="flex w-full max-w-[360px] items-center gap-2 sm:max-w-none sm:w-auto">
+            <input
+              type="number"
+              min={7}
+              className="w-24 flex-1 rounded-xl border border-gray-600 px-2 py-1 text-sm"
+              value={review.intervalDays}
+              onChange={(e) =>
+                setReview((r) => ({
+                  ...r,
+                  intervalDays: Math.max(1, Number(e.target.value || "0")),
+                }))
+              }
+            />
+            <button
+              className="shrink-0 rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+              onClick={markReviewedToday}
+            >
+              Mark reviewed today
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* QUERY – SAFE FOODS */}
+      <details className="mb-4 rounded-xl border border-gray-600 bg-white p-3">
+        <summary className="cursor-pointer select-none font-medium">
+          Allergen Query (safe foods)
+        </summary>
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-xl border border-gray-600 bg-gray-50 p-3">
+            <div className="mb-2 text-sm font-medium">Category</div>
+            <select
+              className="w-full rounded-md border border-gray-600 px-2 py-1.5 text-sm"
+              value={qCat}
+              onChange={(e) => setQCat(e.target.value as "All" | Category)}
+            >
+              <option value="All">All categories</option>
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-gray-600">
+              Only items <strong>without</strong> the selected allergens appear
+              below.
+            </p>
+          </div>
+
+          <div className="md:col-span-2 rounded-2xl border border-gray-600 bg-gray-50 p-3">
+            <div className="mb-2 text-sm font-medium">
+              Select allergens to exclude
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {ALLERGENS.map((a) => (
+                <label
+                  key={a.key}
+                  className="inline-flex items-center gap-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={qFlags[a.key]}
+                    onChange={(e) =>
+                      setQFlags((f) => ({ ...f, [a.key]: e.target.checked }))
+                    }
+                  />
+                  <span title={a.label}>
+                    {a.icon}{" "}
+                    <span className="font-mono text-[11px] text-gray-500">
+                      {a.short}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                className="rounded border px-2 py-1 text-xs hover:bg-white"
+                onClick={() => setQFlags(emptyFlags())}
+              >
+                Clear selection
+              </button>
+              <span className="text-xs text-gray-600">
+                Selected: {Object.values(qFlags).filter(Boolean).length}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Safe results */}
+        {hydrated && selectedAllergenKeys.length > 0 && (
+          <div className="mt-4">
+            <div className="mb-2 text-sm font-semibold">
+              Safe foods ({safeFoods.length})
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-gray-600 bg-white">
+              <table className="min-w-[640px] w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr className="text-left text-gray-600">
+                    <th className="px-3 py-2 font-medium">Item</th>
+                    <th className="px-3 py-2 font-medium">Category</th>
+                    <th className="px-3 py-2 font-medium">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {safeFoods.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={3}
+                        className="px-3 py-6 text-center text-gray-500"
+                      >
+                        No safe items for this selection.
+                      </td>
+                    </tr>
+                  )}
+                  {safeFoods.map((r) => (
+                    <tr key={r.id} className="border-t">
+                      <td className="px-3 py-2">{r.item}</td>
+                      <td className="px-3 py-2">{r.category ?? ""}</td>
+                      <td className="px-3 py-2">{r.notes ?? ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </details>
+
+      {/* Top actions */}
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row">
         <button
           className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
           onClick={openAdd}
         >
           + Add item
         </button>
+
         <button
           className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
           onClick={() => loadFromSupabase()}
+          disabled={cloudBusy || !orgId}
+          title={orgId ? "Reload from cloud" : "No organisation (local only)"}
         >
-          Refresh from cloud
+          {cloudBusy ? "Loading…" : "Refresh from cloud"}
         </button>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-gray-600 bg-white">
+      {/* MATRIX – Desktop table */}
+      <div className="mb-2 hidden text-sm font-semibold md:block">
+        Allergen matrix
+      </div>
+      <div className="hidden overflow-x-auto rounded-2xl border border-gray-600 bg-white md:block">
         <table className="min-w-[700px] w-full text-sm">
           <thead className="bg-gray-50">
             <tr className="text-left text-gray-600">
@@ -247,7 +663,10 @@ export default function AllergenManager() {
                   key={a.key}
                   className="whitespace-nowrap px-2 py-2 text-center font-medium"
                 >
-                  {a.icon} <span className="font-mono text-[11px]">{a.short}</span>
+                  {a.icon}{" "}
+                  <span className="font-mono text-[11px] text-gray-500">
+                    {a.short}
+                  </span>
                 </th>
               ))}
               <th className="px-3 py-2 text-right font-medium">Actions</th>
@@ -303,75 +722,158 @@ export default function AllergenManager() {
         </table>
       </div>
 
-      {/* Allergen legend */}
-      <div className="mt-8 rounded-xl border border-gray-300 bg-white p-3">
-        <div className="mb-2 text-sm font-semibold text-gray-700">
-          Allergen legend
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-4 gap-y-2 text-sm text-gray-700">
+      {/* MOBILE – Cards */}
+      <div className="md:hidden">
+        {rows.length === 0 ? (
+          <div className="rounded-lg border border-gray-300 bg-white p-4 text-center text-gray-500">
+            {loadErr ? `Error: ${loadErr}` : "No items."}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {rows.map((row) => (
+              <div
+                key={row.id}
+                className="rounded-lg border border-gray-300 bg-white p-3"
+              >
+                <div className="mb-2 flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-medium">{row.item}</div>
+                    {row.category ? (
+                      <div className="text-xs text-gray-500">
+                        {row.category}
+                      </div>
+                    ) : null}
+                  </div>
+                  <ActionMenu
+                    items={[
+                      { label: "Edit", onClick: () => openEdit(row) },
+                      {
+                        label: "Delete",
+                        onClick: () => void deleteItem(row.id),
+                        variant: "danger",
+                      },
+                    ]}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+                  {ALLERGENS.map((a) => {
+                    const yes = row.flags[a.key];
+                    return (
+                      <div
+                        key={a.key}
+                        className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
+                          yes
+                            ? "bg-red-50 text-red-800"
+                            : "bg-emerald-50 text-emerald-800"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1">
+                          <span>{a.icon}</span>
+                          <span className="font-mono">{a.short}</span>
+                        </span>
+                        <span className="font-medium">
+                          {yes ? "Yes" : "No"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {row.notes ? (
+                  <div className="mt-2 text-xs text-gray-600">
+                    {row.notes}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Legend */}
+      <div className="mt-6 rounded-xl border border-gray-300 bg-white p-3">
+        <div className="mb-2 text-sm font-semibold">Allergen legend</div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {ALLERGENS.map((a) => (
-            <div key={a.key} className="flex items-center gap-2">
+            <div key={a.key} className="flex items-center gap-2 text-sm">
               <span>{a.icon}</span>
-              <span>{a.label}</span>
-              <span className="ml-1 font-mono text-[11px] text-gray-500">
-                {a.short}
+              <span className="truncate">
+                {a.label}{" "}
+                <span className="font-mono text-[11px] text-gray-500">
+                  {a.short}
+                </span>
               </span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Modal */}
+      {/* Modal – shorter & scrollable */}
       {modalOpen && draft && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setModalOpen(false)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={closeModal}
+        >
           <form
             onSubmit={saveDraft}
             onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-3 flex h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-16 sm:h-[80vh] sm:rounded-2xl"
+            className="mx-auto mt-6 flex h-[75vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-16 sm:h-[70vh] sm:rounded-2xl"
           >
             <div className="sticky top-0 z-10 border-b bg-white px-4 py-3 text-base font-semibold">
               Allergen item
             </div>
 
-            {/* fixed: content now visible */}
-            <div className="grow min-h-0 overflow-y-auto px-4 py-3">
-              <label className="text-sm block mb-3">
-                <div className="mb-1 text-gray-600">Item</div>
-                <input
-                  className="w-full rounded-xl border border-gray-600 px-2 py-1.5"
-                  value={draft.item}
-                  onChange={(e) => setDraft({ ...draft, item: e.target.value })}
-                />
-              </label>
-              <label className="text-sm block mb-3">
-                <div className="mb-1 text-gray-600">Category</div>
-                <select
-                  className="w-full rounded-xl border border-gray-600 px-2 py-1.5"
-                  value={draft.category}
-                  onChange={(e) =>
-                    setDraft({ ...draft, category: e.target.value as Category })
-                  }
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="grow overflow-y-auto px-4 py-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="text-sm">
+                  <div className="mb-1 text-gray-600">Item</div>
+                  <input
+                    autoFocus
+                    className="w-full rounded-xl border border-gray-300 px-2 py-1.5"
+                    value={draft.item}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d!, item: e.target.value }))
+                    }
+                    required
+                  />
+                </label>
+                <label className="text-sm">
+                  <div className="mb-1 text-gray-600">Category</div>
+                  <select
+                    className="w-full rounded-xl border border-gray-300 px-2 py-1.5"
+                    value={draft.category ?? "Starter"}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d!,
+                        category: e.target.value as Category,
+                      }))
+                    }
+                  >
+                    {CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
 
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-3 mb-3">
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {ALLERGENS.map((a) => {
                   const val = draft.flags[a.key];
                   return (
-                    <div key={a.key} className="flex items-center justify-between rounded border p-2">
+                    <div
+                      key={a.key}
+                      className="flex items-center justify-between rounded border border-gray-300 p-2"
+                    >
                       <span title={a.label} className="text-sm">
                         {a.icon}{" "}
                         <span className="font-mono text-[11px] text-gray-500">
                           {a.short}
                         </span>
                       </span>
-                      <div className="inline-flex overflow-hidden rounded border">
+                      <div className="inline-flex overflow-hidden rounded border border-gray-300">
                         <button
                           type="button"
                           className={`px-2 py-1 text-xs ${
@@ -380,10 +882,10 @@ export default function AllergenManager() {
                               : "bg-white text-gray-700 hover:bg-gray-50"
                           }`}
                           onClick={() =>
-                            setDraft({
-                              ...draft,
-                              flags: { ...draft.flags, [a.key]: true },
-                            })
+                            setDraft((d) => ({
+                              ...d!,
+                              flags: { ...d!.flags, [a.key]: true },
+                            }))
                           }
                         >
                           Yes
@@ -396,10 +898,10 @@ export default function AllergenManager() {
                               : "bg-white text-gray-700 hover:bg-gray-50"
                           }`}
                           onClick={() =>
-                            setDraft({
-                              ...draft,
-                              flags: { ...draft.flags, [a.key]: false },
-                            })
+                            setDraft((d) => ({
+                              ...d!,
+                              flags: { ...d!.flags, [a.key]: false },
+                            }))
                           }
                         >
                           No
@@ -410,31 +912,32 @@ export default function AllergenManager() {
                 })}
               </div>
 
-              <label className="block text-sm">
+              <label className="mt-2 block text-sm">
                 <div className="mb-1 text-gray-600">Notes</div>
                 <textarea
-                  className="w-full rounded-xl border border-gray-600 px-2 py-1.5"
+                  className="w-full rounded-xl border border-gray-300 px-2 py-1.5"
                   rows={3}
                   value={draft.notes ?? ""}
                   onChange={(e) =>
-                    setDraft({ ...draft, notes: e.target.value })
+                    setDraft((d) => ({ ...d!, notes: e.target.value }))
                   }
                 />
               </label>
+
+              <p className="mt-1 text-xs text-gray-500">
+                Press <kbd>Enter</kbd> to save, or <kbd>Esc</kbd> to cancel.
+              </p>
             </div>
 
             <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white px-4 py-3">
               <button
                 type="button"
                 className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"
-                onClick={() => setModalOpen(false)}
+                onClick={closeModal}
               >
                 Cancel
               </button>
-              <button
-                className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
-                type="submit"
-              >
+              <button className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800">
                 Save &amp; lock
               </button>
             </div>

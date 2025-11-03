@@ -933,7 +933,7 @@ export default function FoodTempLogger({
                 setConfirmInitials(ini || form.staff_initials || initials[0] || "");
               }}
             >
-              Complete all today
+              Complete All
             </button>
           </div>
         </div>

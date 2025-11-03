@@ -6,6 +6,12 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
 
+import EditRoutineModal, {
+  type RoutineDraft,
+  type RoutineItemDraft,
+} from "@/components/EditRoutineModal";
+
+
 type RoutineItem = {
   id: string;
   routine_id: string;

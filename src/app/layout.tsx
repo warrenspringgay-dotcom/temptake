@@ -21,6 +21,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         {/* PWA-friendly meta (safe even if you ignore PWA) */}
         <link rel="manifest" href="/manifest.webmanifest" />
         <meta name="theme-color" content="#111111" />
+        <link rel="icon" href="/icon-192x192.png" sizes="192x192" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
