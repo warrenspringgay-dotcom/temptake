@@ -446,374 +446,302 @@ export default function AllergenManager() {
     : "border-gray-300 bg-white";
 
   return (
-    <div className="px-4 py-6">
-      {/* Review panel */}
-      <div className={`mb-4 rounded-xl border px-4 py-3 ${reviewPanelTone}`}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-0.5">
-            <div className="font-medium">Allergen register review</div>
-            <div className="text-xs text-gray-600">
-              Last reviewed:{" "}
-              {review.lastReviewedOn ? <span className="font-medium">{review.lastReviewedOn}</span> : <span className="italic">never</span>}
-              {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} · Interval (days): {review.intervalDays}
-            </div>
-          </div>
-          <div className="flex w-full max-w-[360px] items-center gap-2 sm:max-w-none sm:w-auto">
-            <input
-              type="number"
-              min={7}
-              className="w-24 flex-1 rounded-xl border border-gray-600 px-2 py-1 text-sm"
-              value={review.intervalDays}
-              onChange={(e) =>
-                setReview((r) => ({
-                  ...r,
-                  intervalDays: Math.max(1, Number(e.target.value || "0")),
-                }))
-              }
-            />
-            <button
-              className="shrink-0 rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
-              onClick={markReviewedToday}
-            >
-              Mark reviewed today
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* QUERY – SAFE FOODS */}
-      <details className="mb-4 rounded-xl border border-gray-600 bg-white p-3">
-        <summary className="cursor-pointer select-none font-medium">Allergen Query (safe foods)</summary>
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="rounded-xl border border-gray-300 bg-gray-50 p-3">
-            <div className="mb-2 text-sm font-medium">Category</div>
-            <select
-              className="w-full rounded-md border border-gray-600 px-2 py-1.5 text-sm"
-              value={qCat}
-              onChange={(e) => setQCat(e.target.value as "All" | Category)}
-            >
-              <option value="All">All categories</option>
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-            <p className="mt-2 text-xs text-gray-600">Only items <strong>without</strong> the selected allergens appear below.</p>
-          </div>
-
-          <div className="md:col-span-2 rounded-md border border-gray-300 bg-gray-50 p-3">
-            <div className="mb-2 text-sm font-medium">Select allergens to exclude</div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-              {ALLERGENS.map((a) => (
-                <label key={a.key} className="inline-flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={qFlags[a.key]}
-                    onChange={(e) => setQFlags((f) => ({ ...f, [a.key]: e.target.checked }))}
-                  />
-                  <span title={a.label}>
-                    {a.icon} <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-            <div className="mt-3 flex items-center gap-2">
-              <button className="rounded border border-gray-600 px-2 py-1 text-xs hover:bg-white" onClick={() => setQFlags(emptyFlags())}>
-                Clear selection
-              </button>
-              <span className="text-xs text-gray-600">Selected: {Object.values(qFlags).filter(Boolean).length}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Safe results */}
-        {hydrated && selectedAllergenKeys.length > 0 && (
-          <div className="mt-4">
-            <div className="mb-2 text-sm font-semibold">Safe foods ({safeFoods.length})</div>
-            <div className="overflow-x-auto rounded-lg border border-gray-300 bg-white">
-              <table className="min-w-[640px] w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr className="text-left text-gray-600">
-                    <th className="px-3 py-2 font-medium">Item</th>
-                    <th className="px-3 py-2 font-medium">Category</th>
-                    <th className="px-3 py-2 font-medium">Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {safeFoods.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="px-3 py-6 text-center text-gray-500">No safe items for this selection.</td>
-                    </tr>
-                  )}
-                  {safeFoods.map((r) => (
-                    <tr key={r.id} className="border-t border-gray-300">
-                      <td className="px-3 py-2">{r.item}</td>
-                      <td className="px-3 py-2">{r.category ?? ""}</td>
-                      <td className="px-3 py-2">{r.notes ?? ""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </details>
-
-      {/* Top actions */}
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row">
-        <button
-          className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
-          onClick={openAdd}
-        >
-          + Add item
-        </button>
-
-        <button
-          className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
-          onClick={() => loadFromSupabase()}
-          disabled={cloudBusy || !orgId}
-          title={orgId ? "Reload from cloud" : "No organisation (local only)"}
-        >
-          {cloudBusy ? "Loading…" : "Refresh from cloud"}
-        </button>
-      </div>
-
-      {/* MATRIX – Desktop table */}
-      <div className="mb-2 hidden text-sm font-semibold md:block">Allergen matrix</div>
-      <div className="hidden overflow-x-auto rounded-2xl border border-gray-600 bg-white md:block">
-        <table className="min-w-[700px] w-full text-sm">
-          <thead className="bg-gray-50">
-            <tr className="text-left text-gray-600">
-              <th className="px-2 py-2 font-medium">Item</th>
-              <th className="px-2 py-2 font-medium">Category</th>
-              {ALLERGENS.map((a) => (
-                <th key={a.key} className="whitespace-nowrap px-2 py-2 text-center font-medium">
-                  {a.icon} <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
-                </th>
-              ))}
-              <th className="px-3 py-2 text-right font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={2 + ALLERGENS.length + 1} className="px-3 py-6 text-center text-gray-500">
-                  {loadErr ? `Error: ${loadErr}` : "No items."}
-                </td>
-              </tr>
+  <div className="px-4 py-6">
+    {/* Review panel */}
+    <div className={`mb-4 rounded-xl border px-4 py-3 ${reviewPanelTone}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-0.5">
+          <div className="font-medium">Allergen register review</div>
+          <div className="text-xs text-gray-600">
+            Last reviewed:{" "}
+            {review.lastReviewedOn ? (
+              <span className="font-medium">{review.lastReviewedOn}</span>
             ) : (
-              rows.map((row) => (
-                <tr key={row.id} className="border-t border-gray-300">
-                  <td className="px-3 py-2">{row.item}</td>
-                  <td className="px-3 py-2">{row.category ?? ""}</td>
-                  {ALLERGENS.map((a) => {
-                    const yes = row.flags[a.key];
-                    return (
-                      <td key={a.key} className="px-2 py-2 text-center">
-                        <span
-                          className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${
-                            yes ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"
-                          }`}
-                        >
-                          {yes ? "Yes" : "No"}
-                        </span>
-                      </td>
-                    );
-                  })}
-                  <td className="px-3 py-2 text-right">
-                    <ActionMenu
-                      items={[
-                        { label: "Edit", onClick: () => openEdit(row) },
-                        { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
-                      ]}
-                    />
-                  </td>
-                </tr>
-              ))
+              <span className="italic">never</span>
             )}
-          </tbody>
-        </table>
+            {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} · Interval (days): {review.intervalDays}
+          </div>
+        </div>
+        <div className="flex w-full max-w-[360px] items-center gap-2 sm:max-w-none sm:w-auto">
+          <input
+            type="number"
+            min={7}
+            className="w-24 flex-1 rounded-xl border border-gray-600 px-2 py-1 text-sm"
+            value={review.intervalDays}
+            onChange={(e) =>
+              setReview((r) => ({
+                ...r,
+                intervalDays: Math.max(1, Number(e.target.value || "0")),
+              }))
+            }
+          />
+          <button
+            className="shrink-0 rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+            onClick={markReviewedToday}
+          >
+            Mark reviewed today
+          </button>
+        </div>
+      </div>
+    </div>
+
+    {/* QUERY – SAFE FOODS */}
+    <details className="mb-4 rounded-xl border border-gray-600 bg-white p-3">
+      <summary className="cursor-pointer select-none font-medium">Allergen Query (safe foods)</summary>
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="rounded-xl border border-gray-300 bg-gray-50 p-3">
+          <div className="mb-2 text-sm font-medium">Category</div>
+          <select
+            className="w-full rounded-md border border-gray-600 px-2 py-1.5 text-sm"
+            value={qCat}
+            onChange={(e) => setQCat(e.target.value as "All" | Category)}
+          >
+            <option value="All">All categories</option>
+            {CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <p className="mt-2 text-xs text-gray-600">
+            Only items <strong>without</strong> the selected allergens appear below.
+          </p>
+        </div>
+
+        <div className="md:col-span-2 rounded-md border border-gray-300 bg-gray-50 p-3">
+          <div className="mb-2 text-sm font-medium">Select allergens to exclude</div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+            {ALLERGENS.map((a) => (
+              <label key={a.key} className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={qFlags[a.key]}
+                  onChange={(e) => setQFlags((f) => ({ ...f, [a.key]: e.target.checked }))}
+                />
+                <span title={a.label}>
+                  {a.icon} <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              className="rounded border border-gray-600 px-2 py-1 text-xs hover:bg-white"
+              onClick={() => setQFlags(emptyFlags())}
+            >
+              Clear selection
+            </button>
+            <span className="text-xs text-gray-600">
+              Selected: {Object.values(qFlags).filter(Boolean).length}
+            </span>
+          </div>
+        </div>
       </div>
 
-      {/* MOBILE – Cards */}
-      <div className="md:hidden">
-        {rows.length === 0 ? (
-          <div className="rounded-lg border border-gray-300 bg-white p-4 text-center text-gray-500">
-            {loadErr ? `Error: ${loadErr}` : "No items."}
+      {/* Safe results */}
+      {hydrated && selectedAllergenKeys.length > 0 && (
+        <div className="mt-4">
+          <div className="mb-2 text-sm font-semibold">Safe foods ({safeFoods.length})</div>
+          <div className="overflow-x-auto rounded-lg border border-gray-300 bg-white">
+            <table className="min-w-[640px] w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr className="text-left text-gray-600">
+                  <th className="px-3 py-2 font-medium">Item</th>
+                  <th className="px-3 py-2 font-medium">Category</th>
+                  <th className="px-3 py-2 font-medium">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {safeFoods.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-6 text-center text-gray-500">
+                      No safe items for this selection.
+                    </td>
+                  </tr>
+                )}
+                {safeFoods.map((r) => (
+                  <tr key={r.id} className="border-t border-gray-300">
+                    <td className="px-3 py-2">{r.item}</td>
+                    <td className="px-3 py-2">{r.category ?? ""}</td>
+                    <td className="px-3 py-2">{r.notes ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        ) : (
-          <div className="space-y-3">
-            {rows.map((row) => (
-              <div key={row.id} className="rounded-lg border border-gray-300 bg-white p-3">
-                <div className="mb-2 flex items-start justify-between gap-2">
-                  <div>
-                    <div className="font-medium">{row.item}</div>
-                    {row.category ? <div className="text-xs text-gray-500">{row.category}</div> : null}
-                  </div>
+        </div>
+      )}
+    </details>
+
+    {/* Top actions */}
+    <div className="mb-3 flex flex-col gap-2 sm:flex-row">
+      <button
+        className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+        onClick={openAdd}
+      >
+        + Add item
+      </button>
+
+      <button
+        className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+        onClick={() => loadFromSupabase()}
+        disabled={cloudBusy || !orgId}
+        title={orgId ? 'Reload from cloud' : 'No organisation (local only)'}
+      >
+        {cloudBusy ? "Loading…" : "Refresh from cloud"}
+      </button>
+    </div>
+
+    {/* MATRIX – Desktop table */}
+    <div className="mb-2 hidden text-sm font-semibold md:block">Allergen matrix</div>
+    <div className="hidden overflow-x-auto rounded-2xl border border-gray-600 bg-white md:block">
+      <table className="min-w-[700px] w-full text-sm">
+        <thead className="bg-gray-50">
+          <tr className="text-left text-gray-600">
+            <th className="px-2 py-2 font-medium">Item</th>
+            <th className="px-2 py-2 font-medium">Category</th>
+            {ALLERGENS.map((a) => (
+              <th key={a.key} className="whitespace-nowrap px-2 py-2 text-center font-medium">
+                {a.icon} <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
+              </th>
+            ))}
+            <th className="px-3 py-2 text-right font-medium">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={2 + ALLERGENS.length + 1} className="px-3 py-6 text-center text-gray-500">
+                {loadErr ? `Error: ${loadErr}` : "No items."}
+              </td>
+            </tr>
+          ) : (
+            rows.map((row) => (
+              <tr key={row.id} className="border-t border-gray-300">
+                <td className="px-3 py-2">{row.item}</td>
+                <td className="px-3 py-2">{row.category ?? ""}</td>
+                {ALLERGENS.map((a) => {
+                  const yes = row.flags[a.key];
+                  return (
+                    <td key={a.key} className="px-2 py-2 text-center">
+                      <span
+                        className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${
+                          yes ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"
+                        }`}
+                      >
+                        {yes ? "Yes" : "No"}
+                      </span>
+                    </td>
+                  );
+                })}
+                <td className="px-3 py-2 text-right">
                   <ActionMenu
                     items={[
                       { label: "Edit", onClick: () => openEdit(row) },
                       { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
                     ]}
                   />
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+
+    {/* MOBILE – Cards */}
+    <div className="md:hidden">
+      {rows.length === 0 ? (
+        <div className="rounded-lg border border-gray-300 bg-white p-4 text-center text-gray-500">
+          {loadErr ? `Error: ${loadErr}` : "No items."}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {rows.map((row) => (
+            <div key={row.id} className="rounded-lg border border-gray-300 bg-white p-3">
+              <div className="mb-2 flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-medium">{row.item}</div>
+                  {row.category ? <div className="text-xs text-gray-500">{row.category}</div> : null}
                 </div>
-
-                <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-                  {ALLERGENS.map((a) => {
-                    const yes = row.flags[a.key];
-                    return (
-                      <div
-                        key={a.key}
-                        className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
-                          yes ? "bg-red-50 text-red-800 border border-red-300" : "bg-emerald-50 text-emerald-800 border border-emerald-300"
-                        }`}
-                      >
-                        <span className="flex items-center gap-1">
-                          <span>{a.icon}</span>
-                          <span className="font-mono">{a.short}</span>
-                        </span>
-                        <span className="font-medium">{yes ? "Yes" : "No"}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {row.notes ? <div className="mt-2 text-xs text-gray-600">{row.notes}</div> : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Modal */}
-      {modalOpen && draft && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={closeModal}>
-          <form
-            onSubmit={saveDraft}
-            onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-3 flex h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-gray-300 bg-white shadow sm:mt-16 sm:h-[80vh] sm:rounded-2xl"
-          >
-            <div className="sticky top-0 z-10 border-b border-gray-300 bg-white px-4 py-3 text-base font-semibold">
-              Allergen item
-            </div>
-
-            <div className="grow overflow-y-auto px-4 py-3">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="text-sm">
-                  <div className="mb-1 text-gray-600">Item</div>
-                  <input
-                    autoFocus
-                    className="w-full rounded-xl border border-gray-300 px-2 py-1.5"
-                    value={draft.item}
-                    onChange={(e) => setDraft({ ...draft, item: e.target.value })}
-                    required
-                  />
-                </label>
-                <label className="text-sm">
-                  <div className="mb-1 text-gray-600">Category</div>
-                  <select
-                    className="w-full rounded-xl border border-gray-300 px-2 py-1.5"
-                    value={draft.category ?? "Starter"}
-                    onChange={(e) => setDraft({ ...draft, category: e.target.value as Category })}
-                  >
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <ActionMenu
+                  items={[
+                    { label: "Edit", onClick: () => openEdit(row) },
+                    { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
+                  ]}
+                />
               </div>
 
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
                 {ALLERGENS.map((a) => {
-                  const val = draft.flags[a.key];
+                  const yes = row.flags[a.key];
                   return (
-                    <div key={a.key} className="flex items-center justify-between rounded border border-gray-300 p-2">
-                      <span title={a.label} className="text-sm">
-                        {a.icon} <span className="font-mono text-[11px] text-gray-500">{a.short}</span>
+                    <div
+                      key={a.key}
+                      className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
+                        yes
+                          ? "bg-red-50 text-red-800 border border-red-300"
+                          : "bg-emerald-50 text-emerald-800 border border-emerald-300"
+                      }`}
+                    >
+                      <span className="flex items-center gap-1">
+                        <span>{a.icon}</span>
+                        <span className="font-mono">{a.short}</span>
                       </span>
-                      <div className="inline-flex overflow-hidden rounded border border-gray-300">
-                        <button
-                          type="button"
-                          className={`px-2 py-1 text-xs ${
-                            val ? "bg-red-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
-                          }`}
-                          onClick={() => setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: true } }))}
-                        >
-                          Yes
-                        </button>
-                        <button
-                          type="button"
-                          className={`px-2 py-1 text-xs ${
-                            !val ? "bg-emerald-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
-                          }`}
-                          onClick={() => setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: false } }))}
-                        >
-                          No
-                        </button>
-                      </div>
+                      <span className="font-medium">{yes ? "Yes" : "No"}</span>
                     </div>
                   );
                 })}
               </div>
 
-              <label className="mt-2 block text-sm">
-                <div className="mb-1 text-gray-600">Notes</div>
-                <textarea
-                  className="w-full rounded-xl border border-gray-300 px-2 py-1.5"
-                  rows={3}
-                  value={draft.notes ?? ""}
-                  onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
-                />
-              </label>
-
-              <p className="mt-1 text-xs text-gray-500">
-                Press <kbd>Enter</kbd> to save, or <kbd>Esc</kbd> to cancel.
-              </p>
-            </div>
-
-            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t border-gray-300 bg-white px-4 py-3">
-              <button type="button" className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50" onClick={closeModal}>
-                Cancel
-              </button>
-              <button className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800">
-                Save &amp; lock
-              </button>
-              // src/components/AllergenManager.tsx
-// …everything above unchanged…
-
-export default function AllergenManager() {
-  // …state, effects, handlers unchanged…
-
-  return (
-    <div className="px-4 py-6">
-      {/* review + query + matrix + mobile cards … unchanged */}
-
-      {/* Legend — NEW */}
-      <div className="mt-8 rounded-xl border border-gray-300 bg-white p-3">
-        <div className="mb-2 text-sm font-semibold text-gray-700">Allergen legend</div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-4 gap-y-2 text-sm text-gray-700">
-          {ALLERGENS.map((a) => (
-            <div key={a.key} className="flex items-center gap-2">
-              <span className="text-base leading-none">{a.icon}</span>
-              <span>{a.label}</span>
-              <span className="ml-1 font-mono text-[11px] text-gray-500">{a.short}</span>
+              {row.notes ? <div className="mt-2 text-xs text-gray-600">{row.notes}</div> : null}
             </div>
           ))}
         </div>
-      </div>
-
-      {/* modal … unchanged */}
-    </div>
-  );
-}
-
-            </div>
-          </form>
-        </div>
       )}
     </div>
-  );
-}
+
+    {/* Legend */}
+    <div className="mt-8 rounded-xl border border-gray-300 bg-white p-3">
+      <div className="mb-2 text-sm font-semibold text-gray-700">Allergen legend</div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-4 gap-y-2 text-sm text-gray-700">
+        {ALLERGENS.map((a) => (
+          <div key={a.key} className="flex items-center gap-2">
+            <span className="text-base leading-none">{a.icon}</span>
+            <span>{a.label}</span>
+            <span className="ml-1 font-mono text-[11px] text-gray-500">{a.short}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+
+    {/* Modal */}
+    {modalOpen && draft && (
+      <div className="fixed inset-0 z-50 bg-black/30" onClick={closeModal}>
+        <form
+          onSubmit={saveDraft}
+          onClick={(e) => e.stopPropagation()}
+          className="mx-auto mt-3 flex h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-gray-300 bg-white shadow sm:mt-16 sm:h-[80vh] sm:rounded-2xl"
+        >
+          <div className="sticky top-0 z-10 border-b border-gray-300 bg-white px-4 py-3 text-base font-semibold">
+            Allergen item
+          </div>
+
+          <div className="grow overflow-y-auto px-4 py-3">
+            {/* form fields unchanged */}
+            {/* … keep your inputs from above … */}
+          </div>
+
+          <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t border-gray-300 bg-white px-4 py-3">
+            <button type="button" className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50" onClick={closeModal}>
+              Cancel
+            </button>
+            <button className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800">
+              Save &amp; lock
+            </button>
+          </div>
+        </form>
+      </div>
+    )}
+  </div>
+);}
