@@ -5,12 +5,23 @@ import NavTabs from "@/components/NavTabs";
 import MobileMenu from "@/components/MobileMenu";
 import UserMenu from "@/components/UserMenu";
 import { getUserOrNull } from "@/app/actions/auth";
+import ServiceWorkerRegister from "@/components/ServiceWorkerRegister"; // ← added
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const user = await getUserOrNull();
 
   return (
     <html lang="en">
+      <head>
+        {/* PWA-friendly meta (safe even if you ignore PWA) */}
+        <meta name="theme-color" content="#111111" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+        {/* If you don't add app/manifest.ts, you can uncomment the line below and serve /manifest.webmanifest manually
+        <link rel="manifest" href="/manifest.webmanifest" />
+        */}
+      </head>
       <body className="bg-gray-100 text-gray-900">
         {/* STICKY TOP BAR */}
         <header className="sticky top-0 z-50 border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/70">
@@ -44,6 +55,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
         {/* Page container */}
         <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+
+        {/* Register SW on the client (no UI impact) */}
+        <ServiceWorkerRegister />
       </body>
     </html>
   );
