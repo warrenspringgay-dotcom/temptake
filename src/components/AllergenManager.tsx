@@ -266,115 +266,111 @@ export default function AllergenManager() {
   }, [review, hydrated]);
 
   /* ---------- CRUD ---------- */
-  // Replace your current upsertItem with this version
-async function upsertItem(d: {
-  id?: string;
-  item: string;
-  category?: Category;
-  notes?: string;
-  flags: Flags;
-}) {
-  const currentOrgId = orgId ?? (await getActiveOrgIdClient());
 
-  const applyLocal = (forcedId?: string) => {
-    setRows((rs) => {
-      const idToUse = forcedId ?? d.id ?? uid();
-      const patch: MatrixRow = {
-        id: idToUse,
-        item: d.item,
-        category: d.category,
-        flags: d.flags,
-        notes: d.notes,
-        locked: true,
-      };
-      const exists = rs.some((r) => r.id === idToUse);
-      return exists
-        ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r))
-        : [...rs, patch];
-    });
-  };
+  async function upsertItem(d: {
+    id?: string;
+    item: string;
+    category?: Category;
+    notes?: string;
+    flags: Flags;
+  }) {
+    const currentOrgId = orgId ?? (await getActiveOrgIdClient());
 
-  // No org => local only
-  if (!currentOrgId) {
-    applyLocal();
-    return;
-  }
-
-  let rowId = d.id as string | undefined;
-
-  // 1) Save the main allergen item row. If THIS fails, we *do* alert.
-  try {
-    if (rowId) {
-      const { error } = await supabase
-        .from("allergen_items")
-        .update({
+    const applyLocal = (forcedId?: string) => {
+      setRows((rs) => {
+        const idToUse = forcedId ?? d.id ?? uid();
+        const patch: MatrixRow = {
+          id: idToUse,
           item: d.item,
-          category: d.category ?? null,
-          notes: d.notes ?? null,
+          category: d.category,
+          flags: d.flags,
+          notes: d.notes,
           locked: true,
-          organisation_id: currentOrgId,
-        })
-        .eq("id", rowId);
-      if (error) throw error;
-    } else {
-      const { data, error } = await supabase
-        .from("allergen_items")
-        .insert({
-          item: d.item,
-          category: d.category ?? null,
-          notes: d.notes ?? null,
-          locked: true,
-          organisation_id: currentOrgId,
-        })
-        .select("id")
-        .single();
-      if (error) throw error;
-      rowId = String(data?.id);
+        };
+        const exists = rs.some((r) => r.id === idToUse);
+        return exists
+          ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r))
+          : [...rs, patch];
+      });
+    };
+
+    // No org => purely local
+    if (!currentOrgId) {
+      applyLocal();
+      return;
     }
-  } catch (error: any) {
-    console.error("Saving allergen item failed:", error);
-    alert(`Save failed: ${error?.message ?? "Unknown error"}`);
-    return;
-  }
 
-  // 2) Replace flags. If this hits a constraint, we log it but DO NOT alert.
-  if (rowId) {
+    let rowId = d.id as string | undefined;
+
     try {
-      const { error: delErr } = await supabase
-        .from("allergen_flags")
-        .delete()
-        .eq("item_id", rowId);
-      if (delErr) throw delErr;
-
-      const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
-        item_id: rowId!,
-        key: k,
-        value: !!d.flags[k],
-      }));
-
-      if (payload.length) {
-        const { error: flagsErr } = await supabase
-          .from("allergen_flags")
-          .insert(payload);
-        if (flagsErr) throw flagsErr;
+      // 1) Upsert allergen_items with BOTH org columns
+      if (rowId) {
+        const { error } = await supabase
+          .from("allergen_items")
+          .update({
+            item: d.item,
+            category: d.category ?? null,
+            notes: d.notes ?? null,
+            locked: true,
+            organisation_id: currentOrgId, // legacy
+            org_id: currentOrgId,          // new NOT NULL column
+          })
+          .eq("id", rowId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from("allergen_items")
+          .insert({
+            item: d.item,
+            category: d.category ?? null,
+            notes: d.notes ?? null,
+            locked: true,
+            organisation_id: currentOrgId,
+            org_id: currentOrgId,
+          })
+          .select("id")
+          .single();
+        if (error) throw error;
+        rowId = String(data?.id);
       }
-    } catch (err: any) {
-      const msg = err?.message || "";
-      // This is the noisy one you keep seeing – just log it now.
-      console.warn("Saving allergen flags hit a DB constraint, ignoring:", msg);
-      // No alert here on purpose, because your data is already in a good state.
+
+      // 2) Replace flags
+      if (rowId) {
+        const { error: delErr } = await supabase
+          .from("allergen_flags")
+          .delete()
+          .eq("item_id", rowId);
+        if (delErr) throw delErr;
+
+        const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
+          item_id: rowId!,
+          key: k,
+          value: !!d.flags[k],
+        }));
+
+        if (payload.length) {
+          const { error: flagsErr } = await supabase
+            .from("allergen_flags")
+            .insert(payload);
+          if (flagsErr) throw flagsErr;
+        }
+      }
+
+      // 3) reflect in UI
+      applyLocal(rowId);
+    } catch (error: any) {
+      console.error("Saving allergen item/flags failed:", error);
+      applyLocal(rowId);
+      alert(
+        `Save failed: ${error?.message ?? "Unknown error"}`
+      );
     }
   }
-
-  // 3) Reflect in UI regardless of any flag error.
-  applyLocal(rowId);
-}
-
-
 
   async function deleteItem(idToDelete: string) {
     const id = orgId ?? (await getActiveOrgIdClient());
     if (!id) {
+      // local only
       setRows((rs) => rs.filter((r) => r.id !== idToDelete));
       return;
     }
@@ -481,6 +477,7 @@ async function upsertItem(d: {
       ? "border-red-300 bg-red-50"
       : "border-emerald-300 bg-emerald-50"
     : "border-gray-300 bg-white";
+
 
   return (
     <div className="px-4 py-6">

@@ -1,3 +1,4 @@
+// src/app/(protected)/cleaning/cleaning-rota-client.tsx (or similar)
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -11,6 +12,7 @@ const PAGE = "max-w-[1100px] mx-auto px-3 sm:px-4";
 const CARD = "rounded-2xl border border-gray-600 bg-white shadow-sm";
 
 type Frequency = "daily" | "weekly" | "monthly";
+
 type Task = {
   id: string;
   org_id: string;
@@ -21,18 +23,25 @@ type Task = {
   weekday: number | null;
   month_day: number | null;
 };
-type Run = { task_id: string; run_on: string; done_by: string | null };
+
+type Run = {
+  task_id: string;
+  run_on: string;
+  done_by: string | null;
+};
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const ISO_TODAY = () => iso(new Date());
 const getDow1to7 = (d: string) => ((new Date(d).getDay() + 6) % 7) + 1;
 const getDom = (d: string) => new Date(d).getDate();
+
 const isDueOn = (t: Task, y: string) =>
   t.frequency === "daily"
     ? true
     : t.frequency === "weekly"
     ? t.weekday === getDow1to7(y)
     : t.month_day === getDom(y);
+
 const nice = (d: string) =>
   new Date(d).toLocaleDateString(undefined, {
     weekday: "short",
@@ -92,6 +101,7 @@ export default function CleaningRota() {
         .select("initials")
         .eq("org_id", orgId)
         .order("initials");
+
       const list = Array.from(
         new Set(
           (data ?? [])
@@ -146,6 +156,7 @@ export default function CleaningRota() {
       }))
     );
   }
+
   useEffect(() => {
     loadAll();
   }, [today]);
@@ -203,24 +214,28 @@ export default function CleaningRota() {
     [days7, tasks]
   );
 
-  /** Complete helpers (always respect org_id for FK) */
+  /** ===== Complete helpers (always include org_id) ===== */
+
   async function completeOne(id: string, initialsVal: string) {
     const orgId = await getActiveOrgIdClient();
     if (!orgId) return;
 
     const payload = {
-      org_id: orgId,
+      org_id: orgId,                   // 👈 satisfies cleaning_task_runs_org_id_fkey
       task_id: id,
       run_on: today,
       done_by: initialsVal.toUpperCase(),
     };
+
     const { error } = await supabase
       .from("cleaning_task_runs")
       .insert(payload);
+
     if (error) {
       alert(error.message);
       return;
     }
+
     setRuns((prev) => [
       ...prev,
       { task_id: id, run_on: today, done_by: payload.done_by },
@@ -242,25 +257,32 @@ export default function CleaningRota() {
       alert(error.message);
       return;
     }
-    setRuns((prev) => prev.filter((r) => !(r.task_id === id && r.run_on === today)));
+
+    setRuns((prev) =>
+      prev.filter((r) => !(r.task_id === id && r.run_on === today))
+    );
   }
 
   async function completeMany(ids: string[], initialsVal: string) {
     const orgId = await getActiveOrgIdClient();
     if (!orgId || !ids.length) return;
+
     const payload = ids.map((id) => ({
       org_id: orgId,
       task_id: id,
       run_on: today,
       done_by: initialsVal.toUpperCase(),
     }));
+
     const { error } = await supabase
       .from("cleaning_task_runs")
       .insert(payload);
+
     if (error) {
       alert(error.message);
       return;
     }
+
     setRuns((prev) => [
       ...prev,
       ...payload.map((p) => ({
@@ -314,7 +336,10 @@ export default function CleaningRota() {
                   .map((t) => t.id);
                 completeMany(ids, ini);
               }}
-              disabled={!ini || dueToday.every((t) => runsKey.has(`${t.id}|${today}`))}
+              disabled={
+                !ini ||
+                dueToday.every((t) => runsKey.has(`${t.id}|${today}`))
+              }
             >
               Complete all today
             </button>
@@ -381,9 +406,16 @@ export default function CleaningRota() {
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 mt-2">
             {CLEANING_CATEGORIES.map((cat) => {
               const list = dailyByCat.get(cat) ?? [];
-              const open = list.filter((t) => !runsKey.has(`${t.id}|${today}`)).length;
+              const open = list.filter(
+                (t) => !runsKey.has(`${t.id}|${today}`)
+              ).length;
               return (
-                <CategoryPill key={cat} title={cat} total={list.length} open={open} />
+                <CategoryPill
+                  key={cat}
+                  title={cat}
+                  total={list.length}
+                  open={open}
+                />
               );
             })}
           </div>
@@ -392,7 +424,9 @@ export default function CleaningRota() {
 
       {/* ===== Upcoming (7 days) — weekly/monthly only ===== */}
       <div className={CARD + " p-4"}>
-        <div className="mb-2 text-base font-semibold">Upcoming (next 7 days)</div>
+        <div className="mb-2 text-base font-semibold">
+          Upcoming (next 7 days)
+        </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-4">
           {upcoming.map(({ day, list }) => (
             <div key={day} className="rounded-xl border border-gray-300 p-3">
