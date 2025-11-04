@@ -27,6 +27,48 @@ function inferStatus(
   return "pass";
 }
 
+/**
+ * Try hard to get an org_id:
+ * 1) use getActiveOrgIdClient()
+ * 2) fall back to profiles.org_id for the current user
+ * 3) cache it for next time
+ */
+async function getOrgIdSafe(): Promise<string | null> {
+  try {
+    const existing = await getActiveOrgIdClient();
+    if (existing) return existing;
+  } catch {
+    // ignore and fall through
+  }
+
+  try {
+    const { data: userRes } = await supabase.auth.getUser();
+    const userId = userRes?.user?.id;
+    if (!userId) return null;
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("org_id")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (error || !data?.org_id) return null;
+
+    const orgId = String(data.org_id);
+
+    // cache as "active org" for the rest of the app
+    try {
+      localStorage.setItem("tt_active_org_id", orgId);
+    } catch {
+      // non-fatal
+    }
+
+    return orgId;
+  } catch {
+    return null;
+  }
+}
+
 export default function RoutineRunModal({
   open,
   routine,
@@ -55,15 +97,17 @@ export default function RoutineRunModal({
     async function handleSave(e?: React.FormEvent) {
     e?.preventDefault();
 
-    // 👈 extra safety + fixes the TS error
+    // ✅ extra safety + fixes the TS error
     if (!routine) return;
 
     if (!date || !initials) return;
     setSaving(true);
     try {
-      const org_id = await getActiveOrgIdClient();
+      const org_id = await getOrgIdSafe();
       if (!org_id) {
-        alert("No organisation found.");
+        alert(
+          "No organisation found for this user. Please sign out and back in, or ask your admin to check your organisation settings."
+        );
         return;
       }
 
@@ -164,117 +208,61 @@ export default function RoutineRunModal({
             Enter temps for any items you’re logging now, then “Save all”.
           </p>
 
-          {/* Desktop / tablet table */}
-          <div className="hidden md:block">
-            <div className="overflow-x-auto rounded-lg border border-gray-300">
-              <table className="min-w-full w-full text-sm">
-                <thead className="bg-gray-50 text-gray-600">
-                  <tr>
-                    <th className="px-2 py-2 text-left w-10">#</th>
-                    <th className="px-2 py-2 text-left w-32">Location</th>
-                    <th className="px-2 py-2 text-left w-40">Item</th>
-                    <th className="px-2 py-2 text-left w-40">Target</th>
-                    <th className="px-2 py-2 text-left w-32">Temp (°C)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {routine.items.map((it, idx) => {
-                    const preset =
-                      (TARGET_BY_KEY as any)[it.target_key] as
-                        | TargetPreset
-                        | undefined;
-                    return (
-                      <tr key={it.id} className="border-t">
-                        <td className="px-2 py-2 align-top">{idx + 1}</td>
-                        <td className="px-2 py-2 align-top">
-                          {it.location ?? "—"}
-                        </td>
-                        <td className="px-2 py-2 align-top">
-                          {it.item ?? "—"}
-                        </td>
-                        <td className="px-2 py-2 align-top text-xs text-gray-600">
-                          {preset
-                            ? `${preset.label}${
-                                preset.minC != null || preset.maxC != null
-                                  ? ` (${preset.minC ?? "−∞"}–${
-                                      preset.maxC ?? "+∞"
-                                    } °C)`
-                                  : ""
-                              }`
-                            : it.target_key || "—"}
-                        </td>
-                        <td className="px-2 py-2 align-top">
-                          <input
-                            className="w-24 rounded-xl border border-gray-300 px-2 py-1 text-sm"
-                            inputMode="decimal"
-                            value={temps[it.id] ?? ""}
-                            onChange={(e) =>
-                              setTemps((t) => ({
-                                ...t,
-                                [it.id]: e.target.value,
-                              }))
-                            }
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Mobile list – no horizontal scroll, item + temp visible */}
-          <div className="space-y-2 md:hidden">
-            {routine.items.map((it, idx) => {
-              const preset =
-                (TARGET_BY_KEY as any)[it.target_key] as
-                  | TargetPreset
-                  | undefined;
-              return (
-                <div
-                  key={it.id}
-                  className="flex items-center justify-between gap-3 rounded-lg border border-gray-300 px-3 py-2"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-gray-500">#{idx + 1}</div>
-                    <div className="text-sm font-medium truncate">
-                      {it.item ?? "—"}
-                    </div>
-                    <div className="text-xs text-gray-600 truncate">
-                      {it.location ?? "—"}
-                    </div>
-                    <div className="mt-0.5 text-[11px] text-gray-500 line-clamp-2">
-                      {preset
-                        ? `${preset.label}${
-                            preset.minC != null || preset.maxC != null
-                              ? ` (${preset.minC ?? "−∞"}–${
-                                  preset.maxC ?? "+∞"
-                                } °C)`
-                              : ""
-                          }`
-                        : it.target_key || "—"}
-                    </div>
-                  </div>
-                  <div className="shrink-0">
-                    <label className="text-[11px] text-gray-600 block mb-0.5">
-                      Temp °C
-                    </label>
-                    <input
-                      className="w-20 rounded-xl border border-gray-300 px-2 py-1 text-sm text-right"
-                      inputMode="decimal"
-                      value={temps[it.id] ?? ""}
-                      onChange={(e) =>
-                        setTemps((t) => ({
-                          ...t,
-                          [it.id]: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-              );
-            })}
+          <div className="overflow-x-auto rounded-lg border border-gray-300">
+            <table className="min-w-[640px] w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="px-2 py-2 text-left w-10">#</th>
+                  <th className="px-2 py-2 text-left w-32">Location</th>
+                  <th className="px-2 py-2 text-left w-40">Item</th>
+                  <th className="px-2 py-2 text-left w-40">Target</th>
+                  <th className="px-2 py-2 text-left w-32">Temp (°C)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {routine.items.map((it, idx) => {
+                  const preset =
+                    (TARGET_BY_KEY as any)[it.target_key] as
+                      | TargetPreset
+                      | undefined;
+                  return (
+                    <tr key={it.id} className="border-t">
+                      <td className="px-2 py-2 align-top">{idx + 1}</td>
+                      <td className="px-2 py-2 align-top">
+                        {it.location ?? "—"}
+                      </td>
+                      <td className="px-2 py-2 align-top">
+                        {it.item ?? "—"}
+                      </td>
+                      <td className="px-2 py-2 align-top text-xs text-gray-600">
+                        {preset
+                          ? `${preset.label}${
+                              preset.minC != null || preset.maxC != null
+                                ? ` (${preset.minC ?? "−∞"}–${
+                                    preset.maxC ?? "+∞"
+                                  } °C)`
+                                : ""
+                            }`
+                          : it.target_key || "—"}
+                      </td>
+                      <td className="px-2 py-2 align-top">
+                        <input
+                          className="w-24 rounded-xl border border-gray-300 px-2 py-1 text-sm"
+                          inputMode="decimal"
+                          value={temps[it.id] ?? ""}
+                          onChange={(e) =>
+                            setTemps((t) => ({
+                              ...t,
+                              [it.id]: e.target.value,
+                            }))
+                          }
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
 
