@@ -5,29 +5,30 @@ import NavTabs from "@/components/NavTabs";
 import MobileMenu from "@/components/MobileMenu";
 import UserMenu from "@/components/UserMenu";
 import { getUserOrNull } from "@/app/actions/auth";
-import ServiceWorkerRegister from "@/components/ServiceWorkerRegister"; // ← added
+import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import Pwa from "@/components/Pwa";
+import OrgName from "@/components/OrgName";   // 👈 NEW
 
-
-
-
-
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const user = await getUserOrNull();
 
   return (
     <html lang="en">
       <head>
-        {/* PWA-friendly meta (safe even if you ignore PWA) */}
+        {/* PWA meta */}
         <link rel="manifest" href="/manifest.webmanifest" />
         <meta name="theme-color" content="#111111" />
         <link rel="icon" href="/icon-192x192.png" sizes="192x192" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta
+          name="apple-mobile-web-app-status-bar-style"
+          content="black-translucent"
+        />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-        {/* If you don't add app/manifest.ts, you can uncomment the line below and serve /manifest.webmanifest manually
-        <link rel="manifest" href="/manifest.webmanifest" />
-        */}
       </head>
       <body className="bg-gray-100 text-gray-900">
         {/* STICKY TOP BAR */}
@@ -40,18 +41,27 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <span className="font-semibold">TempTake</span>
               </Link>
 
+              {/* Mobile: business name centred */}
+              <div className="flex-1 md:hidden">
+                <OrgName className="block text-center text-xs font-semibold truncate" />
+              </div>
+
               {/* Middle: tabs (desktop only) */}
               <div className="mx-auto hidden md:block">
                 <NavTabs />
               </div>
 
-              {/* Right: desktop user menu OR mobile hamburger */}
-              <div className="ml-auto">
-                {/* Desktop: small user menu */}
+              {/* Right side: business name (desktop) + user menu / mobile menu */}
+              <div className="ml-auto flex items-center gap-3">
+                {/* Desktop business name next to user/logout */}
+                <OrgName className="hidden md:inline text-sm font-medium text-slate-600 max-w-[220px] truncate" />
+
+                {/* Desktop: user menu */}
                 <div className="hidden md:block">
                   <UserMenu user={user} />
                 </div>
-                {/* Mobile: single hamburger that includes Help/Settings/Auth */}
+
+                {/* Mobile: hamburger menu */}
                 <div className="md:hidden">
                   <MobileMenu user={user} />
                 </div>
@@ -59,11 +69,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </div>
           </div>
         </header>
- <Pwa />
+
+        <Pwa />
+
         {/* Page container */}
         <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
 
-        {/* Register SW on the client (no UI impact) */}
         <ServiceWorkerRegister />
       </body>
     </html>

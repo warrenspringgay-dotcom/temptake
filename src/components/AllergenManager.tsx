@@ -267,105 +267,109 @@ export default function AllergenManager() {
 
   /* ---------- CRUD ---------- */
 
-  async function upsertItem(d: {
-    id?: string;
-    item: string;
-    category?: Category;
-    notes?: string;
-    flags: Flags;
-  }) {
-    const currentOrgId = orgId ?? (await getActiveOrgIdClient());
+  // ---------- CRUD ----------
+async function upsertItem(d: {
+  id?: string;
+  item: string;
+  category?: Category;
+  notes?: string;
+  flags: Flags;
+}) {
+  // Make sure we always have the current org id
+  const currentOrgId = orgId ?? (await getActiveOrgIdClient());
 
-    const applyLocal = (forcedId?: string) => {
-      setRows((rs) => {
-        const idToUse = forcedId ?? d.id ?? uid();
-        const patch: MatrixRow = {
-          id: idToUse,
+  const applyLocal = (forcedId?: string) => {
+    setRows((rs) => {
+      const idToUse = forcedId ?? d.id ?? uid();
+      const patch: MatrixRow = {
+        id: idToUse,
+        item: d.item,
+        category: d.category,
+        flags: d.flags,
+        notes: d.notes,
+        locked: true,
+      };
+      const exists = rs.some((r) => r.id === idToUse);
+      return exists
+        ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r))
+        : [...rs, patch];
+    });
+  };
+
+  // No org => purely local
+  if (!currentOrgId) {
+    applyLocal();
+    return;
+  }
+
+  let rowId = d.id as string | undefined;
+
+  try {
+    // 1) Save / update the main allergen_items row
+    if (rowId) {
+      const { error } = await supabase
+        .from("allergen_items")
+        .update({
           item: d.item,
-          category: d.category,
-          flags: d.flags,
-          notes: d.notes,
+          category: d.category ?? null,
+          notes: d.notes ?? null,
           locked: true,
-        };
-        const exists = rs.some((r) => r.id === idToUse);
-        return exists
-          ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r))
-          : [...rs, patch];
-      });
-    };
+          org_id: currentOrgId,        // 👈 make sure org_id is set
+          organisation_id: currentOrgId, // keep legacy column in sync if it exists
+        })
+        .eq("id", rowId);
 
-    // No org => purely local
-    if (!currentOrgId) {
-      applyLocal();
-      return;
+      if (error) throw error;
+    } else {
+      const { data, error } = await supabase
+        .from("allergen_items")
+        .insert({
+          item: d.item,
+          category: d.category ?? null,
+          notes: d.notes ?? null,
+          locked: true,
+          org_id: currentOrgId,        // 👈 required FK
+          organisation_id: currentOrgId,
+        })
+        .select("id")
+        .single();
+
+      if (error) throw error;
+      rowId = String(data!.id);
     }
 
-    let rowId = d.id as string | undefined;
+    // 2) Upsert all flags for that item (no more duplicate key errors)
+    if (rowId) {
+      const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
+        item_id: rowId!,
+        key: k,
+        value: !!d.flags[k],
+      }));
 
-    try {
-      // 1) Upsert allergen_items with BOTH org columns
-      if (rowId) {
-        const { error } = await supabase
-          .from("allergen_items")
-          .update({
-            item: d.item,
-            category: d.category ?? null,
-            notes: d.notes ?? null,
-            locked: true,
-            organisation_id: currentOrgId, // legacy
-            org_id: currentOrgId,          // new NOT NULL column
-          })
-          .eq("id", rowId);
-        if (error) throw error;
-      } else {
-        const { data, error } = await supabase
-          .from("allergen_items")
-          .insert({
-            item: d.item,
-            category: d.category ?? null,
-            notes: d.notes ?? null,
-            locked: true,
-            organisation_id: currentOrgId,
-            org_id: currentOrgId,
-          })
-          .select("id")
-          .single();
-        if (error) throw error;
-        rowId = String(data?.id);
-      }
-
-      // 2) Replace flags
-      if (rowId) {
-        const { error: delErr } = await supabase
+      if (payload.length) {
+        const { error: flagsErr } = await supabase
           .from("allergen_flags")
-          .delete()
-          .eq("item_id", rowId);
-        if (delErr) throw delErr;
+          .upsert(payload, {
+            onConflict: "item_id,key", // 👈 match your PK/unique constraint
+          });
 
-        const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
-          item_id: rowId!,
-          key: k,
-          value: !!d.flags[k],
-        }));
-
-        if (payload.length) {
-          const { error: flagsErr } = await supabase
-            .from("allergen_flags")
-            .insert(payload);
-          if (flagsErr) throw flagsErr;
+        if (flagsErr) {
+          console.warn(
+            "Saving allergen flags failed (ignored — item still saved):",
+            flagsErr.message
+          );
+          // We don't alert because the main item save has succeeded.
         }
       }
-
-      // 3) reflect in UI
-      applyLocal(rowId);
-    } catch (error: any) {
-      console.error("Saving allergen item/flags failed:", error);
-      applyLocal(rowId);
-      alert(
-        `Save failed: ${error?.message ?? "Unknown error"}`
-      );
     }
+
+    // 3) Reflect in UI
+    applyLocal(rowId);
+  } catch (error: any) {
+    console.error("Saving allergen item failed:", error);
+    alert(`Save failed: ${error?.message ?? "Unknown error"}`);
   }
+}
 
   async function deleteItem(idToDelete: string) {
     const id = orgId ?? (await getActiveOrgIdClient());

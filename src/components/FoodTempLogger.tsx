@@ -14,7 +14,7 @@ import {
 } from "@/lib/temp-constants";
 import RoutineRunModal from "@/components/RoutineRunModal";
 import { CLEANING_CATEGORIES } from "@/components/ManageCleaningTasksModal";
-
+import type { RoutineRow } from "@/components/RoutinePickerModal";
 /* =============== Types =============== */
 type CanonRow = {
   id: string;
@@ -30,22 +30,6 @@ type CanonRow = {
 type Props = {
   initials?: string[];
   locations?: string[];
-};
-
-/* Routine picker types (local, to decouple from external modal types) */
-type RoutineItemRow = {
-  id: string;
-  routine_id: string;
-  position: number;
-  location: string | null;
-  item: string | null;
-  target_key: string;
-};
-type RoutineRow = {
-  id: string;
-  name: string;
-  active: boolean;
-  items: RoutineItemRow[];
 };
 
 /* cleaning rota types */

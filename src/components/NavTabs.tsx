@@ -17,6 +17,7 @@ export default function NavTabs() {
   const pathname = usePathname();
 
   return (
+    
     <ul className="flex flex-nowrap items-center justify-center gap-1">
       {TABS.map((t) => {
         const active =
@@ -32,6 +33,7 @@ export default function NavTabs() {
             >
               {t.label}
             </Link>
+            
           </li>
         );
       })}
