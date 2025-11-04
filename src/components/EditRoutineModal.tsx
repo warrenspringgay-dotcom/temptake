@@ -4,15 +4,15 @@
 import React, { useEffect, useState } from "react";
 
 export type RoutineItemDraft = {
-  id?: string;        // existing DB id (optional)
-  position: number;   // 1, 2, 3, ...
+  id?: string; // existing DB id (optional)
+  position: number; // 1, 2, 3, ...
   location: string | null;
   item: string | null;
   target_key: string; // e.g. "cooked"
 };
 
 export type RoutineDraft = {
-  id?: string;        // routine id when editing
+  id?: string; // routine id when editing
   name: string;
   active: boolean;
   items: RoutineItemDraft[];
@@ -25,7 +25,7 @@ type Props = {
   onSave: (draft: RoutineDraft) => Promise<void> | void;
 };
 
-// You can tweak these to match your real targets if needed
+// Simple target list – adjust to your real targets if needed
 const TARGET_OPTIONS: { key: string; label: string }[] = [
   { key: "cooked", label: "Cooked" },
   { key: "chilled", label: "Chilled" },
@@ -43,6 +43,7 @@ function normaliseDraft(initial: RoutineDraft | null): RoutineDraft {
       items: [],
     };
   }
+
   const sorted = [...(initial.items ?? [])]
     .map((it, idx) => ({
       ...it,
@@ -115,7 +116,6 @@ export default function EditRoutineModal({
   const removeItem = (index: number) => {
     setDraft((d) => {
       const copy = d.items.filter((_, i) => i !== index);
-      // re-number positions
       const renumbered = copy.map((it, idx) => ({
         ...it,
         position: idx + 1,
@@ -164,7 +164,7 @@ export default function EditRoutineModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 overscroll-contain"
       onClick={onClose}
     >
       <form
@@ -172,37 +172,39 @@ export default function EditRoutineModal({
         onClick={(e) => e.stopPropagation()}
         className="mt-4 mb-4 flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <div className="text-base font-semibold">Edit routine</div>
+        {/* Header (stays visible) */}
+        <div className="flex items-center justify-between border-b bg-white px-4 py-3">
+          <h2 className="text-base font-semibold">Edit routine</h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full p-1 text-gray-500 hover:bg-gray-100"
+            className="rounded-full p-1 text-gray-500 hover:bg-gray-100 hover:text-black"
             aria-label="Close"
           >
             ✕
           </button>
         </div>
 
-        {/* Scrollable body */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-4">
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+          {/* Routine name + active toggle */}
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex-1 min-w-[200px] text-sm">
-              <div className="mb-1 text-gray-700">Name</div>
+            <label className="flex-1 min-w-[180px] text-sm">
+              <div className="mb-1 text-gray-600">Routine name</div>
               <input
                 className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm"
                 value={draft.name}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, name: e.target.value }))
                 }
+                placeholder="e.g., Cooking checks"
                 required
               />
             </label>
-            <label className="flex items-center gap-2 text-sm text-gray-700">
+            <label className="inline-flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-gray-400"
+                className="h-4 w-4 rounded border-gray-300"
                 checked={draft.active}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, active: e.target.checked }))
@@ -212,6 +214,7 @@ export default function EditRoutineModal({
             </label>
           </div>
 
+          {/* Items header + add button */}
           <div className="flex items-center justify-between">
             <div className="text-sm font-semibold">Items</div>
             <button
@@ -223,17 +226,16 @@ export default function EditRoutineModal({
             </button>
           </div>
 
+          {/* Items list */}
           {items.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-300 p-3 text-sm text-gray-500">
-              No items yet. Click “Add item” to start building this routine.
+              No items yet. Tap “Add item” to start building this routine.
             </div>
           ) : (
             <div className="space-y-3">
               {items.map((it, idx) => {
                 const currentKey = it.target_key || "cooked";
-                const known = TARGET_OPTIONS.some(
-                  (t) => t.key === currentKey
-                );
+                const known = TARGET_OPTIONS.some((t) => t.key === currentKey);
                 const options = known
                   ? TARGET_OPTIONS
                   : [
@@ -244,7 +246,7 @@ export default function EditRoutineModal({
                 return (
                   <div
                     key={idx}
-                    className="rounded-xl border border-gray-300 p-3 space-y-2"
+                    className="space-y-2 rounded-xl border border-gray-300 p-3"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-xs font-semibold text-gray-500">
@@ -253,7 +255,7 @@ export default function EditRoutineModal({
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          className="rounded-full border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50"
+                          className="rounded-full border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50 disabled:opacity-40"
                           disabled={idx === 0}
                           onClick={() => moveItem(idx, -1)}
                         >
@@ -261,7 +263,7 @@ export default function EditRoutineModal({
                         </button>
                         <button
                           type="button"
-                          className="rounded-full border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50"
+                          className="rounded-full border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50 disabled:opacity-40"
                           disabled={idx === items.length - 1}
                           onClick={() => moveItem(idx, +1)}
                         >
@@ -322,7 +324,7 @@ export default function EditRoutineModal({
           )}
         </div>
 
-        {/* Footer */}
+        {/* Footer (stays visible) */}
         <div className="flex items-center justify-end gap-2 border-t bg-gray-50 px-4 py-3">
           <button
             type="button"

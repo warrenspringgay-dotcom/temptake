@@ -1,3 +1,4 @@
+// src/app/(protected)/routines/RoutineManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -32,21 +33,16 @@ export default function RoutineManager() {
   const [loading, setLoading] = useState(true);
   const [orgId, setOrgId] = useState<string | null>(null);
 
-  // search
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(""); // search
+  const [newName, setNewName] = useState(""); // quick add
 
-  // add quick
-  const [newName, setNewName] = useState("");
-
-  // view card
+  // view + edit modals
   const [viewOpen, setViewOpen] = useState(false);
   const [viewing, setViewing] = useState<RoutineRow | null>(null);
-
-  // edit modal
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<RoutineRow | null>(null);
 
-  // =============== data ===============
+  // ================= Fetch routines =================
   async function refresh() {
     setLoading(true);
     try {
@@ -62,8 +58,8 @@ export default function RoutineManager() {
         .select("id,name,active,last_used_at")
         .eq("org_id", id)
         .order("name");
-      if (rErr) throw rErr;
 
+      if (rErr) throw rErr;
       if (!routines?.length) {
         setRows([]);
         return;
@@ -110,13 +106,14 @@ export default function RoutineManager() {
     refresh();
   }, []);
 
+  // ================= Filter =================
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return rows;
     return rows.filter((r) => r.name.toLowerCase().includes(term));
   }, [rows, q]);
 
-  // =============== actions ===============
+  // ================= Actions =================
   async function addQuick() {
     if (!newName.trim() || !orgId) return;
     const { data: created, error } = await supabase
@@ -126,9 +123,8 @@ export default function RoutineManager() {
       .single();
     if (error) return alert(error.message);
     setNewName("");
-    setViewing(null);
     await refresh();
-    // fetch fresh + open for editing
+
     const r = (
       await supabase
         .from("temp_routines")
@@ -144,8 +140,9 @@ export default function RoutineManager() {
     setViewing(r);
     setViewOpen(true);
   }
+
   function openEdit(r: RoutineRow) {
-    setEditing(JSON.parse(JSON.stringify(r))); // deep copy
+    setEditing(JSON.parse(JSON.stringify(r)));
     setEditOpen(true);
   }
 
@@ -159,6 +156,7 @@ export default function RoutineManager() {
       if (uErr) throw uErr;
 
       await supabase.from("temp_routine_items").delete().eq("routine_id", editing.id);
+
       const inserts = editing.items.map((it, i) => ({
         routine_id: editing.id,
         position: it.position ?? i + 1,
@@ -166,6 +164,7 @@ export default function RoutineManager() {
         item: it.item ?? null,
         target_key: it.target_key,
       }));
+
       if (inserts.length) {
         const { error: iErr } = await supabase.from("temp_routine_items").insert(inserts);
         if (iErr) throw iErr;
@@ -185,7 +184,7 @@ export default function RoutineManager() {
     await refresh();
   }
 
-  // =============== render ===============
+  // ================= Render =================
   return (
     <div className="space-y-4 rounded-2xl border bg-white p-4">
       <div className="flex items-center gap-2">
@@ -200,7 +199,7 @@ export default function RoutineManager() {
         </div>
       </div>
 
-      {/* quick add */}
+      {/* Quick add */}
       <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
         <input
           className="rounded-xl border px-3 py-2"
@@ -216,7 +215,7 @@ export default function RoutineManager() {
         </button>
       </div>
 
-      {/* list */}
+      {/* List */}
       <div className="overflow-x-auto">
         <table className="min-w-full table-fixed text-sm">
           <colgroup>
@@ -255,17 +254,21 @@ export default function RoutineManager() {
 
                   <td className="py-2 pr-3">
                     <div className="relative inline-block text-left">
-                      <td className="py-2 pr-3">
-  <ActionMenu
-    items={[
-      { label: "View", onClick: () => openView(r) },
-      { label: "Edit", onClick: () => openEdit(r) },
-      { label: "Use routine", href: `/dashboard?run=${encodeURIComponent(r.id)}` },
-      { label: "Delete", onClick: () => removeRoutine(r.id), variant: "danger" },
-    ]}
-  />
-</td>
-
+                      <ActionMenu
+                        items={[
+                          { label: "View", onClick: () => openView(r) },
+                          { label: "Edit", onClick: () => openEdit(r) },
+                          {
+                            label: "Use routine",
+                            href: `/dashboard?run=${encodeURIComponent(r.id)}`,
+                          },
+                          {
+                            label: "Delete",
+                            onClick: () => removeRoutine(r.id),
+                            variant: "danger",
+                          },
+                        ]}
+                      />
                     </div>
                   </td>
                 </tr>
@@ -281,9 +284,12 @@ export default function RoutineManager() {
         </table>
       </div>
 
-      {/* ===== view card ===== */}
+      {/* ===== View Card ===== */}
       {viewOpen && viewing && (
-        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/40"
+          onClick={() => setViewOpen(false)}
+        >
           <div
             className="mx-auto mt-16 w-full max-w-xl overflow-y-auto rounded-2xl border bg-white"
             onClick={(e) => e.stopPropagation()}
@@ -291,24 +297,32 @@ export default function RoutineManager() {
             <div className="bg-slate-800 px-4 py-3 text-white">
               <div className="text-sm opacity-80">Routine</div>
               <div className="text-xl font-semibold">{viewing.name}</div>
-              <div className="opacity-80">{viewing.active ? "Active" : "Inactive"}</div>
+              <div className="opacity-80">
+                {viewing.active ? "Active" : "Inactive"}
+              </div>
             </div>
 
             <div className="p-4">
               {viewing.items.length ? (
                 <ul className="divide-y">
                   {viewing.items.map((it) => (
-                    <li key={`${it.position}-${it.item}-${it.location}`} className="py-2 text-sm">
+                    <li
+                      key={`${it.position}-${it.item}-${it.location}`}
+                      className="py-2 text-sm"
+                    >
                       <div className="font-medium">Step {it.position}</div>
                       <div className="text-gray-600">
-                        {[it.location, it.item].filter(Boolean).join(" · ") || "—"} · target:{" "}
-                        <code>{it.target_key}</code>
+                        {[it.location, it.item].filter(Boolean).join(" · ") ||
+                          "—"}{" "}
+                        · target: <code>{it.target_key}</code>
                       </div>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <div className="text-sm text-gray-600">No items in this routine.</div>
+                <div className="text-sm text-gray-600">
+                  No items in this routine.
+                </div>
               )}
             </div>
 
@@ -319,7 +333,10 @@ export default function RoutineManager() {
               >
                 Use routine
               </a>
-              <button className="rounded-md bg-white px-3 py-1.5 text-sm" onClick={() => setViewOpen(false)}>
+              <button
+                className="rounded-md bg-white px-3 py-1.5 text-sm"
+                onClick={() => setViewOpen(false)}
+              >
                 Close
               </button>
             </div>
@@ -327,16 +344,22 @@ export default function RoutineManager() {
         </div>
       )}
 
-      {/* ===== edit modal ===== */}
+      {/* ===== Edit Modal ===== */}
       {editOpen && editing && (
-        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEditOpen(false)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/40 overflow-y-auto"
+          onClick={() => setEditOpen(false)}
+        >
           <div
             className="mx-auto mt-16 w-full max-w-3xl rounded-2xl border bg-white p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Edit routine</div>
-              <button onClick={() => setEditOpen(false)} className="rounded-md p-2 hover:bg-gray-100">
+              <button
+                onClick={() => setEditOpen(false)}
+                className="rounded-md p-2 hover:bg-gray-100"
+              >
                 ✕
               </button>
             </div>
@@ -345,13 +368,17 @@ export default function RoutineManager() {
               <input
                 className="h-10 w-full rounded-xl border px-3"
                 value={editing.name}
-                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                onChange={(e) =>
+                  setEditing({ ...editing, name: e.target.value })
+                }
               />
               <label className="mt-2 flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   checked={!!editing.active}
-                  onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
+                  onChange={(e) =>
+                    setEditing({ ...editing, active: e.target.checked })
+                  }
                 />
                 Active
               </label>
@@ -359,15 +386,24 @@ export default function RoutineManager() {
 
             <div className="mt-4 space-y-2">
               {editing.items.map((it, i) => (
-                <div key={i} className="grid gap-2 sm:grid-cols-[80px_1fr_1fr_1fr_auto]">
+                <div
+                  key={i}
+                  className="grid gap-2 sm:grid-cols-[80px_1fr_1fr_1fr_auto]"
+                >
                   <input
                     className="rounded-xl border px-3 py-2"
                     placeholder="#"
                     type="number"
                     value={it.position}
                     onChange={(e) => {
-                      const copy = { ...editing, items: [...editing.items] };
-                      copy.items[i] = { ...copy.items[i], position: Number(e.target.value) || 0 };
+                      const copy = {
+                        ...editing,
+                        items: [...editing.items],
+                      };
+                      copy.items[i] = {
+                        ...copy.items[i],
+                        position: Number(e.target.value) || 0,
+                      };
                       setEditing(copy);
                     }}
                   />
@@ -376,8 +412,14 @@ export default function RoutineManager() {
                     placeholder="Location"
                     value={it.location ?? ""}
                     onChange={(e) => {
-                      const copy = { ...editing, items: [...editing.items] };
-                      copy.items[i] = { ...copy.items[i], location: e.target.value || null };
+                      const copy = {
+                        ...editing,
+                        items: [...editing.items],
+                      };
+                      copy.items[i] = {
+                        ...copy.items[i],
+                        location: e.target.value || null,
+                      };
                       setEditing(copy);
                     }}
                   />
@@ -386,8 +428,14 @@ export default function RoutineManager() {
                     placeholder="Item"
                     value={it.item ?? ""}
                     onChange={(e) => {
-                      const copy = { ...editing, items: [...editing.items] };
-                      copy.items[i] = { ...copy.items[i], item: e.target.value || null };
+                      const copy = {
+                        ...editing,
+                        items: [...editing.items],
+                      };
+                      copy.items[i] = {
+                        ...copy.items[i],
+                        item: e.target.value || null,
+                      };
                       setEditing(copy);
                     }}
                   />
@@ -395,8 +443,14 @@ export default function RoutineManager() {
                     className="rounded-xl border px-3 py-2"
                     value={it.target_key}
                     onChange={(e) => {
-                      const copy = { ...editing, items: [...editing.items] };
-                      copy.items[i] = { ...copy.items[i], target_key: e.target.value };
+                      const copy = {
+                        ...editing,
+                        items: [...editing.items],
+                      };
+                      copy.items[i] = {
+                        ...copy.items[i],
+                        target_key: e.target.value,
+                      };
                       setEditing(copy);
                     }}
                   >
@@ -409,7 +463,10 @@ export default function RoutineManager() {
                   <button
                     className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
                     onClick={() => {
-                      const copy = { ...editing, items: editing.items.filter((_, idx) => idx !== i) };
+                      const copy = {
+                        ...editing,
+                        items: editing.items.filter((_, idx) => idx !== i),
+                      };
                       setEditing(copy);
                     }}
                   >
@@ -426,7 +483,8 @@ export default function RoutineManager() {
                     items: [
                       ...editing.items,
                       {
-                        position: (editing.items.at(-1)?.position ?? 0) + 1,
+                        position:
+                          (editing.items.at(-1)?.position ?? 0) + 1,
                         location: "",
                         item: "",
                         target_key: "chill",
@@ -440,7 +498,10 @@ export default function RoutineManager() {
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
-              <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setEditOpen(false)}>
+              <button
+                className="rounded-xl border px-4 py-2 text-sm"
+                onClick={() => setEditOpen(false)}
+              >
                 Cancel
               </button>
               <button

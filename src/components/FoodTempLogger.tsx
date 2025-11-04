@@ -881,7 +881,7 @@ export default function FoodTempLogger({
               >
                 <div className="text-xs text-gray-500">Cleaning (today)</div>
                 <div className="text-2xl font-semibold">{doneCount}/{dueTodayAll.length}</div>
-                <div className="mt-1 text-[11px] text-gray-500 underline">View / complete</div>
+                
               </button>
             </div>
           );
