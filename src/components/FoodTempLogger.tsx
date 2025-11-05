@@ -15,6 +15,7 @@ import {
 import RoutineRunModal from "@/components/RoutineRunModal";
 import { CLEANING_CATEGORIES } from "@/components/ManageCleaningTasksModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
+
 /* =============== Types =============== */
 type CanonRow = {
   id: string;
@@ -324,7 +325,9 @@ export default function FoodTempLogger({
       try {
         const orgId = await getActiveOrgIdClient();
         if (!orgId) {
-          const base = Array.from(new Set([...locationsSeed, ...LOCATION_PRESETS]));
+          const base = Array.from(
+            new Set([...locationsSeed, ...LOCATION_PRESETS])
+          );
           setLocations(base.length ? base : ["Kitchen"]);
           if (!form.location)
             setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
@@ -350,7 +353,9 @@ export default function FoodTempLogger({
         if (!form.location)
           setForm((f) => ({ ...f, location: merged[0] || "Kitchen" }));
       } catch {
-        const base = Array.from(new Set([...locationsSeed, ...LOCATION_PRESETS]));
+        const base = Array.from(
+          new Set([...locationsSeed, ...LOCATION_PRESETS])
+        );
         setLocations(base.length ? base : ["Kitchen"]);
         if (!form.location)
           setForm((f) => ({ ...f, location: base[0] || "Kitchen" }));
@@ -383,7 +388,10 @@ export default function FoodTempLogger({
 
           (data ?? []).forEach((r: any) => {
             const raw =
-              r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
+              r.training_expires_at ??
+              r.training_expiry ??
+              r.expires_at ??
+              null;
             if (!raw) return;
             const d = new Date(raw);
             if (isNaN(d.getTime())) return;
@@ -809,7 +817,9 @@ export default function FoodTempLogger({
         .eq("task_id", id)
         .eq("run_on", today);
       if (error) throw error;
-      setRuns((prev) => prev.filter((r) => !(r.task_id === id && r.run_on === today)));
+      setRuns((prev) =>
+        prev.filter((r) => !(r.task_id === id && r.run_on === today))
+      );
     } catch (e: any) {
       alert(e?.message || "Failed to undo completion.");
     }
@@ -822,50 +832,121 @@ export default function FoodTempLogger({
         {(() => {
           const todayISO = new Date().toISOString().slice(0, 10);
           const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-          const in7d = (d: string | null) => (d ? new Date(d) >= since : false);
+          const in7d = (d: string | null) =>
+            (d ? new Date(d) >= since : false);
 
-          const entriesToday = rows.filter((r) => r.date === todayISO).length;
+          const entriesToday = rows.filter(
+            (r) => r.date === todayISO
+          ).length;
           const last7 = rows.filter((r) => in7d(r.date)).length;
-          const fails7 = rows.filter((r) => in7d(r.date) && r.status === "fail").length;
+          const fails7 = rows.filter(
+            (r) => in7d(r.date) && r.status === "fail"
+          ).length;
+
+          // New variants for colours / icons
+          const entriesTodayIsEmpty = entriesToday === 0;
+          const entriesTodayIcon = entriesTodayIsEmpty ? "❌" : "✅";
+          const entriesTodayTile =
+            "rounded-xl p-3 min-h-[76px] flex flex-col justify-between border " +
+            (entriesTodayIsEmpty
+              ? "border-red-200 bg-red-50 text-red-800"
+              : "border-emerald-200 bg-emerald-50 text-emerald-900");
+
+          const hasCleaning = dueTodayAll.length > 0;
+          const allCleaningDone =
+            hasCleaning && doneCount === dueTodayAll.length;
+          const cleaningIcon = !hasCleaning
+            ? "ℹ️"
+            : allCleaningDone
+            ? "✅"
+            : "❌";
+          const cleaningColor = !hasCleaning
+            ? "border-gray-200 bg-white text-gray-800"
+            : allCleaningDone
+            ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+            : "border-red-200 bg-red-50 text-red-800";
+
+          const cleaningTileBase =
+            "rounded-xl p-3 min-h-[76px] text-left flex flex-col justify-between border transition-colors hover:bg-opacity-90";
+
+          const failsTileColor =
+            fails7 > 0
+              ? "border-red-200 bg-red-50 text-red-800"
+              : "border-gray-200 bg-white text-gray-800";
+          const failsIcon = fails7 > 0 ? "⚠️" : "✅";
 
           return (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              {/* tile 1 */}
-              <div className="rounded-xl border bg-white p-3 min-h-[76px] flex flex-col justify-between">
-                <div className="text-xs text-gray-500">Entries today</div>
-                <div className="text-2xl font-semibold">{entriesToday}</div>
+              {/* tile 1: Entries today (red / green + icon) */}
+              <div className={entriesTodayTile}>
+                <div className="flex items-center justify-between text-xs">
+                  <span>Entries today</span>
+                  <span className="text-base">{entriesTodayIcon}</span>
+                </div>
+                <div className="mt-1 text-2xl font-semibold">
+                  {entriesToday}
+                </div>
+                <div className="mt-1 text-[11px] opacity-80">
+                  {entriesTodayIsEmpty
+                    ? "No temperatures logged yet today."
+                    : "Great — at least one log recorded."}
+                </div>
               </div>
 
-              {/* tile 2 */}
-              <div className="rounded-xl border bg-white p-3 min-h-[76px] flex flex-col justify-between">
+              {/* tile 2: Last 7 days (neutral) */}
+              <div className="rounded-xl border border-gray-200 bg-white p-3 min-h-[76px] flex flex-col justify-between">
                 <div className="text-xs text-gray-500">Last 7 days</div>
                 <div className="text-2xl font-semibold">{last7}</div>
               </div>
 
-              {/* tile 3 */}
-              <div className="rounded-xl border bg-white p-3 min-h-[76px] flex flex-col justify-between">
-                <div className="text-xs text-gray-500">Failures (7d)</div>
-                <div className="text-2xl font-semibold">{fails7}</div>
+              {/* tile 3: Failures (7d) – highlight if any */}
+              <div
+                className={
+                  "rounded-xl p-3 min-h-[76px] flex flex-col justify-between border " +
+                  failsTileColor
+                }
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span>Failures (7d)</span>
+                  <span className="text-base">{failsIcon}</span>
+                </div>
+                <div className="mt-1 text-2xl font-semibold">{fails7}</div>
+                <div className="mt-1 text-[11px] opacity-80">
+                  {fails7 > 0
+                    ? "Check and record any corrective actions."
+                    : "No failed temperature checks in the last week."}
+                </div>
               </div>
 
-              {/* tile 4 */}
-              <div className="rounded-xl border bg-white p-3 min-h-[76px] flex flex-col justify-between">
-                <div className="text-xs text-gray-500">Top logger</div>
-                <div className="text-2xl font-semibold">
+              {/* tile 4: Top logger – gold medal feel */}
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 min-h-[76px] flex flex-col justify-between text-amber-900">
+                <div className="flex items-center justify-between text-xs">
+                  <span>Top logger</span>
+                  <span className="text-lg">🏅</span>
+                </div>
+                <div className="mt-1 text-2xl font-semibold">
                   {(() => {
                     const freq = new Map<string, number>();
                     rows
                       .filter((r) => in7d(r.date) && r.staff_initials)
                       .forEach((r) =>
-                        freq.set(r.staff_initials!, (freq.get(r.staff_initials!) ?? 0) + 1)
+                        freq.set(
+                          r.staff_initials!,
+                          (freq.get(r.staff_initials!) ?? 0) + 1
+                        )
                       );
-                    const best = Array.from(freq.entries()).sort((a, b) => b[1] - a[1])[0];
+                    const best = Array.from(freq.entries()).sort(
+                      (a, b) => b[1] - a[1]
+                    )[0];
                     return best ? best[0] : "—";
                   })()}
                 </div>
+                <div className="mt-1 text-[11px] opacity-80">
+                  Most logs in the last 7 days.
+                </div>
               </div>
 
-              {/* tile 5: Cleaning (today) — keep aligned like the others */}
+              {/* tile 5: Cleaning (today) – red/green + icon */}
               <button
                 type="button"
                 onClick={() => {
@@ -874,14 +955,27 @@ export default function FoodTempLogger({
                     .map((t) => t.id);
                   setConfirm({ ids, run_on: today });
                   setConfirmLabel("Complete all today");
-                  setConfirmInitials(form.staff_initials || ini || initials[0] || "");
+                  setConfirmInitials(
+                    form.staff_initials || ini || initials[0] || ""
+                  );
                 }}
-                className="rounded-xl border bg-white p-3 min-h-[76px] text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black/10 flex flex-col justify-between"
-                title="Complete all today"
+                className={`${cleaningTileBase} ${cleaningColor}`}
+                title="View or complete today’s cleaning tasks"
               >
-                <div className="text-xs text-gray-500">Cleaning (today)</div>
-                <div className="text-2xl font-semibold">{doneCount}/{dueTodayAll.length}</div>
-                
+                <div className="flex items-center justify-between text-xs">
+                  <span>Cleaning (today)</span>
+                  <span className="text-base">{cleaningIcon}</span>
+                </div>
+                <div className="mt-1 text-2xl font-semibold">
+                  {doneCount}/{dueTodayAll.length}
+                </div>
+                <div className="mt-1 text-[11px] opacity-80 underline">
+                  {hasCleaning
+                    ? allCleaningDone
+                      ? "All cleaning tasks completed."
+                      : "Tap to view and complete remaining tasks."
+                    : "No cleaning tasks scheduled for today."}
+                </div>
               </button>
             </div>
           );
@@ -905,7 +999,9 @@ export default function FoodTempLogger({
           <h2 className="text-lg font-semibold">Today’s Cleaning Tasks</h2>
 
           <div className="ml-auto flex items-center gap-2">
-            <div className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm">{doneCount}/{dueTodayAll.length}</div>
+            <div className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm">
+              {doneCount}/{dueTodayAll.length}
+            </div>
             <button
               className="inline-flex items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
               onClick={() => {
@@ -914,16 +1010,15 @@ export default function FoodTempLogger({
                   .map((t) => t.id);
                 setConfirm({ ids, run_on: today });
                 setConfirmLabel("Complete all today");
-                setConfirmInitials(ini || form.staff_initials || initials[0] || "");
+                setConfirmInitials(
+                  ini || form.staff_initials || initials[0] || ""
+                );
               }}
             >
               Complete All
             </button>
           </div>
         </div>
-
-        {/* …rest of component unchanged… */}
-
 
         {/* Weekly/Monthly only */}
         <div className="space-y-2">
@@ -945,14 +1040,18 @@ export default function FoodTempLogger({
                     key={t.id}
                     className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 px-2 py-2 text-sm"
                   >
-                    <div className={done ? "text-gray-500 line-through" : ""}>
+                    <div
+                      className={done ? "text-gray-500 line-through" : ""}
+                    >
                       <div className="font-medium">{t.task}</div>
                       <div className="text-xs text-gray-500">
                         {t.category ?? t.area ?? "—"} •{" "}
                         {t.frequency === "weekly" ? "Weekly" : "Monthly"}
                       </div>
                       {run?.done_by && (
-                        <div className="text-[11px] text-gray-400">Done by {run.done_by}</div>
+                        <div className="text-[11px] text-gray-400">
+                          Done by {run.done_by}
+                        </div>
                       )}
                     </div>
                     <Pill
@@ -960,7 +1059,10 @@ export default function FoodTempLogger({
                       onClick={() =>
                         done
                           ? uncompleteTask(t.id)
-                          : completeTasks([t.id], ini || form.staff_initials || "")
+                          : completeTasks(
+                              [t.id],
+                              ini || form.staff_initials || ""
+                            )
                       }
                     />
                   </div>
@@ -978,7 +1080,9 @@ export default function FoodTempLogger({
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {CLEANING_CATEGORIES.map((cat) => {
               const list = dailyByCat.get(cat) ?? [];
-              const open = list.filter((t) => !runsKey.has(`${t.id}|${today}`)).length;
+              const open = list.filter(
+                (t) => !runsKey.has(`${t.id}|${today}`)
+              ).length;
               return (
                 <CategoryPill
                   key={cat}
@@ -991,7 +1095,9 @@ export default function FoodTempLogger({
                       .map((t) => t.id);
                     setConfirm({ ids, run_on: today });
                     setConfirmLabel(`Complete: ${cat}`);
-                    setConfirmInitials(ini || form.staff_initials || initials[0] || "");
+                    setConfirmInitials(
+                      ini || form.staff_initials || initials[0] || ""
+                    );
                   }}
                 />
               );
@@ -1022,7 +1128,13 @@ export default function FoodTempLogger({
               aria-expanded={formOpen}
             >
               {formOpen ? "Hide" : "Show"}
-              <span className={`transition-transform ${formOpen ? "rotate-180" : ""}`}>▾</span>
+              <span
+                className={`transition-transform ${
+                  formOpen ? "rotate-180" : ""
+                }`}
+              >
+                ▾
+              </span>
             </button>
           </div>
         </div>
@@ -1030,17 +1142,23 @@ export default function FoodTempLogger({
         {formOpen && (
           <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-6">
             <div>
-              <label className="mb-1 block text-xs text-gray-500">Date</label>
+              <label className="mb-1 block text-xs text-gray-500">
+                Date
+              </label>
               <input
                 type="date"
                 value={form.date}
-                onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, date: e.target.value }))
+                }
                 className="h-10 w-full rounded-xl border px-3 py-2"
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-gray-500">Initials</label>
+              <label className="mb-1 block text-xs text-gray-500">
+                Initials
+              </label>
               <select
                 value={form.staff_initials}
                 onChange={(e) => {
@@ -1067,7 +1185,9 @@ export default function FoodTempLogger({
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-gray-500">Location</label>
+              <label className="mb-1 block text-xs text-gray-500">
+                Location
+              </label>
               <select
                 value={form.location}
                 onChange={(e) => {
@@ -1093,20 +1213,28 @@ export default function FoodTempLogger({
             </div>
 
             <div className="lg:col-span-2">
-              <label className="mb-1 block text-xs text-gray-500">Item</label>
+              <label className="mb-1 block text-xs text-gray-500">
+                Item
+              </label>
               <input
                 value={form.item}
-                onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, item: e.target.value }))
+                }
                 className="h-10 w-full rounded-xl border px-3 py-2"
                 placeholder="e.g., Chicken curry"
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-gray-500">Target</label>
+              <label className="mb-1 block text-xs text-gray-500">
+                Target
+              </label>
               <select
                 value={form.target_key}
-                onChange={(e) => setForm((f) => ({ ...f, target_key: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, target_key: e.target.value }))
+                }
                 className="h-10 w-full rounded-xl border px-3 py-2"
               >
                 {TARGET_PRESETS.map((p) => (
@@ -1121,10 +1249,14 @@ export default function FoodTempLogger({
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-gray-500">Temp (°C)</label>
+              <label className="mb-1 block text-xs text-gray-500">
+                Temp (°C)
+              </label>
               <input
                 value={form.temp_c}
-                onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, temp_c: e.target.value }))
+                }
                 onKeyDown={onTempKeyDown}
                 className="h-10 w-full rounded-xl border px-3 py-2"
                 inputMode="decimal"
@@ -1150,7 +1282,10 @@ export default function FoodTempLogger({
 
       {/* ===== Inline Routine Picker Modal ===== */}
       {showPicker && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setShowPicker(false)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setShowPicker(false)}
+        >
           <div
             onClick={(e) => e.stopPropagation()}
             className="mx-auto mt-6 flex h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-24 sm:h-auto sm:rounded-2xl"
@@ -1179,7 +1314,11 @@ export default function FoodTempLogger({
                     >
                       <div>
                         <div className="font-medium">{r.name}</div>
-                        {!r.active && <div className="text-xs text-gray-500">Inactive</div>}
+                        {!r.active && (
+                          <div className="text-xs text-gray-500">
+                            Inactive
+                          </div>
+                        )}
                       </div>
                       <span className="text-gray-400">{">"}</span>
                     </button>
@@ -1241,18 +1380,25 @@ export default function FoodTempLogger({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
+                  <td
+                    colSpan={7}
+                    className="py-6 text-center text-gray-500"
+                  >
                     Loading…
                   </td>
                 </tr>
               ) : rows.length ? (
                 rows.map((r) => {
                   const preset =
-                    r.target_key ? (TARGET_BY_KEY as any)[r.target_key] : undefined;
+                    r.target_key
+                      ? (TARGET_BY_KEY as any)[r.target_key]
+                      : undefined;
                   const st = r.status ?? inferStatus(r.temp_c, preset);
                   return (
                     <tr key={r.id} className="border-t">
-                      <td className="px-3 py-2">{formatDDMMYYYY(r.date)}</td>
+                      <td className="px-3 py-2">
+                        {formatDDMMYYYY(r.date)}
+                      </td>
                       <td className="px-3 py-2 font-medium uppercase">
                         {r.staff_initials ?? "—"}
                       </td>
@@ -1262,12 +1408,16 @@ export default function FoodTempLogger({
                         {preset
                           ? `${preset.label}${
                               preset.minC != null || preset.maxC != null
-                                ? ` (${preset.minC ?? "−∞"}–${preset.maxC ?? "+∞"} °C)`
+                                ? ` (${preset.minC ?? "−∞"}–${
+                                    preset.maxC ?? "+∞"
+                                  } °C)`
                                 : ""
                             }`
                           : "—"}
                       </td>
-                      <td className="px-3 py-2">{r.temp_c ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {r.temp_c ?? "—"}
+                      </td>
                       <td className="px-3 py-2 text-right">
                         {st ? (
                           <span
@@ -1289,7 +1439,10 @@ export default function FoodTempLogger({
                 })
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
+                  <td
+                    colSpan={7}
+                    className="py-6 text-center text-gray-500"
+                  >
                     No entries
                   </td>
                 </tr>
@@ -1301,7 +1454,9 @@ export default function FoodTempLogger({
         {/* Mobile cards */}
         <div className="md:hidden space-y-2">
           {loading ? (
-            <div className="text-center text-sm text-gray-500 py-4">Loading…</div>
+            <div className="text-center text-sm text-gray-500 py-4">
+              Loading…
+            </div>
           ) : grouped.length ? (
             grouped.map((g) => (
               <div key={g.date}>
@@ -1317,7 +1472,9 @@ export default function FoodTempLogger({
                     return (
                       <div key={r.id} className="rounded-xl border p-3">
                         <div className="flex items-center justify-between">
-                          <div className="text-sm font-medium">{r.item ?? "—"}</div>
+                          <div className="text-sm font-medium">
+                            {r.item ?? "—"}
+                          </div>
                           {st && (
                             <span
                               className={
@@ -1332,14 +1489,17 @@ export default function FoodTempLogger({
                           )}
                         </div>
                         <div className="mt-1 text-xs text-gray-600">
-                          {r.location ?? "—"} • {r.staff_initials ?? "—"} • {r.temp_c ?? "—"}°C
+                          {r.location ?? "—"} • {r.staff_initials ?? "—"} •{" "}
+                          {r.temp_c ?? "—"}°C
                         </div>
                         <div className="mt-1 text-[11px] text-gray-500">
                           Target:{" "}
                           {preset
                             ? `${preset.label}${
                                 preset.minC != null || preset.maxC != null
-                                  ? ` (${preset.minC ?? "−∞"}–${preset.maxC ?? "+∞"} °C)`
+                                  ? ` (${preset.minC ?? "−∞"}–${
+                                      preset.maxC ?? "+∞"
+                                    } °C)`
                                   : ""
                               }`
                             : "—"}
@@ -1351,14 +1511,19 @@ export default function FoodTempLogger({
               </div>
             ))
           ) : (
-            <div className="text-center text-sm text-gray-500 py-4">No entries</div>
+            <div className="text-center text-sm text-gray-500 py-4">
+              No entries
+            </div>
           )}
         </div>
       </div>
 
       {/* Cleaning completion modal */}
       {confirm && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setConfirm(null)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setConfirm(null)}
+        >
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -1373,7 +1538,9 @@ export default function FoodTempLogger({
             </div>
             <div className="grow overflow-y-auto px-4 py-3 space-y-3">
               <div className="rounded border bg-gray-50 p-2 text-sm">
-                <div className="font-medium">{confirm.ids.length} task(s)</div>
+                <div className="font-medium">
+                  {confirm.ids.length} task(s)
+                </div>
                 <div className="mt-1 text-xs text-gray-500">
                   For <strong>{nice(confirm.run_on)}</strong>
                 </div>
@@ -1384,7 +1551,9 @@ export default function FoodTempLogger({
                 <select
                   className="w-full rounded-xl border px-2 py-1.5 uppercase"
                   value={confirmInitials}
-                  onChange={(e) => setConfirmInitials(e.target.value.toUpperCase())}
+                  onChange={(e) =>
+                    setConfirmInitials(e.target.value.toUpperCase())
+                  }
                   required
                 >
                   <option value="" disabled>
