@@ -843,7 +843,6 @@ export default function FoodTempLogger({
             (r) => in7d(r.date) && r.status === "fail"
           ).length;
 
-          // New variants for colours / icons
           const entriesTodayIsEmpty = entriesToday === 0;
           const entriesTodayIcon = entriesTodayIsEmpty ? "❌" : "✅";
           const entriesTodayTile =
@@ -886,7 +885,7 @@ export default function FoodTempLogger({
                 <div className="mt-1 text-2xl font-semibold">
                   {entriesToday}
                 </div>
-                <div className="mt-1 text-[11px] opacity-80">
+                <div className="mt-1 text-[11px] opacity-80 hidden md:block">
                   {entriesTodayIsEmpty
                     ? "No temperatures logged yet today."
                     : "Great — at least one log recorded."}
@@ -896,7 +895,7 @@ export default function FoodTempLogger({
               {/* tile 2: Last 7 days (neutral) */}
               <div className="rounded-xl border border-gray-200 bg-white p-3 min-h-[76px] flex flex-col justify-between">
                 <div className="text-xs text-gray-500">Last 7 days</div>
-                <div className="text-2xl font-semibold">{last7}</div>
+                <div className="mt-1 text-2xl font-semibold">{last7}</div>
               </div>
 
               {/* tile 3: Failures (7d) – highlight if any */}
@@ -911,7 +910,7 @@ export default function FoodTempLogger({
                   <span className="text-base">{failsIcon}</span>
                 </div>
                 <div className="mt-1 text-2xl font-semibold">{fails7}</div>
-                <div className="mt-1 text-[11px] opacity-80">
+                <div className="mt-1 text-[11px] opacity-80 hidden md:block">
                   {fails7 > 0
                     ? "Check and record any corrective actions."
                     : "No failed temperature checks in the last week."}
@@ -941,7 +940,7 @@ export default function FoodTempLogger({
                     return best ? best[0] : "—";
                   })()}
                 </div>
-                <div className="mt-1 text-[11px] opacity-80">
+                <div className="mt-1 text-[11px] opacity-80 hidden md:block">
                   Most logs in the last 7 days.
                 </div>
               </div>
@@ -960,7 +959,7 @@ export default function FoodTempLogger({
                   );
                 }}
                 className={`${cleaningTileBase} ${cleaningColor}`}
-                title="View or complete today’s cleaning tasks"
+                title="View and complete today’s cleaning tasks"
               >
                 <div className="flex items-center justify-between text-xs">
                   <span>Cleaning (today)</span>
@@ -969,11 +968,11 @@ export default function FoodTempLogger({
                 <div className="mt-1 text-2xl font-semibold">
                   {doneCount}/{dueTodayAll.length}
                 </div>
-                <div className="mt-1 text-[11px] opacity-80 underline">
+                <div className="mt-1 text-[11px] opacity-80 underline hidden md:block">
                   {hasCleaning
                     ? allCleaningDone
                       ? "All cleaning tasks completed."
-                      : "Tap to view and complete remaining tasks."
+                      : "Click to complete remaining tasks."
                     : "No cleaning tasks scheduled for today."}
                 </div>
               </button>
@@ -981,7 +980,7 @@ export default function FoodTempLogger({
           );
         })()}
 
-        {/* KPI pills row unchanged except button nowrap fix below */}
+        {/* KPI pills row (unchanged placeholder) */}
         <div className="flex flex-wrap items-center gap-2">
           {/* initials selector + training + allergen pills … unchanged */}
         </div>
