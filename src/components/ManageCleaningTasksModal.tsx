@@ -1,3 +1,4 @@
+// src/components/ManageCleaningTasksModal.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -8,13 +9,13 @@ import { getActiveOrgIdClient } from "@/lib/orgClient";
 type Frequency = "daily" | "weekly" | "monthly";
 
 export type CleaningTaskRow = {
-  id: string;               // uuid
-  org_id: string;           // uuid
+  id: string; // uuid
+  org_id: string; // uuid
   task: string;
   area: string | null;
   category: string | null;
   frequency: Frequency;
-  weekday: number | null;   // 1..7
+  weekday: number | null; // 1..7
   month_day: number | null; // 1..31
 };
 
@@ -77,7 +78,9 @@ export default function ManageCleaningTasksModal({
     try {
       const { data, error } = await supabase
         .from("cleaning_tasks")
-        .select("id, org_id, task, area, category, frequency, weekday, month_day")
+        .select(
+          "id, org_id, task, area, category, frequency, weekday, month_day"
+        )
         .order("category", { ascending: true })
         .order("task", { ascending: true });
 
@@ -201,7 +204,9 @@ export default function ManageCleaningTasksModal({
           month_day: draft.frequency === "monthly" ? draft.month_day : null,
         };
 
-        const { error } = await supabase.from("cleaning_tasks").insert(payload);
+        const { error } = await supabase
+          .from("cleaning_tasks")
+          .insert(payload);
         if (error) throw error;
       }
 
@@ -216,7 +221,10 @@ export default function ManageCleaningTasksModal({
   async function deleteTask(id: string) {
     if (!confirm("Delete this task? This cannot be undone.")) return;
     try {
-      const { error } = await supabase.from("cleaning_tasks").delete().eq("id", id);
+      const { error } = await supabase
+        .from("cleaning_tasks")
+        .delete()
+        .eq("id", id);
       if (error) throw error;
       await loadTasks();
       await onSaved?.();
@@ -228,33 +236,44 @@ export default function ManageCleaningTasksModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/30" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 overflow-y-auto overscroll-contain"
+      onClick={onClose}
+    >
       <div
-        className={cls(CARD, "mx-auto mt-6 flex h-[90vh] w-full max-w-3xl flex-col")}
+        className={cls(
+          CARD,
+          "mt-4 mb-4 flex w-full max-w-4xl max-h-[90vh] flex-col overflow-hidden"
+        )}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-4 py-3">
-          <div className="text-base font-semibold">Manage cleaning tasks</div>
-          <div className="flex items-center gap-2">
-            <input
-              className="h-9 w-48 rounded-xl border border-gray-200 px-3 text-sm"
-              placeholder="Search…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-            <button
-              className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
-              onClick={openNew}
-            >
-              + Add task
-            </button>
-            <button
-              className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
-              onClick={onClose}
-            >
-              Close
-            </button>
+        {/* Header – tighter layout, mobile-friendly */}
+        <div className="sticky top-0 z-10 border-b border-gray-200 bg-white px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="text-base font-semibold whitespace-nowrap">
+              Manage cleaning tasks
+            </div>
+            <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
+              <input
+                className="h-9 w-full min-w-0 flex-1 rounded-xl border border-gray-200 px-3 text-sm"
+                placeholder="Search…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
+              <button
+                className="inline-flex items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+                onClick={openNew}
+              >
+                <span className="text-lg leading-none mr-1">＋</span>
+                <span>Add task</span>
+              </button>
+              <button
+                className="inline-flex items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+                onClick={onClose}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
 
@@ -277,13 +296,19 @@ export default function ManageCleaningTasksModal({
               </div>
             ) : (
               grouped.map((g) => (
-                <div key={g.cat} className="rounded-xl border border-gray-200">
+                <div
+                  key={g.cat}
+                  className="rounded-xl border border-gray-200"
+                >
                   <div className="border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-600">
                     {g.cat}
                   </div>
                   <ul className="divide-y divide-gray-100">
                     {g.list.map((t) => (
-                      <li key={t.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                      <li
+                        key={t.id}
+                        className="flex items-center justify-between px-3 py-2 text-sm"
+                      >
                         <div>
                           <div className="font-medium">{t.task}</div>
                           <div className="text-[11px] text-gray-500">
@@ -324,7 +349,10 @@ export default function ManageCleaningTasksModal({
                 Select a task to edit, or click <strong>+ Add task</strong>.
               </div>
             ) : (
-              <form onSubmit={saveDraft} className="space-y-3 rounded-xl border border-gray-200 p-4">
+              <form
+                onSubmit={saveDraft}
+                className="space-y-3 rounded-xl border border-gray-200 p-4"
+              >
                 <div className="text-sm font-semibold">
                   {draft.id ? "Edit task" : "Add task"}
                 </div>
@@ -334,7 +362,9 @@ export default function ManageCleaningTasksModal({
                   <input
                     className="w-full rounded-xl border border-gray-200 px-3 py-2"
                     value={draft.task}
-                    onChange={(e) => setDraft({ ...draft, task: e.target.value })}
+                    onChange={(e) =>
+                      setDraft({ ...draft, task: e.target.value })
+                    }
                     required
                   />
                 </label>
@@ -344,7 +374,9 @@ export default function ManageCleaningTasksModal({
                   <input
                     className="w-full rounded-xl border border-gray-200 px-3 py-2"
                     value={draft.area}
-                    onChange={(e) => setDraft({ ...draft, area: e.target.value })}
+                    onChange={(e) =>
+                      setDraft({ ...draft, area: e.target.value })
+                    }
                     placeholder="e.g., Kitchen"
                   />
                 </label>
@@ -354,7 +386,9 @@ export default function ManageCleaningTasksModal({
                   <select
                     className="w-full rounded-xl border border-gray-200 px-3 py-2"
                     value={draft.category}
-                    onChange={(e) => setDraft({ ...draft, category: e.target.value })}
+                    onChange={(e) =>
+                      setDraft({ ...draft, category: e.target.value })
+                    }
                   >
                     {CLEANING_CATEGORIES.map((c) => (
                       <option key={c} value={c}>
@@ -372,7 +406,8 @@ export default function ManageCleaningTasksModal({
                     onChange={(e) =>
                       setDraft({
                         ...draft,
-                        frequency: e.target.value as Frequency,
+                        frequency: e.target
+                          .value as Frequency,
                       })
                     }
                   >
@@ -389,7 +424,10 @@ export default function ManageCleaningTasksModal({
                       className="w-full rounded-xl border border-gray-200 px-3 py-2"
                       value={draft.weekday ?? 1}
                       onChange={(e) =>
-                        setDraft({ ...draft, weekday: Number(e.target.value) || 1 })
+                        setDraft({
+                          ...draft,
+                          weekday: Number(e.target.value) || 1,
+                        })
                       }
                     >
                       {WEEKDAY_OPTIONS.map(([v, label]) => (
@@ -413,7 +451,10 @@ export default function ManageCleaningTasksModal({
                       onChange={(e) =>
                         setDraft({
                           ...draft,
-                          month_day: Math.min(31, Math.max(1, Number(e.target.value) || 1)),
+                          month_day: Math.min(
+                            31,
+                            Math.max(1, Number(e.target.value) || 1)
+                          ),
                         })
                       }
                     />

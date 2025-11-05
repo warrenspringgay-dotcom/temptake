@@ -164,7 +164,7 @@ export default function EditRoutineModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 overscroll-contain"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 overflow-y-auto overscroll-contain"
       onClick={onClose}
     >
       <form
@@ -172,16 +172,15 @@ export default function EditRoutineModal({
         onClick={(e) => e.stopPropagation()}
         className="mt-4 mb-4 flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
       >
-        {/* Header (stays visible) */}
-        <div className="flex items-center justify-between border-b bg-white px-4 py-3">
-          <h2 className="text-base font-semibold">Edit routine</h2>
+        {/* Header – styled to match Run routine modal */}
+        <div className="flex items-center justify-between border-b bg-slate-900 px-4 py-3 text-white">
+          <div className="text-base font-semibold">Edit routine</div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full p-1 text-gray-500 hover:bg-gray-100 hover:text-black"
-            aria-label="Close"
+            className="rounded-md border border-white/30 bg-white/10 px-3 py-1.5 text-sm font-medium hover:bg-white/20"
           >
-            ✕
+            Close
           </button>
         </div>
 

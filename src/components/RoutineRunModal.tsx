@@ -5,6 +5,7 @@ import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
+// If you have a local type, adjust this import:
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 
 type Props = {
@@ -27,19 +28,11 @@ function inferStatus(
   return "pass";
 }
 
-/**
- * Try hard to get an org_id:
- * 1) use getActiveOrgIdClient()
- * 2) fall back to profiles.org_id for the current user
- * 3) cache it for next time
- */
 async function getOrgIdSafe(): Promise<string | null> {
   try {
-    const existing = await getActiveOrgIdClient();
-    if (existing) return existing;
-  } catch {
-    // ignore and fall through
-  }
+    const org = await getActiveOrgIdClient();
+    if (org) return org;
+  } catch {}
 
   try {
     const { data: userRes } = await supabase.auth.getUser();
@@ -55,14 +48,9 @@ async function getOrgIdSafe(): Promise<string | null> {
     if (error || !data?.org_id) return null;
 
     const orgId = String(data.org_id);
-
-    // cache as "active org" for the rest of the app
     try {
       localStorage.setItem("tt_active_org_id", orgId);
-    } catch {
-      // non-fatal
-    }
-
+    } catch {}
     return orgId;
   } catch {
     return null;
@@ -82,7 +70,7 @@ export default function RoutineRunModal({
   const [temps, setTemps] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
-  // Reset whenever a new routine opens
+  // reset when opened / routine changes
   useEffect(() => {
     if (!open || !routine) return;
     setDate(defaultDate);
@@ -94,64 +82,85 @@ export default function RoutineRunModal({
 
   if (!open || !routine) return null;
 
-    async function handleSave(e?: React.FormEvent) {
-    e?.preventDefault();
+  async function handleSave(e?: React.FormEvent) {
+  e?.preventDefault();
 
-    // ✅ extra safety + fixes the TS error
-    if (!routine) return;
+  // basic validation
+  if (!date || !initials) return;
 
-    if (!date || !initials) return;
-    setSaving(true);
-    try {
-      const org_id = await getOrgIdSafe();
-      if (!org_id) {
-        alert(
-          "No organisation found for this user. Please sign out and back in, or ask your admin to check your organisation settings."
-        );
-        return;
-      }
-
-      const rowsToSave = routine.items
-        .map((it) => {
-          const raw = (temps[it.id] ?? "").trim();
-          if (!raw) return null;
-          const tempNum = Number.isFinite(Number(raw)) ? Number(raw) : null;
-          const preset = (TARGET_BY_KEY as any)[it.target_key] as
-            | TargetPreset
-            | undefined;
-          const status = inferStatus(tempNum, preset);
-          return {
-            org_id,
-            at: date,
-            area: it.location || null,
-            note: it.item || null,
-            staff_initials: initials.toUpperCase(),
-            target_key: it.target_key || null,
-            temp_c: tempNum,
-            status,
-          };
-        })
-        .filter(Boolean) as any[];
-
-      if (!rowsToSave.length) {
-        onClose();
-        return;
-      }
-
-      const { error } = await supabase
-        .from("food_temp_logs")
-        .insert(rowsToSave);
-      if (error) {
-        alert(`Save failed: ${error.message}`);
-        return;
-      }
-
-      await onSaved();
-      onClose();
-    } finally {
-      setSaving(false);
-    }
+  // 🔐 IMPORTANT: make sure we actually have a routine
+  if (!routine) {
+    alert("No routine loaded – please close this window and try again.");
+    return;
   }
+
+  setSaving(true);
+
+  try {
+    const org_id = await getOrgIdSafe();
+    if (!org_id) {
+      alert(
+        "No organisation found. Please sign out and back in, or ask your admin to check your organisation."
+      );
+      return;
+    }
+
+    type NewLogRow = {
+      org_id: string;
+      at: string;
+      area: string | null;
+      note: string | null;
+      staff_initials: string;
+      target_key: string | null;
+      temp_c: number | null;
+      status: "pass" | "fail" | null;
+    };
+
+    const rowsToSave: NewLogRow[] = routine.items
+      .map<NewLogRow | null>((it) => {
+        const raw = (temps[it.id] ?? "").trim();
+        if (!raw) return null; // skip empty temps
+
+        const tempNum = Number.isFinite(Number(raw)) ? Number(raw) : null;
+        const preset =
+          (TARGET_BY_KEY as any)[it.target_key] as TargetPreset | undefined;
+        const status = inferStatus(tempNum, preset);
+
+        return {
+          org_id,
+          at: date,
+          area: it.location || null,
+          note: it.item || null,
+          staff_initials: initials.toUpperCase(),
+          target_key: it.target_key || null,
+          temp_c: tempNum,
+          status,
+        };
+      })
+      .filter((row): row is NewLogRow => row !== null);
+
+    if (!rowsToSave.length) {
+      // nothing filled in – just close
+      onClose();
+      return;
+    }
+
+    const { error } = await supabase
+      .from("food_temp_logs")
+      .insert(rowsToSave);
+
+    if (error) {
+      alert(`Save failed: ${error.message}`);
+      return;
+    }
+
+    await onSaved();
+    onClose();
+  } finally {
+    setSaving(false);
+  }
+}
+
 
   return (
     <div
@@ -161,12 +170,12 @@ export default function RoutineRunModal({
       <form
         onSubmit={handleSave}
         onClick={(e) => e.stopPropagation()}
-        className="mt-4 mb-4 flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+        className="mt-4 mb-4 flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-slate-900 text-slate-50 shadow-xl"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b bg-slate-900 px-4 py-3 text-white">
+        {/* Header – same style as current run routine */}
+        <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950 px-4 py-3">
           <div>
-            <div className="text-xs uppercase tracking-wide opacity-80">
+            <div className="text-[11px] uppercase tracking-wide text-slate-400">
               Run routine
             </div>
             <div className="text-base font-semibold">{routine.name}</div>
@@ -180,23 +189,24 @@ export default function RoutineRunModal({
           </button>
         </div>
 
-        {/* Scrollable body */}
+        {/* Body */}
         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-4">
+          {/* Date / initials */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="text-sm">
-              <div className="mb-1 text-gray-700">Date</div>
+              <div className="mb-1 text-slate-200">Date</div>
               <input
                 type="date"
-                className="w-full rounded-xl border border-gray-300 px-2 py-2 text-sm"
+                className="w-full rounded-xl border border-slate-600 bg-slate-900 px-2 py-2 text-sm text-slate-50"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
                 required
               />
             </label>
             <label className="text-sm">
-              <div className="mb-1 text-gray-700">Initials</div>
+              <div className="mb-1 text-slate-200">Initials</div>
               <input
-                className="w-full rounded-xl border border-gray-300 px-2 py-2 text-sm uppercase"
+                className="w-full rounded-xl border border-slate-600 bg-slate-900 px-2 py-2 text-sm uppercase text-slate-50"
                 value={initials}
                 onChange={(e) => setInitials(e.target.value.toUpperCase())}
                 required
@@ -204,19 +214,21 @@ export default function RoutineRunModal({
             </label>
           </div>
 
-          <p className="text-xs text-gray-600">
-            Enter temps for any items you’re logging now, then “Save all”.
+          <p className="text-xs text-slate-300">
+            Enter temps for any items you’re logging now, then tap{" "}
+            <span className="font-semibold">“Save all”</span>.
           </p>
 
-          <div className="overflow-x-auto rounded-lg border border-gray-300">
-            <table className="min-w-[640px] w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
+          {/* Desktop/tablet – keep table look */}
+          <div className="hidden md:block rounded-lg border border-slate-700 bg-slate-900">
+            <table className="w-full table-fixed text-sm">
+              <thead className="bg-slate-800 text-slate-300">
                 <tr>
-                  <th className="px-2 py-2 text-left w-10">#</th>
-                  <th className="px-2 py-2 text-left w-32">Location</th>
-                  <th className="px-2 py-2 text-left w-40">Item</th>
-                  <th className="px-2 py-2 text-left w-40">Target</th>
-                  <th className="px-2 py-2 text-left w-32">Temp (°C)</th>
+                  <th className="px-3 py-2 w-10 text-left">#</th>
+                  <th className="px-3 py-2 w-32 text-left">Location</th>
+                  <th className="px-3 py-2 w-40 text-left">Item</th>
+                  <th className="px-3 py-2 text-left">Target</th>
+                  <th className="px-3 py-2 w-32 text-left">Temp (°C)</th>
                 </tr>
               </thead>
               <tbody>
@@ -226,15 +238,15 @@ export default function RoutineRunModal({
                       | TargetPreset
                       | undefined;
                   return (
-                    <tr key={it.id} className="border-t">
-                      <td className="px-2 py-2 align-top">{idx + 1}</td>
-                      <td className="px-2 py-2 align-top">
+                    <tr key={it.id} className="border-t border-slate-800">
+                      <td className="px-3 py-2 align-top">{idx + 1}</td>
+                      <td className="px-3 py-2 align-top">
                         {it.location ?? "—"}
                       </td>
-                      <td className="px-2 py-2 align-top">
+                      <td className="px-3 py-2 align-top">
                         {it.item ?? "—"}
                       </td>
-                      <td className="px-2 py-2 align-top text-xs text-gray-600">
+                      <td className="px-3 py-2 align-top text-xs text-slate-300">
                         {preset
                           ? `${preset.label}${
                               preset.minC != null || preset.maxC != null
@@ -245,9 +257,9 @@ export default function RoutineRunModal({
                             }`
                           : it.target_key || "—"}
                       </td>
-                      <td className="px-2 py-2 align-top">
+                      <td className="px-3 py-2 align-top">
                         <input
-                          className="w-24 rounded-xl border border-gray-300 px-2 py-1 text-sm"
+                          className="w-24 rounded-xl border border-slate-600 bg-slate-900 px-2 py-1 text-sm text-slate-50"
                           inputMode="decimal"
                           value={temps[it.id] ?? ""}
                           onChange={(e) =>
@@ -264,21 +276,79 @@ export default function RoutineRunModal({
               </tbody>
             </table>
           </div>
+
+          {/* Mobile – stacked cards, no horizontal scroll */}
+          <div className="md:hidden space-y-2">
+            {routine.items.map((it, idx) => {
+              const preset =
+                (TARGET_BY_KEY as any)[it.target_key] as
+                  | TargetPreset
+                  | undefined;
+              return (
+                <div
+                  key={it.id}
+                  className="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs text-slate-400">#{idx + 1}</div>
+                    {/* you could add a tiny status badge here later if you want */}
+                  </div>
+
+                  <div className="mt-1 text-sm font-medium text-slate-50">
+                    {it.item ?? "—"}
+                  </div>
+                  <div className="text-xs text-slate-300">
+                    {it.location ?? "—"}
+                  </div>
+
+                  <div className="mt-2 text-[11px] text-slate-400">
+                    {preset
+                      ? `${preset.label}${
+                          preset.minC != null || preset.maxC != null
+                            ? ` (${preset.minC ?? "−∞"}–${
+                                preset.maxC ?? "+∞"
+                              } °C)`
+                            : ""
+                        }`
+                      : it.target_key || "—"}
+                  </div>
+
+                  <div className="mt-2">
+                    <label className="text-xs text-slate-300">
+                      Temp (°C)
+                      <input
+                        className="mt-1 w-full rounded-xl border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-slate-50"
+                        inputMode="decimal"
+                        value={temps[it.id] ?? ""}
+                        onChange={(e) =>
+                          setTemps((t) => ({
+                            ...t,
+                            [it.id]: e.target.value,
+                          }))
+                        }
+                        placeholder="e.g. 75"
+                      />
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t bg-gray-50 px-4 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-slate-800 bg-slate-900 px-4 py-3">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md px-3 py-1.5 text-sm hover:bg-white"
+            className="rounded-md px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-800"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={saving}
-            className="rounded-xl bg-black px-4 py-1.5 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-60"
+            className="rounded-xl bg-white px-4 py-1.5 text-sm font-semibold text-slate-900 hover:bg-slate-200 disabled:opacity-60"
           >
             {saving ? "Saving…" : "Save all"}
           </button>
