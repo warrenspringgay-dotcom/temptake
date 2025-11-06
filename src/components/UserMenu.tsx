@@ -1,7 +1,9 @@
+// src/components/UserMenu.tsx
 "use client";
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { signOutAction } from "@/app/actions/auth";
 
 type Props = {
   user: { email?: string | null } | null;
@@ -54,18 +56,38 @@ export default function UserMenu({ user }: Props) {
         role="menu"
       >
         <div className="py-1 text-sm">
-          <Link href="/help" className="block px-3 py-2 hover:bg-gray-50" role="menuitem">
+          <Link
+            href="/help"
+            className="block px-3 py-2 hover:bg-gray-50"
+            role="menuitem"
+          >
             Help
           </Link>
-          <Link href="/settings" className="block px-3 py-2 hover:bg-gray-50" role="menuitem">
+
+          <Link
+            href="/settings"
+            className="block px-3 py-2 hover:bg-gray-50"
+            role="menuitem"
+          >
             Settings
           </Link>
+
           {user ? (
-            <Link href="/logout" className="block px-3 py-2 text-red-600 hover:bg-gray-50" role="menuitem">
-              Sign out
-            </Link>
+            <form action={signOutAction}>
+              <button
+                type="submit"
+                className="block w-full px-3 py-2 text-left text-red-600 hover:bg-gray-50"
+                role="menuitem"
+              >
+                Sign out
+              </button>
+            </form>
           ) : (
-            <Link href="/login" className="block px-3 py-2 hover:bg-gray-50" role="menuitem">
+            <Link
+              href="/login"
+              className="block px-3 py-2 hover:bg-gray-50"
+              role="menuitem"
+            >
               Login
             </Link>
           )}

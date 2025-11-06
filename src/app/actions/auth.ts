@@ -3,6 +3,15 @@
 import { redirect } from "next/navigation";
 import { getServerSupabase, getServerSupabaseAction } from "@/lib/supabaseServer";
 
+
+
+export async function signOut() {
+  const supabase = await getServerSupabaseAction();
+  await supabase.auth.signOut();
+  redirect("/login");
+}
+
+
 // ——— Queries ———
 export async function getUserOrNull() {
   const supabase = await getServerSupabase();
