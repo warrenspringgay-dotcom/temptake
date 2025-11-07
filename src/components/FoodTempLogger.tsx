@@ -771,40 +771,52 @@ export default function FoodTempLogger({
   }, [dueDaily]);
 
   /* complete api (active org_id) */
-  async function completeTasks(ids: string[], ini: string) {
-    try {
-      const org_id = await getActiveOrgIdClient();
-      if (!org_id) {
-        alert("No organisation found.");
-        return;
-      }
-      const run_on = today;
-      const payload = ids.map((id) => ({
-        org_id,
-        task_id: id,
-        run_on,
-        done_by: ini.toUpperCase(),
-      }));
-      const { error } = await supabase
-        .from("cleaning_task_runs")
-        .insert(payload);
-      if (error) throw error;
-
-      setRuns((prev) => [
-        ...prev,
-        ...ids.map((id) => ({
-          task_id: id,
-          run_on,
-          done_by: ini.toUpperCase(),
-        })),
-      ]);
-    } catch (e: any) {
-      alert(e?.message || "Failed to save completion.");
-    } finally {
-      setConfirm(null);
-      setConfirmInitials("");
-    }
+async function completeTasks(ids: string[], ini: string) {
+  // nothing to do
+  if (!ids.length) {
+    setConfirm(null);
+    setConfirmInitials("");
+    return;
   }
+
+  try {
+    const org_id = await getActiveOrgIdClient();
+    if (!org_id) {
+      alert("No organisation found.");
+      return;
+    }
+
+    const run_on = today;
+
+    const payload = ids.map((id) => ({
+      org_id,
+      task_id: id,
+      run_on,
+      done_by: ini.toUpperCase(),
+    }));
+
+    // Use upsert + onConflict so duplicate (task_id,run_on) is OK
+    const { error } = await supabase
+      .from("cleaning_task_runs")
+      .upsert(payload, {
+        onConflict: "task_id,run_on",
+        ignoreDuplicates: true,
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    // Refresh from DB so runsKey is correct and we don't double-add
+    await loadRotaToday();
+  } catch (e: any) {
+    alert(e?.message || "Failed to save completion.");
+  } finally {
+    setConfirm(null);
+    setConfirmInitials("");
+  }
+}
+
 
   async function uncompleteTask(id: string) {
     try {
@@ -833,7 +845,7 @@ export default function FoodTempLogger({
           const todayISO = new Date().toISOString().slice(0, 10);
           const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
           const in7d = (d: string | null) =>
-            (d ? new Date(d) >= since : false);
+            d ? new Date(d) >= since : false;
 
           const entriesToday = rows.filter(
             (r) => r.date === todayISO
@@ -1362,7 +1374,7 @@ export default function FoodTempLogger({
           </button>
         </div>
 
-        {/* Desktop/tablet */}
+        {/* Desktop/tablet – grouped by date */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full table-fixed text-sm">
             <thead className="bg-gray-50 text-gray-600">
@@ -1379,69 +1391,81 @@ export default function FoodTempLogger({
             <tbody>
               {loading ? (
                 <tr>
-                  <td
-                    colSpan={7}
-                    className="py-6 text-center text-gray-500"
-                  >
+                  <td colSpan={7} className="py-6 text-center text-gray-500">
                     Loading…
                   </td>
                 </tr>
-              ) : rows.length ? (
-                rows.map((r) => {
-                  const preset =
-                    r.target_key
-                      ? (TARGET_BY_KEY as any)[r.target_key]
-                      : undefined;
-                  const st = r.status ?? inferStatus(r.temp_c, preset);
-                  return (
-                    <tr key={r.id} className="border-t">
-                      <td className="px-3 py-2">
-                        {formatDDMMYYYY(r.date)}
-                      </td>
-                      <td className="px-3 py-2 font-medium uppercase">
-                        {r.staff_initials ?? "—"}
-                      </td>
-                      <td className="px-3 py-2">{r.location ?? "—"}</td>
-                      <td className="px-3 py-2">{r.item ?? "—"}</td>
-                      <td className="px-3 py-2">
-                        {preset
-                          ? `${preset.label}${
-                              preset.minC != null || preset.maxC != null
-                                ? ` (${preset.minC ?? "−∞"}–${
-                                    preset.maxC ?? "+∞"
-                                  } °C)`
-                                : ""
-                            }`
-                          : "—"}
-                      </td>
-                      <td className="px-3 py-2">
-                        {r.temp_c ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        {st ? (
-                          <span
-                            className={
-                              "inline-flex rounded-full px-2 py-0.5 text-xs font-medium " +
-                              (st === "pass"
-                                ? "bg-emerald-100 text-emerald-800"
-                                : "bg-red-100 text-red-800")
-                            }
-                          >
-                            {st}
-                          </span>
-                        ) : (
-                          "—"
-                        )}
+              ) : grouped.length ? (
+                grouped.map((g) => (
+                  <React.Fragment key={g.date}>
+                    {/* Date header row */}
+                    <tr className="border-t bg-gray-50/80">
+                      <td
+                        colSpan={7}
+                        className="px-3 py-2 text-sm font-semibold text-gray-700"
+                      >
+                        {formatDDMMYYYY(g.date)}
                       </td>
                     </tr>
-                  );
-                })
+                    {/* Rows for that date */}
+                    {g.list.map((r) => {
+                      const preset: TargetPreset | undefined = r.target_key
+                        ? (TARGET_BY_KEY as any)[r.target_key]
+                        : undefined;
+                      const st =
+                        r.status ?? inferStatus(r.temp_c, preset);
+                      return (
+                        <tr key={r.id} className="border-t">
+                          {/* empty date cell – date is shown in header row */}
+                          <td className="px-3 py-2 text-xs text-gray-400"></td>
+                          <td className="px-3 py-2 font-medium uppercase">
+                            {r.staff_initials ?? "—"}
+                          </td>
+                          <td className="px-3 py-2">
+                            {r.location ?? "—"}
+                          </td>
+                          <td className="px-3 py-2">
+                            {r.item ?? "—"}
+                          </td>
+                          <td className="px-3 py-2">
+                            {preset
+                              ? `${preset.label}${
+                                  preset.minC != null ||
+                                  preset.maxC != null
+                                    ? ` (${preset.minC ?? "−∞"}–${
+                                        preset.maxC ?? "+∞"
+                                      } °C)`
+                                    : ""
+                                }`
+                              : "—"}
+                          </td>
+                          <td className="px-3 py-2">
+                            {r.temp_c ?? "—"}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            {st ? (
+                              <span
+                                className={
+                                  "inline-flex rounded-full px-2 py-0.5 text-xs font-medium " +
+                                  (st === "pass"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-red-100 text-red-800")
+                                }
+                              >
+                                {st}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                ))
               ) : (
                 <tr>
-                  <td
-                    colSpan={7}
-                    className="py-6 text-center text-gray-500"
-                  >
+                  <td colSpan={7} className="py-6 text-center text-gray-500">
                     No entries
                   </td>
                 </tr>
@@ -1450,7 +1474,7 @@ export default function FoodTempLogger({
           </table>
         </div>
 
-        {/* Mobile cards */}
+        {/* Mobile cards (already grouped) */}
         <div className="md:hidden space-y-2">
           {loading ? (
             <div className="text-center text-sm text-gray-500 py-4">
@@ -1467,7 +1491,8 @@ export default function FoodTempLogger({
                     const preset: TargetPreset | undefined = r.target_key
                       ? (TARGET_BY_KEY as any)[r.target_key]
                       : undefined;
-                    const st = r.status ?? inferStatus(r.temp_c, preset);
+                    const st =
+                      r.status ?? inferStatus(r.temp_c, preset);
                     return (
                       <div key={r.id} className="rounded-xl border p-3">
                         <div className="flex items-center justify-between">
