@@ -76,11 +76,20 @@ export default function ManageCleaningTasksModal({
     setLoading(true);
     setErr(null);
     try {
+      const org_id = await getActiveOrgIdClient();
+      if (!org_id) {
+        setTasks([]);
+        setErr("No organisation found for this user.");
+        setLoading(false);
+        return;
+      }
+
       const { data, error } = await supabase
         .from("cleaning_tasks")
         .select(
           "id, org_id, task, area, category, frequency, weekday, month_day"
         )
+        .eq("org_id", org_id)
         .order("category", { ascending: true })
         .order("task", { ascending: true });
 
@@ -99,7 +108,9 @@ export default function ManageCleaningTasksModal({
         }))
       );
     } catch (e: any) {
+      console.error("loadTasks error", e);
       setErr(e?.message || "Failed to load tasks.");
+      setTasks([]);
     } finally {
       setLoading(false);
     }
@@ -214,7 +225,11 @@ export default function ManageCleaningTasksModal({
       await loadTasks();
       await onSaved?.();
     } catch (e: any) {
-      alert(e?.message || "Failed to save task.");
+      console.error("saveDraft error", e);
+      alert(
+        e?.message ||
+          "Failed to save task. If this mentions row-level security, check org/user permissions."
+      );
     }
   }
 
@@ -229,6 +244,7 @@ export default function ManageCleaningTasksModal({
       await loadTasks();
       await onSaved?.();
     } catch (e: any) {
+      console.error("deleteTask error", e);
       alert(e?.message || "Failed to delete.");
     }
   }
@@ -406,8 +422,7 @@ export default function ManageCleaningTasksModal({
                     onChange={(e) =>
                       setDraft({
                         ...draft,
-                        frequency: e.target
-                          .value as Frequency,
+                        frequency: e.target.value as Frequency,
                       })
                     }
                   >

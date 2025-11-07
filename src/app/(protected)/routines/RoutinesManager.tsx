@@ -1,4 +1,4 @@
-// src/app/(protected)/routines/RoutineManager.tsx
+// src/app/(protected)/routines/RoutinesManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -28,15 +28,14 @@ function cls(...p: Array<string | false | undefined>) {
   return p.filter(Boolean).join(" ");
 }
 
-export default function RoutineManager() {
+export default function RoutinesManager() {
   const [rows, setRows] = useState<RoutineRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [orgId, setOrgId] = useState<string | null>(null);
 
-  const [q, setQ] = useState(""); // search
-  const [newName, setNewName] = useState(""); // quick add name
+  const [q, setQ] = useState("");
+  const [newName, setNewName] = useState("");
 
-  // view + edit modals
   const [viewOpen, setViewOpen] = useState(false);
   const [viewing, setViewing] = useState<RoutineRow | null>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -120,11 +119,11 @@ export default function RoutineManager() {
 
   // ================= Actions =================
   function addQuick() {
-    // Always open the editor, even if the name box is empty
+    // Always open the editor; if the text box is empty, use a default name
     const baseName = newName.trim() || "New routine";
 
     setEditing({
-      id: null, // null = new routine (we'll INSERT on save)
+      id: null,
       name: baseName,
       active: true,
       items: [],
@@ -135,12 +134,12 @@ export default function RoutineManager() {
   }
 
   function openView(r: RoutineRow) {
+    if (!r.id) return; // can't view unsaved ones
     setViewing(r);
     setViewOpen(true);
   }
 
   function openEdit(r: RoutineRow) {
-    // Deep clone so edits don’t mutate the table list until saved
     setEditing(JSON.parse(JSON.stringify(r)));
     setEditOpen(true);
   }
@@ -149,20 +148,17 @@ export default function RoutineManager() {
     if (!editing) return;
 
     try {
-      // Ensure we know the org
       let currentOrgId = orgId;
       if (!currentOrgId) {
         currentOrgId = await getActiveOrgIdClient();
         setOrgId(currentOrgId);
       }
-      if (!currentOrgId) {
-        throw new Error("No organisation found.");
-      }
+      if (!currentOrgId) throw new Error("No organisation found.");
 
       let routineId = editing.id;
 
       if (!routineId) {
-        // NEW routine → INSERT into temp_routines first
+        // New routine
         const { data, error } = await supabase
           .from("temp_routines")
           .insert({
@@ -176,7 +172,7 @@ export default function RoutineManager() {
         if (error) throw error;
         routineId = data.id as string;
       } else {
-        // Existing routine → UPDATE
+        // Existing routine
         const { error: uErr } = await supabase
           .from("temp_routines")
           .update({
@@ -187,14 +183,12 @@ export default function RoutineManager() {
 
         if (uErr) throw uErr;
 
-        // Clear old items before re-inserting
         await supabase
           .from("temp_routine_items")
           .delete()
           .eq("routine_id", routineId);
       }
 
-      // Insert items for both new + existing routines
       const inserts = editing.items.map((it, i) => ({
         routine_id: routineId,
         position: it.position ?? i + 1,
@@ -220,7 +214,7 @@ export default function RoutineManager() {
   }
 
   async function removeRoutine(id: string | null) {
-    if (!id) return; // should not happen for saved routines
+    if (!id) return;
     if (!confirm("Delete routine?")) return;
     const { error } = await supabase
       .from("temp_routines")
@@ -291,9 +285,9 @@ export default function RoutineManager() {
                   <td className="py-2 pr-3">
                     <button
                       type="button"
-                      className="text-blue-600 underline hover:text-blue-700"
-                      title="Open"
-                      onClick={() => openView(r)}
+                      className="text-blue-600 underline hover:text-blue-700 disabled:text-gray-400"
+                      title={r.id ? "Open" : "Save this routine first"}
+                      onClick={() => r.id && openView(r)}
                       disabled={!r.id}
                     >
                       {r.name}
