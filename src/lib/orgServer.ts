@@ -1,23 +1,16 @@
 // src/lib/orgServer.ts
-import { getServerSupabase } from "@/lib/supabaseServer";
+import { ensureOrgForCurrentUser } from "@/lib/ensureOrg";
 
-/** Server-only: get org_id for the current user. */
+/**
+ * Server-side helper to get the active organisation id
+ * for the current authenticated user.
+ *
+ * This will also create the org + membership if needed.
+ */
 export async function getActiveOrgIdServer(): Promise<string | null> {
-  const supabase = await getServerSupabase();
-  const { data: { session } } = await supabase.auth.getSession();
-
-  const md = session?.user?.user_metadata ?? {};
-  const orgFromJwt = (md.org_id as string) || null;
-  if (orgFromJwt) return orgFromJwt;
-
-  const userId = session?.user?.id;
-  if (!userId) return null;
-
-  const { data } = await supabase
-    .from("profiles")
-    .select("org_id")
-    .eq("id", userId)
-    .maybeSingle();
-
-  return (data?.org_id as string) ?? null;
+  const orgId = await ensureOrgForCurrentUser();
+  return orgId ?? null;
 }
+
+// Re-export in case other server code wants to call it directly
+export { ensureOrgForCurrentUser };

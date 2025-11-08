@@ -1,3 +1,4 @@
+// src/app/layout.tsx
 import "./globals.css";
 import Image from "next/image";
 import Link from "next/link";
@@ -7,7 +8,7 @@ import UserMenu from "@/components/UserMenu";
 import { getUserOrNull } from "@/app/actions/auth";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import Pwa from "@/components/Pwa";
-import OrgName from "@/components/OrgName";   // 👈 NEW
+import OrgName from "@/components/OrgName";
 
 export default async function RootLayout({
   children,
@@ -19,7 +20,6 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <head>
-        {/* PWA meta */}
         <link rel="manifest" href="/manifest.webmanifest" />
         <meta name="theme-color" content="#111111" />
         <link rel="icon" href="/icon-192x192.png" sizes="192x192" />
@@ -34,6 +34,7 @@ export default async function RootLayout({
         {/* STICKY TOP BAR */}
         <header className="sticky top-0 z-50 border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/70">
           <div className="mx-auto max-w-6xl px-4">
+            {/* Row 1: brand + menus */}
             <div className="flex h-12 items-center gap-3">
               {/* Left: brand */}
               <Link href="/dashboard" className="flex items-center gap-2">
@@ -43,27 +44,40 @@ export default async function RootLayout({
 
               {/* Mobile: business name centred */}
               <div className="flex-1 md:hidden">
-                <OrgName className="block text-center text-xs font-semibold truncate" />
+                <OrgName className="block truncate text-center text-xs font-semibold" />
               </div>
 
-              {/* Middle: tabs (desktop only) */}
-              <div className="mx-auto hidden md:block">
-                <NavTabs />
-              </div>
-
-              {/* Right side: business name (desktop) + user menu / mobile menu */}
+              {/* Right side */}
               <div className="ml-auto flex items-center gap-3">
-                {/* Desktop business name next to user/logout */}
-                <OrgName className="hidden md:inline text-sm font-medium text-slate-600 max-w-[220px] truncate" />
+                {/* Desktop business name */}
+                <OrgName className="hidden max-w-[220px] truncate text-sm font-medium text-slate-600 md:inline" />
+
+                {/* Desktop: Help link */}
+                <Link
+                  href="/help"
+                  className="hidden text-xs font-medium text-slate-600 underline-offset-2 hover:underline hover:text-slate-900 md:inline"
+                >
+                  Help
+                </Link>
 
                 {/* Desktop: user menu */}
                 <div className="hidden md:block">
                   <UserMenu user={user} />
                 </div>
 
-                {/* Mobile: hamburger menu */}
+                {/* Mobile: hamburger */}
                 <div className="md:hidden">
                   <MobileMenu user={user} />
+                </div>
+              </div>
+            </div>
+
+            {/* Row 2: nav tabs – scrollable on mobile, centred on desktop */}
+            <div className="pb-2">
+              <div className="overflow-x-auto">
+                {/* This inner div is only as wide as the tabs and is centred */}
+                <div className="mx-auto w-fit">
+                  <NavTabs />
                 </div>
               </div>
             </div>
@@ -72,7 +86,6 @@ export default async function RootLayout({
 
         <Pwa />
 
-        {/* Page container */}
         <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
 
         <ServiceWorkerRegister />

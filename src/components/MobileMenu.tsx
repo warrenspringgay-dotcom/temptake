@@ -1,116 +1,67 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { Menu } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { usePathname } from "next/navigation";
+import { Menu, X } from "lucide-react";
+import { supabase } from "@/lib/supabaseBrowser";
+import { useRouter } from "next/navigation";
 
-const LINKS = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/routines", label: "Routines" },
-  { href: "/allergens", label: "Allergens" },
-  { href: "/cleaning-rota", label: "Cleaning Rota" },
-  { href: "/team", label: "Team" },
-  { href: "/suppliers", label: "Suppliers" },
-  { href: "/reports", label: "Reports" },
-  // Utility links shown in the same menu (mobile requirement)
-  { href: "/help", label: "Help" },
-  { href: "/settings", label: "Settings" },
-];
-
-type Props = {
-  user: { email?: string | null } | null;
-};
-
-export default function MobileMenu({ user }: Props) {
+export default function MobileMenu({ user }: { user: any }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-  const pathname = usePathname();
+  const router = useRouter();
 
-  // close on route change
-  useEffect(() => setOpen(false), [pathname]);
-
-  // outside click / esc
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    function onClick(e: MouseEvent) {
-      if (!ref.current) return;
-      if (!ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    if (open) {
-      document.addEventListener("keydown", onKey);
-      document.addEventListener("mousedown", onClick);
-    }
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onClick);
-    };
-  }, [open]);
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    router.push("/login");
+  }
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
+      {/* Button */}
       <button
-        type="button"
-        aria-label="Open menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-10 w-10 items-center justify-center rounded-xl hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-black/20"
+        className="flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 hover:bg-gray-50"
+        onClick={() => setOpen((o) => !o)}
       >
-        <Menu className="h-5 w-5" />
+        {open ? <X size={18} /> : <Menu size={18} />}
       </button>
 
-      {/* Backdrop */}
+      {/* Dropdown */}
       {open && (
-        <button
-          aria-label="Close menu"
-          className="fixed inset-0 z-40 bg-black/25"
-          onClick={() => setOpen(false)}
-        />
-      )}
+        <div className="absolute right-0 mt-2 w-48 rounded-xl border border-gray-200 bg-white shadow-md">
+          <div className="flex flex-col text-sm">
+            <Link
+              href="/dashboard"
+              onClick={() => setOpen(false)}
+              className="px-4 py-2 hover:bg-gray-50"
+            >
+              Dashboard
+            </Link>
+            <Link
+              href="/settings"
+              onClick={() => setOpen(false)}
+              className="px-4 py-2 hover:bg-gray-50"
+            >
+              Settings
+            </Link>
+            <Link
+              href="/help"
+              onClick={() => setOpen(false)}
+              className="px-4 py-2 hover:bg-gray-50"
+            >
+              Help
+            </Link>
 
-      {/* Panel */}
-      <div
-        className={[
-          "fixed left-3 right-3 top-14 z-50 origin-top",
-          open ? "scale-y-100 opacity-100" : "pointer-events-none scale-y-95 opacity-0",
-          "transition duration-150 ease-out",
-        ].join(" ")}
-      >
-        <div className="rounded-xl border bg-white shadow-xl overflow-y-auto">
-          <nav className="max-h-[70vh] overflow-y-auto">
-            {LINKS.map((t) => {
-              const active = pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
-              return (
-                <Link
-                  key={t.href}
-                  href={t.href}
-                  className={[
-                    "block px-4 py-3 text-sm",
-                    active ? "bg-black text-white" : "text-slate-700 hover:bg-gray-50",
-                  ].join(" ")}
-                >
-                  {t.label}
-                </Link>
-              );
-            })}
+            <hr className="my-1" />
 
-            {/* Auth at bottom */}
-            <div className="border-t">
-              {user ? (
-                <Link href="/logout" className="block px-4 py-3 text-sm text-red-600 hover:bg-gray-50">
-                  Sign out
-                </Link>
-              ) : (
-                <Link href="/login" className="block px-4 py-3 text-sm hover:bg-gray-50">
-                  Login
-                </Link>
-              )}
-            </div>
-          </nav>
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 text-left text-red-600 hover:bg-red-50"
+            >
+              Log out
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -17,23 +17,25 @@ export default function NavTabs() {
   const pathname = usePathname();
 
   return (
-    
-    <ul className="flex flex-nowrap items-center justify-center gap-1">
+    <ul className="flex flex-nowrap items-center gap-1 min-w-max px-2">
       {TABS.map((t) => {
         const active =
-          pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
+          pathname === t.href ||
+          (pathname?.startsWith(t.href + "/") ?? false);
+
         return (
           <li key={t.href} className="shrink-0">
             <Link
               href={t.href}
               className={[
-                "inline-flex h-9 items-center rounded-md px-3 text-sm transition-colors",
-                active ? "bg-black text-white" : "text-slate-700 hover:bg-gray-100",
+                "inline-flex h-9 items-center rounded-md px-3 text-sm font-medium transition-colors whitespace-nowrap",
+                active
+                  ? "bg-black text-white"
+                  : "text-slate-700 hover:bg-gray-100 hover:text-black",
               ].join(" ")}
             >
               {t.label}
             </Link>
-            
           </li>
         );
       })}
