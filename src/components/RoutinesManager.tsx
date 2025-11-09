@@ -1,4 +1,3 @@
-// src/app/(protected)/routines/RoutineManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -41,6 +40,9 @@ export default function RoutineManager() {
   const [viewing, setViewing] = useState<RoutineRow | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<RoutineRow | null>(null);
+
+  // permissions
+  const [canManage, setCanManage] = useState(false);
 
   // ================= Fetch routines =================
   async function refresh() {
@@ -111,6 +113,42 @@ export default function RoutineManager() {
     refresh();
   }, []);
 
+  // ================= Permissions =================
+  useEffect(() => {
+    (async () => {
+      try {
+        const [id, userRes] = await Promise.all([
+          getActiveOrgIdClient(),
+          supabase.auth.getUser(),
+        ]);
+        const email = userRes.data.user?.email?.toLowerCase() ?? null;
+        if (!id || !email) {
+          setCanManage(false);
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from("team_members")
+          .select("role,email")
+          .eq("org_id", id)
+          .eq("email", email)
+          .maybeSingle();
+
+        if (error) {
+          setCanManage(false);
+          return;
+        }
+
+        const role = (data?.role ?? "").toLowerCase();
+        setCanManage(
+          role === "owner" || role === "manager" || role === "admin"
+        );
+      } catch {
+        setCanManage(false);
+      }
+    })();
+  }, []);
+
   // ================= Filter =================
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -120,7 +158,11 @@ export default function RoutineManager() {
 
   // ================= Actions =================
   function addQuick() {
-    // Always open the editor, even if the name box is empty
+    if (!canManage) {
+      alert("Only managers/owners can create routines.");
+      return;
+    }
+
     const baseName = newName.trim() || "New routine";
 
     setEditing({
@@ -140,6 +182,10 @@ export default function RoutineManager() {
   }
 
   function openEdit(r: RoutineRow) {
+    if (!canManage) {
+      alert("Only managers / owners can edit routines.");
+      return;
+    }
     // Deep clone so edits don’t mutate the table list until saved
     setEditing(JSON.parse(JSON.stringify(r)));
     setEditOpen(true);
@@ -147,9 +193,12 @@ export default function RoutineManager() {
 
   async function saveEdit() {
     if (!editing) return;
+    if (!canManage) {
+      alert("Only managers / owners can save routines.");
+      return;
+    }
 
     try {
-      // Ensure we know the org
       let currentOrgId = orgId;
       if (!currentOrgId) {
         currentOrgId = await getActiveOrgIdClient();
@@ -220,6 +269,10 @@ export default function RoutineManager() {
   }
 
   async function removeRoutine(id: string | null) {
+    if (!canManage) {
+      alert("Only managers / owners can delete routines.");
+      return;
+    }
     if (!id) return; // should not happen for saved routines
     if (!confirm("Delete routine?")) return;
     const { error } = await supabase
@@ -249,15 +302,23 @@ export default function RoutineManager() {
       <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
         <input
           className="rounded-xl border px-3 py-2"
-          placeholder="New routine name"
+          placeholder={
+            canManage ? "New routine name" : "View-only · ask manager to add"
+          }
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
+          disabled={!canManage}
         />
         <button
           type="button"
-          className="rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:bg-gray-400"
+          className={cls(
+            "rounded-xl px-3 py-2 text-sm font-medium text-white",
+            canManage
+              ? "bg-black hover:bg-gray-900"
+              : "bg-gray-400 cursor-not-allowed"
+          )}
           onClick={addQuick}
-          disabled={loading}
+          disabled={loading || !canManage}
         >
           Add routine
         </button>
@@ -289,15 +350,18 @@ export default function RoutineManager() {
               filtered.map((r) => (
                 <tr key={r.id ?? `temp-${r.name}`} className="border-t">
                   <td className="py-2 pr-3">
-                    <button
-                      type="button"
-                      className="text-blue-600 underline hover:text-blue-700"
-                      title="Open"
-                      onClick={() => openView(r)}
-                      disabled={!r.id}
-                    >
-                      {r.name}
-                    </button>
+                    {r.id ? (
+                      <button
+                        type="button"
+                        className="text-blue-600 underline hover:text-blue-700"
+                        title="Open"
+                        onClick={() => openView(r)}
+                      >
+                        {r.name}
+                      </button>
+                    ) : (
+                      <span>{r.name}</span>
+                    )}
                   </td>
 
                   <td className="py-2 pr-3">{r.items.length}</td>
@@ -312,17 +376,24 @@ export default function RoutineManager() {
                                   label: "View",
                                   onClick: () => openView(r),
                                 },
-                              ]
-                            : []),
-                          { label: "Edit", onClick: () => openEdit(r) },
-                          ...(r.id
-                            ? [
                                 {
                                   label: "Use routine",
                                   href: `/dashboard?run=${encodeURIComponent(
                                     r.id
                                   )}`,
                                 },
+                              ]
+                            : []),
+                          ...(canManage
+                            ? [
+                                {
+                                  label: "Edit",
+                                  onClick: () => openEdit(r),
+                                },
+                              ]
+                            : []),
+                          ...(canManage && r.id
+                            ? [
                                 {
                                   label: "Delete",
                                   onClick: () => removeRoutine(r.id),
@@ -390,14 +461,16 @@ export default function RoutineManager() {
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t bg-gray-50 p-3">
-              <a
-                href={`/dashboard?run=${encodeURIComponent(viewing.id)}`}
-                className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
-              >
-                Use routine
-              </a>
+              {viewing.id && (
+                <a
+                  href={`/dashboard?run=${encodeURIComponent(viewing.id)}`}
+                  className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
+                >
+                  Use routine
+                </a>
+              )}
               <button
-                className="rounded-md bg-white px-3 py-1.5 text-sm"
+                className="rounded-md bg.white px-3 py-1.5 text-sm bg-white"
                 onClick={() => setViewOpen(false)}
               >
                 Close
@@ -410,7 +483,7 @@ export default function RoutineManager() {
       {/* ===== Edit Modal ===== */}
       {editOpen && editing && (
         <div
-          className="fixed inset-0 z-50 bg-black/40 overflow-y-auto"
+          className="fixed inset-0 z-50 overflow-y-auto bg-black/40"
           onClick={() => setEditOpen(false)}
         >
           <div
@@ -548,8 +621,7 @@ export default function RoutineManager() {
                     items: [
                       ...editing.items,
                       {
-                        position:
-                          (editing.items.at(-1)?.position ?? 0) + 1,
+                        position: (editing.items.at(-1)?.position ?? 0) + 1,
                         location: "",
                         item: "",
                         target_key: "chill",
@@ -572,6 +644,7 @@ export default function RoutineManager() {
               <button
                 className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
                 onClick={saveEdit}
+                disabled={!canManage}
               >
                 Save
               </button>

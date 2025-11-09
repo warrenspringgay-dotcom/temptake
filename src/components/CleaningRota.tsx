@@ -1,4 +1,3 @@
-// src/app/(protected)/cleaning/cleaning-rota-client.tsx (or similar)
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -64,10 +63,10 @@ function CategoryPill({
       : "bg-emerald-50 text-emerald-700 border-emerald-200";
   return (
     <div
-      className={`flex flex-col justify-between min-h-[64px] rounded-xl border px-3 py-2 text-left ${color}`}
+      className={`flex min-h-[64px] flex-col justify-between rounded-xl border px-3 py-2 text-left ${color}`}
     >
       <div className="text-[13px] leading-tight">{title}</div>
-      <div className="text-lg leading-none font-semibold mt-1">
+      <div className="mt-1 text-lg font-semibold leading-none">
         {total}
         <span className="ml-1 text-[11px] opacity-75">({open} open)</span>
       </div>
@@ -90,6 +89,9 @@ export default function CleaningRota() {
   const [ini, setIni] = useState<string>("");
 
   const [manageOpen, setManageOpen] = useState(false);
+
+  // permissions: can this user manage cleaning tasks?
+  const [canManage, setCanManage] = useState(false);
 
   /** Load initials for the org */
   useEffect(() => {
@@ -115,6 +117,42 @@ export default function CleaningRota() {
       if (!ini && list[0]) setIni(list[0]);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Work out if user is owner/manager/admin */
+  useEffect(() => {
+    (async () => {
+      try {
+        const [orgId, userRes] = await Promise.all([
+          getActiveOrgIdClient(),
+          supabase.auth.getUser(),
+        ]);
+        const email = userRes.data.user?.email?.toLowerCase() ?? null;
+        if (!orgId || !email) {
+          setCanManage(false);
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from("team_members")
+          .select("role,email")
+          .eq("org_id", orgId)
+          .eq("email", email)
+          .maybeSingle();
+
+        if (error) {
+          setCanManage(false);
+          return;
+        }
+
+        const role = (data?.role ?? "").toLowerCase();
+        setCanManage(
+          role === "owner" || role === "manager" || role === "admin"
+        );
+      } catch {
+        setCanManage(false);
+      }
+    })();
   }, []);
 
   /** Load tasks + today's runs */
@@ -159,6 +197,7 @@ export default function CleaningRota() {
 
   useEffect(() => {
     loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [today]);
 
   /** Derived: what’s due today */
@@ -215,13 +254,12 @@ export default function CleaningRota() {
   );
 
   /** ===== Complete helpers (always include org_id) ===== */
-
   async function completeOne(id: string, initialsVal: string) {
     const orgId = await getActiveOrgIdClient();
     if (!orgId) return;
 
     const payload = {
-      org_id: orgId,                   // 👈 satisfies cleaning_task_runs_org_id_fkey
+      org_id: orgId,
       task_id: id,
       run_on: today,
       done_by: initialsVal.toUpperCase(),
@@ -298,22 +336,26 @@ export default function CleaningRota() {
       {/* ===== Header / Actions ===== */}
       <div className={CARD + " p-4"}>
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-semibold leading-tight">Cleaning rota</h1>
+          <h1 className="text-lg font-semibold leading-tight">
+            Cleaning rota
+          </h1>
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className="shrink-0 rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
-              onClick={() => setManageOpen(true)}
-            >
-              Manage tasks
-            </button>
+            {canManage && (
+              <button
+                type="button"
+                className="shrink-0 rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+                onClick={() => setManageOpen(true)}
+              >
+                Manage tasks
+              </button>
+            )}
 
             <label className="shrink-0 text-xs text-gray-600">Initials</label>
             <select
               value={ini}
               onChange={(e) => setIni(e.target.value.toUpperCase())}
-              className="shrink-0 h-9 rounded-xl border border-gray-300 px-2 py-1.5 uppercase"
+              className="h-9 shrink-0 rounded-xl border border-gray-300 px-2 py-1.5 uppercase"
             >
               {initials.map((v) => (
                 <option key={v} value={v}>
@@ -326,23 +368,25 @@ export default function CleaningRota() {
               {doneCount}/{dueToday.length}
             </div>
 
-            <button
-              type="button"
-              className="shrink-0 rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
-              title="Complete everything due today"
-              onClick={() => {
-                const ids = dueToday
-                  .filter((t) => !runsKey.has(`${t.id}|${today}`))
-                  .map((t) => t.id);
-                completeMany(ids, ini);
-              }}
-              disabled={
-                !ini ||
-                dueToday.every((t) => runsKey.has(`${t.id}|${today}`))
-              }
-            >
-              Complete all today
-            </button>
+            {canManage && (
+              <button
+                type="button"
+                className="shrink-0 rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-60"
+                title="Complete everything due today"
+                onClick={() => {
+                  const ids = dueToday
+                    .filter((t) => !runsKey.has(`${t.id}|${today}`))
+                    .map((t) => t.id);
+                  completeMany(ids, ini);
+                }}
+                disabled={
+                  !ini ||
+                  dueToday.every((t) => runsKey.has(`${t.id}|${today}`))
+                }
+              >
+                Complete all today
+              </button>
+            )}
           </div>
         </div>
 
@@ -403,7 +447,7 @@ export default function CleaningRota() {
           <div className="text-[11px] font-semibold uppercase text-gray-500">
             Daily tasks (by category)
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 mt-2">
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {CLEANING_CATEGORIES.map((cat) => {
               const list = dailyByCat.get(cat) ?? [];
               const open = list.filter(
@@ -457,14 +501,16 @@ export default function CleaningRota() {
         </div>
       </div>
 
-      {/* ===== Manage Tasks Modal ===== */}
-      <ManageCleaningTasksModal
-        open={manageOpen}
-        onClose={() => setManageOpen(false)}
-        onSaved={async () => {
-          await loadAll();
-        }}
-      />
+      {/* ===== Manage Tasks Modal (managers/owners only) ===== */}
+      {canManage && (
+        <ManageCleaningTasksModal
+          open={manageOpen}
+          onClose={() => setManageOpen(false)}
+          onSaved={async () => {
+            await loadAll();
+          }}
+        />
+      )}
     </div>
   );
 }

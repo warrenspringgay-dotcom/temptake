@@ -4,7 +4,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { uid } from "@/lib/uid";
 import ActionMenu from "@/components/ActionMenu";
-import { emptyFlags as libEmptyFlags } from "@/lib/allergens";
 import { supabase } from "@/lib/supabaseClient";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 
@@ -89,6 +88,9 @@ export default function AllergenManager() {
   const [cloudBusy, setCloudBusy] = useState(false);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
+  // permissions
+  const [canManage, setCanManage] = useState(true); // default true so first user isn’t locked out
+
   // State
   const [review, setReview] = useState<ReviewInfo>({ intervalDays: 30 });
   const [rows, setRows] = useState<MatrixRow[]>([]);
@@ -104,6 +106,33 @@ export default function AllergenManager() {
       try {
         const id = await getActiveOrgIdClient();
         setOrgId(id ?? null);
+
+        // figure out if this user can manage
+        try {
+          const { data: userRes } = await supabase.auth.getUser();
+          const email = userRes.user?.email?.toLowerCase() ?? null;
+          let manage = true;
+
+          if (id && email) {
+            const { data, error } = await supabase
+              .from("team_members")
+              .select("role,email")
+              .eq("org_id", id)
+              .eq("email", email)
+              .limit(1);
+
+            if (!error && data && data.length > 0) {
+              const role = (data[0].role ?? "").toLowerCase();
+              manage =
+                role === "owner" || role === "manager" || role === "admin";
+            }
+          }
+
+          setCanManage(manage);
+        } catch {
+          setCanManage(true);
+        }
+
         if (!id) {
           primeLocal();
           return;
@@ -267,111 +296,119 @@ export default function AllergenManager() {
 
   /* ---------- CRUD ---------- */
 
-  // ---------- CRUD ----------
-async function upsertItem(d: {
-  id?: string;
-  item: string;
-  category?: Category;
-  notes?: string;
-  flags: Flags;
-}) {
-  // Make sure we always have the current org id
-  const currentOrgId = orgId ?? (await getActiveOrgIdClient());
-
-  const applyLocal = (forcedId?: string) => {
-    setRows((rs) => {
-      const idToUse = forcedId ?? d.id ?? uid();
-      const patch: MatrixRow = {
-        id: idToUse,
-        item: d.item,
-        category: d.category,
-        flags: d.flags,
-        notes: d.notes,
-        locked: true,
-      };
-      const exists = rs.some((r) => r.id === idToUse);
-      return exists
-        ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r))
-        : [...rs, patch];
-    });
-  };
-
-  // No org => purely local
-  if (!currentOrgId) {
-    applyLocal();
-    return;
-  }
-
-  let rowId = d.id as string | undefined;
-
-  try {
-    // 1) Save / update the main allergen_items row
-    if (rowId) {
-      const { error } = await supabase
-        .from("allergen_items")
-        .update({
-          item: d.item,
-          category: d.category ?? null,
-          notes: d.notes ?? null,
-          locked: true,
-          org_id: currentOrgId,        // 👈 make sure org_id is set
-          organisation_id: currentOrgId, // keep legacy column in sync if it exists
-        })
-        .eq("id", rowId);
-
-      if (error) throw error;
-    } else {
-      const { data, error } = await supabase
-        .from("allergen_items")
-        .insert({
-          item: d.item,
-          category: d.category ?? null,
-          notes: d.notes ?? null,
-          locked: true,
-          org_id: currentOrgId,        // 👈 required FK
-          organisation_id: currentOrgId,
-        })
-        .select("id")
-        .single();
-
-      if (error) throw error;
-      rowId = String(data!.id);
+  async function upsertItem(d: {
+    id?: string;
+    item: string;
+    category?: Category;
+    notes?: string;
+    flags: Flags;
+  }) {
+    if (!canManage) {
+      alert("You don’t have permission to edit allergen items.");
+      return;
     }
 
-    // 2) Upsert all flags for that item (no more duplicate key errors)
-    if (rowId) {
-      const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
-        item_id: rowId!,
-        key: k,
-        value: !!d.flags[k],
-      }));
+    // Make sure we always have the current org id
+    const currentOrgId = orgId ?? (await getActiveOrgIdClient());
 
-      if (payload.length) {
-        const { error: flagsErr } = await supabase
-          .from("allergen_flags")
-          .upsert(payload, {
-            onConflict: "item_id,key", // 👈 match your PK/unique constraint
-          });
+    const applyLocal = (forcedId?: string) => {
+      setRows((rs) => {
+        const idToUse = forcedId ?? d.id ?? uid();
+        const patch: MatrixRow = {
+          id: idToUse,
+          item: d.item,
+          category: d.category,
+          flags: d.flags,
+          notes: d.notes,
+          locked: true,
+        };
+        const exists = rs.some((r) => r.id === idToUse);
+        return exists
+          ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r))
+          : [...rs, patch];
+      });
+    };
 
-        if (flagsErr) {
-          console.warn(
-            "Saving allergen flags failed (ignored — item still saved):",
-            flagsErr.message
-          );
-          // We don't alert because the main item save has succeeded.
+    // No org => purely local
+    if (!currentOrgId) {
+      applyLocal();
+      return;
+    }
+
+    let rowId = d.id as string | undefined;
+
+    try {
+      // 1) Save / update the main allergen_items row
+      if (rowId) {
+        const { error } = await supabase
+          .from("allergen_items")
+          .update({
+            item: d.item,
+            category: d.category ?? null,
+            notes: d.notes ?? null,
+            locked: true,
+            org_id: currentOrgId,
+            organisation_id: currentOrgId,
+          })
+          .eq("id", rowId);
+
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from("allergen_items")
+          .insert({
+            item: d.item,
+            category: d.category ?? null,
+            notes: d.notes ?? null,
+            locked: true,
+            org_id: currentOrgId,
+            organisation_id: currentOrgId,
+          })
+          .select("id")
+          .single();
+
+        if (error) throw error;
+        rowId = String(data!.id);
+      }
+
+      // 2) Upsert all flags for that item
+      if (rowId) {
+        const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
+          item_id: rowId!,
+          key: k,
+          value: !!d.flags[k],
+        }));
+
+        if (payload.length) {
+          const { error: flagsErr } = await supabase
+            .from("allergen_flags")
+            .upsert(payload, {
+              onConflict: "item_id,key",
+            });
+
+          if (flagsErr) {
+            console.warn(
+              "Saving allergen flags failed (ignored — item still saved):",
+              flagsErr.message
+            );
+          }
         }
       }
-    }
 
-    // 3) Reflect in UI
-    applyLocal(rowId);
-  } catch (error: any) {
-    console.error("Saving allergen item failed:", error);
-    alert(`Save failed: ${error?.message ?? "Unknown error"}`);
+      // 3) Reflect in UI
+      applyLocal(rowId);
+    } catch (error: any) {
+      console.error("Saving allergen item failed:", error);
+      alert(`Save failed: ${error?.message ?? "Unknown error"}`);
+    }
   }
-}
 
   async function deleteItem(idToDelete: string) {
+    if (!canManage) {
+      alert("You don’t have permission to delete allergen items.");
+      return;
+    }
+
     const id = orgId ?? (await getActiveOrgIdClient());
     if (!id) {
       // local only
@@ -396,6 +433,13 @@ async function upsertItem(d: {
 
   /* ---------- review save ---------- */
   async function markReviewedToday() {
+    if (!canManage) {
+      alert(
+        "You don’t have permission to mark the allergen register as reviewed."
+      );
+      return;
+    }
+
     const id = orgId ?? (await getActiveOrgIdClient());
     const today = todayISO();
     const nextDue = new Date(
@@ -443,15 +487,31 @@ async function upsertItem(d: {
   }, [hydrated, rows, qCat, selectedAllergenKeys]);
 
   /* ===== Add/Edit modal ===== */
-  type Draft = Omit<MatrixRow, "id" | "locked"> & { id?: string; locked?: boolean };
+  type Draft = Omit<MatrixRow, "id" | "locked"> & {
+    id?: string;
+    locked?: boolean;
+  };
   const [modalOpen, setModalOpen] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
 
   const openAdd = () => {
-    setDraft({ item: "", category: "Starter", flags: emptyFlags(), notes: "" });
+    if (!canManage) {
+      alert("You don’t have permission to add allergen items.");
+      return;
+    }
+    setDraft({
+      item: "",
+      category: "Starter",
+      flags: emptyFlags(),
+      notes: "",
+    });
     setModalOpen(true);
   };
   const openEdit = (row: MatrixRow) => {
+    if (!canManage) {
+      alert("You don’t have permission to edit allergen items.");
+      return;
+    }
     setDraft({
       id: row.id,
       item: row.item,
@@ -481,7 +541,6 @@ async function upsertItem(d: {
       ? "border-red-300 bg-red-50"
       : "border-emerald-300 bg-emerald-50"
     : "border-gray-300 bg-white";
-
 
   return (
     <div className="px-4 py-6">
@@ -515,8 +574,14 @@ async function upsertItem(d: {
               }
             />
             <button
-              className="shrink-0 rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+              className="shrink-0 rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
               onClick={markReviewedToday}
+              disabled={!canManage}
+              title={
+                canManage
+                  ? "Mark as reviewed"
+                  : "Only managers/owners can mark reviewed"
+              }
             >
               Mark reviewed today
             </button>
@@ -535,7 +600,9 @@ async function upsertItem(d: {
             <select
               className="w-full rounded-md border border-gray-600 px-2 py-1.5 text-sm"
               value={qCat}
-              onChange={(e) => setQCat(e.target.value as "All" | Category)}
+              onChange={(e) =>
+                setQCat(e.target.value as "All" | Category)
+              }
             >
               <option value="All">All categories</option>
               {CATEGORIES.map((c) => (
@@ -564,7 +631,10 @@ async function upsertItem(d: {
                     type="checkbox"
                     checked={qFlags[a.key]}
                     onChange={(e) =>
-                      setQFlags((f) => ({ ...f, [a.key]: e.target.checked }))
+                      setQFlags((f) => ({
+                        ...f,
+                        [a.key]: e.target.checked,
+                      }))
                     }
                   />
                   <span title={a.label}>
@@ -632,15 +702,17 @@ async function upsertItem(d: {
 
       {/* Top actions */}
       <div className="mb-3 flex flex-col gap-2 sm:flex-row">
-        <button
-          className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
-          onClick={openAdd}
-        >
-          + Add item
-        </button>
+        {canManage && (
+          <button
+            className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+            onClick={openAdd}
+          >
+            + Add item
+          </button>
+        )}
 
         <button
-          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+          className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
           onClick={() => loadFromSupabase()}
           disabled={cloudBusy || !orgId}
           title={orgId ? "Reload from cloud" : "No organisation (local only)"}
@@ -705,16 +777,18 @@ async function upsertItem(d: {
                     );
                   })}
                   <td className="px-3 py-2 text-right">
-                    <ActionMenu
-                      items={[
-                        { label: "Edit", onClick: () => openEdit(row) },
-                        {
-                          label: "Delete",
-                          onClick: () => void deleteItem(row.id),
-                          variant: "danger",
-                        },
-                      ]}
-                    />
+                    {canManage && (
+                      <ActionMenu
+                        items={[
+                          { label: "Edit", onClick: () => openEdit(row) },
+                          {
+                            label: "Delete",
+                            onClick: () => void deleteItem(row.id),
+                            variant: "danger" as const,
+                          },
+                        ]}
+                      />
+                    )}
                   </td>
                 </tr>
               ))
@@ -745,16 +819,18 @@ async function upsertItem(d: {
                       </div>
                     ) : null}
                   </div>
-                  <ActionMenu
-                    items={[
-                      { label: "Edit", onClick: () => openEdit(row) },
-                      {
-                        label: "Delete",
-                        onClick: () => void deleteItem(row.id),
-                        variant: "danger",
-                      },
-                    ]}
-                  />
+                  {canManage && (
+                    <ActionMenu
+                      items={[
+                        { label: "Edit", onClick: () => openEdit(row) },
+                        {
+                          label: "Delete",
+                          onClick: () => void deleteItem(row.id),
+                          variant: "danger" as const,
+                        },
+                      ]}
+                    />
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
@@ -811,7 +887,7 @@ async function upsertItem(d: {
       </div>
 
       {/* Modal – shorter & scrollable */}
-      {modalOpen && draft && (
+      {modalOpen && draft && canManage && (
         <div
           className="fixed inset-0 z-50 bg-black/30"
           onClick={closeModal}

@@ -41,6 +41,8 @@ type SupplierEdit = {
   active: boolean;
 };
 
+type OrgRole = "owner" | "manager" | "staff" | "other";
+
 /* -------------------- Helpers -------------------- */
 function cls(...p: Array<string | false | undefined>) {
   return p.filter(Boolean).join(" ");
@@ -49,14 +51,20 @@ function cls(...p: Array<string | false | undefined>) {
 function parseCats(input: unknown): string[] {
   try {
     if (Array.isArray(input)) {
-      return input.map((x) => (x == null ? "" : String(x))).map((s) => s.trim()).filter(Boolean);
+      return input
+        .map((x) => (x == null ? "" : String(x)))
+        .map((s) => s.trim())
+        .filter(Boolean);
     }
     if (input == null) return [];
     if (typeof input === "object") return [];
     if (typeof input === "string") {
       const raw = input.trim();
       if (!raw) return [];
-      return raw.split(/[;,|]/g).map((s) => s.trim()).filter(Boolean);
+      return raw
+        .split(/[;,|]/g)
+        .map((s) => s.trim())
+        .filter(Boolean);
     }
     return [];
   } catch {
@@ -75,6 +83,10 @@ export default function SuppliersManager() {
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
 
+  // permissions
+  const [myRole, setMyRole] = useState<OrgRole>("other");
+  const canManage = myRole === "owner" || myRole === "manager";
+
   const [viewOpen, setViewOpen] = useState(false);
   const [viewing, setViewing] = useState<SupplierRow | null>(null);
 
@@ -92,6 +104,36 @@ export default function SuppliersManager() {
     notes: "",
     active: true,
   });
+
+  // ----- load role once -----
+  useEffect(() => {
+    (async () => {
+      try {
+        const [{ data: userRes }, orgId] = await Promise.all([
+          supabase.auth.getUser(),
+          getActiveOrgIdClient(),
+        ]);
+        const user = userRes.user;
+        const email = user?.email?.toLowerCase() ?? null;
+        if (!orgId || !email) return;
+
+        const { data, error } = await supabase
+          .from("team_members")
+          .select("role,email")
+          .eq("org_id", orgId)
+          .eq("email", email)
+          .maybeSingle();
+
+        if (error || !data) return;
+        const r = (data.role ?? "").toLowerCase();
+        if (r === "owner" || r === "manager" || r === "staff") {
+          setMyRole(r as OrgRole);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
 
   async function refresh() {
     setLoading(true);
@@ -115,6 +157,7 @@ export default function SuppliersManager() {
       setLoading(false);
     }
   }
+
   useEffect(() => {
     refresh();
   }, []);
@@ -135,6 +178,7 @@ export default function SuppliersManager() {
   }
 
   function openEdit(r: SupplierRow) {
+    if (!canManage) return;
     setEditing({
       id: r.id,
       name: r.name ?? "",
@@ -150,6 +194,10 @@ export default function SuppliersManager() {
   }
 
   async function removeSupplier(id: string) {
+    if (!canManage) {
+      alert("Only managers / owners can delete suppliers.");
+      return;
+    }
     if (!confirm("Delete supplier?")) return;
     const { error } = await supabase.from("suppliers").delete().eq("id", id);
     if (error) return alert(error.message);
@@ -170,9 +218,16 @@ export default function SuppliersManager() {
 
   async function saveEdit() {
     if (!editing) return;
+    if (!canManage) {
+      alert("Only managers / owners can update suppliers.");
+      return;
+    }
     if (!editing.name.trim()) return alert("Name is required.");
 
-    const { error } = await supabase.from("suppliers").update(normalizeBeforeSave(editing)).eq("id", editing.id);
+    const { error } = await supabase
+      .from("suppliers")
+      .update(normalizeBeforeSave(editing))
+      .eq("id", editing.id);
     if (error) return alert(error.message);
     setEditOpen(false);
     setEditing(null);
@@ -180,6 +235,10 @@ export default function SuppliersManager() {
   }
 
   async function saveAdd() {
+    if (!canManage) {
+      alert("Only managers / owners can add suppliers.");
+      return;
+    }
     if (!adding.name.trim()) return alert("Name is required.");
     const orgId = await getActiveOrgIdClient();
     if (!orgId) return alert("No organisation found.");
@@ -202,40 +261,41 @@ export default function SuppliersManager() {
     refresh();
   }
 
-  // Replace toggleCat + addFreeCat with these typed versions
-function toggleCat(
-  _state: SupplierEdit,
-  setState: (updater: (s: SupplierEdit) => SupplierEdit) => void,
-  cat: string
-) {
-  setState((s: SupplierEdit) => {
-    const v = cat.trim();
-    const has = s.categories.includes(v);
-    return {
-      ...s,
-      categories: has ? s.categories.filter((c) => c !== v) : [...s.categories, v],
-    };
-  });
-}
-
-function addFreeCat(
-  state: SupplierEdit,
-  setState: (updater: (s: SupplierEdit) => SupplierEdit) => void
-) {
-  const v = state.addCategory.trim();
-  if (!v) return;
-
-  if (!state.categories.includes(v)) {
-    setState((s: SupplierEdit) => ({
-      ...s,
-      categories: [...s.categories, v],
-      addCategory: "",
-    }));
-  } else {
-    setState((s: SupplierEdit) => ({ ...s, addCategory: "" }));
+  // Category helpers (typed)
+  function toggleCat(
+    _state: SupplierEdit,
+    setState: (updater: (s: SupplierEdit) => SupplierEdit) => void,
+    cat: string
+  ) {
+    setState((s: SupplierEdit) => {
+      const v = cat.trim();
+      const has = s.categories.includes(v);
+      return {
+        ...s,
+        categories: has
+          ? s.categories.filter((c) => c !== v)
+          : [...s.categories, v],
+      };
+    });
   }
-}
 
+  function addFreeCat(
+    state: SupplierEdit,
+    setState: (updater: (s: SupplierEdit) => SupplierEdit) => void
+  ) {
+    const v = state.addCategory.trim();
+    if (!v) return;
+
+    if (!state.categories.includes(v)) {
+      setState((s: SupplierEdit) => ({
+        ...s,
+        categories: [...s.categories, v],
+        addCategory: "",
+      }));
+    } else {
+      setState((s) => ({ ...s, addCategory: "" }));
+    }
+  }
 
   return (
     <div className="space-y-6 rounded-2xl border bg-white p-4 shadow-sm">
@@ -248,53 +308,74 @@ function addFreeCat(
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-          <button
-            className="shrink-0 rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900"
-            onClick={() => setAddOpen(true)}
-          >
-            + Add supplier
-          </button>
+          {canManage && (
+            <button
+              className="shrink-0 rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900"
+              onClick={() => setAddOpen(true)}
+            >
+              + Add supplier
+            </button>
+          )}
         </div>
       </div>
 
       {/* Mobile: cards */}
       <div className="grid gap-3 sm:hidden">
         {loading ? (
-          <div className="rounded-xl border p-4 text-center text-gray-500">Loading…</div>
+          <div className="rounded-xl border p-4 text-center text-gray-500">
+            Loading…
+          </div>
         ) : filtered.length === 0 ? (
-          <div className="rounded-xl border p-4 text-center text-gray-500">No suppliers yet.</div>
+          <div className="rounded-xl border p-4 text-center text-gray-500">
+            No suppliers yet.
+          </div>
         ) : (
           filtered.map((r) => {
             const cats = parseCats(r.categories);
+            const items = [
+              { label: "View", onClick: () => openView(r) },
+              ...(canManage
+                ? [
+                    { label: "Edit", onClick: () => openEdit(r) },
+                    {
+                      label: "Delete",
+                      onClick: () => removeSupplier(r.id),
+                      variant: "danger" as const,
+                    },
+                  ]
+                : []),
+            ];
             return (
               <div key={r.id} className="rounded-xl border p-3">
                 <div className="mb-2 flex items-start justify-between">
                   <div>
                     <div className="text-base font-semibold">{r.name}</div>
-                    <div className="text-xs text-gray-500">{r.active ? "Active" : "Inactive"}</div>
+                    <div className="text-xs text-gray-500">
+                      {r.active ? "Active" : "Inactive"}
+                    </div>
                   </div>
-                  <ActionMenu
-                    items={[
-                      { label: "View", onClick: () => openView(r) },
-                      { label: "Edit", onClick: () => openEdit(r) },
-                      { label: "Delete", onClick: () => removeSupplier(r.id), variant: "danger" },
-                    ]}
-                  />
+                  <ActionMenu items={items} />
                 </div>
                 <div className="space-y-1 text-sm">
                   <div>
-                    <span className="text-gray-500">Contact:</span> {r.contact || "—"}
+                    <span className="text-gray-500">Contact:</span>{" "}
+                    {r.contact || "—"}
                   </div>
                   <div>
-                    <span className="text-gray-500">Phone:</span> {r.phone || "—"}
+                    <span className="text-gray-500">Phone:</span>{" "}
+                    {r.phone || "—"}
                   </div>
                   <div>
-                    <span className="text-gray-500">Email:</span> {r.email || "—"}
+                    <span className="text-gray-500">Email:</span>{" "}
+                    {r.email || "—"}
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {cats.length ? (
                       cats.map((c) => (
-                        <span key={c} className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px]">
+                        <span
+                          key={c}
+                          className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px]"
+                        >
                           {c}
                         </span>
                       ))
@@ -339,10 +420,27 @@ function addFreeCat(
             ) : (
               filtered.map((r) => {
                 const cats = parseCats(r.categories);
+                const items = [
+                  { label: "View", onClick: () => openView(r) },
+                  ...(canManage
+                    ? [
+                        { label: "Edit", onClick: () => openEdit(r) },
+                        {
+                          label: "Delete",
+                          onClick: () => removeSupplier(r.id),
+                          variant: "danger" as const,
+                        },
+                      ]
+                    : []),
+                ];
+
                 return (
                   <tr key={r.id} className="border-t align-top">
                     <td className="py-2 pr-3">
-                      <button className="text-blue-600 underline hover:text-blue-700" onClick={() => openView(r)}>
+                      <button
+                        className="text-blue-600 underline hover:text-blue-700"
+                        onClick={() => openView(r)}
+                      >
                         {r.name}
                       </button>
                     </td>
@@ -353,7 +451,10 @@ function addFreeCat(
                       {cats.length ? (
                         <div className="flex flex-wrap gap-1">
                           {cats.map((c) => (
-                            <span key={c} className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px]">
+                            <span
+                              key={c}
+                              className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px]"
+                            >
                               {c}
                             </span>
                           ))}
@@ -362,15 +463,11 @@ function addFreeCat(
                         "—"
                       )}
                     </td>
-                    <td className="py-2 pr-3">{r.active ? "Yes" : "No"}</td>
+                    <td className="py-2 pr-3">
+                      {r.active ? "Yes" : "No"}
+                    </td>
                     <td className="py-2 pr-0 text-right">
-                      <ActionMenu
-                        items={[
-                          { label: "View", onClick: () => openView(r) },
-                          { label: "Edit", onClick: () => openEdit(r) },
-                          { label: "Delete", onClick: () => removeSupplier(r.id), variant: "danger" },
-                        ]}
-                      />
+                      <ActionMenu items={items} />
                     </td>
                   </tr>
                 );
@@ -380,46 +477,110 @@ function addFreeCat(
         </table>
       </div>
 
-      {/* View / Edit / Add modals are unchanged from your version… */}
-      {/* (Keep your existing view/edit/add modal implementations here) */}
-      {/* ---------- VIEW ---------- */}
+      {/* VIEW MODAL */}
       {viewOpen && viewing && (
-        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
-          <div className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-2xl border bg-white" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 bg-black/40"
+          onClick={() => setViewOpen(false)}
+        >
+          <div
+            className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-2xl border bg-white"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="rounded-t-2xl bg-slate-800 p-4 text-white">
               <div className="text-sm opacity-80">Supplier</div>
               <div className="text-xl font-semibold">{viewing.name}</div>
-              <div className="opacity-80">{viewing.active ? "Active" : "Inactive"}</div>
+              <div className="opacity-80">
+                {viewing.active ? "Active" : "Inactive"}
+              </div>
             </div>
             <div className="space-y-3 p-4 text-sm">
-              <div><span className="font-medium">Contact:</span> {viewing.contact || "—"}</div>
-              <div><span className="font-medium">Phone:</span> {viewing.phone || "—"}</div>
-              <div><span className="font-medium">Email:</span> {viewing.email || "—"}</div>
-              <div><span className="font-medium">Categories:</span> {parseCats(viewing.categories).join(", ") || "—"}</div>
-              <div><span className="font-medium">Notes:</span> {viewing.notes || "—"}</div>
+              <div>
+                <span className="font-medium">Contact:</span>{" "}
+                {viewing.contact || "—"}
+              </div>
+              <div>
+                <span className="font-medium">Phone:</span>{" "}
+                {viewing.phone || "—"}
+              </div>
+              <div>
+                <span className="font-medium">Email:</span>{" "}
+                {viewing.email || "—"}
+              </div>
+              <div>
+                <span className="font-medium">Categories:</span>{" "}
+                {parseCats(viewing.categories).join(", ") || "—"}
+              </div>
+              <div>
+                <span className="font-medium">Notes:</span>{" "}
+                {viewing.notes || "—"}
+              </div>
             </div>
             <div className="flex justify-end gap-2 border-t p-3">
-              <button className="rounded-md px-3 py-1.5 hover:bg-gray-100" onClick={() => setViewOpen(false)}>Close</button>
+              <button
+                className="rounded-md px-3 py-1.5 hover:bg-gray-100"
+                onClick={() => setViewOpen(false)}
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ---------- EDIT ---------- */}
+      {/* EDIT MODAL */}
       {editOpen && editing && (
-        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEditOpen(false)}>
-          <div className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-2xl border bg-white p-4" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 bg-black/40"
+          onClick={() => setEditOpen(false)}
+        >
+          <div
+            className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-2xl border bg-white p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Edit supplier</div>
-              <button onClick={() => setEditOpen(false)} className="rounded-md p-2 hover:bg-gray-100">✕</button>
+              <button
+                onClick={() => setEditOpen(false)}
+                className="rounded-md p-2 hover:bg-gray-100"
+              >
+                ✕
+              </button>
             </div>
 
             <div className="grid gap-3">
-              <input className="h-10 w-full rounded-xl border px-3" value={editing.name} onChange={(e) => setEditing((s) => ({ ...s!, name: e.target.value }))} />
-              <input className="h-10 w-full rounded-xl border px-3" placeholder="Contact" value={editing.contact} onChange={(e) => setEditing((s) => ({ ...s!, contact: e.target.value }))} />
+              <input
+                className="h-10 w-full rounded-xl border px-3"
+                value={editing.name}
+                onChange={(e) =>
+                  setEditing((s) => ({ ...s!, name: e.target.value }))
+                }
+              />
+              <input
+                className="h-10 w-full rounded-xl border px-3"
+                placeholder="Contact"
+                value={editing.contact}
+                onChange={(e) =>
+                  setEditing((s) => ({ ...s!, contact: e.target.value }))
+                }
+              />
               <div className="grid grid-cols-2 gap-3">
-                <input className="h-10 w-full rounded-xl border px-3" placeholder="Phone" value={editing.phone} onChange={(e) => setEditing((s) => ({ ...s!, phone: e.target.value }))} />
-                <input className="h-10 w-full rounded-xl border px-3" placeholder="Email" value={editing.email} onChange={(e) => setEditing((s) => ({ ...s!, email: e.target.value }))} />
+                <input
+                  className="h-10 w-full rounded-xl border px-3"
+                  placeholder="Phone"
+                  value={editing.phone}
+                  onChange={(e) =>
+                    setEditing((s) => ({ ...s!, phone: e.target.value }))
+                  }
+                />
+                <input
+                  className="h-10 w-full rounded-xl border px-3"
+                  placeholder="Email"
+                  value={editing.email}
+                  onChange={(e) =>
+                    setEditing((s) => ({ ...s!, email: e.target.value }))
+                  }
+                />
               </div>
 
               <div>
@@ -431,8 +592,15 @@ function addFreeCat(
                       <button
                         key={c}
                         type="button"
-                        className={cls("rounded-full border px-2 py-0.5 text-xs", active ? "bg-black text-white" : "bg-white hover:bg-gray-50")}
-                        onClick={() => toggleCat(editing, setEditing as any, c)}
+                        className={cls(
+                          "rounded-full border px-2 py-0.5 text-xs",
+                          active
+                            ? "bg-black text-white"
+                            : "bg-white hover:bg-gray-50"
+                        )}
+                        onClick={() =>
+                          toggleCat(editing, setEditing as any, c)
+                        }
                       >
                         {c}
                       </button>
@@ -444,10 +612,21 @@ function addFreeCat(
                     className="h-9 w-full rounded-xl border px-3 text-sm"
                     placeholder="Add custom category"
                     value={editing.addCategory}
-                    onChange={(e) => setEditing((s) => ({ ...s!, addCategory: e.target.value }))}
-                    onKeyDown={(e) => e.key === "Enter" && addFreeCat(editing, setEditing as any)}
+                    onChange={(e) =>
+                      setEditing((s) => ({ ...s!, addCategory: e.target.value }))
+                    }
+                    onKeyDown={(e) =>
+                      e.key === "Enter" &&
+                      addFreeCat(editing, setEditing as any)
+                    }
                   />
-                  <button type="button" className="h-9 rounded-xl border px-3 text-sm hover:bg-gray-50" onClick={() => addFreeCat(editing, setEditing as any)}>
+                  <button
+                    type="button"
+                    className="h-9 rounded-xl border px-3 text-sm hover:bg-gray-50"
+                    onClick={() =>
+                      addFreeCat(editing, setEditing as any)
+                    }
+                  >
                     Add
                   </button>
                 </div>
@@ -455,12 +634,22 @@ function addFreeCat(
                 {editing.categories.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
                     {editing.categories.map((c) => (
-                      <span key={c} className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px]">
+                      <span
+                        key={c}
+                        className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px]"
+                      >
                         {c}
                         <button
                           type="button"
                           className="ml-1 rounded p-0.5 hover:bg-gray-200"
-                          onClick={() => setEditing((s) => ({ ...s!, categories: s!.categories.filter((x) => x !== c) }))}
+                          onClick={() =>
+                            setEditing((s) => ({
+                              ...s!,
+                              categories: s!.categories.filter(
+                                (x) => x !== c
+                              ),
+                            }))
+                          }
                           aria-label={`Remove ${c}`}
                         >
                           ×
@@ -471,36 +660,101 @@ function addFreeCat(
                 )}
               </div>
 
-              <textarea className="min-h-[90px] w-full rounded-xl border px-3 py-2" placeholder="Notes" value={editing.notes} onChange={(e) => setEditing((s) => ({ ...s!, notes: e.target.value }))} />
+              <textarea
+                className="min-h-[90px] w-full rounded-xl border px-3 py-2"
+                placeholder="Notes"
+                value={editing.notes}
+                onChange={(e) =>
+                  setEditing((s) => ({ ...s!, notes: e.target.value }))
+                }
+              />
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={editing.active} onChange={(e) => setEditing((s) => ({ ...s!, active: e.target.checked }))} />
+                <input
+                  type="checkbox"
+                  checked={editing.active}
+                  onChange={(e) =>
+                    setEditing((s) => ({
+                      ...s!,
+                      active: e.target.checked,
+                    }))
+                  }
+                />
                 Active
               </label>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setEditOpen(false)}>Cancel</button>
-                <button className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900" onClick={saveEdit}>Save</button>
+                <button
+                  className="rounded-xl border px-4 py-2 text-sm"
+                  onClick={() => setEditOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
+                  onClick={saveEdit}
+                >
+                  Save
+                </button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ---------- ADD ---------- */}
+      {/* ADD MODAL */}
       {addOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setAddOpen(false)}>
-          <div className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-2xl border bg-white p-4" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 bg-black/40"
+          onClick={() => setAddOpen(false)}
+        >
+          <div
+            className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-2xl border bg-white p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Add supplier</div>
-              <button onClick={() => setAddOpen(false)} className="rounded-md p-2 hover:bg-gray-100">✕</button>
+              <button
+                onClick={() => setAddOpen(false)}
+                className="rounded-md p-2 hover:bg-gray-100"
+              >
+                ✕
+              </button>
             </div>
 
             <div className="grid gap-3">
-              <input className="h-10 w-full rounded-xl border px-3" placeholder="Name" value={adding.name} onChange={(e) => setAdding((s) => ({ ...s, name: e.target.value }))} />
-              <input className="h-10 w-full rounded-xl border px-3" placeholder="Contact" value={adding.contact} onChange={(e) => setAdding((s) => ({ ...s, contact: e.target.value }))} />
+              <input
+                className="h-10 w-full rounded-xl border px-3"
+                placeholder="Name"
+                value={adding.name}
+                onChange={(e) =>
+                  setAdding((s) => ({ ...s, name: e.target.value }))
+                }
+              />
+              <input
+                className="h-10 w-full rounded-xl border px-3"
+                placeholder="Contact"
+                value={adding.contact}
+                onChange={(e) =>
+                  setAdding((s) => ({ ...s, contact: e.target.value }))
+                }
+              />
               <div className="grid grid-cols-2 gap-3">
-                <input className="h-10 w-full rounded-xl border px-3" placeholder="Phone" value={adding.phone} onChange={(e) => setAdding((s) => ({ ...s, phone: e.target.value }))} />
-                <input className="h-10 w-full rounded-xl border px-3" placeholder="Email" value={adding.email} onChange={(e) => setAdding((s) => ({ ...s, email: e.target.value }))} />
+                <input
+                  className="h-10 w-full rounded-xl border px-3"
+                  placeholder="Phone"
+                  value={adding.phone}
+                  onChange={(e) =>
+                    setAdding((s) => ({ ...s, phone: e.target.value }))
+                  }
+                />
+                <input
+                  className="h-10 w-full rounded-xl border px-3"
+                  placeholder="Email"
+                  value={adding.email}
+                  onChange={(e) =>
+                    setAdding((s) => ({ ...s, email: e.target.value }))
+                  }
+                />
               </div>
 
               <div>
@@ -512,8 +766,15 @@ function addFreeCat(
                       <button
                         key={c}
                         type="button"
-                        className={cls("rounded-full border px-2 py-0.5 text-xs", active ? "bg-black text-white" : "bg-white hover:bg-gray-50")}
-                        onClick={() => toggleCat(adding, setAdding as any, c)}
+                        className={cls(
+                          "rounded-full border px-2 py-0.5 text-xs",
+                          active
+                            ? "bg-black text-white"
+                            : "bg-white hover:bg-gray-50"
+                        )}
+                        onClick={() =>
+                          toggleCat(adding, setAdding as any, c)
+                        }
                       >
                         {c}
                       </button>
@@ -525,25 +786,57 @@ function addFreeCat(
                     className="h-9 w-full rounded-xl border px-3 text-sm"
                     placeholder="Add custom category"
                     value={adding.addCategory}
-                    onChange={(e) => setAdding((s) => ({ ...s, addCategory: e.target.value }))}
-                    onKeyDown={(e) => e.key === "Enter" && addFreeCat(adding, setAdding as any)}
+                    onChange={(e) =>
+                      setAdding((s) => ({ ...s, addCategory: e.target.value }))
+                    }
+                    onKeyDown={(e) =>
+                      e.key === "Enter" &&
+                      addFreeCat(adding, setAdding as any)
+                    }
                   />
-                  <button type="button" className="h-9 rounded-xl border px-3 text-sm hover:bg-gray-50" onClick={() => addFreeCat(adding, setAdding as any)}>
+                  <button
+                    type="button"
+                    className="h-9 rounded-xl border px-3 text-sm hover:bg-gray-50"
+                    onClick={() =>
+                      addFreeCat(adding, setAdding as any)
+                    }
+                  >
                     Add
                   </button>
                 </div>
-
               </div>
 
-              <textarea className="min-h-[90px] w-full rounded-xl border px-3 py-2" placeholder="Notes" value={adding.notes} onChange={(e) => setAdding((s) => ({ ...s, notes: e.target.value }))} />
+              <textarea
+                className="min-h-[90px] w-full rounded-xl border px-3 py-2"
+                placeholder="Notes"
+                value={adding.notes}
+                onChange={(e) =>
+                  setAdding((s) => ({ ...s, notes: e.target.value }))
+                }
+              />
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={adding.active} onChange={(e) => setAdding((s) => ({ ...s, active: e.target.checked }))} />
+                <input
+                  type="checkbox"
+                  checked={adding.active}
+                  onChange={(e) =>
+                    setAdding((s) => ({ ...s, active: e.target.checked }))
+                  }
+                />
                 Active
               </label>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button className="rounded-xl border px-4 py-2 text-sm" onClick={() => setAddOpen(false)}>Cancel</button>
-                <button className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900" onClick={saveAdd} disabled={!adding.name.trim()}>
+                <button
+                  className="rounded-xl border px-4 py-2 text-sm"
+                  onClick={() => setAddOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
+                  onClick={saveAdd}
+                  disabled={!adding.name.trim()}
+                >
                   Add supplier
                 </button>
               </div>
