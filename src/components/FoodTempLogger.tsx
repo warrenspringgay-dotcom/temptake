@@ -856,7 +856,7 @@ export default function FoodTempLogger({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 py-4">
       {/* Centered day + date header with glassy pill */}
       <div className="text-center">
         <div className="">

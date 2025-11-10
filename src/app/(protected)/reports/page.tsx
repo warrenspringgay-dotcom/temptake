@@ -1,3 +1,4 @@
+// src/app/reports/page.tsx
 "use client";
 
 import React, { useMemo, useRef, useState } from "react";
@@ -48,7 +49,12 @@ async function fetchTemps(fromISO: string, toISO: string): Promise<TempRow[]> {
     .from("food_temp_logs")
     .select("*")
     .gte("at", new Date(fromISO).toISOString())
-    .lte("at", new Date(new Date(toISO).getTime() + 24 * 3600 * 1000 - 1).toISOString())
+    .lte(
+      "at",
+      new Date(
+        new Date(toISO).getTime() + 24 * 3600 * 1000 - 1
+      ).toISOString()
+    )
     .order("at", { ascending: false })
     .limit(3000);
 
@@ -69,77 +75,95 @@ async function fetchTemps(fromISO: string, toISO: string): Promise<TempRow[]> {
 async function fetchTeamDue(withinDays: number): Promise<TeamRow[]> {
   const { data, error } = await supabase
     .from("team_members")
-    // drop the non-existent training_expires_at
-    .select("id, name, email, initials")
+    .select("id, name, email, initials, training_expiry, expires_at")
     .limit(2000);
 
   if (error) throw error;
 
-  const today0 = new Date(); today0.setHours(0,0,0,0);
+  const today0 = new Date();
+  today0.setHours(0, 0, 0, 0);
 
   return (data ?? [])
     .map((r: any) => {
-      // tolerate multiple possible expiry columns
       const raw = r.training_expiry ?? r.expires_at ?? null;
 
       const iso = raw ? new Date(raw).toISOString() : null;
       const d0 = raw ? new Date(raw) : null;
-      if (d0) d0.setHours(0,0,0,0);
+      if (d0) d0.setHours(0, 0, 0, 0);
+
+      const fallbackId =
+        typeof crypto !== "undefined" && (crypto as any).randomUUID
+          ? (crypto as any).randomUUID()
+          : Math.random().toString(36).slice(2);
 
       return {
-        id: String(r.id ?? r.email ?? crypto.randomUUID()),
+        id: String(r.id ?? r.email ?? fallbackId),
         name: r.name ?? "—",
         email: r.email ?? null,
         initials: r.initials ?? null,
         expires_on: iso,
-        days_until: d0 ? Math.round((d0.getTime() - today0.getTime()) / 86400000) : null,
+        days_until: d0
+          ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
+          : null,
       };
     })
-    .filter(r => r.days_until != null && r.days_until <= withinDays)
+    .filter((r) => r.days_until != null && r.days_until <= withinDays)
     .sort((a, b) => (a.expires_on || "").localeCompare(b.expires_on || ""));
 }
-
-
 
 async function fetchAllergensDue(withinDays: number): Promise<AllergenRow[]> {
   const { data, error } = await supabase
     .from("allergen_review")
-    // remove "item", ask for name (and keep location/area)
-    .select("id, last_reviewed, interval_days")
+    .select("id, name, location, area, last_reviewed, interval_days")
     .limit(2000);
 
   if (error) throw error;
 
-  const today0 = new Date(); today0.setHours(0,0,0,0);
+  const today0 = new Date();
+  today0.setHours(0, 0, 0, 0);
 
   return (data ?? [])
     .map((r: any) => {
       const lr = r.last_reviewed ? new Date(r.last_reviewed) : null;
       let nextISO: string | null = null;
       if (lr && Number.isFinite(Number(r.interval_days))) {
-        const next = new Date(lr.getTime() + Number(r.interval_days) * 86400000);
+        const next = new Date(
+          lr.getTime() + Number(r.interval_days) * 86400000
+        );
         nextISO = next.toISOString();
       }
       const d0 = nextISO ? new Date(nextISO) : null;
-      if (d0) d0.setHours(0,0,0,0);
+      if (d0) d0.setHours(0, 0, 0, 0);
+
+      const fallbackId =
+        typeof crypto !== "undefined" && (crypto as any).randomUUID
+          ? (crypto as any).randomUUID()
+          : Math.random().toString(36).slice(2);
 
       return {
-        id: String(r.id ?? crypto.randomUUID()),
-        // map: prefer r.name when r.item doesn't exist
+        id: String(r.id ?? fallbackId),
         item: r.name ?? "—",
-        // prefer explicit location, fall back to area
         location: r.location ?? r.area ?? "—",
         next_due: nextISO,
-        days_until: d0 ? Math.round((d0.getTime() - today0.getTime()) / 86400000) : null,
+        days_until: d0
+          ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
+          : null,
       };
     })
-    .filter(r => r.days_until != null && r.days_until <= withinDays)
+    .filter((r) => r.days_until != null && r.days_until <= withinDays)
     .sort((a, b) => (a.next_due || "").localeCompare(b.next_due || ""));
 }
 
-
 function tempsToCSV(rows: TempRow[]) {
-  const header = ["Date", "Staff", "Location", "Item", "Temp (°C)", "Target", "Status"];
+  const header = [
+    "Date",
+    "Staff",
+    "Location",
+    "Item",
+    "Temp (°C)",
+    "Target",
+    "Status",
+  ];
   const lines = [header.join(",")];
   for (const r of rows) {
     const cells = [
@@ -180,7 +204,11 @@ export default function ReportsPage() {
     return { count: t.length, fails, locations };
   }, [temps]);
 
-  async function runRange(rangeFrom: string, rangeTo: string, includeAncillary = true) {
+  async function runRange(
+    rangeFrom: string,
+    rangeTo: string,
+    includeAncillary = true
+  ) {
     try {
       setErr(null);
       setLoading(true);
@@ -220,7 +248,9 @@ export default function ReportsPage() {
 
   function downloadCSV() {
     if (!temps?.length) return;
-    const blob = new Blob([tempsToCSV(temps)], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob([tempsToCSV(temps)], {
+      type: "text/csv;charset=utf-8",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -230,72 +260,109 @@ export default function ReportsPage() {
   }
 
   function printReport() {
-    // If you wanted to limit printing to the ref, you’d use a lib.
-    // For now just print the page.
+    // For now just print the page; printable area is wrapped in printRef.
     window.print();
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader className="justify-between">
-          <CardTitle>Reports</CardTitle>
+    <div className="mx-auto max-w-6xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
+      {/* Top controls */}
+      <Card className="border-none bg-transparent p-0 shadow-none">
+        <CardHeader className="flex flex-row items-center justify-between px-0 pb-3 pt-0">
+          <CardTitle className="text-xl font-semibold text-slate-900">
+            Reports
+          </CardTitle>
         </CardHeader>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="col-span-2 rounded-2xl border p-3">
-            <div className="mb-2 text-xs text-gray-500">Custom range</div>
-            <div className="flex items-center gap-2">
+        <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div className="col-span-2 rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+              Custom range
+            </div>
+            <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
               <input
                 type="date"
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm text-slate-900"
               />
-              <span className="text-gray-400">—</span>
+              <span className="hidden text-slate-400 sm:inline">—</span>
               <input
                 type="date"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm text-slate-900"
               />
-              <Button onClick={runCustom} disabled={loading}>Run</Button>
+              <Button
+                onClick={runCustom}
+                disabled={loading}
+                className="shrink-0 rounded-xl bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                Run
+              </Button>
             </div>
           </div>
 
           <div className="flex flex-col justify-end gap-2">
-            <Button onClick={runInstantAudit90} disabled={loading}>
+            <Button
+              onClick={runInstantAudit90}
+              disabled={loading}
+              className="w-full rounded-xl bg-emerald-600 text-sm font-medium text-white hover:bg-emerald-700"
+            >
               Instant Audit (last 90 days)
             </Button>
-            <Button variant="outline" onClick={downloadCSV} disabled={!temps?.length}>
+            <Button
+              variant="outline"
+              onClick={downloadCSV}
+              disabled={!temps?.length}
+              className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50"
+            >
               <Download className="mr-2 h-4 w-4" /> Export CSV
             </Button>
-            <Button variant="outline" onClick={printReport} disabled={!temps?.length}>
+            <Button
+              variant="outline"
+              onClick={printReport}
+              disabled={!temps?.length}
+              className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50"
+            >
               <Printer className="mr-2 h-4 w-4" /> Print
             </Button>
           </div>
         </div>
 
         {err && (
-          <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             {err}
           </div>
         )}
       </Card>
 
-      <Card>
+      {/* KPI cards */}
+      <Card className="border-none bg-transparent p-0 shadow-none">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl border bg-white p-3">
-            <div className="text-xs text-gray-500">Entries</div>
-            <div className="text-2xl font-semibold">{kpi.count}</div>
+          <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Entries
+            </div>
+            <div className="text-2xl font-semibold text-slate-900">
+              {kpi.count}
+            </div>
           </div>
-          <div className="rounded-xl border bg-white p-3">
-            <div className="text-xs text-gray-500">Failures</div>
-            <div className="text-2xl font-semibold">{kpi.fails}</div>
+          <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Failures
+            </div>
+            <div className="text-2xl font-semibold text-slate-900">
+              {kpi.fails}
+            </div>
           </div>
-          <div className="rounded-xl border bg-white p-3">
-            <div className="text-xs text-gray-500">Locations</div>
-            <div className="text-2xl font-semibold">{kpi.locations}</div>
+          <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Locations
+            </div>
+            <div className="text-2xl font-semibold text-slate-900">
+              {kpi.locations}
+            </div>
           </div>
         </div>
       </Card>
@@ -303,14 +370,14 @@ export default function ReportsPage() {
       {/* Printable content root */}
       <div ref={printRef} id="audit-print-root" className="space-y-6">
         {/* Temps table */}
-        <Card>
-          <h3 className="mb-3 text-base font-medium">
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
             Temperature Logs {temps ? `(${from} → ${to})` : ""}
           </h3>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead>
-                <tr className="text-left text-gray-500">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
                   <th className="py-2 pr-3">Date</th>
                   <th className="py-2 pr-3">Staff</th>
                   <th className="py-2 pr-3">Location</th>
@@ -322,12 +389,29 @@ export default function ReportsPage() {
               </thead>
               <tbody>
                 {!temps ? (
-                  <tr><td colSpan={7} className="py-6 text-center text-gray-500">Run a report to see results</td></tr>
+                  <tr>
+                    <td
+                      colSpan={7}
+                      className="py-6 text-center text-slate-500"
+                    >
+                      Run a report to see results
+                    </td>
+                  </tr>
                 ) : temps.length === 0 ? (
-                  <tr><td colSpan={7} className="py-6 text-center text-gray-500">No results</td></tr>
+                  <tr>
+                    <td
+                      colSpan={7}
+                      className="py-6 text-center text-slate-500"
+                    >
+                      No results
+                    </td>
+                  </tr>
                 ) : (
                   temps.map((r) => (
-                    <tr key={r.id} className="border-t">
+                    <tr
+                      key={r.id}
+                      className="border-t border-slate-100"
+                    >
                       <td className="py-2 pr-3">{r.date}</td>
                       <td className="py-2 pr-3">{r.staff}</td>
                       <td className="py-2 pr-3">{r.location}</td>
@@ -336,12 +420,18 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3">{r.target_key ?? "—"}</td>
                       <td className="py-2 pr-3">
                         {r.status ? (
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                            r.status === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
-                          }`}>
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                              r.status === "pass"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-red-100 text-red-800"
+                            }`}
+                          >
                             {r.status}
                           </span>
-                        ) : "—"}
+                        ) : (
+                          "—"
+                        )}
                       </td>
                     </tr>
                   ))
@@ -352,12 +442,14 @@ export default function ReportsPage() {
         </Card>
 
         {/* Team training due */}
-        <Card>
-          <h3 className="mb-3 text-base font-medium">Team Training — due/overdue (≤90 days)</h3>
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Team Training — due/overdue (≤90 days)
+          </h3>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead>
-                <tr className="text-left text-gray-500">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
                   <th className="py-2 pr-3">Name</th>
                   <th className="py-2 pr-3">Initials</th>
                   <th className="py-2 pr-3">Email</th>
@@ -367,15 +459,33 @@ export default function ReportsPage() {
               </thead>
               <tbody>
                 {!teamDue?.length ? (
-                  <tr><td colSpan={5} className="py-6 text-center text-gray-500">None due</td></tr>
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="py-6 text-center text-slate-500"
+                    >
+                      None due
+                    </td>
+                  </tr>
                 ) : (
                   teamDue.map((r) => (
-                    <tr key={r.id} className="border-t">
+                    <tr
+                      key={r.id}
+                      className="border-t border-slate-100"
+                    >
                       <td className="py-2 pr-3">{r.name}</td>
                       <td className="py-2 pr-3">{r.initials ?? "—"}</td>
                       <td className="py-2 pr-3">{r.email ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.expires_on ? toISODate(r.expires_on) : "—"}</td>
-                      <td className={`py-2 pr-3 ${r.days_until != null && r.days_until < 0 ? "text-red-700" : ""}`}>
+                      <td className="py-2 pr-3">
+                        {r.expires_on ? toISODate(r.expires_on) : "—"}
+                      </td>
+                      <td
+                        className={`py-2 pr-3 ${
+                          r.days_until != null && r.days_until < 0
+                            ? "text-red-700"
+                            : ""
+                        }`}
+                      >
                         {r.days_until != null ? r.days_until : "—"}
                       </td>
                     </tr>
@@ -387,12 +497,14 @@ export default function ReportsPage() {
         </Card>
 
         {/* Allergen reviews due */}
-        <Card>
-          <h3 className="mb-3 text-base font-medium">Allergen Reviews — due/overdue (≤90 days)</h3>
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Allergen Reviews — due/overdue (≤90 days)
+          </h3>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead>
-                <tr className="text-left text-gray-500">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
                   <th className="py-2 pr-3">Item</th>
                   <th className="py-2 pr-3">Location</th>
                   <th className="py-2 pr-3">Next Due</th>
@@ -401,14 +513,32 @@ export default function ReportsPage() {
               </thead>
               <tbody>
                 {!allergenDue?.length ? (
-                  <tr><td colSpan={4} className="py-6 text-center text-gray-500">None due</td></tr>
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="py-6 text-center text-slate-500"
+                    >
+                      None due
+                    </td>
+                  </tr>
                 ) : (
                   allergenDue.map((r) => (
-                    <tr key={r.id} className="border-t">
+                    <tr
+                      key={r.id}
+                      className="border-t border-slate-100"
+                    >
                       <td className="py-2 pr-3">{r.item ?? "—"}</td>
                       <td className="py-2 pr-3">{r.location ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.next_due ? toISODate(r.next_due) : "—"}</td>
-                      <td className={`py-2 pr-3 ${r.days_until != null && r.days_until < 0 ? "text-red-700" : ""}`}>
+                      <td className="py-2 pr-3">
+                        {r.next_due ? toISODate(r.next_due) : "—"}
+                      </td>
+                      <td
+                        className={`py-2 pr-3 ${
+                          r.days_until != null && r.days_until < 0
+                            ? "text-red-700"
+                            : ""
+                        }`}
+                      >
                         {r.days_until != null ? r.days_until : "—"}
                       </td>
                     </tr>
@@ -422,10 +552,23 @@ export default function ReportsPage() {
 
       <style jsx global>{`
         @media print {
-          nav, header, footer, [data-hide-on-print], button { display: none !important; }
-          a { text-decoration: none; color: inherit; }
-          body { background: white !important; }
-          .shadow-sm { box-shadow: none !important; }
+          nav,
+          header,
+          footer,
+          [data-hide-on-print],
+          button {
+            display: none !important;
+          }
+          a {
+            text-decoration: none;
+            color: inherit;
+          }
+          body {
+            background: white !important;
+          }
+          .shadow-sm {
+            box-shadow: none !important;
+          }
         }
       `}</style>
     </div>
