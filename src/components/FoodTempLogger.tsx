@@ -870,7 +870,7 @@ export default function FoodTempLogger({
       {/* Big centred header, like Cleaning Rota */}
       <div className="text-center">
         <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">
-          
+          Food temperature log
         </h1>
 
         <div className="mt-3">
@@ -1036,17 +1036,28 @@ export default function FoodTempLogger({
           );
         })()}
 
-        {/* KPI pills row placeholder (you can style training/allergen KPIs here) */}
-        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-          {/* Example:
-          <span className="rounded-full bg-amber-100 px-2 py-0.5">
-            Training due soon: {kpi.trainingDueSoon}
+        {/* KPI pills row – simple training/allergen overview */}
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <span className="rounded-full bg-amber-50 px-2 py-0.5">
+            Training due soon:{" "}
+            <span className="font-semibold">{kpi.trainingDueSoon}</span>
           </span>
-          */}
+          <span className="rounded-full bg-red-50 px-2 py-0.5">
+            Training overdue:{" "}
+            <span className="font-semibold">{kpi.trainingOver}</span>
+          </span>
+          <span className="rounded-full bg-amber-50 px-2 py-0.5">
+            Allergen review due soon:{" "}
+            <span className="font-semibold">{kpi.allergenDueSoon}</span>
+          </span>
+          <span className="rounded-full bg-red-50 px-2 py-0.5">
+            Allergen review overdue:{" "}
+            <span className="font-semibold">{kpi.allergenOver}</span>
+          </span>
         </div>
 
         {err && (
-          <div className="rounded-md border border-red-200 bg-red-50/90 px-3 py-2 text-sm text-red-800">
+          <div className="mt-2 rounded-md border border-red-200 bg-red-50/90 px-3 py-2 text-sm text-red-800">
             {err}
           </div>
         )}

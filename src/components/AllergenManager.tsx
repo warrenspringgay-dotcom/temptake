@@ -4,8 +4,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { uid } from "@/lib/uid";
 import ActionMenu from "@/components/ActionMenu";
-import { emptyFlags as libEmptyFlags } from "@/lib/allergens";
-import { supabase } from "@/lib/supabaseClient";
+// import { emptyFlags as libEmptyFlags } from "@/lib/allergens"; // no longer used
+import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 
 /* ---------- Types & Constants ---------- */
@@ -261,8 +261,8 @@ export default function AllergenManager() {
     if (!id) return;
     const { data, error } = await supabase
       .from("allergen_reviews")
-      .select("last_reviewed_on,last_reviewed_by,interval_days")
-      .eq("organisation_id", id)
+      .select("last_reviewed_on,last_reviewed_by,interval_days,organisation_id,org_id")
+      .or(`organisation_id.eq.${id},org_id.eq.${id}`)
       .maybeSingle();
 
     if (error) return;
@@ -408,18 +408,21 @@ export default function AllergenManager() {
       return;
     }
 
-    const id = orgId ?? (await getActiveOrgIdClient());
-    if (!id) {
+    const currentOrgId = orgId ?? (await getActiveOrgIdClient());
+    if (!currentOrgId) {
       // local only
       setRows((rs) => rs.filter((r) => r.id !== idToDelete));
       return;
     }
+
     try {
       await supabase.from("allergen_flags").delete().eq("item_id", idToDelete);
+
       const { error } = await supabase
         .from("allergen_items")
         .delete()
         .eq("id", idToDelete);
+
       if (error) {
         alert(`Delete failed: ${error.message}`);
         return;
@@ -447,10 +450,19 @@ export default function AllergenManager() {
       .toISOString()
       .slice(0, 10);
 
+    // Who is reviewing?
+    let reviewer = "Manager";
+    try {
+      const userRes = await supabase.auth.getUser();
+      reviewer = userRes.data.user?.email ?? reviewer;
+    } catch {
+      // ignore
+    }
+
     setReview((r) => ({
       ...r,
       lastReviewedOn: today,
-      lastReviewedBy: "Manager",
+      lastReviewedBy: reviewer,
     }));
 
     if (!id) return;
@@ -458,8 +470,9 @@ export default function AllergenManager() {
     const { error } = await supabase.from("allergen_reviews").upsert(
       {
         organisation_id: id,
+        org_id: id,
         last_reviewed_on: today,
-        last_reviewed_by: "Manager",
+        last_reviewed_by: reviewer,
         interval_days: review.intervalDays,
         next_due: nextDue,
       },
