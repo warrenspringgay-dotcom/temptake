@@ -51,7 +51,25 @@ type CleanRun = {
   done_by: string | null;
 };
 
-/* =============== Helpers =============== */
+/* =============== Small helpers =============== */
+
+function sameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function formatPrettyDate(d: Date) {
+  return d.toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
 
@@ -201,17 +219,6 @@ export default function FoodTempLogger({
 }: Props) {
   const search = useSearchParams();
 
-  // Big header day + date (centered)
-  const headerNow = new Date();
-  const headerWeekday = headerNow.toLocaleDateString(undefined, {
-    weekday: "long",
-  });
-  const headerDate = headerNow.toLocaleDateString(undefined, {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-
   // Modals
   const [showPicker, setShowPicker] = useState(false);
   const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
@@ -278,6 +285,14 @@ export default function FoodTempLogger({
     !!form.item &&
     !!form.target_key &&
     form.temp_c.trim().length > 0;
+
+  // Header date (uses form.date, so header follows the selected log date)
+  const headerDateObj: Date = (() => {
+    if (!form.date) return new Date();
+    const d = new Date(form.date);
+    return isNaN(d.getTime()) ? new Date() : d;
+  })();
+  const isTodayHeader = sameDay(headerDateObj, new Date());
 
   /* prime from localStorage */
   useEffect(() => {
@@ -709,7 +724,7 @@ export default function FoodTempLogger({
       const org_id = await getActiveOrgIdClient();
       if (!org_id) return;
 
-      const today = isoToday();
+      const todayISO = isoToday();
 
       const { data: tData } = await supabase
         .from("cleaning_tasks")
@@ -736,7 +751,7 @@ export default function FoodTempLogger({
         .from("cleaning_task_runs")
         .select("task_id,run_on,done_by")
         .eq("org_id", org_id)
-        .eq("run_on", today);
+        .eq("run_on", todayISO);
 
       setRuns(
         (rData ?? []).map((r: any) => ({
@@ -751,10 +766,10 @@ export default function FoodTempLogger({
     loadRotaToday();
   }, []);
 
-  const today = isoToday();
+  const todayISO = isoToday();
   const dueTodayAll = useMemo(
-    () => tasks.filter((t) => isDueOn(t, today)),
-    [tasks, today]
+    () => tasks.filter((t) => isDueOn(t, todayISO)),
+    [tasks, todayISO]
   );
   const dueDaily = useMemo(
     () => dueTodayAll.filter((t) => t.frequency === "daily"),
@@ -765,8 +780,8 @@ export default function FoodTempLogger({
     [dueTodayAll]
   );
   const doneCount = useMemo(
-    () => dueTodayAll.filter((t) => runsKey.has(`${t.id}|${today}`)).length,
-    [dueTodayAll, runsKey, today]
+    () => dueTodayAll.filter((t) => runsKey.has(`${t.id}|${todayISO}`)).length,
+    [dueTodayAll, runsKey, todayISO]
   );
 
   const dailyByCat = useMemo(() => {
@@ -791,7 +806,6 @@ export default function FoodTempLogger({
 
   /* complete api (active org_id) */
   async function completeTasks(ids: string[], iniVal: string) {
-    // nothing to do
     if (!ids.length) {
       setConfirm(null);
       setConfirmInitials("");
@@ -805,7 +819,7 @@ export default function FoodTempLogger({
         return;
       }
 
-      const run_on = today;
+      const run_on = todayISO;
 
       const payload = ids.map((id) => ({
         org_id,
@@ -814,7 +828,6 @@ export default function FoodTempLogger({
         done_by: iniVal.toUpperCase(),
       }));
 
-      // Use upsert + onConflict so duplicate (task_id,run_on) is OK
       const { error } = await supabase
         .from("cleaning_task_runs")
         .upsert(payload, {
@@ -822,11 +835,8 @@ export default function FoodTempLogger({
           ignoreDuplicates: true,
         });
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
-      // Refresh from DB so runsKey is correct
       await loadRotaToday();
     } catch (e: any) {
       alert(e?.message || "Failed to save completion.");
@@ -845,10 +855,10 @@ export default function FoodTempLogger({
         .delete()
         .eq("org_id", org_id)
         .eq("task_id", id)
-        .eq("run_on", today);
+        .eq("run_on", todayISO);
       if (error) throw error;
       setRuns((prev) =>
-        prev.filter((r) => !(r.task_id === id && r.run_on === today))
+        prev.filter((r) => !(r.task_id === id && r.run_on === todayISO))
       );
     } catch (e: any) {
       alert(e?.message || "Failed to undo completion.");
@@ -856,18 +866,19 @@ export default function FoodTempLogger({
   }
 
   return (
-    <div className="space-y-6 py-4">
-      {/* Centered day + date header with glassy pill */}
+    <div className="space-y-6">
+      {/* Big centred header, like Cleaning Rota */}
       <div className="text-center">
-        <div className="">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.25em] text-slate-400">
-            Today
+        <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">
+          
+        </h1>
+
+        <div className="mt-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">
+            {isTodayHeader ? "Today" : "Selected date"}
           </div>
-          <div className="mt-1 text-xl sm:text-2xl font-semibold text-slate-900">
-            {headerWeekday}
-          </div>
-          <div className="text-sm sm:text-base text-slate-500">
-            {headerDate}
+          <div className="mt-1 text-xl font-semibold text-slate-900 sm:text-2xl">
+            {formatPrettyDate(headerDateObj)}
           </div>
         </div>
       </div>
@@ -995,9 +1006,9 @@ export default function FoodTempLogger({
                 type="button"
                 onClick={() => {
                   const ids = dueTodayAll
-                    .filter((t) => !runsKey.has(`${t.id}|${today}`))
+                    .filter((t) => !runsKey.has(`${t.id}|${todayISO}`))
                     .map((t) => t.id);
-                  setConfirm({ ids, run_on: today });
+                  setConfirm({ ids, run_on: todayISO });
                   setConfirmLabel("Complete all today");
                   setConfirmInitials(
                     form.staff_initials || ini || initials[0] || ""
@@ -1027,7 +1038,7 @@ export default function FoodTempLogger({
 
         {/* KPI pills row placeholder (you can style training/allergen KPIs here) */}
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-          {/* Example (not wired yet):
+          {/* Example:
           <span className="rounded-full bg-amber-100 px-2 py-0.5">
             Training due soon: {kpi.trainingDueSoon}
           </span>
@@ -1054,9 +1065,9 @@ export default function FoodTempLogger({
               className="inline-flex items-center justify-center whitespace-nowrap rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30 hover:brightness-105 disabled:opacity-60"
               onClick={() => {
                 const ids = dueTodayAll
-                  .filter((t) => !runsKey.has(`${t.id}|${today}`))
+                  .filter((t) => !runsKey.has(`${t.id}|${todayISO}`))
                   .map((t) => t.id);
-                setConfirm({ ids, run_on: today });
+                setConfirm({ ids, run_on: todayISO });
                 setConfirmLabel("Complete all today");
                 setConfirmInitials(
                   ini || form.staff_initials || initials[0] || ""
@@ -1064,7 +1075,7 @@ export default function FoodTempLogger({
               }}
               disabled={
                 !dueTodayAll.length ||
-                dueTodayAll.every((t) => runsKey.has(`${t.id}|${today}`))
+                dueTodayAll.every((t) => runsKey.has(`${t.id}|${todayISO}`))
               }
             >
               Complete All
@@ -1084,7 +1095,7 @@ export default function FoodTempLogger({
           ) : (
             <>
               {dueNonDaily.map((t) => {
-                const key = `${t.id}|${today}`;
+                const key = `${t.id}|${todayISO}`;
                 const done = runsKey.has(key);
                 const run = runsKey.get(key) || null;
                 return (
@@ -1131,7 +1142,7 @@ export default function FoodTempLogger({
             {CLEANING_CATEGORIES.map((cat) => {
               const list = dailyByCat.get(cat) ?? [];
               const open = list.filter(
-                (t) => !runsKey.has(`${t.id}|${today}`)
+                (t) => !runsKey.has(`${t.id}|${todayISO}`)
               ).length;
               return (
                 <CategoryPill
@@ -1141,9 +1152,9 @@ export default function FoodTempLogger({
                   open={open}
                   onClick={() => {
                     const ids = list
-                      .filter((t) => !runsKey.has(`${t.id}|${today}`))
+                      .filter((t) => !runsKey.has(`${t.id}|${todayISO}`))
                       .map((t) => t.id);
-                    setConfirm({ ids, run_on: today });
+                    setConfirm({ ids, run_on: todayISO });
                     setConfirmLabel(`Complete: ${cat}`);
                     setConfirmInitials(
                       ini || form.staff_initials || initials[0] || ""
@@ -1192,9 +1203,7 @@ export default function FoodTempLogger({
         {formOpen && (
           <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-6">
             <div>
-              <label className="mb-1 block text-xs text-gray-500">
-                Date
-              </label>
+              <label className="mb-1 block text-xs text-gray-500">Date</label>
               <input
                 type="date"
                 value={form.date}
@@ -1263,9 +1272,7 @@ export default function FoodTempLogger({
             </div>
 
             <div className="lg:col-span-2">
-              <label className="mb-1 block text-xs text-gray-500">
-                Item
-              </label>
+              <label className="mb-1 block text-xs text-gray-500">Item</label>
               <input
                 value={form.item}
                 onChange={(e) =>
@@ -1511,7 +1518,7 @@ export default function FoodTempLogger({
           </table>
         </div>
 
-        {/* Mobile cards (already grouped) */}
+        {/* Mobile cards */}
         <div className="space-y-2 md:hidden">
           {loading ? (
             <div className="py-4 text-center text-sm text-gray-500">
@@ -1581,7 +1588,7 @@ export default function FoodTempLogger({
         </div>
       </div>
 
-      {/* Cleaning completion modal – now shows individual tasks */}
+      {/* Cleaning completion modal – shows individual tasks */}
       {confirm && (
         <div
           className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
