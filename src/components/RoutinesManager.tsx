@@ -1,6 +1,8 @@
+// src/components/RoutineManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
@@ -25,6 +27,14 @@ type RoutineRow = {
 
 function cls(...p: Array<string | false | undefined>) {
   return p.filter(Boolean).join(" ");
+}
+
+/** Render modals at document.body level so they aren't clipped by parent cards */
+function ModalPortal({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
 }
 
 export default function RoutineManager() {
@@ -285,12 +295,13 @@ export default function RoutineManager() {
 
   // ================= Render =================
   return (
-    <div className="space-y-4 rounded-2xl border bg-white p-4">
-      <div className="flex items-center gap-2">
-        <h1 className="text-lg font-semibold">Routines</h1>
+    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 text-slate-900 shadow-xl backdrop-blur-sm sm:p-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-center gap-2">
+        <h1 className="text-lg font-semibold text-slate-900">Routines</h1>
         <div className="ml-auto flex items-center gap-2">
           <input
-            className="h-9 rounded-xl border px-3 text-sm"
+            className="h-9 rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900 placeholder:text-slate-400"
             placeholder="Search…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -301,7 +312,7 @@ export default function RoutineManager() {
       {/* Quick add (opens modal) */}
       <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
         <input
-          className="rounded-xl border px-3 py-2"
+          className="rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400"
           placeholder={
             canManage ? "New routine name" : "View-only · ask manager to add"
           }
@@ -312,10 +323,10 @@ export default function RoutineManager() {
         <button
           type="button"
           className={cls(
-            "rounded-xl px-3 py-2 text-sm font-medium text-white",
+            "rounded-xl px-3 py-2 text-sm font-medium text-white transition",
             canManage
-              ? "bg-black hover:bg-gray-900"
-              : "bg-gray-400 cursor-not-allowed"
+              ? "bg-emerald-600 hover:bg-emerald-700"
+              : "cursor-not-allowed bg-slate-400"
           )}
           onClick={addQuick}
           disabled={loading || !canManage}
@@ -325,15 +336,15 @@ export default function RoutineManager() {
       </div>
 
       {/* List */}
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/80 shadow-sm backdrop-blur-sm">
         <table className="min-w-full table-fixed text-sm">
           <colgroup>
             <col className="w-[55%]" />
             <col className="w-[12%]" />
             <col className="w-[33%]" />
           </colgroup>
-          <thead>
-            <tr className="text-left text-gray-500">
+          <thead className="bg-slate-50/80">
+            <tr className="text-left text-slate-500">
               <th className="py-2 pr-3">Name</th>
               <th className="py-2 pr-3">Items</th>
               <th className="py-2 pr-3">Actions</th>
@@ -342,18 +353,21 @@ export default function RoutineManager() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={3} className="py-6 text-center text-gray-500">
+                <td colSpan={3} className="py-6 text-center text-slate-500">
                   Loading…
                 </td>
               </tr>
             ) : filtered.length ? (
               filtered.map((r) => (
-                <tr key={r.id ?? `temp-${r.name}`} className="border-t">
+                <tr
+                  key={r.id ?? `temp-${r.name}`}
+                  className="border-t border-slate-100"
+                >
                   <td className="py-2 pr-3">
                     {r.id ? (
                       <button
                         type="button"
-                        className="text-blue-600 underline hover:text-blue-700"
+                        className="text-emerald-700 underline decoration-emerald-400 underline-offset-2 hover:text-emerald-800"
                         title="Open"
                         onClick={() => openView(r)}
                       >
@@ -364,7 +378,7 @@ export default function RoutineManager() {
                     )}
                   </td>
 
-                  <td className="py-2 pr-3">{r.items.length}</td>
+                  <td className="py-2 pr-3 text-slate-900">{r.items.length}</td>
 
                   <td className="py-2 pr-3">
                     <div className="relative inline-block text-left">
@@ -409,7 +423,7 @@ export default function RoutineManager() {
               ))
             ) : (
               <tr>
-                <td colSpan={3} className="py-6 text-center text-gray-500">
+                <td colSpan={3} className="py-6 text-center text-slate-500">
                   No routines yet.
                 </td>
               </tr>
@@ -420,237 +434,248 @@ export default function RoutineManager() {
 
       {/* ===== View Card ===== */}
       {viewOpen && viewing && viewing.id && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40"
-          onClick={() => setViewOpen(false)}
-        >
+        <ModalPortal>
           <div
-            className="mx-auto mt-16 w-full max-w-xl overflow-y-auto rounded-2xl border bg-white"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 bg-black/40"
+            onClick={() => setViewOpen(false)}
           >
-            <div className="bg-slate-800 px-4 py-3 text-white">
-              <div className="text-sm opacity-80">Routine</div>
-              <div className="text-xl font-semibold">{viewing.name}</div>
-              <div className="opacity-80">
-                {viewing.active ? "Active" : "Inactive"}
+            <div
+              className="mx-auto mt-16 w-full max-w-xl overflow-y-auto rounded-3xl border border-slate-200 bg-white/95 text-slate-900 shadow-2xl backdrop-blur-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="rounded-t-3xl bg-slate-900 px-4 py-3 text-white">
+                <div className="text-sm opacity-80">Routine</div>
+                <div className="text-xl font-semibold">{viewing.name}</div>
+                <div className="opacity-80">
+                  {viewing.active ? "Active" : "Inactive"}
+                </div>
+              </div>
+
+              <div className="p-4">
+                {viewing.items.length ? (
+                  <ul className="divide-y divide-slate-100">
+                    {viewing.items.map((it) => (
+                      <li
+                        key={`${it.position}-${it.item}-${it.location}`}
+                        className="py-2 text-sm"
+                      >
+                        <div className="font-medium text-slate-900">
+                          Step {it.position}
+                        </div>
+                        <div className="text-slate-600">
+                          {[it.location, it.item]
+                            .filter(Boolean)
+                            .join(" · ") || "—"}{" "}
+                          · target:{" "}
+                          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+                            {it.target_key}
+                          </code>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="text-sm text-slate-600">
+                    No items in this routine.
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
+                {viewing.id && (
+                  <a
+                    href={`/dashboard?run=${encodeURIComponent(viewing.id)}`}
+                    className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+                  >
+                    Use routine
+                  </a>
+                )}
+                <button
+                  className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                  onClick={() => setViewOpen(false)}
+                >
+                  Close
+                </button>
               </div>
             </div>
-
-            <div className="p-4">
-              {viewing.items.length ? (
-                <ul className="divide-y">
-                  {viewing.items.map((it) => (
-                    <li
-                      key={`${it.position}-${it.item}-${it.location}`}
-                      className="py-2 text-sm"
-                    >
-                      <div className="font-medium">Step {it.position}</div>
-                      <div className="text-gray-600">
-                        {[it.location, it.item].filter(Boolean).join(" · ") ||
-                          "—"}{" "}
-                        · target: <code>{it.target_key}</code>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="text-sm text-gray-600">
-                  No items in this routine.
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center justify-end gap-2 border-t bg-gray-50 p-3">
-              {viewing.id && (
-                <a
-                  href={`/dashboard?run=${encodeURIComponent(viewing.id)}`}
-                  className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
-                >
-                  Use routine
-                </a>
-              )}
-              <button
-                className="rounded-md bg.white px-3 py-1.5 text-sm bg-white"
-                onClick={() => setViewOpen(false)}
-              >
-                Close
-              </button>
-            </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* ===== Edit Modal ===== */}
       {editOpen && editing && (
-        <div
-          className="fixed inset-0 z-50 overflow-y-auto bg-black/40"
-          onClick={() => setEditOpen(false)}
-        >
+        <ModalPortal>
           <div
-            className="mx-auto mt-16 w-full max-w-3xl rounded-2xl border bg-white p-4"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/40"
+            onClick={() => setEditOpen(false)}
           >
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">
-                {editing.id ? "Edit routine" : "New routine"}
+            <div
+              className="mx-auto mt-16 w-full max-w-3xl rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl backdrop-blur-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-base font-semibold">
+                  {editing.id ? "Edit routine" : "New routine"}
+                </div>
+                <button
+                  onClick={() => setEditOpen(false)}
+                  className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                >
+                  ✕
+                </button>
               </div>
-              <button
-                onClick={() => setEditOpen(false)}
-                className="rounded-md p-2 hover:bg-gray-100"
-              >
-                ✕
-              </button>
-            </div>
 
-            <div className="flex items-center justify-between gap-4">
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                value={editing.name}
-                onChange={(e) =>
-                  setEditing({ ...editing, name: e.target.value })
-                }
-              />
-              <label className="mt-2 flex items-center gap-2 text-sm">
+              <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <input
-                  type="checkbox"
-                  checked={!!editing.active}
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900"
+                  value={editing.name}
                   onChange={(e) =>
-                    setEditing({ ...editing, active: e.target.checked })
+                    setEditing({ ...editing, name: e.target.value })
                   }
                 />
-                Active
-              </label>
-            </div>
+                <label className="flex items-center gap-2 text-sm text-slate-800">
+                  <input
+                    type="checkbox"
+                    className="accent-emerald-600"
+                    checked={!!editing.active}
+                    onChange={(e) =>
+                      setEditing({ ...editing, active: e.target.checked })
+                    }
+                  />
+                  Active
+                </label>
+              </div>
 
-            <div className="mt-4 space-y-2">
-              {editing.items.map((it, i) => (
-                <div
-                  key={i}
-                  className="grid gap-2 sm:grid-cols-[80px_1fr_1fr_1fr_auto]"
+              <div className="mt-4 space-y-2">
+                {editing.items.map((it, i) => (
+                  <div
+                    key={i}
+                    className="grid gap-2 sm:grid-cols-[80px_1fr_1fr_1fr_auto]"
+                  >
+                    <input
+                      className="rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm"
+                      placeholder="#"
+                      type="number"
+                      value={it.position}
+                      onChange={(e) => {
+                        const copy: RoutineRow = {
+                          ...editing,
+                          items: [...editing.items],
+                        };
+                        copy.items[i] = {
+                          ...copy.items[i],
+                          position: Number(e.target.value) || 0,
+                        };
+                        setEditing(copy);
+                      }}
+                    />
+                    <input
+                      className="rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm"
+                      placeholder="Location"
+                      value={it.location ?? ""}
+                      onChange={(e) => {
+                        const copy: RoutineRow = {
+                          ...editing,
+                          items: [...editing.items],
+                        };
+                        copy.items[i] = {
+                          ...copy.items[i],
+                          location: e.target.value || null,
+                        };
+                        setEditing(copy);
+                      }}
+                    />
+                    <input
+                      className="rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm"
+                      placeholder="Item"
+                      value={it.item ?? ""}
+                      onChange={(e) => {
+                        const copy: RoutineRow = {
+                          ...editing,
+                          items: [...editing.items],
+                        };
+                        copy.items[i] = {
+                          ...copy.items[i],
+                          item: e.target.value || null,
+                        };
+                        setEditing(copy);
+                      }}
+                    />
+                    <select
+                      className="rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm"
+                      value={it.target_key}
+                      onChange={(e) => {
+                        const copy: RoutineRow = {
+                          ...editing,
+                          items: [...editing.items],
+                        };
+                        copy.items[i] = {
+                          ...copy.items[i],
+                          target_key: e.target.value,
+                        };
+                        setEditing(copy);
+                      }}
+                    >
+                      {TARGET_PRESETS.map((p) => (
+                        <option key={p.key} value={p.key}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                      onClick={() => {
+                        const copy: RoutineRow = {
+                          ...editing,
+                          items: editing.items.filter((_, idx) => idx !== i),
+                        };
+                        setEditing(copy);
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+
+                <button
+                  className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  onClick={() =>
+                    setEditing({
+                      ...editing,
+                      items: [
+                        ...editing.items,
+                        {
+                          position: (editing.items.at(-1)?.position ?? 0) + 1,
+                          location: "",
+                          item: "",
+                          target_key: "chill",
+                        },
+                      ],
+                    })
+                  }
                 >
-                  <input
-                    className="rounded-xl border px-3 py-2"
-                    placeholder="#"
-                    type="number"
-                    value={it.position}
-                    onChange={(e) => {
-                      const copy: RoutineRow = {
-                        ...editing,
-                        items: [...editing.items],
-                      };
-                      copy.items[i] = {
-                        ...copy.items[i],
-                        position: Number(e.target.value) || 0,
-                      };
-                      setEditing(copy);
-                    }}
-                  />
-                  <input
-                    className="rounded-xl border px-3 py-2"
-                    placeholder="Location"
-                    value={it.location ?? ""}
-                    onChange={(e) => {
-                      const copy: RoutineRow = {
-                        ...editing,
-                        items: [...editing.items],
-                      };
-                      copy.items[i] = {
-                        ...copy.items[i],
-                        location: e.target.value || null,
-                      };
-                      setEditing(copy);
-                    }}
-                  />
-                  <input
-                    className="rounded-xl border px-3 py-2"
-                    placeholder="Item"
-                    value={it.item ?? ""}
-                    onChange={(e) => {
-                      const copy: RoutineRow = {
-                        ...editing,
-                        items: [...editing.items],
-                      };
-                      copy.items[i] = {
-                        ...copy.items[i],
-                        item: e.target.value || null,
-                      };
-                      setEditing(copy);
-                    }}
-                  />
-                  <select
-                    className="rounded-xl border px-3 py-2"
-                    value={it.target_key}
-                    onChange={(e) => {
-                      const copy: RoutineRow = {
-                        ...editing,
-                        items: [...editing.items],
-                      };
-                      copy.items[i] = {
-                        ...copy.items[i],
-                        target_key: e.target.value,
-                      };
-                      setEditing(copy);
-                    }}
-                  >
-                    {TARGET_PRESETS.map((p) => (
-                      <option key={p.key} value={p.key}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-                    onClick={() => {
-                      const copy: RoutineRow = {
-                        ...editing,
-                        items: editing.items.filter((_, idx) => idx !== i),
-                      };
-                      setEditing(copy);
-                    }}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
+                  + Add step
+                </button>
+              </div>
 
-              <button
-                className="mt-2 rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
-                onClick={() =>
-                  setEditing({
-                    ...editing,
-                    items: [
-                      ...editing.items,
-                      {
-                        position: (editing.items.at(-1)?.position ?? 0) + 1,
-                        location: "",
-                        item: "",
-                        target_key: "chill",
-                      },
-                    ],
-                  })
-                }
-              >
-                + Add step
-              </button>
-            </div>
-
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                className="rounded-xl border px-4 py-2 text-sm"
-                onClick={() => setEditOpen(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
-                onClick={saveEdit}
-                disabled={!canManage}
-              >
-                Save
-              </button>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  onClick={() => setEditOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                  onClick={saveEdit}
+                  disabled={!canManage}
+                >
+                  Save
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   );

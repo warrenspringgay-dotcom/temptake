@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import ActionMenu from "@/components/ActionMenu";
@@ -41,8 +42,6 @@ type SupplierEdit = {
   active: boolean;
 };
 
-type OrgRole = "owner" | "manager" | "staff" | "other";
-
 /* -------------------- Helpers -------------------- */
 function cls(...p: Array<string | false | undefined>) {
   return p.filter(Boolean).join(" ");
@@ -77,15 +76,18 @@ function catsToString(arr: string[]): string | null {
   return clean.length ? clean.join(", ") : null;
 }
 
+function ModalPortal({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+}
+
 /* ================================================= */
 export default function SuppliersManager() {
   const [rows, setRows] = useState<SupplierRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
-
-  // permissions
-  const [myRole, setMyRole] = useState<OrgRole>("other");
-  const canManage = myRole === "owner" || myRole === "manager";
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewing, setViewing] = useState<SupplierRow | null>(null);
@@ -105,48 +107,22 @@ export default function SuppliersManager() {
     active: true,
   });
 
-  // ----- load role once -----
-  useEffect(() => {
-    (async () => {
-      try {
-        const [{ data: userRes }, orgId] = await Promise.all([
-          supabase.auth.getUser(),
-          getActiveOrgIdClient(),
-        ]);
-        const user = userRes.user;
-        const email = user?.email?.toLowerCase() ?? null;
-        if (!orgId || !email) return;
-
-        const { data, error } = await supabase
-          .from("team_members")
-          .select("role,email")
-          .eq("org_id", orgId)
-          .eq("email", email)
-          .maybeSingle();
-
-        if (error || !data) return;
-        const r = (data.role ?? "").toLowerCase();
-        if (r === "owner" || r === "manager" || r === "staff") {
-          setMyRole(r as OrgRole);
-        }
-      } catch {
-        // ignore
-      }
-    })();
-  }, []);
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [canManage, setCanManage] = useState(false);
 
   async function refresh() {
     setLoading(true);
     try {
-      const orgId = await getActiveOrgIdClient();
-      if (!orgId) {
+      const id = await getActiveOrgIdClient();
+      setOrgId(id ?? null);
+      if (!id) {
         setRows([]);
         return;
       }
       const { data, error } = await supabase
         .from("suppliers")
         .select("id,name,contact,phone,email,categories,notes,active")
-        .eq("org_id", orgId)
+        .eq("org_id", id)
         .order("name");
       if (error) throw error;
       setRows((data ?? []) as SupplierRow[]);
@@ -160,6 +136,42 @@ export default function SuppliersManager() {
 
   useEffect(() => {
     refresh();
+  }, []);
+
+  // permissions
+  useEffect(() => {
+    (async () => {
+      try {
+        const [id, userRes] = await Promise.all([
+          getActiveOrgIdClient(),
+          supabase.auth.getUser(),
+        ]);
+        const email = userRes.data.user?.email?.toLowerCase() ?? null;
+        if (!id || !email) {
+          setCanManage(false);
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from("team_members")
+          .select("role,email")
+          .eq("org_id", id)
+          .eq("email", email)
+          .maybeSingle();
+
+        if (error) {
+          setCanManage(false);
+          return;
+        }
+
+        const role = (data?.role ?? "").toLowerCase();
+        setCanManage(
+          role === "owner" || role === "manager" || role === "admin"
+        );
+      } catch {
+        setCanManage(false);
+      }
+    })();
   }, []);
 
   const filtered = useMemo(() => {
@@ -178,7 +190,10 @@ export default function SuppliersManager() {
   }
 
   function openEdit(r: SupplierRow) {
-    if (!canManage) return;
+    if (!canManage) {
+      alert("Only managers / owners can edit suppliers.");
+      return;
+    }
     setEditing({
       id: r.id,
       name: r.name ?? "",
@@ -191,6 +206,14 @@ export default function SuppliersManager() {
       active: !!r.active,
     });
     setEditOpen(true);
+  }
+
+  function openAddModal() {
+    if (!canManage) {
+      alert("Only managers / owners can add suppliers.");
+      return;
+    }
+    setAddOpen(true);
   }
 
   async function removeSupplier(id: string) {
@@ -219,7 +242,7 @@ export default function SuppliersManager() {
   async function saveEdit() {
     if (!editing) return;
     if (!canManage) {
-      alert("Only managers / owners can update suppliers.");
+      alert("Only managers / owners can edit suppliers.");
       return;
     }
     if (!editing.name.trim()) return alert("Name is required.");
@@ -235,15 +258,15 @@ export default function SuppliersManager() {
   }
 
   async function saveAdd() {
+    if (!adding.name.trim()) return alert("Name is required.");
     if (!canManage) {
       alert("Only managers / owners can add suppliers.");
       return;
     }
-    if (!adding.name.trim()) return alert("Name is required.");
-    const orgId = await getActiveOrgIdClient();
-    if (!orgId) return alert("No organisation found.");
+    const id = orgId ?? (await getActiveOrgIdClient());
+    if (!id) return alert("No organisation found.");
 
-    const payload = { org_id: orgId, ...normalizeBeforeSave(adding) };
+    const payload = { org_id: id, ...normalizeBeforeSave(adding) };
     const { error } = await supabase.from("suppliers").insert(payload);
     if (error) return alert(error.message);
 
@@ -261,7 +284,7 @@ export default function SuppliersManager() {
     refresh();
   }
 
-  // Category helpers (typed)
+  // typed toggleCat + addFreeCat
   function toggleCat(
     _state: SupplierEdit,
     setState: (updater: (s: SupplierEdit) => SupplierEdit) => void,
@@ -293,80 +316,91 @@ export default function SuppliersManager() {
         addCategory: "",
       }));
     } else {
-      setState((s) => ({ ...s, addCategory: "" }));
+      setState((s: SupplierEdit) => ({ ...s, addCategory: "" }));
     }
   }
 
   return (
-    <div className="space-y-6 rounded-2xl border bg-white p-4 shadow-sm">
+    <div className="space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 text-slate-900 shadow-xl backdrop-blur-sm sm:p-6">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-lg font-semibold">Suppliers</h1>
+        <h1 className="text-lg font-semibold text-slate-900">Suppliers</h1>
         <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
           <input
-            className="h-10 w-full rounded-xl border px-3 text-sm sm:w-64"
+            className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900 placeholder:text-slate-400 sm:w-64"
             placeholder="Search…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-          {canManage && (
-            <button
-              className="shrink-0 rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900"
-              onClick={() => setAddOpen(true)}
-            >
-              + Add supplier
-            </button>
-          )}
+          <button
+            className={cls(
+              "shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-white",
+              canManage
+                ? "bg-emerald-600 hover:bg-emerald-700"
+                : "cursor-not-allowed bg-slate-400"
+            )}
+            onClick={openAddModal}
+            disabled={!canManage}
+          >
+            + Add supplier
+          </button>
         </div>
       </div>
 
       {/* Mobile: cards */}
       <div className="grid gap-3 sm:hidden">
         {loading ? (
-          <div className="rounded-xl border p-4 text-center text-gray-500">
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-4 text-center text-slate-500 shadow-sm backdrop-blur-sm">
             Loading…
           </div>
         ) : filtered.length === 0 ? (
-          <div className="rounded-xl border p-4 text-center text-gray-500">
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-4 text-center text-slate-500 shadow-sm backdrop-blur-sm">
             No suppliers yet.
           </div>
         ) : (
           filtered.map((r) => {
             const cats = parseCats(r.categories);
-            const items = [
-              { label: "View", onClick: () => openView(r) },
-              ...(canManage
-                ? [
-                    { label: "Edit", onClick: () => openEdit(r) },
-                    {
-                      label: "Delete",
-                      onClick: () => removeSupplier(r.id),
-                      variant: "danger" as const,
-                    },
-                  ]
-                : []),
-            ];
             return (
-              <div key={r.id} className="rounded-xl border p-3">
+              <div
+                key={r.id}
+                className="rounded-xl border border-slate-200 bg-white/80 p-3 text-sm text-slate-900 shadow-sm backdrop-blur-sm"
+              >
                 <div className="mb-2 flex items-start justify-between">
                   <div>
                     <div className="text-base font-semibold">{r.name}</div>
-                    <div className="text-xs text-gray-500">
+                    <div className="text-xs text-slate-500">
                       {r.active ? "Active" : "Inactive"}
                     </div>
                   </div>
-                  <ActionMenu items={items} />
+                  <ActionMenu
+                    items={[
+                      { label: "View", onClick: () => openView(r) },
+                      ...(canManage
+                        ? [
+                            {
+                              label: "Edit",
+                              onClick: () => openEdit(r),
+                            },
+                            {
+                              label: "Delete",
+                              onClick: () => removeSupplier(r.id),
+                              variant: "danger" as const,
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
                 </div>
                 <div className="space-y-1 text-sm">
                   <div>
-                    <span className="text-gray-500">Contact:</span>{" "}
+                    <span className="text-slate-500">Contact:</span>{" "}
                     {r.contact || "—"}
                   </div>
                   <div>
-                    <span className="text-gray-500">Phone:</span>{" "}
+                    <span className="text-slate-500">Phone:</span>{" "}
                     {r.phone || "—"}
                   </div>
                   <div>
-                    <span className="text-gray-500">Email:</span>{" "}
+                    <span className="text-slate-500">Email:</span>{" "}
                     {r.email || "—"}
                   </div>
                   <div className="flex flex-wrap gap-1">
@@ -374,13 +408,13 @@ export default function SuppliersManager() {
                       cats.map((c) => (
                         <span
                           key={c}
-                          className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px]"
+                          className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800"
                         >
                           {c}
                         </span>
                       ))
                     ) : (
-                      <span className="text-gray-500">No categories</span>
+                      <span className="text-slate-500">No categories</span>
                     )}
                   </div>
                 </div>
@@ -391,10 +425,10 @@ export default function SuppliersManager() {
       </div>
 
       {/* Tablet / Desktop: table */}
-      <div className="hidden overflow-x-auto sm:block">
+      <div className="hidden overflow-x-auto rounded-2xl border border-slate-200 bg-white/80 shadow-sm backdrop-blur-sm sm:block">
         <table className="min-w-full text-sm">
-          <thead>
-            <tr className="text-left text-gray-500">
+          <thead className="bg-slate-50/80">
+            <tr className="text-left text-slate-500">
               <th className="py-2 pr-3">Supplier</th>
               <th className="py-2 pr-3">Contact</th>
               <th className="py-2 pr-3">Phone</th>
@@ -407,67 +441,79 @@ export default function SuppliersManager() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="py-6 text-center text-gray-500">
+                <td colSpan={7} className="py-6 text-center text-slate-500">
                   Loading…
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-6 text-center text-gray-500">
+                <td colSpan={7} className="py-6 text-center text-slate-500">
                   No suppliers yet.
                 </td>
               </tr>
             ) : (
               filtered.map((r) => {
                 const cats = parseCats(r.categories);
-                const items = [
-                  { label: "View", onClick: () => openView(r) },
-                  ...(canManage
-                    ? [
-                        { label: "Edit", onClick: () => openEdit(r) },
-                        {
-                          label: "Delete",
-                          onClick: () => removeSupplier(r.id),
-                          variant: "danger" as const,
-                        },
-                      ]
-                    : []),
-                ];
-
                 return (
-                  <tr key={r.id} className="border-t align-top">
+                  <tr
+                    key={r.id}
+                    className="border-t border-slate-100 align-top"
+                  >
                     <td className="py-2 pr-3">
                       <button
-                        className="text-blue-600 underline hover:text-blue-700"
+                        className="text-emerald-700 underline decoration-emerald-400 underline-offset-2 hover:text-emerald-800"
                         onClick={() => openView(r)}
                       >
                         {r.name}
                       </button>
                     </td>
-                    <td className="py-2 pr-3">{r.contact ?? "—"}</td>
-                    <td className="py-2 pr-3">{r.phone ?? "—"}</td>
-                    <td className="py-2 pr-3">{r.email ?? "—"}</td>
+                    <td className="py-2 pr-3 text-slate-900">
+                      {r.contact ?? "—"}
+                    </td>
+                    <td className="py-2 pr-3 text-slate-900">
+                      {r.phone ?? "—"}
+                    </td>
+                    <td className="py-2 pr-3 text-slate-900">
+                      {r.email ?? "—"}
+                    </td>
                     <td className="py-2 pr-3">
                       {cats.length ? (
                         <div className="flex flex-wrap gap-1">
                           {cats.map((c) => (
                             <span
                               key={c}
-                              className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px]"
+                              className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800"
                             >
                               {c}
                             </span>
                           ))}
                         </div>
                       ) : (
-                        "—"
+                        <span className="text-slate-500">—</span>
                       )}
                     </td>
-                    <td className="py-2 pr-3">
+                    <td className="py-2 pr-3 text-slate-900">
                       {r.active ? "Yes" : "No"}
                     </td>
                     <td className="py-2 pr-0 text-right">
-                      <ActionMenu items={items} />
+                      <ActionMenu
+                        items={[
+                          { label: "View", onClick: () => openView(r) },
+                          ...(canManage
+                            ? [
+                                {
+                                  label: "Edit",
+                                  onClick: () => openEdit(r),
+                                },
+                                {
+                                  label: "Delete",
+                                  onClick: () => removeSupplier(r.id),
+                                  variant: "danger" as const,
+                                },
+                              ]
+                            : []),
+                        ]}
+                      />
                     </td>
                   </tr>
                 );
@@ -477,372 +523,383 @@ export default function SuppliersManager() {
         </table>
       </div>
 
-      {/* VIEW MODAL */}
+      {/* ---------- VIEW ---------- */}
       {viewOpen && viewing && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40"
-          onClick={() => setViewOpen(false)}
-        >
+        <ModalPortal>
           <div
-            className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-2xl border bg-white"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 bg-black/40"
+            onClick={() => setViewOpen(false)}
           >
-            <div className="rounded-t-2xl bg-slate-800 p-4 text-white">
-              <div className="text-sm opacity-80">Supplier</div>
-              <div className="text-xl font-semibold">{viewing.name}</div>
-              <div className="opacity-80">
-                {viewing.active ? "Active" : "Inactive"}
+            <div
+              className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 text-slate-900 shadow-2xl backdrop-blur-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="rounded-t-3xl bg-slate-900 p-4 text-white">
+                <div className="text-sm opacity-80">Supplier</div>
+                <div className="text-xl font-semibold">{viewing.name}</div>
+                <div className="opacity-80">
+                  {viewing.active ? "Active" : "Inactive"}
+                </div>
               </div>
-            </div>
-            <div className="space-y-3 p-4 text-sm">
-              <div>
-                <span className="font-medium">Contact:</span>{" "}
-                {viewing.contact || "—"}
+              <div className="space-y-3 p-4 text-sm">
+                <div>
+                  <span className="font-medium">Contact:</span>{" "}
+                  {viewing.contact || "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Phone:</span>{" "}
+                  {viewing.phone || "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Email:</span>{" "}
+                  {viewing.email || "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Categories:</span>{" "}
+                  {parseCats(viewing.categories).join(", ") || "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Notes:</span>{" "}
+                  {viewing.notes || "—"}
+                </div>
               </div>
-              <div>
-                <span className="font-medium">Phone:</span>{" "}
-                {viewing.phone || "—"}
+              <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
+                <button
+                  className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                  onClick={() => setViewOpen(false)}
+                >
+                  Close
+                </button>
               </div>
-              <div>
-                <span className="font-medium">Email:</span>{" "}
-                {viewing.email || "—"}
-              </div>
-              <div>
-                <span className="font-medium">Categories:</span>{" "}
-                {parseCats(viewing.categories).join(", ") || "—"}
-              </div>
-              <div>
-                <span className="font-medium">Notes:</span>{" "}
-                {viewing.notes || "—"}
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 border-t p-3">
-              <button
-                className="rounded-md px-3 py-1.5 hover:bg-gray-100"
-                onClick={() => setViewOpen(false)}
-              >
-                Close
-              </button>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
-      {/* EDIT MODAL */}
+      {/* ---------- EDIT ---------- */}
       {editOpen && editing && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40"
-          onClick={() => setEditOpen(false)}
-        >
+        <ModalPortal>
           <div
-            className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-2xl border bg-white p-4"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 bg-black/40"
+            onClick={() => setEditOpen(false)}
           >
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">Edit supplier</div>
-              <button
-                onClick={() => setEditOpen(false)}
-                className="rounded-md p-2 hover:bg-gray-100"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="grid gap-3">
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                value={editing.name}
-                onChange={(e) =>
-                  setEditing((s) => ({ ...s!, name: e.target.value }))
-                }
-              />
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                placeholder="Contact"
-                value={editing.contact}
-                onChange={(e) =>
-                  setEditing((s) => ({ ...s!, contact: e.target.value }))
-                }
-              />
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  className="h-10 w-full rounded-xl border px-3"
-                  placeholder="Phone"
-                  value={editing.phone}
-                  onChange={(e) =>
-                    setEditing((s) => ({ ...s!, phone: e.target.value }))
-                  }
-                />
-                <input
-                  className="h-10 w-full rounded-xl border px-3"
-                  placeholder="Email"
-                  value={editing.email}
-                  onChange={(e) =>
-                    setEditing((s) => ({ ...s!, email: e.target.value }))
-                  }
-                />
+            <div
+              className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl backdrop-blur-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-base font-semibold">Edit supplier</div>
+                <button
+                  onClick={() => setEditOpen(false)}
+                  className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                >
+                  ✕
+                </button>
               </div>
 
-              <div>
-                <div className="mb-1 text-xs text-gray-500">Categories</div>
-                <div className="flex flex-wrap gap-2">
-                  {PRESET_CATEGORIES.map((c) => {
-                    const active = editing.categories.includes(c);
-                    return (
-                      <button
-                        key={c}
-                        type="button"
-                        className={cls(
-                          "rounded-full border px-2 py-0.5 text-xs",
-                          active
-                            ? "bg-black text-white"
-                            : "bg-white hover:bg-gray-50"
-                        )}
-                        onClick={() =>
-                          toggleCat(editing, setEditing as any, c)
-                        }
-                      >
-                        {c}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="mt-2 flex items-center gap-2">
+              <div className="grid gap-3 text-sm">
+                <input
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                  value={editing.name}
+                  onChange={(e) =>
+                    setEditing((s) => ({ ...s!, name: e.target.value }))
+                  }
+                />
+                <input
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                  placeholder="Contact"
+                  value={editing.contact}
+                  onChange={(e) =>
+                    setEditing((s) => ({ ...s!, contact: e.target.value }))
+                  }
+                />
+                <div className="grid grid-cols-2 gap-3">
                   <input
-                    className="h-9 w-full rounded-xl border px-3 text-sm"
-                    placeholder="Add custom category"
-                    value={editing.addCategory}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                    placeholder="Phone"
+                    value={editing.phone}
                     onChange={(e) =>
-                      setEditing((s) => ({ ...s!, addCategory: e.target.value }))
-                    }
-                    onKeyDown={(e) =>
-                      e.key === "Enter" &&
-                      addFreeCat(editing, setEditing as any)
+                      setEditing((s) => ({ ...s!, phone: e.target.value }))
                     }
                   />
-                  <button
-                    type="button"
-                    className="h-9 rounded-xl border px-3 text-sm hover:bg-gray-50"
-                    onClick={() =>
-                      addFreeCat(editing, setEditing as any)
+                  <input
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                    placeholder="Email"
+                    value={editing.email}
+                    onChange={(e) =>
+                      setEditing((s) => ({ ...s!, email: e.target.value }))
                     }
-                  >
-                    Add
-                  </button>
+                  />
                 </div>
 
-                {editing.categories.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {editing.categories.map((c) => (
-                      <span
-                        key={c}
-                        className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px]"
-                      >
-                        {c}
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">Categories</div>
+                  <div className="flex flex-wrap gap-2">
+                    {PRESET_CATEGORIES.map((c) => {
+                      const active = editing.categories.includes(c);
+                      return (
                         <button
+                          key={c}
                           type="button"
-                          className="ml-1 rounded p-0.5 hover:bg-gray-200"
+                          className={cls(
+                            "rounded-full border px-2 py-0.5 text-xs",
+                            active
+                              ? "border-emerald-600 bg-emerald-600 text-white"
+                              : "border-slate-200 bg-white hover:bg-slate-50"
+                          )}
                           onClick={() =>
-                            setEditing((s) => ({
-                              ...s!,
-                              categories: s!.categories.filter(
-                                (x) => x !== c
-                              ),
-                            }))
+                            toggleCat(editing, setEditing as any, c)
                           }
-                          aria-label={`Remove ${c}`}
                         >
-                          ×
+                          {c}
                         </button>
-                      </span>
-                    ))}
+                      );
+                    })}
                   </div>
-                )}
-              </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                      placeholder="Add custom category"
+                      value={editing.addCategory}
+                      onChange={(e) =>
+                        setEditing((s) => ({
+                          ...s!,
+                          addCategory: e.target.value,
+                        }))
+                      }
+                      onKeyDown={(e) =>
+                        e.key === "Enter" &&
+                        addFreeCat(editing, setEditing as any)
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 hover:bg-slate-50"
+                      onClick={() => addFreeCat(editing, setEditing as any)}
+                    >
+                      Add
+                    </button>
+                  </div>
 
-              <textarea
-                className="min-h-[90px] w-full rounded-xl border px-3 py-2"
-                placeholder="Notes"
-                value={editing.notes}
-                onChange={(e) =>
-                  setEditing((s) => ({ ...s!, notes: e.target.value }))
-                }
-              />
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={editing.active}
+                  {editing.categories.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {editing.categories.map((c) => (
+                        <span
+                          key={c}
+                          className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800"
+                        >
+                          {c}
+                          <button
+                            type="button"
+                            className="ml-1 rounded p-0.5 hover:bg-emerald-100"
+                            onClick={() =>
+                              setEditing((s) => ({
+                                ...s!,
+                                categories: s!.categories.filter(
+                                  (x) => x !== c
+                                ),
+                              }))
+                            }
+                            aria-label={`Remove ${c}`}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <textarea
+                  className="min-h-[90px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
+                  placeholder="Notes"
+                  value={editing.notes}
                   onChange={(e) =>
-                    setEditing((s) => ({
-                      ...s!,
-                      active: e.target.checked,
-                    }))
+                    setEditing((s) => ({ ...s!, notes: e.target.value }))
                   }
                 />
-                Active
-              </label>
+                <label className="flex items-center gap-2 text-sm text-slate-800">
+                  <input
+                    type="checkbox"
+                    className="accent-emerald-600"
+                    checked={editing.active}
+                    onChange={(e) =>
+                      setEditing((s) => ({
+                        ...s!,
+                        active: e.target.checked,
+                      }))
+                    }
+                  />
+                  Active
+                </label>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  className="rounded-xl border px-4 py-2 text-sm"
-                  onClick={() => setEditOpen(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
-                  onClick={saveEdit}
-                >
-                  Save
-                </button>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => setEditOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                    onClick={saveEdit}
+                    disabled={!canManage}
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
-      {/* ADD MODAL */}
+      {/* ---------- ADD ---------- */}
       {addOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40"
-          onClick={() => setAddOpen(false)}
-        >
+        <ModalPortal>
           <div
-            className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-2xl border bg-white p-4"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 bg-black/40"
+            onClick={() => setAddOpen(false)}
           >
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">Add supplier</div>
-              <button
-                onClick={() => setAddOpen(false)}
-                className="rounded-md p-2 hover:bg-gray-100"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="grid gap-3">
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                placeholder="Name"
-                value={adding.name}
-                onChange={(e) =>
-                  setAdding((s) => ({ ...s, name: e.target.value }))
-                }
-              />
-              <input
-                className="h-10 w-full rounded-xl border px-3"
-                placeholder="Contact"
-                value={adding.contact}
-                onChange={(e) =>
-                  setAdding((s) => ({ ...s, contact: e.target.value }))
-                }
-              />
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  className="h-10 w-full rounded-xl border px-3"
-                  placeholder="Phone"
-                  value={adding.phone}
-                  onChange={(e) =>
-                    setAdding((s) => ({ ...s, phone: e.target.value }))
-                  }
-                />
-                <input
-                  className="h-10 w-full rounded-xl border px-3"
-                  placeholder="Email"
-                  value={adding.email}
-                  onChange={(e) =>
-                    setAdding((s) => ({ ...s, email: e.target.value }))
-                  }
-                />
+            <div
+              className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl backdrop-blur-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-base font-semibold">Add supplier</div>
+                <button
+                  onClick={() => setAddOpen(false)}
+                  className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                >
+                  ✕
+                </button>
               </div>
 
-              <div>
-                <div className="mb-1 text-xs text-gray-500">Categories</div>
-                <div className="flex flex-wrap gap-2">
-                  {PRESET_CATEGORIES.map((c) => {
-                    const active = adding.categories.includes(c);
-                    return (
-                      <button
-                        key={c}
-                        type="button"
-                        className={cls(
-                          "rounded-full border px-2 py-0.5 text-xs",
-                          active
-                            ? "bg-black text-white"
-                            : "bg-white hover:bg-gray-50"
-                        )}
-                        onClick={() =>
-                          toggleCat(adding, setAdding as any, c)
-                        }
-                      >
-                        {c}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="mt-2 flex items-center gap-2">
+              <div className="grid gap-3 text-sm">
+                <input
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                  placeholder="Name"
+                  value={adding.name}
+                  onChange={(e) =>
+                    setAdding((s) => ({ ...s, name: e.target.value }))
+                  }
+                />
+                <input
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                  placeholder="Contact"
+                  value={adding.contact}
+                  onChange={(e) =>
+                    setAdding((s) => ({ ...s, contact: e.target.value }))
+                  }
+                />
+                <div className="grid grid-cols-2 gap-3">
                   <input
-                    className="h-9 w-full rounded-xl border px-3 text-sm"
-                    placeholder="Add custom category"
-                    value={adding.addCategory}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                    placeholder="Phone"
+                    value={adding.phone}
                     onChange={(e) =>
-                      setAdding((s) => ({ ...s, addCategory: e.target.value }))
-                    }
-                    onKeyDown={(e) =>
-                      e.key === "Enter" &&
-                      addFreeCat(adding, setAdding as any)
+                      setAdding((s) => ({ ...s, phone: e.target.value }))
                     }
                   />
-                  <button
-                    type="button"
-                    className="h-9 rounded-xl border px-3 text-sm hover:bg-gray-50"
-                    onClick={() =>
-                      addFreeCat(adding, setAdding as any)
+                  <input
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                    placeholder="Email"
+                    value={adding.email}
+                    onChange={(e) =>
+                      setAdding((s) => ({ ...s, email: e.target.value }))
                     }
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">Categories</div>
+                  <div className="flex flex-wrap gap-2">
+                    {PRESET_CATEGORIES.map((c) => {
+                      const active = adding.categories.includes(c);
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          className={cls(
+                            "rounded-full border px-2 py-0.5 text-xs",
+                            active
+                              ? "border-emerald-600 bg-emerald-600 text-white"
+                              : "border-slate-200 bg-white hover:bg-slate-50"
+                          )}
+                          onClick={() =>
+                            toggleCat(adding, setAdding as any, c)
+                          }
+                        >
+                          {c}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                      placeholder="Add custom category"
+                      value={adding.addCategory}
+                      onChange={(e) =>
+                        setAdding((s) => ({
+                          ...s,
+                          addCategory: e.target.value,
+                        }))
+                      }
+                      onKeyDown={(e) =>
+                        e.key === "Enter" &&
+                        addFreeCat(adding, setAdding as any)
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 hover:bg-slate-50"
+                      onClick={() => addFreeCat(adding, setAdding as any)}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                <textarea
+                  className="min-h-[90px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
+                  placeholder="Notes"
+                  value={adding.notes}
+                  onChange={(e) =>
+                    setAdding((s) => ({ ...s, notes: e.target.value }))
+                  }
+                />
+                <label className="flex items-center gap-2 text-sm text-slate-800">
+                  <input
+                    type="checkbox"
+                    className="accent-emerald-600"
+                    checked={adding.active}
+                    onChange={(e) =>
+                      setAdding((s) => ({ ...s, active: e.target.checked }))
+                    }
+                  />
+                  Active
+                </label>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => setAddOpen(false)}
                   >
-                    Add
+                    Cancel
+                  </button>
+                  <button
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                    onClick={saveAdd}
+                    disabled={!adding.name.trim() || !canManage}
+                  >
+                    Add supplier
                   </button>
                 </div>
               </div>
-
-              <textarea
-                className="min-h-[90px] w-full rounded-xl border px-3 py-2"
-                placeholder="Notes"
-                value={adding.notes}
-                onChange={(e) =>
-                  setAdding((s) => ({ ...s, notes: e.target.value }))
-                }
-              />
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={adding.active}
-                  onChange={(e) =>
-                    setAdding((s) => ({ ...s, active: e.target.checked }))
-                  }
-                />
-                Active
-              </label>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  className="rounded-xl border px-4 py-2 text-sm"
-                  onClick={() => setAddOpen(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
-                  onClick={saveAdd}
-                  disabled={!adding.name.trim()}
-                >
-                  Add supplier
-                </button>
-              </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   );

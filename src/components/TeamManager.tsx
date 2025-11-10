@@ -1,3 +1,4 @@
+// src/components/TeamManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -359,14 +360,14 @@ export default function TeamManager() {
             active: true,
           },
           {
-            onConflict: "org_id,email", // requires unique constraint in DB; remove if you don't have it
+            onConflict: "org_id,email",
           }
         );
 
       if (tmError) throw tmError;
 
-      // 2) trigger Supabase email sign-up
-      const { error: signUpError } = await supabase.auth.signUp({
+      // 2) trigger Supabase email sign-up (cast to any to satisfy TS types)
+      const { error: signUpError } = await (supabase.auth as any).signUp({
         email: cleanEmail,
         options: {
           emailRedirectTo: `${window.location.origin}/login`,
@@ -403,13 +404,13 @@ export default function TeamManager() {
 
   /* -------------------- Render -------------------- */
   return (
-    <div className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
+    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-lg font-semibold">Team</h1>
+        <h1 className="text-lg font-semibold text-slate-900">Team</h1>
         <div className="ml-auto flex min-w-0 items-center gap-2">
           <input
-            className="h-9 min-w-0 flex-1 rounded-xl border px-3 text-sm md:w-64"
+            className="h-9 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900 placeholder:text-slate-400 md:w-64"
             placeholder="Search…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -418,13 +419,13 @@ export default function TeamManager() {
             <>
               <button
                 onClick={openInvite}
-                className="whitespace-nowrap rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+                className="whitespace-nowrap rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
               >
                 Invite by email
               </button>
               <button
                 onClick={openAdd}
-                className="whitespace-nowrap rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
+                className="whitespace-nowrap rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
               >
                 + Add member
               </button>
@@ -434,10 +435,10 @@ export default function TeamManager() {
       </div>
 
       {/* Desktop table */}
-      <div className="hidden overflow-x-auto md:block">
+      <div className="hidden overflow-x-auto rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm md:block">
         <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-gray-500">
+          <thead className="bg-slate-50/80">
+            <tr className="text-left text-slate-500">
               <th className="w-24 py-2 pr-3">Initials</th>
               <th className="py-2 pr-3">Name</th>
               <th className="w-56 py-2 pr-3">Role</th>
@@ -448,31 +449,39 @@ export default function TeamManager() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="py-6 text-center text-gray-500">
+                <td
+                  colSpan={5}
+                  className="py-6 text-center text-slate-500"
+                >
                   Loading…
                 </td>
               </tr>
             ) : filtered.length ? (
               filtered.map((r) => (
-                <tr key={r.id} className="border-t">
-                  <td className="py-2 pr-3 text-center font-medium">
+                <tr
+                  key={r.id}
+                  className="border-t border-slate-100"
+                >
+                  <td className="py-2 pr-3 text-center font-medium text-slate-900">
                     {r.initials ?? "—"}
                   </td>
                   <td className="py-2 pr-3">
                     <button
-                      className="text-blue-600 underline hover:text-blue-700"
+                      className="text-emerald-700 underline decoration-emerald-400 underline-offset-2 hover:text-emerald-800"
                       onClick={() => openCard(r)}
                     >
                       {r.name}
                     </button>
                   </td>
-                  <td className="py-2 pr-3">
+                  <td className="py-2 pr-3 text-slate-900">
                     {r.role
                       ? r.role.charAt(0).toUpperCase() +
                         r.role.slice(1).toLowerCase()
                       : "—"}
                   </td>
-                  <td className="py-2 pr-3">{r.active ? "Yes" : "No"}</td>
+                  <td className="py-2 pr-3 text-slate-900">
+                    {r.active ? "Yes" : "No"}
+                  </td>
                   <td className="py-2 pr-3 text-right">
                     <ActionMenu
                       items={[
@@ -498,7 +507,10 @@ export default function TeamManager() {
               ))
             ) : (
               <tr>
-                <td colSpan={5} className="py-6 text-center text-gray-500">
+                <td
+                  colSpan={5}
+                  className="py-6 text-center text-slate-500"
+                >
                   No team members yet.
                 </td>
               </tr>
@@ -510,16 +522,19 @@ export default function TeamManager() {
       {/* Mobile cards */}
       <div className="space-y-3 md:hidden">
         {loading ? (
-          <div className="rounded-lg border bg-white p-4 text-center text-gray-500">
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-4 text-center text-slate-500 backdrop-blur-sm">
             Loading…
           </div>
         ) : filtered.length ? (
           filtered.map((r) => (
-            <div key={r.id} className="rounded-lg border bg-white p-3">
+            <div
+              key={r.id}
+              className="rounded-xl border border-slate-200 bg-white/80 p-3 text-sm text-slate-900 backdrop-blur-sm"
+            >
               <div className="mb-1 flex items-start justify-between gap-2">
                 <div>
                   <div className="font-medium">{r.name}</div>
-                  <div className="text-xs text-gray-500">
+                  <div className="text-xs text-slate-500">
                     {r.role
                       ? r.role.charAt(0).toUpperCase() +
                         r.role.slice(1).toLowerCase()
@@ -544,27 +559,27 @@ export default function TeamManager() {
                   ]}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2 text-xs text-gray-700">
+              <div className="grid grid-cols-2 gap-2 text-xs text-slate-800">
                 <div>
-                  <span className="text-gray-500">Initials:</span>{" "}
+                  <span className="text-slate-500">Initials:</span>{" "}
                   {r.initials ?? "—"}
                 </div>
                 <div>
-                  <span className="text-gray-500">Phone:</span>{" "}
+                  <span className="text-slate-500">Phone:</span>{" "}
                   {r.phone ?? "—"}
                 </div>
                 <div className="col-span-2 truncate">
-                  <span className="text-gray-500">Email:</span>{" "}
+                  <span className="text-slate-500">Email:</span>{" "}
                   {r.email ?? "—"}
                 </div>
                 {r.notes ? (
-                  <div className="col-span-2 text-gray-600">{r.notes}</div>
+                  <div className="col-span-2 text-slate-600">{r.notes}</div>
                 ) : null}
               </div>
             </div>
           ))
         ) : (
-          <div className="rounded-lg border bg-white p-4 text-center text-gray-500">
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-4 text-center text-slate-500 backdrop-blur-sm">
             No team members yet.
           </div>
         )}
@@ -573,11 +588,11 @@ export default function TeamManager() {
       {/* Edit / Add modal */}
       {editOpen && editing && (
         <div
-          className="fixed inset-0 z-50 bg-black/40"
+          className="fixed inset-0 z-50 bg-black/30"
           onClick={() => setEditOpen(false)}
         >
           <div
-            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4"
+            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
@@ -586,7 +601,7 @@ export default function TeamManager() {
               </div>
               <button
                 onClick={() => setEditOpen(false)}
-                className="rounded-md p-2 hover:bg-gray-100"
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
               >
                 ✕
               </button>
@@ -595,11 +610,11 @@ export default function TeamManager() {
             <div className="grid gap-3">
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
+                  <label className="mb-1 block text-xs text-slate-500">
                     Initials
                   </label>
                   <input
-                    className="h-10 w-full rounded-xl border px-3"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={editing.initials ?? ""}
                     onChange={(e) =>
                       setEditing({ ...editing, initials: e.target.value })
@@ -607,11 +622,11 @@ export default function TeamManager() {
                   />
                 </div>
                 <div className="col-span-2">
-                  <label className="mb-1 block text-xs text-gray-500">
+                  <label className="mb-1 block text-xs text-slate-500">
                     Name *
                   </label>
                   <input
-                    className="h-10 w-full rounded-xl border px-3"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={editing.name}
                     onChange={(e) =>
                       setEditing({ ...editing, name: e.target.value })
@@ -622,11 +637,11 @@ export default function TeamManager() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
+                  <label className="mb-1 block text-xs text-slate-500">
                     Email
                   </label>
                   <input
-                    className="h-10 w-full rounded-xl border px-3"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={editing.email ?? ""}
                     onChange={(e) =>
                       setEditing({ ...editing, email: e.target.value })
@@ -634,11 +649,11 @@ export default function TeamManager() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
+                  <label className="mb-1 block text-xs text-slate-500">
                     Phone
                   </label>
                   <input
-                    className="h-10 w-full rounded-xl border px-3"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={editing.phone ?? ""}
                     onChange={(e) =>
                       setEditing({ ...editing, phone: e.target.value })
@@ -649,12 +664,12 @@ export default function TeamManager() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
+                  <label className="mb-1 block text-xs text-slate-500">
                     Role
                   </label>
                   {isOwner ? (
                     <select
-                      className="h-10 w-full rounded-xl border px-3 text-sm"
+                      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                       value={(editing.role ?? "staff").toLowerCase()}
                       onChange={(e) =>
                         setEditing({ ...editing, role: e.target.value })
@@ -666,7 +681,7 @@ export default function TeamManager() {
                     </select>
                   ) : (
                     <input
-                      className="h-10 w-full rounded-xl border bg-gray-50 px-3 text-sm"
+                      className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm"
                       value={
                         (editing.role ?? "staff")
                           .toString()
@@ -681,9 +696,10 @@ export default function TeamManager() {
                     />
                   )}
                 </div>
-                <label className="mt-6 flex items-center gap-2 text-sm">
+                <label className="mt-6 flex items-center gap-2 text-sm text-slate-800">
                   <input
                     type="checkbox"
+                    className="accent-emerald-600"
                     checked={!!editing.active}
                     onChange={(e) =>
                       setEditing({ ...editing, active: e.target.checked })
@@ -694,11 +710,11 @@ export default function TeamManager() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-gray-500">
+                <label className="mb-1 block text-xs text-slate-500">
                   Notes
                 </label>
                 <textarea
-                  className="min-h-[80px] w-full rounded-xl border px-3 py-2"
+                  className="min-h-[80px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
                   value={editing.notes ?? ""}
                   onChange={(e) =>
                     setEditing({ ...editing, notes: e.target.value })
@@ -708,13 +724,13 @@ export default function TeamManager() {
 
               <div className="flex justify-end gap-2 pt-1">
                 <button
-                  className="rounded-xl border px-4 py-2 text-sm"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   onClick={() => setEditOpen(false)}
                 >
                   Cancel
                 </button>
                 <button
-                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
                   onClick={saveMember}
                 >
                   Save
@@ -728,14 +744,14 @@ export default function TeamManager() {
       {/* Business card modal */}
       {viewOpen && viewFor && (
         <div
-          className="fixed inset-0 z-50 bg-black/40"
+          className="fixed inset-0 z-50 bg-black/30"
           onClick={() => setViewOpen(false)}
         >
           <div
-            className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-2xl border bg-white"
+            className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="bg-slate-800 px-4 py-3 text-white">
+            <div className="bg-slate-900 px-4 py-3 text-white">
               <div className="text-sm opacity-80">Team member</div>
               <div className="text-xl font-semibold">{viewFor.name}</div>
               <div className="opacity-80">
@@ -771,7 +787,7 @@ export default function TeamManager() {
               <div className="mt-3">
                 <div className="mb-1 font-medium">Education</div>
                 {eduListLoading ? (
-                  <div className="text-gray-500">Loading…</div>
+                  <div className="text-slate-500">Loading…</div>
                 ) : eduList.length ? (
                   <ul className="list-disc space-y-1 pl-5">
                     {eduList.map((t) => (
@@ -781,7 +797,7 @@ export default function TeamManager() {
                         </span>{" "}
                         {t.certificate_url && (
                           <a
-                            className="text-blue-600 underline"
+                            className="text-emerald-700 underline"
                             href={t.certificate_url}
                             target="_blank"
                             rel="noreferrer"
@@ -789,7 +805,7 @@ export default function TeamManager() {
                             (certificate)
                           </a>
                         )}
-                        <div className="text-xs text-gray-600">
+                        <div className="text-xs text-slate-600">
                           Awarded: {fmt(t.awarded_on)} · Expires:{" "}
                           {fmt(t.expires_on)}
                           {t.notes ? ` · ${t.notes}` : ""}
@@ -798,24 +814,24 @@ export default function TeamManager() {
                     ))}
                   </ul>
                 ) : (
-                  <div className="text-gray-500">No education records.</div>
+                  <div className="text-slate-500">No education records.</div>
                 )}
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t bg-gray-50 p-3">
+            <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
               <button
                 onClick={() => {
                   setViewOpen(false);
                   openEducation(viewFor);
                 }}
-                className="rounded-md border px-3 py-1.5 text-sm hover:bg-white"
+                className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
               >
                 Add education
               </button>
               <button
                 onClick={() => setViewOpen(false)}
-                className="rounded-md bg-white px-3 py-1.5 text-sm"
+                className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
               >
                 Close
               </button>
@@ -827,11 +843,11 @@ export default function TeamManager() {
       {/* Education modal */}
       {eduOpen && eduFor && (
         <div
-          className="fixed inset-0 z-50 bg-black/40"
+          className="fixed inset-0 z-50 bg-black/30"
           onClick={() => setEduOpen(false)}
         >
           <div
-            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border bg-white p-4"
+            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
@@ -840,19 +856,19 @@ export default function TeamManager() {
               </div>
               <button
                 onClick={() => setEduOpen(false)}
-                className="rounded-md p-2 hover:bg-gray-100"
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
               >
                 ✕
               </button>
             </div>
 
-            <div className="grid gap-3">
+            <div className="grid gap-3 text-sm">
               <div>
-                <label className="mb-1 block text-xs text-gray-500">
+                <label className="mb-1 block text-xs text-slate-500">
                   Course / Type *
                 </label>
                 <input
-                  className="h-10 w-full rounded-xl border px-3"
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                   value={eduForm.course}
                   onChange={(e) =>
                     setEduForm((f) => ({ ...f, course: e.target.value }))
@@ -863,11 +879,11 @@ export default function TeamManager() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
+                  <label className="mb-1 block text-xs text-slate-500">
                     Provider
                   </label>
                   <input
-                    className="h-10 w-full rounded-xl border px-3"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={eduForm.provider}
                     onChange={(e) =>
                       setEduForm((f) => ({ ...f, provider: e.target.value }))
@@ -875,11 +891,11 @@ export default function TeamManager() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
+                  <label className="mb-1 block text-xs text-slate-500">
                     Certificate URL / ID
                   </label>
                   <input
-                    className="h-10 w-full rounded-xl border px-3"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={eduForm.certificateUrl}
                     onChange={(e) =>
                       setEduForm((f) => ({
@@ -894,12 +910,12 @@ export default function TeamManager() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
+                  <label className="mb-1 block text-xs text-slate-500">
                     Completed on
                   </label>
                   <input
                     type="date"
-                    className="h-10 w-full rounded-xl border px-3"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={eduForm.completedOn}
                     onChange={(e) =>
                       setEduForm((f) => ({
@@ -910,12 +926,12 @@ export default function TeamManager() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
+                  <label className="mb-1 block text-xs text-slate-500">
                     Expiry date
                   </label>
                   <input
                     type="date"
-                    className="h-10 w-full rounded-xl border px-3"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={eduForm.expiryOn}
                     onChange={(e) =>
                       setEduForm((f) => ({
@@ -928,11 +944,11 @@ export default function TeamManager() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-gray-500">
+                <label className="mb-1 block text-xs text-slate-500">
                   Notes
                 </label>
                 <textarea
-                  className="minh-[90px] w-full rounded-xl border px-3 py-2"
+                  className="min-h-[90px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
                   value={eduForm.notes}
                   onChange={(e) =>
                     setEduForm((f) => ({ ...f, notes: e.target.value }))
@@ -943,13 +959,13 @@ export default function TeamManager() {
 
               <div className="flex justify-end gap-2 pt-2">
                 <button
-                  className="rounded-xl border px-4 py-2 text-sm"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   onClick={() => setEduOpen(false)}
                 >
                   Cancel
                 </button>
                 <button
-                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-60"
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
                   disabled={eduSaving || !eduForm.course.trim()}
                   onClick={saveEducation}
                 >
@@ -964,18 +980,18 @@ export default function TeamManager() {
       {/* Invite modal */}
       {inviteOpen && (
         <div
-          className="fixed inset-0 z-50 bg-black/40"
+          className="fixed inset-0 z-50 bg-black/30"
           onClick={() => setInviteOpen(false)}
         >
           <div
-            className="mx-auto mt-16 w-full max-w-md rounded-2xl border bg-white p-4"
+            className="mx-auto mt-16 w-full max-w-md rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Invite team member</div>
               <button
                 onClick={() => setInviteOpen(false)}
-                className="rounded-md p-2 hover:bg-gray-100"
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
               >
                 ✕
               </button>
@@ -983,12 +999,12 @@ export default function TeamManager() {
 
             <div className="space-y-3 text-sm">
               <div>
-                <label className="mb-1 block text-xs text-gray-500">
+                <label className="mb-1 block text-xs text-slate-500">
                   Email
                 </label>
                 <input
                   type="email"
-                  className="h-10 w-full rounded-xl border px-3"
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                   placeholder="team@example.com"
                   value={inviteForm.email}
                   onChange={(e) =>
@@ -998,11 +1014,11 @@ export default function TeamManager() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-gray-500">
+                <label className="mb-1 block text-xs text-slate-500">
                   Role
                 </label>
                 <select
-                  className="h-10 w-full rounded-xl border px-3"
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                   value={inviteForm.role}
                   onChange={(e) =>
                     setInviteForm((f) => ({ ...f, role: e.target.value }))
@@ -1014,10 +1030,9 @@ export default function TeamManager() {
                 </select>
               </div>
 
-              <p className="text-xs text-gray-500">
-                We’ll add them to this business and send a sign-up link. If
-                they already have an account, they can just sign in with this
-                email.
+              <p className="text-xs text-slate-500">
+                We’ll add them to this business and send a sign-up link. If they
+                already have an account, they can just sign in with this email.
               </p>
 
               {inviteError && (
@@ -1033,13 +1048,13 @@ export default function TeamManager() {
 
               <div className="flex justify-end gap-2 pt-1">
                 <button
-                  className="rounded-xl border px-4 py-2 text-sm"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   onClick={() => setInviteOpen(false)}
                 >
                   Cancel
                 </button>
                 <button
-                  className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-60"
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
                   disabled={inviteSending}
                   onClick={sendInvite}
                 >

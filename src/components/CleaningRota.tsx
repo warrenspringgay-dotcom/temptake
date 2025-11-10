@@ -1,3 +1,4 @@
+// src/app/(protected)/cleaning/cleaning-rota-client.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -8,7 +9,10 @@ import ManageCleaningTasksModal, {
 } from "@/components/ManageCleaningTasksModal";
 
 const PAGE = "max-w-[1100px] mx-auto px-3 sm:px-4";
-const CARD = "rounded-2xl border border-gray-600 bg-white shadow-sm";
+
+// glassy panel
+const CARD =
+  "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md";
 
 type Frequency = "daily" | "weekly" | "monthly";
 
@@ -41,36 +45,51 @@ const isDueOn = (t: Task, y: string) =>
     ? t.weekday === getDow1to7(y)
     : t.month_day === getDom(y);
 
-const nice = (d: string) =>
+const niceShort = (d: string) =>
   new Date(d).toLocaleDateString(undefined, {
     weekday: "short",
     day: "2-digit",
     month: "short",
   });
 
-function CategoryPill({
-  title,
-  total,
-  open,
-}: {
+const niceFull = (d: string) =>
+  new Date(d).toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+type CategoryPillProps = {
   title: string;
   total: number;
   open: number;
-}) {
-  const color =
-    open > 0
-      ? "bg-red-50 text-red-700 border-red-200"
-      : "bg-emerald-50 text-emerald-700 border-emerald-200";
+  active: boolean;
+  onClick: () => void;
+};
+
+function CategoryPill({ title, total, open, active, onClick }: CategoryPillProps) {
+  const hasOpen = open > 0;
+  const baseColor = hasOpen
+    ? "bg-red-50/80 text-red-700 border-red-200/80"
+    : "bg-emerald-50/80 text-emerald-700 border-emerald-200/80";
+
+  const activeRing = active ? "ring-2 ring-indigo-400/70" : "";
+
   return (
-    <div
-      className={`flex min-h-[64px] flex-col justify-between rounded-xl border px-3 py-2 text-left ${color}`}
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex min-h-[64px] flex-col justify-between rounded-2xl border px-3 py-2 text-left transition-transform hover:scale-[1.02] hover:shadow-md ${baseColor} ${activeRing}`}
     >
       <div className="text-[13px] leading-tight">{title}</div>
       <div className="mt-1 text-lg font-semibold leading-none">
         {total}
-        <span className="ml-1 text-[11px] opacity-75">({open} open)</span>
+        <span className="ml-1 text-[11px] opacity-75">
+          ({open} open)
+        </span>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -90,8 +109,11 @@ export default function CleaningRota() {
 
   const [manageOpen, setManageOpen] = useState(false);
 
-  // permissions: can this user manage cleaning tasks?
-  const [canManage, setCanManage] = useState(false);
+  // permissions: who can manage tasks?
+  const [canManage, setCanManage] = useState(true); // default true so first user isn’t locked out
+
+  // which daily category is selected to show detail
+  const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
   /** Load initials for the org */
   useEffect(() => {
@@ -119,38 +141,34 @@ export default function CleaningRota() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** Work out if user is owner/manager/admin */
+  /** Load role (owner/manager/admin?) */
   useEffect(() => {
     (async () => {
       try {
-        const [orgId, userRes] = await Promise.all([
-          getActiveOrgIdClient(),
-          supabase.auth.getUser(),
-        ]);
-        const email = userRes.data.user?.email?.toLowerCase() ?? null;
-        if (!orgId || !email) {
-          setCanManage(false);
-          return;
+        const orgId = await getActiveOrgIdClient();
+        const { data: userRes } = await supabase.auth.getUser();
+        const email = userRes.user?.email?.toLowerCase() ?? null;
+
+        let manage = true; // default
+
+        if (orgId && email) {
+          const { data, error } = await supabase
+            .from("team_members")
+            .select("role,email")
+            .eq("org_id", orgId)
+            .eq("email", email)
+            .limit(1);
+
+          if (!error && data && data.length > 0) {
+            const role = (data[0].role ?? "").toLowerCase();
+            manage =
+              role === "owner" || role === "manager" || role === "admin";
+          }
         }
 
-        const { data, error } = await supabase
-          .from("team_members")
-          .select("role,email")
-          .eq("org_id", orgId)
-          .eq("email", email)
-          .maybeSingle();
-
-        if (error) {
-          setCanManage(false);
-          return;
-        }
-
-        const role = (data?.role ?? "").toLowerCase();
-        setCanManage(
-          role === "owner" || role === "manager" || role === "admin"
-        );
+        setCanManage(manage);
       } catch {
-        setCanManage(false);
+        setCanManage(true);
       }
     })();
   }, []);
@@ -197,7 +215,6 @@ export default function CleaningRota() {
 
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [today]);
 
   /** Derived: what’s due today */
@@ -228,6 +245,18 @@ export default function CleaningRota() {
     return map;
   }, [dailyToday]);
 
+  // pick a sensible default selected category when the data changes
+  useEffect(() => {
+    if (selectedCat) return;
+    for (const cat of CLEANING_CATEGORIES) {
+      const list = dailyByCat.get(cat) ?? [];
+      if (list.length) {
+        setSelectedCat(cat);
+        return;
+      }
+    }
+  }, [dailyByCat, selectedCat]);
+
   const doneCount = useMemo(
     () => dueToday.filter((t) => runsKey.has(`${t.id}|${today}`)).length,
     [dueToday, runsKey, today]
@@ -254,6 +283,7 @@ export default function CleaningRota() {
   );
 
   /** ===== Complete helpers (always include org_id) ===== */
+
   async function completeOne(id: string, initialsVal: string) {
     const orgId = await getActiveOrgIdClient();
     if (!orgId) return;
@@ -331,12 +361,23 @@ export default function CleaningRota() {
     ]);
   }
 
+  /* ===== RENDER ===== */
   return (
-    <div className={PAGE + " space-y-6"}>
+    <div className={PAGE + " space-y-6 py-4"}>
+      {/* Centered date at the very top */}
+      <div className="mb-2 text-center">
+        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+          Today
+        </div>
+        <div className="text-lg font-semibold text-slate-800">
+          {niceFull(today)}
+        </div>
+      </div>
+
       {/* ===== Header / Actions ===== */}
       <div className={CARD + " p-4"}>
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-semibold leading-tight">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-semibold leading-tight text-slate-900">
             Cleaning rota
           </h1>
 
@@ -344,7 +385,7 @@ export default function CleaningRota() {
             {canManage && (
               <button
                 type="button"
-                className="shrink-0 rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+                className="shrink-0 rounded-xl bg-indigo-600/90 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-500"
                 onClick={() => setManageOpen(true)}
               >
                 Manage tasks
@@ -355,7 +396,7 @@ export default function CleaningRota() {
             <select
               value={ini}
               onChange={(e) => setIni(e.target.value.toUpperCase())}
-              className="h-9 shrink-0 rounded-xl border border-gray-300 px-2 py-1.5 uppercase"
+              className="h-9 shrink-0 rounded-xl border border-gray-300 bg-white/70 px-2 py-1.5 uppercase shadow-sm"
             >
               {initials.map((v) => (
                 <option key={v} value={v}>
@@ -364,39 +405,37 @@ export default function CleaningRota() {
               ))}
             </select>
 
-            <div className="shrink-0 rounded-xl border border-gray-300 px-3 py-1.5 text-sm">
+            <div className="shrink-0 rounded-xl bg-slate-900/90 px-3 py-1.5 text-sm font-medium text-white shadow-sm">
               {doneCount}/{dueToday.length}
             </div>
 
-            {canManage && (
-              <button
-                type="button"
-                className="shrink-0 rounded-xl border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-60"
-                title="Complete everything due today"
-                onClick={() => {
-                  const ids = dueToday
-                    .filter((t) => !runsKey.has(`${t.id}|${today}`))
-                    .map((t) => t.id);
-                  completeMany(ids, ini);
-                }}
-                disabled={
-                  !ini ||
-                  dueToday.every((t) => runsKey.has(`${t.id}|${today}`))
-                }
-              >
-                Complete all today
-              </button>
-            )}
+            <button
+              type="button"
+              className="shrink-0 rounded-xl bg-emerald-600/90 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-50"
+              title="Complete everything due today"
+              onClick={() => {
+                const ids = dueToday
+                  .filter((t) => !runsKey.has(`${t.id}|${today}`))
+                  .map((t) => t.id);
+                completeMany(ids, ini);
+              }}
+              disabled={
+                !ini ||
+                dueToday.every((t) => runsKey.has(`${t.id}|${today}`))
+              }
+            >
+              Complete all today
+            </button>
           </div>
         </div>
 
         {/* ===== Weekly / Monthly due today ===== */}
         <div className="space-y-2">
-          <div className="text-[11px] font-semibold uppercase text-gray-500">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
             Weekly / Monthly
           </div>
           {nonDailyToday.length === 0 ? (
-            <div className="rounded-xl border border-gray-300 p-3 text-sm text-gray-500">
+            <div className="rounded-2xl border border-gray-200/80 bg-white/70 p-3 text-sm text-gray-500">
               No tasks.
             </div>
           ) : (
@@ -407,10 +446,12 @@ export default function CleaningRota() {
               return (
                 <div
                   key={t.id}
-                  className="flex items-start justify-between gap-2 rounded-xl border border-gray-300 px-2 py-2 text-sm"
+                  className="flex items-start justify-between gap-2 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-sm shadow-sm"
                 >
                   <div className={done ? "text-gray-500 line-through" : ""}>
-                    <div className="font-medium">{t.task}</div>
+                    <div className="font-medium text-slate-900">
+                      {t.task}
+                    </div>
                     <div className="text-xs text-gray-500">
                       {t.category ?? t.area ?? "—"} •{" "}
                       {t.frequency === "weekly" ? "Weekly" : "Monthly"}
@@ -444,7 +485,7 @@ export default function CleaningRota() {
 
         {/* ===== Daily summary by category (pills) ===== */}
         <div className="mt-4">
-          <div className="text-[11px] font-semibold uppercase text-gray-500">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
             Daily tasks (by category)
           </div>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -459,23 +500,99 @@ export default function CleaningRota() {
                   title={cat}
                   total={list.length}
                   open={open}
+                  active={selectedCat === cat}
+                  onClick={() => setSelectedCat(cat)}
                 />
               );
             })}
           </div>
+
+          {/* Detail list for selected category – individual tasks with completion toggles */}
+          {selectedCat && (
+            <div className="mt-4 rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-sm font-semibold text-slate-900">
+                  Today’s daily tasks – {selectedCat}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {(
+                    dailyByCat.get(selectedCat) ?? []
+                  ).filter((t) => !runsKey.has(`${t.id}|${today}`)).length}{" "}
+                  open of {(dailyByCat.get(selectedCat) ?? []).length}
+                </div>
+              </div>
+              <div className="space-y-2">
+                {(dailyByCat.get(selectedCat) ?? []).length === 0 ? (
+                  <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-gray-500">
+                    No daily tasks in this category today.
+                  </div>
+                ) : (
+                  (dailyByCat.get(selectedCat) ?? []).map((t) => {
+                    const key = `${t.id}|${today}`;
+                    const done = runsKey.has(key);
+                    const run = runsKey.get(key) || null;
+                    return (
+                      <div
+                        key={t.id}
+                        className="flex items-start justify-between gap-2 rounded-xl border border-gray-200/80 bg-white/90 px-3 py-2 text-sm"
+                      >
+                        <div
+                          className={
+                            done
+                              ? "text-gray-500 line-through"
+                              : "text-slate-900"
+                          }
+                        >
+                          <div className="font-medium">{t.task}</div>
+                          <div className="text-xs text-gray-500">
+                            {t.area ?? "—"} • Daily
+                          </div>
+                          {run?.done_by && (
+                            <div className="text-[11px] text-gray-400">
+                              Done by {run.done_by}
+                            </div>
+                          )}
+                        </div>
+                        {done ? (
+                          <button
+                            className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
+                            onClick={() => uncompleteOne(t.id)}
+                          >
+                            Complete
+                          </button>
+                        ) : (
+                          <button
+                            className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"
+                            onClick={() => completeOne(t.id, ini)}
+                          >
+                            Incomplete
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* ===== Upcoming (7 days) — weekly/monthly only ===== */}
       <div className={CARD + " p-4"}>
-        <div className="mb-2 text-base font-semibold">
+        <div className="mb-2 text-base font-semibold text-slate-900">
           Upcoming (next 7 days)
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-4">
           {upcoming.map(({ day, list }) => (
-            <div key={day} className="rounded-xl border border-gray-300 p-3">
+            <div
+              key={day}
+              className="rounded-2xl border border-gray-200/80 bg-white/80 p-3 shadow-sm"
+            >
               <div className="mb-1 flex items-center justify-between">
-                <div className="font-medium">{nice(day)}</div>
+                <div className="font-medium text-slate-900">
+                  {niceShort(day)}
+                </div>
                 <div className="text-xs text-gray-500">{list.length} due</div>
               </div>
               {list.length === 0 ? (
@@ -485,9 +602,11 @@ export default function CleaningRota() {
                   {list.map((t) => (
                     <li
                       key={t.id}
-                      className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      className="rounded-xl border border-gray-200/80 bg-white px-2 py-1.5 text-sm"
                     >
-                      <div className="font-medium">{t.task}</div>
+                      <div className="font-medium text-slate-900">
+                        {t.task}
+                      </div>
                       <div className="text-xs text-gray-500">
                         {t.category ?? t.area ?? "—"} •{" "}
                         {t.frequency === "weekly" ? "Weekly" : "Monthly"}
@@ -501,16 +620,14 @@ export default function CleaningRota() {
         </div>
       </div>
 
-      {/* ===== Manage Tasks Modal (managers/owners only) ===== */}
-      {canManage && (
-        <ManageCleaningTasksModal
-          open={manageOpen}
-          onClose={() => setManageOpen(false)}
-          onSaved={async () => {
-            await loadAll();
-          }}
-        />
-      )}
+      {/* ===== Manage Tasks Modal ===== */}
+      <ManageCleaningTasksModal
+        open={canManage && manageOpen}
+        onClose={() => setManageOpen(false)}
+        onSaved={async () => {
+          await loadAll();
+        }}
+      />
     </div>
   );
 }

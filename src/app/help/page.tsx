@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 
 const CARD =
-  "rounded-2xl border border-gray-200 bg-white shadow-sm p-4 md:p-5";
+  "rounded-3xl border border-slate-200 bg-white/80 shadow-xl p-4 md:p-5 backdrop-blur-sm";
 
 type HelpSectionProps = {
   id: string;
@@ -28,15 +28,15 @@ function HelpSection({
     <section id={id} className={CARD}>
       <div className="flex flex-col gap-4 md:flex-row md:items-start">
         <div className="flex-1 space-y-2">
-          <h2 className="flex items-center gap-2 text-lg font-semibold">
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
             <span className="text-xl">{icon}</span>
             <span>{title}</span>
           </h2>
-          <p className="text-sm text-gray-700">{intro}</p>
-          <ul className="mt-2 space-y-1.5 text-sm text-gray-700">
+          <p className="text-sm text-slate-700">{intro}</p>
+          <ul className="mt-2 space-y-1.5 text-sm text-slate-700">
             {bullets.map((b) => (
               <li key={b} className="flex gap-2">
-                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400" />
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
                 <span>{b}</span>
               </li>
             ))}
@@ -44,7 +44,7 @@ function HelpSection({
         </div>
 
         {imageSrc && (
-          <div className="relative mt-2 h-32 w-full overflow-hidden rounded-xl border bg-gray-50 md:mt-0 md:h-32 md:w-56">
+          <div className="relative mt-2 h-32 w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80 md:mt-0 md:h-32 md:w-56">
             <Image
               src={imageSrc}
               alt={title}
@@ -61,17 +61,21 @@ function HelpSection({
 
 export default function HelpPage() {
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 text-slate-900">
       {/* Page header */}
-      <header className="space-y-2">
-        <h1 className="text-2xl font-semibold">Help &amp; Quick Guide</h1>
-        <p className="max-w-2xl text-sm text-gray-700">
-          TempTake keeps your daily food safety paperwork in one simple app.
-          This page explains what each section does and how to use it in a busy
-          kitchen.
-        </p>
+      <header className="space-y-3 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-xl backdrop-blur-sm md:p-5">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold text-slate-900">
+            Help &amp; Quick Guide
+          </h1>
+          <p className="max-w-2xl text-sm text-slate-700">
+            TempTake keeps your daily food safety paperwork in one simple app.
+            This page explains what each section does and how to use it in a
+            busy kitchen.
+          </p>
+        </div>
 
-        <nav className="flex flex-wrap gap-2 text-xs">
+        <nav className="mt-3 flex flex-wrap gap-2 text-xs">
           {[
             ["dashboard", "Dashboard"],
             ["routines", "Routines"],
@@ -85,7 +89,7 @@ export default function HelpPage() {
             <a
               key={id}
               href={`#${id}`}
-              className="rounded-full border border-gray-300 px-3 py-1 hover:bg-gray-50"
+              className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-slate-800 shadow-sm hover:bg-slate-50"
             >
               {label}
             </a>
@@ -209,7 +213,7 @@ export default function HelpPage() {
       />
 
       {/* Small footer note */}
-      <footer className="mt-4 border-t pt-4 text-xs text-gray-500">
+      <footer className="mt-4 border-t border-slate-200 pt-4 text-xs text-slate-500">
         Need more help or want to suggest a new feature?{" "}
         <Link href="/contact" className="underline">
           Contact support

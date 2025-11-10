@@ -152,16 +152,21 @@ function CategoryPill({
 }) {
   const hasOpen = open > 0;
   const color = hasOpen
-    ? "bg-red-50 text-red-700 border-red-200"
-    : "bg-emerald-50 text-emerald-700 border-emerald-200";
+    ? "bg-red-50/90 text-red-700 border-red-200"
+    : "bg-emerald-50/90 text-emerald-700 border-emerald-200";
 
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col justify-between min-h-[64px] rounded-xl border px-3 py-2 text-left ${color}`}
+      className={cls(
+        "flex min-h-[64px] flex-col justify-between rounded-xl border px-3 py-2 text-left text-sm shadow-sm transition",
+        "backdrop-blur-sm",
+        "hover:brightness-105",
+        color
+      )}
     >
       <div className="text-[13px] leading-tight">{title}</div>
-      <div className="text-lg leading-none font-semibold mt-1">
+      <div className="mt-1 text-lg font-semibold leading-none">
         {total}
         <span className="ml-1 text-[11px] opacity-75">({open} open)</span>
       </div>
@@ -169,16 +174,10 @@ function CategoryPill({
   );
 }
 
-function Pill({
-  done,
-  onClick,
-}: {
-  done: boolean;
-  onClick: () => void;
-}) {
+function Pill({ done, onClick }: { done: boolean; onClick: () => void }) {
   return done ? (
     <button
-      className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
+      className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-500/20"
       onClick={onClick}
       title="Mark incomplete"
     >
@@ -186,7 +185,7 @@ function Pill({
     </button>
   ) : (
     <button
-      className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"
+      className="shrink-0 rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-500/20"
       onClick={onClick}
       title="Mark complete"
     >
@@ -201,6 +200,17 @@ export default function FoodTempLogger({
   locations: locationsSeed = [],
 }: Props) {
   const search = useSearchParams();
+
+  // Big header day + date (centered)
+  const headerNow = new Date();
+  const headerWeekday = headerNow.toLocaleDateString(undefined, {
+    weekday: "long",
+  });
+  const headerDate = headerNow.toLocaleDateString(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 
   // Modals
   const [showPicker, setShowPicker] = useState(false);
@@ -770,53 +780,61 @@ export default function FoodTempLogger({
     return map;
   }, [dueDaily]);
 
-  /* complete api (active org_id) */
-async function completeTasks(ids: string[], ini: string) {
-  // nothing to do
-  if (!ids.length) {
-    setConfirm(null);
-    setConfirmInitials("");
-    return;
-  }
+  // List of tasks included in the current confirm modal (for display)
+  const confirmTasks = useMemo(
+    () =>
+      confirm
+        ? tasks.filter((t) => confirm.ids.includes(t.id))
+        : [],
+    [confirm, tasks]
+  );
 
-  try {
-    const org_id = await getActiveOrgIdClient();
-    if (!org_id) {
-      alert("No organisation found.");
+  /* complete api (active org_id) */
+  async function completeTasks(ids: string[], iniVal: string) {
+    // nothing to do
+    if (!ids.length) {
+      setConfirm(null);
+      setConfirmInitials("");
       return;
     }
 
-    const run_on = today;
+    try {
+      const org_id = await getActiveOrgIdClient();
+      if (!org_id) {
+        alert("No organisation found.");
+        return;
+      }
 
-    const payload = ids.map((id) => ({
-      org_id,
-      task_id: id,
-      run_on,
-      done_by: ini.toUpperCase(),
-    }));
+      const run_on = today;
 
-    // Use upsert + onConflict so duplicate (task_id,run_on) is OK
-    const { error } = await supabase
-      .from("cleaning_task_runs")
-      .upsert(payload, {
-        onConflict: "task_id,run_on",
-        ignoreDuplicates: true,
-      });
+      const payload = ids.map((id) => ({
+        org_id,
+        task_id: id,
+        run_on,
+        done_by: iniVal.toUpperCase(),
+      }));
 
-    if (error) {
-      throw error;
+      // Use upsert + onConflict so duplicate (task_id,run_on) is OK
+      const { error } = await supabase
+        .from("cleaning_task_runs")
+        .upsert(payload, {
+          onConflict: "task_id,run_on",
+          ignoreDuplicates: true,
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      // Refresh from DB so runsKey is correct
+      await loadRotaToday();
+    } catch (e: any) {
+      alert(e?.message || "Failed to save completion.");
+    } finally {
+      setConfirm(null);
+      setConfirmInitials("");
     }
-
-    // Refresh from DB so runsKey is correct and we don't double-add
-    await loadRotaToday();
-  } catch (e: any) {
-    alert(e?.message || "Failed to save completion.");
-  } finally {
-    setConfirm(null);
-    setConfirmInitials("");
   }
-}
-
 
   async function uncompleteTask(id: string) {
     try {
@@ -839,8 +857,23 @@ async function completeTasks(ids: string[], ini: string) {
 
   return (
     <div className="space-y-6">
+      {/* Centered day + date header with glassy pill */}
+      <div className="text-center">
+        <div className="">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.25em] text-slate-400">
+            Today
+          </div>
+          <div className="mt-1 text-xl sm:text-2xl font-semibold text-slate-900">
+            {headerWeekday}
+          </div>
+          <div className="text-sm sm:text-base text-slate-500">
+            {headerDate}
+          </div>
+        </div>
+      </div>
+
       {/* KPI grid + pills */}
-      <div className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
+      <div className="space-y-4 rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
         {(() => {
           const todayISO = new Date().toISOString().slice(0, 10);
           const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
@@ -858,10 +891,10 @@ async function completeTasks(ids: string[], ini: string) {
           const entriesTodayIsEmpty = entriesToday === 0;
           const entriesTodayIcon = entriesTodayIsEmpty ? "❌" : "✅";
           const entriesTodayTile =
-            "rounded-xl p-3 min-h-[76px] flex flex-col justify-between border " +
+            "rounded-xl p-3 min-h-[76px] flex flex-col justify-between border shadow-sm backdrop-blur-sm " +
             (entriesTodayIsEmpty
-              ? "border-red-200 bg-red-50 text-red-800"
-              : "border-emerald-200 bg-emerald-50 text-emerald-900");
+              ? "border-red-200 bg-red-50/90 text-red-800"
+              : "border-emerald-200 bg-emerald-50/90 text-emerald-900");
 
           const hasCleaning = dueTodayAll.length > 0;
           const allCleaningDone =
@@ -872,23 +905,23 @@ async function completeTasks(ids: string[], ini: string) {
             ? "✅"
             : "❌";
           const cleaningColor = !hasCleaning
-            ? "border-gray-200 bg-white text-gray-800"
+            ? "border-gray-200 bg-white/80 text-gray-800"
             : allCleaningDone
-            ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-            : "border-red-200 bg-red-50 text-red-800";
+            ? "border-emerald-200 bg-emerald-50/90 text-emerald-900"
+            : "border-red-200 bg-red-50/90 text-red-800";
 
           const cleaningTileBase =
-            "rounded-xl p-3 min-h-[76px] text-left flex flex-col justify-between border transition-colors hover:bg-opacity-90";
+            "rounded-xl p-3 min-h-[76px] text-left flex flex-col justify-between border shadow-sm backdrop-blur-sm transition hover:brightness-105";
 
           const failsTileColor =
             fails7 > 0
-              ? "border-red-200 bg-red-50 text-red-800"
-              : "border-gray-200 bg-white text-gray-800";
+              ? "border-red-200 bg-red-50/90 text-red-800"
+              : "border-gray-200 bg-white/80 text-gray-800";
           const failsIcon = fails7 > 0 ? "⚠️" : "✅";
 
           return (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              {/* tile 1: Entries today (red / green + icon) */}
+              {/* tile 1: Entries today */}
               <div className={entriesTodayTile}>
                 <div className="flex items-center justify-between text-xs">
                   <span>Entries today</span>
@@ -897,23 +930,23 @@ async function completeTasks(ids: string[], ini: string) {
                 <div className="mt-1 text-2xl font-semibold">
                   {entriesToday}
                 </div>
-                <div className="mt-1 text-[11px] opacity-80 hidden md:block">
+                <div className="mt-1 hidden text-[11px] opacity-80 md:block">
                   {entriesTodayIsEmpty
                     ? "No temperatures logged yet today."
                     : "Great — at least one log recorded."}
                 </div>
               </div>
 
-              {/* tile 2: Last 7 days (neutral) */}
-              <div className="rounded-xl border border-gray-200 bg-white p-3 min-h-[76px] flex flex-col justify-between">
+              {/* tile 2: Last 7 days */}
+              <div className="flex min-h-[76px] flex-col justify-between rounded-xl border border-gray-200 bg-white/80 p-3 text-gray-800 shadow-sm backdrop-blur-sm">
                 <div className="text-xs text-gray-500">Last 7 days</div>
                 <div className="mt-1 text-2xl font-semibold">{last7}</div>
               </div>
 
-              {/* tile 3: Failures (7d) – highlight if any */}
+              {/* tile 3: Failures (7d) */}
               <div
                 className={
-                  "rounded-xl p-3 min-h-[76px] flex flex-col justify-between border " +
+                  "flex min-h-[76px] flex-col justify-between rounded-xl border p-3 text-xs shadow-sm backdrop-blur-sm " +
                   failsTileColor
                 }
               >
@@ -922,15 +955,15 @@ async function completeTasks(ids: string[], ini: string) {
                   <span className="text-base">{failsIcon}</span>
                 </div>
                 <div className="mt-1 text-2xl font-semibold">{fails7}</div>
-                <div className="mt-1 text-[11px] opacity-80 hidden md:block">
+                <div className="mt-1 hidden text-[11px] opacity-80 md:block">
                   {fails7 > 0
                     ? "Check and record any corrective actions."
                     : "No failed temperature checks in the last week."}
                 </div>
               </div>
 
-              {/* tile 4: Top logger – gold medal feel */}
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 min-h-[76px] flex flex-col justify-between text-amber-900">
+              {/* tile 4: Top logger */}
+              <div className="flex min-h-[76px] flex-col justify-between rounded-xl border border-amber-200 bg-amber-50/90 p-3 text-amber-900 shadow-sm backdrop-blur-sm">
                 <div className="flex items-center justify-between text-xs">
                   <span>Top logger</span>
                   <span className="text-lg">🏅</span>
@@ -952,12 +985,12 @@ async function completeTasks(ids: string[], ini: string) {
                     return best ? best[0] : "—";
                   })()}
                 </div>
-                <div className="mt-1 text-[11px] opacity-80 hidden md:block">
+                <div className="mt-1 hidden text-[11px] opacity-80 md:block">
                   Most logs in the last 7 days.
                 </div>
               </div>
 
-              {/* tile 5: Cleaning (today) – red/green + icon */}
+              {/* tile 5: Cleaning (today) */}
               <button
                 type="button"
                 onClick={() => {
@@ -980,7 +1013,7 @@ async function completeTasks(ids: string[], ini: string) {
                 <div className="mt-1 text-2xl font-semibold">
                   {doneCount}/{dueTodayAll.length}
                 </div>
-                <div className="mt-1 text-[11px] opacity-80 underline hidden md:block">
+                <div className="mt-1 hidden text-[11px] underline opacity-80 md:block">
                   {hasCleaning
                     ? allCleaningDone
                       ? "All cleaning tasks completed."
@@ -992,29 +1025,33 @@ async function completeTasks(ids: string[], ini: string) {
           );
         })()}
 
-        {/* KPI pills row (unchanged placeholder) */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* initials selector + training + allergen pills … unchanged */}
+        {/* KPI pills row placeholder (you can style training/allergen KPIs here) */}
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          {/* Example (not wired yet):
+          <span className="rounded-full bg-amber-100 px-2 py-0.5">
+            Training due soon: {kpi.trainingDueSoon}
+          </span>
+          */}
         </div>
 
         {err && (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          <div className="rounded-md border border-red-200 bg-red-50/90 px-3 py-2 text-sm text-red-800">
             {err}
           </div>
         )}
       </div>
 
       {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+      <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
         <div className="mb-2 flex items-center gap-2">
           <h2 className="text-lg font-semibold">Today’s Cleaning Tasks</h2>
 
           <div className="ml-auto flex items-center gap-2">
-            <div className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm">
+            <div className="rounded-xl border border-gray-200 bg-white/70 px-3 py-1.5 text-sm shadow-sm">
               {doneCount}/{dueTodayAll.length}
             </div>
             <button
-              className="inline-flex items-center justify-center whitespace-nowrap rounded-xl border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="inline-flex items-center justify-center whitespace-nowrap rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30 hover:brightness-105 disabled:opacity-60"
               onClick={() => {
                 const ids = dueTodayAll
                   .filter((t) => !runsKey.has(`${t.id}|${today}`))
@@ -1025,6 +1062,10 @@ async function completeTasks(ids: string[], ini: string) {
                   ini || form.staff_initials || initials[0] || ""
                 );
               }}
+              disabled={
+                !dueTodayAll.length ||
+                dueTodayAll.every((t) => runsKey.has(`${t.id}|${today}`))
+              }
             >
               Complete All
             </button>
@@ -1037,7 +1078,7 @@ async function completeTasks(ids: string[], ini: string) {
             Weekly / Monthly
           </div>
           {dueNonDaily.length === 0 ? (
-            <div className="rounded-xl border border-gray-200 p-3 text-sm text-gray-500">
+            <div className="rounded-xl border border-gray-200 bg-white/70 p-3 text-sm text-gray-500 shadow-sm">
               No tasks.
             </div>
           ) : (
@@ -1049,11 +1090,9 @@ async function completeTasks(ids: string[], ini: string) {
                 return (
                   <div
                     key={t.id}
-                    className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 px-2 py-2 text-sm"
+                    className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 bg-white/80 px-2 py-2 text-sm shadow-sm backdrop-blur-sm"
                   >
-                    <div
-                      className={done ? "text-gray-500 line-through" : ""}
-                    >
+                    <div className={done ? "text-gray-500 line-through" : ""}>
                       <div className="font-medium">{t.task}</div>
                       <div className="text-xs text-gray-500">
                         {t.category ?? t.area ?? "—"} •{" "}
@@ -1118,14 +1157,14 @@ async function completeTasks(ids: string[], ini: string) {
       </div>
 
       {/* ======= ENTRY FORM ======= */}
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+      <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">Enter Temperature Log</h2>
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
               onClick={openRoutinePicker}
-              className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="rounded-2xl border border-slate-200 bg-white/70 px-3 py-1.5 text-sm text-slate-800 shadow-sm hover:bg-white"
               title="Pick a routine"
             >
               Use routine
@@ -1134,7 +1173,7 @@ async function completeTasks(ids: string[], ini: string) {
             <button
               type="button"
               onClick={() => setFormOpen((v) => !v)}
-              className="flex items-center gap-1 rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="flex items-center gap-1 rounded-2xl border border-slate-200 bg-white/70 px-3 py-1.5 text-sm text-slate-800 shadow-sm hover:bg-white"
               title="Hide or show entry form"
               aria-expanded={formOpen}
             >
@@ -1162,7 +1201,7 @@ async function completeTasks(ids: string[], ini: string) {
                 onChange={(e) =>
                   setForm((f) => ({ ...f, date: e.target.value }))
                 }
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white/80 px-3 py-2 shadow-sm"
               />
             </div>
 
@@ -1180,7 +1219,7 @@ async function completeTasks(ids: string[], ini: string) {
                     localStorage.setItem(LS_LAST_INITIALS, v);
                   } catch {}
                 }}
-                className="h-10 w-full rounded-xl border px-3 py-2 uppercase"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white/80 px-3 py-2 uppercase shadow-sm"
               >
                 {!form.staff_initials && initials.length === 0 && (
                   <option value="" disabled>
@@ -1208,7 +1247,7 @@ async function completeTasks(ids: string[], ini: string) {
                     localStorage.setItem(LS_LAST_LOCATION, v);
                   } catch {}
                 }}
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white/80 px-3 py-2 shadow-sm"
               >
                 {!form.location && locations.length === 0 && (
                   <option value="" disabled>
@@ -1232,7 +1271,7 @@ async function completeTasks(ids: string[], ini: string) {
                 onChange={(e) =>
                   setForm((f) => ({ ...f, item: e.target.value }))
                 }
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white/80 px-3 py-2 shadow-sm"
                 placeholder="e.g., Chicken curry"
               />
             </div>
@@ -1246,7 +1285,7 @@ async function completeTasks(ids: string[], ini: string) {
                 onChange={(e) =>
                   setForm((f) => ({ ...f, target_key: e.target.value }))
                 }
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-xs shadow-sm"
               >
                 {TARGET_PRESETS.map((p) => (
                   <option key={p.key} value={p.key}>
@@ -1269,7 +1308,7 @@ async function completeTasks(ids: string[], ini: string) {
                   setForm((f) => ({ ...f, temp_c: e.target.value }))
                 }
                 onKeyDown={onTempKeyDown}
-                className="h-10 w-full rounded-xl border px-3 py-2"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white/80 px-3 py-2 shadow-sm"
                 inputMode="decimal"
                 placeholder="e.g., 5.0"
               />
@@ -1280,8 +1319,10 @@ async function completeTasks(ids: string[], ini: string) {
                 onClick={handleAddQuick}
                 disabled={!canSave}
                 className={cls(
-                  "rounded-2xl px-4 py-2 text-sm font-medium text-white",
-                  canSave ? "bg-black hover:bg-gray-900" : "bg-gray-400"
+                  "rounded-2xl px-4 py-2 text-sm font-medium text-white shadow-sm shadow-emerald-500/30",
+                  canSave
+                    ? "bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 hover:brightness-105"
+                    : "bg-gray-400 cursor-not-allowed"
                 )}
               >
                 Save quick entry
@@ -1294,25 +1335,25 @@ async function completeTasks(ids: string[], ini: string) {
       {/* ===== Inline Routine Picker Modal ===== */}
       {showPicker && (
         <div
-          className="fixed inset-0 z-50 bg-black/30"
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
           onClick={() => setShowPicker(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-6 flex h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-24 sm:h-auto sm:rounded-2xl"
+            className="mx-auto mt-6 flex h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-white/30 bg-white/90 shadow-xl shadow-slate-900/20 backdrop-blur sm:mt-24 sm:h-auto sm:rounded-2xl"
           >
-            <div className="sticky top-0 z-10 border-b bg-white px-4 py-3 text-base font-semibold">
+            <div className="sticky top-0 z-10 border-b bg-white/90 px-4 py-3 text-base font-semibold">
               Pick a routine
             </div>
             <div className="grow overflow-y-auto px-4 py-3">
               {pickerLoading ? (
                 <div className="p-4 text-sm text-gray-500">Loading…</div>
               ) : pickerErr ? (
-                <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                <div className="rounded-md border border-red-200 bg-red-50/90 p-3 text-sm text-red-800">
                   {pickerErr}
                 </div>
               ) : pickerList.length === 0 ? (
-                <div className="rounded border border-dashed p-6 text-center text-sm text-gray-500">
+                <div className="rounded border border-dashed border-gray-300 bg-white/80 p-6 text-center text-sm text-gray-500">
                   No routines yet.
                 </div>
               ) : (
@@ -1321,7 +1362,7 @@ async function completeTasks(ids: string[], ini: string) {
                     <button
                       key={r.id}
                       onClick={() => pickRoutine(r)}
-                      className="flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left hover:bg-gray-50"
+                      className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-left text-sm shadow-sm hover:bg-white"
                     >
                       <div>
                         <div className="font-medium">{r.name}</div>
@@ -1337,7 +1378,7 @@ async function completeTasks(ids: string[], ini: string) {
                 </div>
               )}
             </div>
-            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white px-4 py-3">
+            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white/90 px-4 py-3">
               <button
                 type="button"
                 className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"
@@ -1363,29 +1404,29 @@ async function completeTasks(ids: string[], ini: string) {
       />
 
       {/* ======= LOGS ======= */}
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+      <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Temperature Logs</h2>
           <button
             onClick={refreshRows}
-            className="rounded-xl border px-3 py-1.5 text-sm hover:bg-gray-50"
+            className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-1.5 text-sm text-slate-800 shadow-sm hover:bg-white"
           >
             Refresh
           </button>
         </div>
 
         {/* Desktop/tablet – grouped by date */}
-        <div className="hidden md:block overflow-x-auto">
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full table-fixed text-sm">
-            <thead className="bg-gray-50 text-gray-600">
-              <tr className="text-left">
-                <th className="px-3 py-2 w-[8.5rem]">Date</th>
-                <th className="px-3 py-2 w-16">Initials</th>
-                <th className="px-3 py-2 w-[9rem]">Location</th>
-                <th className="px-3 py-2 w-[10rem]">Item</th>
-                <th className="px-3 py-2 w-[10rem]">Target</th>
-                <th className="px-3 py-2 w-[7rem]">Temp (°C)</th>
-                <th className="px-3 py-2 w-[6.5rem] text-right">Status</th>
+            <thead className="bg-slate-50/80 text-slate-600">
+              <tr className="text-left text-[11px] font-semibold uppercase tracking-wide">
+                <th className="w-[8.5rem] px-3 py-2">Date</th>
+                <th className="w-16 px-3 py-2">Initials</th>
+                <th className="w-[9rem] px-3 py-2">Location</th>
+                <th className="w-[10rem] px-3 py-2">Item</th>
+                <th className="w-[10rem] px-3 py-2">Target</th>
+                <th className="w-[7rem] px-3 py-2">Temp (°C)</th>
+                <th className="w-[6.5rem] px-3 py-2 text-right">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -1399,10 +1440,10 @@ async function completeTasks(ids: string[], ini: string) {
                 grouped.map((g) => (
                   <React.Fragment key={g.date}>
                     {/* Date header row */}
-                    <tr className="border-t bg-gray-50/80">
+                    <tr className="border-t bg-slate-50/80">
                       <td
                         colSpan={7}
-                        className="px-3 py-2 text-sm font-semibold text-gray-700"
+                        className="px-3 py-2 text-sm font-semibold text-slate-700"
                       >
                         {formatDDMMYYYY(g.date)}
                       </td>
@@ -1412,11 +1453,9 @@ async function completeTasks(ids: string[], ini: string) {
                       const preset: TargetPreset | undefined = r.target_key
                         ? (TARGET_BY_KEY as any)[r.target_key]
                         : undefined;
-                      const st =
-                        r.status ?? inferStatus(r.temp_c, preset);
+                      const st = r.status ?? inferStatus(r.temp_c, preset);
                       return (
-                        <tr key={r.id} className="border-t">
-                          {/* empty date cell – date is shown in header row */}
+                        <tr key={r.id} className="border-t bg-white/80">
                           <td className="px-3 py-2 text-xs text-gray-400"></td>
                           <td className="px-3 py-2 font-medium uppercase">
                             {r.staff_initials ?? "—"}
@@ -1424,9 +1463,7 @@ async function completeTasks(ids: string[], ini: string) {
                           <td className="px-3 py-2">
                             {r.location ?? "—"}
                           </td>
-                          <td className="px-3 py-2">
-                            {r.item ?? "—"}
-                          </td>
+                          <td className="px-3 py-2">{r.item ?? "—"}</td>
                           <td className="px-3 py-2">
                             {preset
                               ? `${preset.label}${
@@ -1445,12 +1482,12 @@ async function completeTasks(ids: string[], ini: string) {
                           <td className="px-3 py-2 text-right">
                             {st ? (
                               <span
-                                className={
-                                  "inline-flex rounded-full px-2 py-0.5 text-xs font-medium " +
-                                  (st === "pass"
+                                className={cls(
+                                  "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
+                                  st === "pass"
                                     ? "bg-emerald-100 text-emerald-800"
-                                    : "bg-red-100 text-red-800")
-                                }
+                                    : "bg-red-100 text-red-800"
+                                )}
                               >
                                 {st}
                               </span>
@@ -1475,9 +1512,9 @@ async function completeTasks(ids: string[], ini: string) {
         </div>
 
         {/* Mobile cards (already grouped) */}
-        <div className="md:hidden space-y-2">
+        <div className="space-y-2 md:hidden">
           {loading ? (
-            <div className="text-center text-sm text-gray-500 py-4">
+            <div className="py-4 text-center text-sm text-gray-500">
               Loading…
             </div>
           ) : grouped.length ? (
@@ -1491,22 +1528,24 @@ async function completeTasks(ids: string[], ini: string) {
                     const preset: TargetPreset | undefined = r.target_key
                       ? (TARGET_BY_KEY as any)[r.target_key]
                       : undefined;
-                    const st =
-                      r.status ?? inferStatus(r.temp_c, preset);
+                    const st = r.status ?? inferStatus(r.temp_c, preset);
                     return (
-                      <div key={r.id} className="rounded-xl border p-3">
+                      <div
+                        key={r.id}
+                        className="rounded-xl border border-slate-200 bg-white/80 p-3 shadow-sm"
+                      >
                         <div className="flex items-center justify-between">
                           <div className="text-sm font-medium">
                             {r.item ?? "—"}
                           </div>
                           {st && (
                             <span
-                              className={
-                                "ml-2 rounded-full px-2 py-0.5 text-[11px] font-medium " +
-                                (st === "pass"
+                              className={cls(
+                                "ml-2 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                                st === "pass"
                                   ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-red-100 text-red-800")
-                              }
+                                  : "bg-red-100 text-red-800"
+                              )}
                             >
                               {st}
                             </span>
@@ -1535,17 +1574,17 @@ async function completeTasks(ids: string[], ini: string) {
               </div>
             ))
           ) : (
-            <div className="text-center text-sm text-gray-500 py-4">
+            <div className="py-4 text-center text-sm text-gray-500">
               No entries
             </div>
           )}
         </div>
       </div>
 
-      {/* Cleaning completion modal */}
+      {/* Cleaning completion modal – now shows individual tasks */}
       {confirm && (
         <div
-          className="fixed inset-0 z-50 bg-black/30"
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
           onClick={() => setConfirm(null)}
         >
           <form
@@ -1555,13 +1594,13 @@ async function completeTasks(ids: string[], ini: string) {
               completeTasks(confirm.ids, confirmInitials.trim());
             }}
             onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-6 flex h-[70vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl border bg-white shadow sm:mt-24 sm:h-auto sm:rounded-2xl"
+            className="mx-auto mt-6 flex h-[70vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl border border-white/30 bg-white/90 shadow-xl shadow-slate-900/25 backdrop-blur sm:mt-24 sm:h-auto sm:rounded-2xl"
           >
-            <div className="sticky top-0 z-10 border-b bg-white px-4 py-3 text-base font-semibold">
+            <div className="sticky top-0 z-10 border-b bg-white/90 px-4 py-3 text-base font-semibold">
               {confirmLabel}
             </div>
-            <div className="grow overflow-y-auto px-4 py-3 space-y-3">
-              <div className="rounded border bg-gray-50 p-2 text-sm">
+            <div className="grow space-y-3 overflow-y-auto px-4 py-3 text-sm">
+              <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-2">
                 <div className="font-medium">
                   {confirm.ids.length} task(s)
                 </div>
@@ -1570,10 +1609,36 @@ async function completeTasks(ids: string[], ini: string) {
                 </div>
               </div>
 
+              {confirmTasks.length > 0 && (
+                <div className="rounded-xl border border-slate-200 bg-white/90 p-2">
+                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                    Tasks to mark complete
+                  </div>
+                  <ul className="space-y-2 text-sm">
+                    {confirmTasks.map((t) => (
+                      <li
+                        key={t.id}
+                        className="rounded-lg border border-slate-100 bg-slate-50/80 px-2 py-1.5"
+                      >
+                        <div className="font-medium">{t.task}</div>
+                        <div className="text-[11px] text-gray-500">
+                          {t.category ?? t.area ?? "—"} •{" "}
+                          {t.frequency === "daily"
+                            ? "Daily"
+                            : t.frequency === "weekly"
+                            ? "Weekly"
+                            : "Monthly"}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <label className="block text-sm">
                 <div className="mb-1 text-gray-600">Initials</div>
                 <select
-                  className="w-full rounded-xl border px-2 py-1.5 uppercase"
+                  className="w-full rounded-xl border border-slate-200 bg-white/80 px-2 py-1.5 uppercase shadow-sm"
                   value={confirmInitials}
                   onChange={(e) =>
                     setConfirmInitials(e.target.value.toUpperCase())
@@ -1591,7 +1656,7 @@ async function completeTasks(ids: string[], ini: string) {
                 </select>
               </label>
             </div>
-            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white px-4 py-3">
+            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white/90 px-4 py-3">
               <button
                 type="button"
                 className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"
@@ -1601,9 +1666,9 @@ async function completeTasks(ids: string[], ini: string) {
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
+                className="rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30 hover:brightness-105"
               >
-                Confirm
+                Mark tasks complete
               </button>
             </div>
           </form>
