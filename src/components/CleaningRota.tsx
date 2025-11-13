@@ -396,7 +396,7 @@ export default function CleaningRota() {
             <select
               value={ini}
               onChange={(e) => setIni(e.target.value.toUpperCase())}
-              className="h-9 shrink-0 rounded-xl border border-gray-300 bg-white/70 px-2 py-1.5 uppercase shadow-sm"
+              className="h-8 rounded-xl border border-gray-300 bg-white/70 px-5 py-1.5 uppercase shadow-sm"
             >
               {initials.map((v) => (
                 <option key={v} value={v}>

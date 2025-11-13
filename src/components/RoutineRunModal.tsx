@@ -5,6 +5,7 @@ import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
+// If you have a local type, adjust this import:
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 
 type Props = {
@@ -69,6 +70,9 @@ export default function RoutineRunModal({
   const [temps, setTemps] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
+  // team initials for quick-fill
+  const [initialOptions, setInitialOptions] = useState<string[]>([]);
+
   // reset when opened / routine changes
   useEffect(() => {
     if (!open || !routine) return;
@@ -79,12 +83,52 @@ export default function RoutineRunModal({
     setTemps(init);
   }, [open, routine, defaultDate, defaultInitials]);
 
+  // load initials for this org when modal opens
+  useEffect(() => {
+    if (!open) return;
+
+    (async () => {
+      try {
+        const orgId = await getActiveOrgIdClient();
+        if (!orgId) return;
+
+        const { data, error } = await supabase
+          .from("team_members")
+          .select("initials, active")
+          .eq("org_id", orgId)
+          .eq("active", true)
+          .order("initials");
+
+        if (error) throw error;
+
+        const list = Array.from(
+          new Set(
+            (data ?? [])
+              .map((r: any) =>
+                (r.initials ?? "").toString().toUpperCase().trim()
+              )
+              .filter(Boolean)
+          )
+        );
+
+        setInitialOptions(list);
+
+        // if the box is empty, auto-fill with first initials
+        setInitials((prev) => prev || list[0] || "");
+      } catch {
+        // ignore – user can still type manually
+      }
+    })();
+  }, [open]);
+
   if (!open || !routine) return null;
 
   async function handleSave(e?: React.FormEvent) {
     e?.preventDefault();
 
+    // basic validation
     if (!date || !initials) return;
+
     if (!routine) {
       alert("No routine loaded – please close this window and try again.");
       return;
@@ -115,7 +159,7 @@ export default function RoutineRunModal({
       const rowsToSave: NewLogRow[] = routine.items
         .map<NewLogRow | null>((it) => {
           const raw = (temps[it.id] ?? "").trim();
-          if (!raw) return null;
+          if (!raw) return null; // skip empty temps
 
           const tempNum = Number.isFinite(Number(raw)) ? Number(raw) : null;
           const preset =
@@ -136,11 +180,15 @@ export default function RoutineRunModal({
         .filter((row): row is NewLogRow => row !== null);
 
       if (!rowsToSave.length) {
+        // nothing filled in – just close
         onClose();
         return;
       }
 
-      const { error } = await supabase.from("food_temp_logs").insert(rowsToSave);
+      const { error } = await supabase
+        .from("food_temp_logs")
+        .insert(rowsToSave);
+
       if (error) {
         alert(`Save failed: ${error.message}`);
         return;
@@ -155,75 +203,87 @@ export default function RoutineRunModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 overflow-y-auto overscroll-contain"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/40"
       onClick={onClose}
     >
       <form
         onSubmit={handleSave}
         onClick={(e) => e.stopPropagation()}
-        className="mt-4 mb-4 flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white/90 text-slate-900 shadow-2xl backdrop-blur-sm"
+        className="mt-4 mb-4 flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-slate-900 text-slate-50 shadow-xl"
       >
         {/* Header */}
-        <div className="flex items-center justify-between bg-emerald-700/90 px-5 py-3 text-white">
+        <div className="flex items-center justify-between border-b border-slate-800 bg-emerald-700 px-4 py-3">
           <div>
-            <div className="text-[11px] uppercase tracking-wide/relaxed opacity-80">
+            <div className="text-[11px] uppercase tracking-wide text-emerald-100/80">
               Run routine
             </div>
-            <div className="text-base font-semibold">{routine.name}</div>
+            <div className="text-base font-semibold text-white">
+              {routine.name}
+            </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md bg-white/10 px-3 py-1.5 text-sm hover:bg-white/20"
+            className="rounded-md bg-emerald-800/90 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-900"
           >
             Close
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-4 py-3">
           {/* Date / initials */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="text-sm">
-              <div className="mb-1 text-slate-600">Date</div>
+              <div className="mb-1 text-slate-200">Date</div>
               <input
                 type="date"
-                className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                className="w-full rounded-xl border border-slate-600 bg-slate-900 px-2 py-2 text-sm text-slate-50"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
                 required
               />
             </label>
             <label className="text-sm">
-              <div className="mb-1 text-slate-600">Initials</div>
+              <div className="mb-1 text-slate-200">Initials</div>
               <input
-                className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm uppercase"
+                className="w-full rounded-xl border border-slate-600 bg-slate-900 px-2 py-2 text-sm uppercase text-slate-50"
                 value={initials}
                 onChange={(e) => setInitials(e.target.value.toUpperCase())}
                 required
               />
+              {initialOptions.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-slate-300">
+                  {initialOptions.map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      className="rounded-full border border-slate-600 bg-slate-800 px-2 py-0.5 uppercase hover:bg-slate-700"
+                      onClick={() => setInitials(opt)}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              )}
             </label>
           </div>
 
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-slate-300">
             Enter temps for any items you’re logging now, then tap{" "}
             <span className="font-semibold">“Save all”</span>.
           </p>
 
-          {/* Desktop/tablet – table */}
-          <div className="hidden md:block rounded-xl border border-slate-200 bg-white/70 shadow-inner">
+          {/* Desktop/tablet table */}
+          <div className="hidden rounded-lg border border-slate-700 bg-slate-900 md:block">
             <table className="w-full table-fixed text-sm">
-              <thead className="bg-slate-50/80 text-slate-500">
+              <thead className="bg-slate-800 text-slate-300">
                 <tr>
-                  <th className="px-3 py-2 w-10 text-left font-medium">#</th>
-                  <th className="px-3 py-2 w-32 text-left font-medium">
-                    Location
-                  </th>
-                  <th className="px-3 py-2 w-40 text-left font-medium">Item</th>
-                  <th className="px-3 py-2 text-left font-medium">Target</th>
-                  <th className="px-3 py-2 w-32 text-left font-medium">
-                    Temp (°C)
-                  </th>
+                  <th className="w-10 px-3 py-2 text-left">#</th>
+                  <th className="w-32 px-3 py-2 text-left">Location</th>
+                  <th className="w-40 px-3 py-2 text-left">Item</th>
+                  <th className="px-3 py-2 text-left">Target</th>
+                  <th className="w-32 px-3 py-2 text-left">Temp (°C)</th>
                 </tr>
               </thead>
               <tbody>
@@ -233,7 +293,7 @@ export default function RoutineRunModal({
                       | TargetPreset
                       | undefined;
                   return (
-                    <tr key={it.id} className="border-t border-slate-100">
+                    <tr key={it.id} className="border-t border-slate-800">
                       <td className="px-3 py-2 align-top">{idx + 1}</td>
                       <td className="px-3 py-2 align-top">
                         {it.location ?? "—"}
@@ -241,7 +301,7 @@ export default function RoutineRunModal({
                       <td className="px-3 py-2 align-top">
                         {it.item ?? "—"}
                       </td>
-                      <td className="px-3 py-2 align-top text-xs text-slate-500">
+                      <td className="px-3 py-2 align-top text-xs text-slate-300">
                         {preset
                           ? `${preset.label}${
                               preset.minC != null || preset.maxC != null
@@ -254,7 +314,7 @@ export default function RoutineRunModal({
                       </td>
                       <td className="px-3 py-2 align-top">
                         <input
-                          className="h-9 w-24 rounded-xl border border-slate-300 bg-white/80 px-2 text-sm"
+                          className="w-24 rounded-xl border border-slate-600 bg-slate-900 px-2 py-1 text-sm text-slate-50"
                           inputMode="decimal"
                           value={temps[it.id] ?? ""}
                           onChange={(e) =>
@@ -272,8 +332,8 @@ export default function RoutineRunModal({
             </table>
           </div>
 
-          {/* Mobile – cards */}
-          <div className="md:hidden space-y-2">
+          {/* Mobile cards */}
+          <div className="space-y-2 md:hidden">
             {routine.items.map((it, idx) => {
               const preset =
                 (TARGET_BY_KEY as any)[it.target_key] as
@@ -282,18 +342,20 @@ export default function RoutineRunModal({
               return (
                 <div
                   key={it.id}
-                  className="rounded-xl border border-slate-200 bg-white/80 p-3 text-sm"
+                  className="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs text-slate-500">#{idx + 1}</div>
+                    <div className="text-xs text-slate-400">#{idx + 1}</div>
                   </div>
 
-                  <div className="mt-1 text-sm font-medium">{it.item ?? "—"}</div>
-                  <div className="text-xs text-slate-600">
+                  <div className="mt-1 text-sm font-medium text-slate-50">
+                    {it.item ?? "—"}
+                  </div>
+                  <div className="text-xs text-slate-300">
                     {it.location ?? "—"}
                   </div>
 
-                  <div className="mt-2 text-[11px] text-slate-500">
+                  <div className="mt-2 text-[11px] text-slate-400">
                     {preset
                       ? `${preset.label}${
                           preset.minC != null || preset.maxC != null
@@ -306,10 +368,10 @@ export default function RoutineRunModal({
                   </div>
 
                   <div className="mt-2">
-                    <label className="text-xs text-slate-600">
+                    <label className="text-xs text-slate-300">
                       Temp (°C)
                       <input
-                        className="mt-1 h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-2 text-sm"
+                        className="mt-1 w-full rounded-xl border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-slate-50"
                         inputMode="decimal"
                         value={temps[it.id] ?? ""}
                         onChange={(e) =>
@@ -329,18 +391,18 @@ export default function RoutineRunModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 px-5 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-slate-800 bg-slate-900 px-4 py-3">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            className="rounded-md px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-800"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={saving}
-            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+            className="rounded-xl bg-emerald-500 px-4 py-1.5 text-sm font-semibold text-slate-900 hover:bg-emerald-400 disabled:opacity-60"
           >
             {saving ? "Saving…" : "Save all"}
           </button>

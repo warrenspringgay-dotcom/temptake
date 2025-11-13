@@ -17,7 +17,9 @@ const NAV_ITEMS = [
   { href: "/cleaning-rota", label: "Cleaning rota" },
   { href: "/team", label: "Team" },
   { href: "/suppliers", label: "Suppliers" },
+  { href: "/leaderboard", label: "Leaderboard" },
   { href: "/reports", label: "Reports" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export default function MobileMenu({ user }: Props) {
