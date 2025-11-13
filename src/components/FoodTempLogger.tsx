@@ -870,7 +870,7 @@ export default function FoodTempLogger({
       {/* Big centred header, like Cleaning Rota */}
       <div className="text-center">
         <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">
-          Food temperature log
+      
         </h1>
 
         <div className="mt-3">

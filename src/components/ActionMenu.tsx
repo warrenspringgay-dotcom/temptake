@@ -1,102 +1,119 @@
 // src/components/ActionMenu.tsx
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 
-export type ActionMenuItem = {
+type Item = {
   label: string;
   onClick?: () => void;
-  href?: string;
-  variant?: "danger" | "default";
+  href?: string;                 // NEW: allow direct navigation
+  variant?: "normal" | "danger";
+  disabled?: boolean;
 };
 
-export default function ActionMenu({ items }: { items: ActionMenuItem[] }) {
+export default function ActionMenu({ items }: { items: Item[] }) {
   const [open, setOpen] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [mounted, setMounted] = useState(false);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const router = useRouter();
+
+  useEffect(() => setMounted(true), []);
+
+  const compute = () => {
+    const b = btnRef.current?.getBoundingClientRect();
+    if (!b) return;
+    const top = Math.round(b.bottom + 6);
+    const desiredLeft = Math.round(b.right - 200);
+    const maxLeft = window.innerWidth - 208;
+    const left = Math.max(8, Math.min(desiredLeft, maxLeft));
+    setPos({ top, left });
+  };
+
+  useLayoutEffect(() => {
+    if (open) compute();
+  }, [open]);
 
   useEffect(() => {
-  if (!open) return;
-
-  const handleClickOutside = (e: MouseEvent) => {
-    if (!wrapperRef.current) return;
-    if (!wrapperRef.current.contains(e.target as Node)) {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (boxRef.current?.contains(t) || btnRef.current?.contains(t)) return;
       setOpen(false);
-    }
-  };
+    };
+    const onEsc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onWin = () => compute();
+    document.addEventListener("mousedown", onDoc, true);
+    document.addEventListener("keydown", onEsc);
+    window.addEventListener("scroll", onWin, true);
+    window.addEventListener("resize", onWin);
+    return () => {
+      document.removeEventListener("mousedown", onDoc, true);
+      document.removeEventListener("keydown", onEsc);
+      window.removeEventListener("scroll", onWin, true);
+      window.removeEventListener("resize", onWin);
+    };
+  }, [open]);
 
-  document.addEventListener("mousedown", handleClickOutside);
-  return () => {
-    document.removeEventListener("mousedown", handleClickOutside);
+  const handleItem = (it: Item) => {
+    setOpen(false);
+    // run click first (for modals etc), then navigate if provided
+    it.onClick?.();
+    if (it.href) router.push(it.href);
   };
-}, [open]);
-
 
   return (
-    <div
-      ref={wrapperRef}
-      className="relative inline-block text-left"
-    >
-      {/* Trigger */}
+    <>
       <button
+        ref={btnRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-gray-300 bg-white text-xl leading-none shadow-sm hover:bg-gray-50 active:scale-95 transition"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        ⋯
+        …
       </button>
 
-      {/* Menu */}
-      {open && (
-        <div
-          className="absolute right-0 top-full z-50 mt-2 min-w-[9rem] rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
-          role="menu"
-        >
-          {items.map((item, idx) => {
-            const base =
-              "flex w-full items-center justify-between px-3 py-2 text-sm text-left";
-            const variant =
-              item.variant === "danger"
-                ? "text-red-700 hover:bg-red-50"
-                : "text-gray-800 hover:bg-gray-50";
-
-            const content = (
-              <span className={`${base} ${variant}`}>
-                {item.label}
-              </span>
-            );
-
-            if (item.href) {
-              return (
-                <a
-                  key={idx}
-                  href={item.href}
-                  onClick={() => setOpen(false)}
-                  role="menuitem"
+      {mounted && open &&
+        createPortal(
+          <div className="fixed inset-0 z-[1000] pointer-events-none">
+            <div
+              ref={boxRef}
+              className="pointer-events-auto rounded-xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur px-1 py-1 text-sm"
+              style={{
+                position: "fixed",
+                top: pos?.top ?? -9999,
+                left: pos?.left ?? -9999,
+                minWidth: 200,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {items.map((it, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  disabled={it.disabled}
+                  onClick={() => handleItem(it)}
+                  className={[
+                    "block w-full rounded-lg px-3 py-2 text-left hover:bg-slate-50",
+                    it.variant === "danger" ? "text-red-600 hover:bg-red-50" : "text-slate-800",
+                    it.disabled ? "opacity-50 cursor-not-allowed" : "",
+                  ].join(" ")}
                 >
-                  {content}
-                </a>
-              );
-            }
-
-            return (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  item.onClick?.();
-                }}
-                className="w-full text-left"
-                role="menuitem"
-              >
-                {content}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
+                  {it.label}
+                </button>
+              ))}
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
   );
 }

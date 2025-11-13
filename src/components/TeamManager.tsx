@@ -320,7 +320,7 @@ export default function TeamManager() {
     }
   }
 
-  /* -------------------- Invite flow -------------------- */
+  /* -------------------- Invite flow (magic link) -------------------- */
   function openInvite() {
     setInviteForm({ email: "", role: "staff" });
     setInviteError(null);
@@ -333,7 +333,7 @@ export default function TeamManager() {
     setInviteInfo(null);
 
     const cleanEmail = inviteForm.email.trim().toLowerCase();
-    const role = inviteForm.role.trim() || "staff";
+    const role = (inviteForm.role.trim() || "staff").toLowerCase();
 
     if (!cleanEmail) {
       setInviteError("Enter an email to invite.");
@@ -348,50 +348,36 @@ export default function TeamManager() {
 
       setInviteSending(true);
 
-      // 1) upsert team_members row for this email + org
+      // 1) Upsert the team_members row (so the org link exists even if email fails)
       const { error: tmError } = await supabase
         .from("team_members")
         .upsert(
           {
             org_id: orgId,
             email: cleanEmail,
-            name: cleanEmail, // you can let them change this later
+            name: cleanEmail, // can be edited later
             role,
             active: true,
           },
-          {
-            onConflict: "org_id,email",
-          }
+          { onConflict: "org_id,email" }
         );
-
       if (tmError) throw tmError;
 
-      // 2) trigger Supabase email sign-up (cast to any to satisfy TS types)
-      const { error: signUpError } = await (supabase.auth as any).signUp({
+      // 2) Send a magic-link (no password required)
+      const { error: otpErr } = await supabase.auth.signInWithOtp({
         email: cleanEmail,
         options: {
           emailRedirectTo: `${window.location.origin}/login`,
         },
       });
 
-      // If they already have an account, Supabase might throw; treat as soft success
-      if (signUpError) {
-        const msg = signUpError.message || "";
-        if (
-          msg.toLowerCase().includes("already registered") ||
-          msg.toLowerCase().includes("already exists")
-        ) {
-          setInviteInfo(
-            "They already have an account — they can just sign in with that email."
-          );
-        } else {
-          // real error
-          throw signUpError;
-        }
-      } else {
+      if (otpErr) {
+        // If magic links aren't enabled, still consider the team link created.
         setInviteInfo(
-          "Invite sent. If that email exists, they’ll get a link to finish setting up."
+          "Invite created. Configure Supabase Auth → Email OTP (Magic Link) to send the email."
         );
+      } else {
+        setInviteInfo("Invite sent. They’ll receive a sign-in link by email.");
       }
 
       await load();
@@ -449,19 +435,13 @@ export default function TeamManager() {
           <tbody>
             {loading ? (
               <tr>
-                <td
-                  colSpan={5}
-                  className="py-6 text-center text-slate-500"
-                >
+                <td colSpan={5} className="py-6 text-center text-slate-500">
                   Loading…
                 </td>
               </tr>
             ) : filtered.length ? (
               filtered.map((r) => (
-                <tr
-                  key={r.id}
-                  className="border-t border-slate-100"
-                >
+                <tr key={r.id} className="border-t border-slate-100">
                   <td className="py-2 pr-3 text-center font-medium text-slate-900">
                     {r.initials ?? "—"}
                   </td>
@@ -507,10 +487,7 @@ export default function TeamManager() {
               ))
             ) : (
               <tr>
-                <td
-                  colSpan={5}
-                  className="py-6 text-center text-slate-500"
-                >
+                <td colSpan={5} className="py-6 text-center text-slate-500">
                   No team members yet.
                 </td>
               </tr>
@@ -1031,7 +1008,7 @@ export default function TeamManager() {
               </div>
 
               <p className="text-xs text-slate-500">
-                We’ll add them to this business and send a sign-up link. If they
+                We’ll add them to this business and send a sign-in link. If they
                 already have an account, they can just sign in with this email.
               </p>
 
