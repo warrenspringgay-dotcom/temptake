@@ -33,6 +33,14 @@ type Props = {
   locations?: string[];
 };
 
+/* leaderboard / employee of month */
+type EmployeeOfMonth = {
+  display_name: string | null;
+  points: number | null;
+  temp_logs_count: number | null;
+  cleaning_count: number | null;
+};
+
 /* cleaning rota types */
 type Frequency = "daily" | "weekly" | "monthly";
 type CleanTask = {
@@ -239,6 +247,10 @@ export default function FoodTempLogger({
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
+  // Employee of the month (from leaderboard view)
+  const [employeeOfMonth, setEmployeeOfMonth] =
+    useState<EmployeeOfMonth | null>(null);
+
   // KPIs (training & allergen due/overdue)
   const [kpi, setKpi] = useState({
     trainingDueSoon: 0,
@@ -444,6 +456,28 @@ export default function FoodTempLogger({
 
         setKpi({ trainingDueSoon, trainingOver, allergenDueSoon, allergenOver });
       } catch {}
+    })();
+  }, []);
+
+  /* Employee of the month fetch (leaderboard) */
+  useEffect(() => {
+    (async () => {
+      try {
+        const orgId = await getActiveOrgIdClient();
+        if (!orgId) return;
+
+        const { data, error } = await supabase
+          .from("leaderboard")
+          .select("display_name, points, temp_logs_count, cleaning_count")
+          .eq("org_id", orgId)
+          .order("points", { ascending: false })
+          .limit(1);
+
+        if (error) throw error;
+        setEmployeeOfMonth(data?.[0] ?? null);
+      } catch {
+        setEmployeeOfMonth(null);
+      }
     })();
   }, []);
 
@@ -870,7 +904,7 @@ export default function FoodTempLogger({
       {/* Big centred header, like Cleaning Rota */}
       <div className="text-center">
         <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">
-      
+          {/* Title intentionally blank per your current design */}
         </h1>
 
         <div className="mt-3">
@@ -930,6 +964,15 @@ export default function FoodTempLogger({
               : "border-gray-200 bg-white/80 text-gray-800";
           const failsIcon = fails7 > 0 ? "⚠️" : "✅";
 
+          const eomName =
+            employeeOfMonth?.display_name || "—";
+          const eomPoints =
+            employeeOfMonth?.points ?? 0;
+          const eomTemp =
+            employeeOfMonth?.temp_logs_count ?? 0;
+          const eomClean =
+            employeeOfMonth?.cleaning_count ?? 0;
+
           return (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               {/* tile 1: Entries today */}
@@ -973,31 +1016,19 @@ export default function FoodTempLogger({
                 </div>
               </div>
 
-              {/* tile 4: Top logger */}
+              {/* tile 4: Employee of the month (from leaderboard) */}
               <div className="flex min-h-[76px] flex-col justify-between rounded-xl border border-amber-200 bg-amber-50/90 p-3 text-amber-900 shadow-sm backdrop-blur-sm">
                 <div className="flex items-center justify-between text-xs">
-                  <span>Top logger</span>
-                  <span className="text-lg">🏅</span>
+                  <span>Employee of the month</span>
+                  <span className="text-lg">🏆</span>
                 </div>
-                <div className="mt-1 text-2xl font-semibold">
-                  {(() => {
-                    const freq = new Map<string, number>();
-                    rows
-                      .filter((r) => in7d(r.date) && r.staff_initials)
-                      .forEach((r) =>
-                        freq.set(
-                          r.staff_initials!,
-                          (freq.get(r.staff_initials!) ?? 0) + 1
-                        )
-                      );
-                    const best = Array.from(freq.entries()).sort(
-                      (a, b) => b[1] - a[1]
-                    )[0];
-                    return best ? best[0] : "—";
-                  })()}
+                <div className="mt-1 text-lg font-semibold truncate">
+                  {eomName}
                 </div>
-                <div className="mt-1 hidden text-[11px] opacity-80 md:block">
-                  Most logs in the last 7 days.
+                <div className="mt-1 text-[11px] opacity-80 md:block">
+                  {eomPoints
+                    ? `${eomPoints} pts · Temps ${eomTemp} · Cleaning ${eomClean}`
+                    : "Based on points from cleaning & temp logs."}
                 </div>
               </div>
 
@@ -1062,6 +1093,8 @@ export default function FoodTempLogger({
           </div>
         )}
       </div>
+
+    
 
       {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
       <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
