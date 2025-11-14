@@ -70,13 +70,39 @@ function sameDay(a: Date, b: Date) {
 }
 
 function formatPrettyDate(d: Date) {
-  return d.toLocaleDateString(undefined, {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  const WEEKDAYS = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
+  const MONTHS = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+
+  const weekday = WEEKDAYS[d.getDay()];
+  const day = d.getDate();
+  const month = MONTHS[d.getMonth()];
+  const year = d.getFullYear();
+
+  // No comma – always: Friday 14 November 2025
+  return `${weekday} ${day} ${month} ${year}`;
 }
+
 
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";

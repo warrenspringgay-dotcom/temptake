@@ -1,223 +1,210 @@
 // src/app/signup/page.tsx
 "use client";
 
-import { FormEvent, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
+import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 
-export default function SignUpPage() {
+function makeInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("")
+    .slice(0, 3);
+}
+
+export default function SignupPage() {
   const router = useRouter();
-  const search = useSearchParams();
-  const redirectTo = search.get("redirectTo") || "/dashboard";
 
   const [fullName, setFullName] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const [agree, setAgree] = useState(false);
 
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setInfo(null);
 
-    if (!email || !password) {
-      setError("Please enter an email and password.");
+    if (!agree) {
+      setError("Please agree to the Terms of Use and Privacy Policy.");
       return;
     }
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+    if (!fullName.trim() || !businessName.trim()) {
+      setError("Please enter your name and business name.");
       return;
     }
-    if (password !== confirmPassword) {
+    if (password !== confirm) {
       setError("Passwords do not match.");
-      return;
-    }
-    if (!acceptTerms) {
-      setError("Please accept the terms to continue.");
       return;
     }
 
     setLoading(true);
-
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
+      // 1) Create auth user
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
         password,
         options: {
-          // these end up in auth.user.user_metadata
           data: {
-            full_name: fullName || null,
-            business_name: businessName || null,
+            full_name: fullName.trim(),
           },
-          // used if you ever enable "confirm email" in Supabase
-          emailRedirectTo:
-            typeof window !== "undefined"
-              ? `${window.location.origin}/auth/callback`
-              : undefined,
         },
       });
 
-      if (error) {
-        throw error;
-      }
+      if (signUpError) throw signUpError;
 
-      // If email confirmation is OFF, Supabase returns a session and user is logged in
-      if (data.session) {
-        router.replace(redirectTo);
+      const user = data.user;
+      if (!user) {
+        // Email confirmation mode – user must confirm before we have a session
+        setInfo(
+          "Account created. Please check your email for a confirmation link."
+        );
         return;
       }
 
-      // If confirmation is ON, no session yet – ask them to check email
-      setInfo(
-        "We've sent you a confirmation email. Please follow the link to finish creating your account."
+      // 2) Create org
+      const { data: orgRow, error: orgError } = await supabase
+        .from("orgs")
+        .insert({ name: businessName.trim() })
+        .select("id")
+        .single();
+
+      if (orgError) throw orgError;
+      const orgId = orgRow.id as string;
+
+      // 3) Attach profile to org
+      const { error: profileError } = await supabase.from("profiles").upsert({
+        id: user.id,
+        full_name: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        org_id: orgId,
+      });
+
+      if (profileError) throw profileError;
+
+      // 4) Add them to team_members as owner
+      const initials = makeInitials(fullName);
+      const { error: teamError } = await supabase.from("team_members").upsert(
+        {
+          org_id: orgId,
+          user_id: user.id,
+          name: fullName.trim(),
+          email: email.trim().toLowerCase(),
+          initials,
+          role: "owner",
+          active: true,
+        },
+        {
+          onConflict: "org_id,email",
+        }
       );
+
+      if (teamError) throw teamError;
+
+      // 5) Go to dashboard
+      router.push("/dashboard");
     } catch (err: any) {
-      console.error("Sign up failed", err);
-      setError(err?.message ?? "Could not create account.");
+      console.error(err);
+      setError(err.message ?? "Sign up failed. Please try again.");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm">
-        <h1 className="mb-1 text-xl font-semibold">Create your account</h1>
-        <p className="mb-6 text-sm text-gray-500">
-          Set up TempTake for your business in a few seconds.
-        </p>
+    <div className="flex min-h-screen items-center justify-center bg-slate-50">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-md space-y-4 rounded-2xl bg-white p-6 shadow"
+      >
+        <h1 className="text-xl font-semibold text-slate-900">
+          Create your TempTake account
+        </h1>
 
-        <form className="space-y-4" onSubmit={handleSubmit}>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">
-              Your name
-            </label>
-            <input
-              type="text"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="h-10 w-full rounded-xl border px-3 text-sm"
-              placeholder="e.g., Alex Smith"
-              autoComplete="name"
-            />
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-600">Your name</span>
+          <input
+            className="h-10 w-full rounded-xl border border-slate-300 px-3"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+          />
+        </label>
+
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-600">Business name</span>
+          <input
+            className="h-10 w-full rounded-xl border border-slate-300 px-3"
+            value={businessName}
+            onChange={(e) => setBusinessName(e.target.value)}
+          />
+        </label>
+
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-600">Email</span>
+          <input
+            type="email"
+            className="h-10 w-full rounded-xl border border-slate-300 px-3"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </label>
+
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-600">Password</span>
+          <input
+            type="password"
+            className="h-10 w-full rounded-xl border border-slate-300 px-3"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </label>
+
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-600">Confirm password</span>
+          <input
+            type="password"
+            className="h-10 w-full rounded-xl border border-slate-300 px-3"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+          />
+        </label>
+
+        <label className="flex items-center gap-2 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            checked={agree}
+            onChange={(e) => setAgree(e.target.checked)}
+          />
+          I agree to the Terms of Use and Privacy Policy.
+        </label>
+
+        {error && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {error}
           </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">
-              Business name
-            </label>
-            <input
-              type="text"
-              value={businessName}
-              onChange={(e) => setBusinessName(e.target.value)}
-              className="h-10 w-full rounded-xl border px-3 text-sm"
-              placeholder="e.g., Pier Vista"
-              autoComplete="organization"
-            />
+        )}
+        {info && (
+          <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+            {info}
           </div>
+        )}
 
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">
-              Email
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value.trim())}
-              className="h-10 w-full rounded-xl border px-3 text-sm"
-              placeholder="you@restaurant.com"
-              autoComplete="email"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="h-10 w-full rounded-xl border px-3 text-sm"
-              autoComplete="new-password"
-              required
-            />
-            <p className="mt-1 text-[11px] text-gray-500">
-              At least 8 characters.
-            </p>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">
-              Confirm password
-            </label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              className="h-10 w-full rounded-xl border px-3 text-sm"
-              autoComplete="new-password"
-              required
-            />
-          </div>
-
-          <label className="flex cursor-pointer items-start gap-2 text-xs text-gray-600">
-            <input
-              type="checkbox"
-              className="mt-[3px] h-4 w-4 rounded border-gray-300"
-              checked={acceptTerms}
-              onChange={(e) => setAcceptTerms(e.target.checked)}
-            />
-            <span>
-              I agree to the{" "}
-              <span className="underline">Terms of Use</span> and{" "}
-              <span className="underline">Privacy Policy</span>.
-            </span>
-          </label>
-
-          {error && (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              {error}
-            </div>
-          )}
-
-          {info && !error && (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-              {info}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className={`mt-2 flex h-10 w-full items-center justify-center rounded-2xl text-sm font-medium text-white ${
-              loading
-                ? "cursor-not-allowed bg-gray-500"
-                : "bg-black hover:bg-gray-900"
-            }`}
-          >
-            {loading ? "Creating account…" : "Create account"}
-          </button>
-        </form>
-
-        <div className="mt-4 text-center text-xs text-gray-600">
-          Already have an account?{" "}
-          <Link
-            href={`/login?redirectTo=${encodeURIComponent(redirectTo)}`}
-            className="font-medium text-gray-900 underline"
-          >
-            Sign in
-          </Link>
-        </div>
-      </div>
+        <button
+          type="submit"
+          disabled={loading}
+          className="mt-2 h-10 w-full rounded-xl bg-black text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-60"
+        >
+          {loading ? "Creating account…" : "Create account"}
+        </button>
+      </form>
     </div>
   );
 }
