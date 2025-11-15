@@ -48,56 +48,102 @@ export default function SignupPage() {
 
     setLoading(true);
     try {
+      const trimmedEmail = email.trim().toLowerCase();
+      const trimmedName = fullName.trim();
+      const trimmedBiz = businessName.trim();
+
       // 1) Create auth user
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
+      const {
+        data: signData,
+        error: signUpError,
+      } = await supabase.auth.signUp({
+        email: trimmedEmail,
         password,
         options: {
           data: {
-            full_name: fullName.trim(),
+            full_name: trimmedName,
           },
         },
       });
 
-      if (signUpError) throw signUpError;
+      if (signUpError) {
+        console.error("Auth signup error", signUpError);
+        setError(
+          signUpError.message ||
+            "Sign up failed at auth step. Please try a different email."
+        );
+        setLoading(false);
+        return;
+      }
 
-      const user = data.user;
+      const user = signData.user;
       if (!user) {
-        // Email confirmation mode – user must confirm before we have a session
         setInfo(
           "Account created. Please check your email for a confirmation link."
         );
+        setLoading(false);
         return;
       }
 
       // 2) Create org
-      const { data: orgRow, error: orgError } = await supabase
+      const {
+        data: orgRow,
+        error: orgError,
+      } = await supabase
         .from("orgs")
-        .insert({ name: businessName.trim() })
+        .insert({ name: trimmedBiz })
         .select("id")
         .single();
 
-      if (orgError) throw orgError;
+      if (orgError) {
+        console.error("Org insert error", orgError);
+        setError(
+          orgError.message ||
+            "Failed to create organisation (orgs). Check RLS policies."
+        );
+        setLoading(false);
+        return;
+      }
+
       const orgId = orgRow.id as string;
 
-      // 3) Attach profile to org
+      // 3) Store org on the auth user metadata
+      const { error: metaError } = await supabase.auth.updateUser({
+        data: {
+          full_name: trimmedName,
+          org_id: orgId,
+        },
+      });
+      if (metaError) {
+        console.error("User metadata update error", metaError);
+      }
+
+      // 4) Attach profile row to org (include role)
       const { error: profileError } = await supabase.from("profiles").upsert({
         id: user.id,
-        full_name: fullName.trim(),
-        email: email.trim().toLowerCase(),
+        full_name: trimmedName,
+        email: trimmedEmail,
         org_id: orgId,
+        role: "owner",
       });
 
-      if (profileError) throw profileError;
+      if (profileError) {
+        console.error("Profiles upsert error", profileError);
+        setError(
+          profileError.message ||
+            "Failed to save profile. Check RLS on table 'profiles'."
+        );
+        setLoading(false);
+        return;
+      }
 
-      // 4) Add them to team_members as owner
-      const initials = makeInitials(fullName);
+      // 5) Add them to team_members as owner
+      const initials = makeInitials(trimmedName);
       const { error: teamError } = await supabase.from("team_members").upsert(
         {
           org_id: orgId,
-          user_id: user.id,
-          name: fullName.trim(),
-          email: email.trim().toLowerCase(),
+          name: trimmedName,
+          email: trimmedEmail,
           initials,
           role: "owner",
           active: true,
@@ -107,13 +153,25 @@ export default function SignupPage() {
         }
       );
 
-      if (teamError) throw teamError;
+      if (teamError) {
+        console.error("team_members upsert error", teamError);
+        setError(
+          teamError.message ||
+            "Failed to create team member. Check RLS on table 'team_members'."
+        );
+        setLoading(false);
+        return;
+      }
 
-      // 5) Go to dashboard
+      // 6) Go to dashboard
       router.push("/dashboard");
     } catch (err: any) {
-      console.error(err);
-      setError(err.message ?? "Sign up failed. Please try again.");
+      console.error("Signup failed (unexpected)", err);
+      const msg =
+        err?.message ||
+        (typeof err === "string" ? err : null) ||
+        "Sign up failed due to an unexpected error.";
+      setError(msg);
     } finally {
       setLoading(false);
     }

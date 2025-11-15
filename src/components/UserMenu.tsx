@@ -1,98 +1,129 @@
 // src/components/UserMenu.tsx
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { signOutAction } from "@/app/actions/auth";
+import { usePathname, useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseBrowser";
 
-type Props = {
-  user: { email?: string | null } | null;
-};
+type User = {
+  id: string;
+  email?: string | null;
+  user_metadata?: {
+    full_name?: string;
+  };
+} | null;
 
-export default function UserMenu({ user }: Props) {
+export default function UserMenu({ user }: { user: User }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
+  // Close menu whenever the route changes
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+    setOpen(false);
+  }, [pathname]);
+
+  // Close when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
     }
-    function onClick(e: MouseEvent) {
-      if (!ref.current) return;
-      if (!ref.current.contains(e.target as Node)) setOpen(false);
-    }
+
     if (open) {
-      document.addEventListener("keydown", onKey);
-      document.addEventListener("mousedown", onClick);
+      document.addEventListener("mousedown", handleClickOutside);
+    } else {
+      document.removeEventListener("mousedown", handleClickOutside);
     }
+
     return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [open]);
 
-  const initials = user?.email?.[0]?.toUpperCase() ?? "⋯";
+  // If no user, just show a Login button
+  if (!user) {
+    return (
+      <button
+        type="button"
+        onClick={() => router.push("/login")}
+        className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium hover:bg-gray-50"
+      >
+        Login
+      </button>
+    );
+  }
+
+  const displayName =
+    user.user_metadata?.full_name ||
+    user.email?.split("@")[0] ||
+    "Account";
+
+  const initials =
+    displayName
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((p) => p[0]?.toUpperCase())
+      .join("")
+      .slice(0, 2) || "U";
+
+  async function handleSignOut() {
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      setOpen(false);
+      router.push("/login");
+    }
+  }
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative" ref={menuRef}>
+      {/* JUST THE CIRCLE, NO NAME TEXT */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-white text-sm font-semibold hover:bg-gray-50"
-        title={user?.email ?? "Menu"}
+        className="flex items-center justify-center"
+        aria-label="Account menu"
       >
-        {initials}
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
+          {initials}
+        </span>
       </button>
 
-      {/* Dropdown */}
-      <div
-        className={[
-          "absolute right-0 mt-2 w-48 origin-top-right rounded-xl border bg-white shadow-lg",
-          open ? "scale-100 opacity-100" : "pointer-events-none scale-95 opacity-0",
-          "transition",
-        ].join(" ")}
-        role="menu"
-      >
-        <div className="py-1 text-sm">
-          <Link
-            href="/help"
-            className="block px-3 py-2 hover:bg-gray-50"
-            role="menuitem"
+      {open && (
+        <div className="absolute right-0 z-50 mt-2 w-40 rounded-xl border border-gray-200 bg-white py-1 text-sm shadow-lg">
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              router.push("/help");
+            }}
+            className="block w-full px-3 py-2 text-left hover:bg-gray-50"
           >
             Help
-          </Link>
-
-          <Link
-            href="/settings"
-            className="block px-3 py-2 hover:bg-gray-50"
-            role="menuitem"
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              router.push("/settings");
+            }}
+            className="block w-full px-3 py-2 text-left hover:bg-gray-50"
           >
             Settings
-          </Link>
-
-          {user ? (
-            <form action={signOutAction}>
-              <button
-                type="submit"
-                className="block w-full px-3 py-2 text-left text-red-600 hover:bg-gray-50"
-                role="menuitem"
-              >
-                Sign out
-              </button>
-            </form>
-          ) : (
-            <Link
-              href="/login"
-              className="block px-3 py-2 hover:bg-gray-50"
-              role="menuitem"
-            >
-              Login
-            </Link>
-          )}
+          </button>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="block w-full px-3 py-2 text-left text-red-600 hover:bg-gray-50"
+          >
+            Sign out
+          </button>
         </div>
-      </div>
+      )}
     </div>
   );
 }

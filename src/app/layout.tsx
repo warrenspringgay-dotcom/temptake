@@ -56,13 +56,7 @@ export default async function RootLayout({
         {/* Desktop business name */}
         <OrgName className="hidden max-w-[220px] truncate text-sm font-medium text-slate-600 md:inline" />
 
-        {/* Desktop: Help link */}
-        <Link
-          href="/help"
-          className="hidden text-xs font-medium text-slate-600 underline-offset-2 hover:underline hover:text-slate-900 md:inline"
-        >
-          Help
-        </Link>
+      
 
         {/* Desktop: user menu */}
         <div className="hidden md:block">

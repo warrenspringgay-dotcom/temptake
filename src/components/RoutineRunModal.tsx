@@ -203,13 +203,13 @@ export default function RoutineRunModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/40"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/40 px-2 py-4 sm:px-4 sm:py-6"
       onClick={onClose}
     >
       <form
         onSubmit={handleSave}
         onClick={(e) => e.stopPropagation()}
-        className="mt-4 mb-4 flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-slate-900 text-slate-50 shadow-xl"
+        className="mt-2 mb-2 flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-slate-900 text-slate-50 shadow-xl"
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 bg-emerald-700 px-4 py-3">
@@ -244,14 +244,28 @@ export default function RoutineRunModal({
                 required
               />
             </label>
+
             <label className="text-sm">
               <div className="mb-1 text-slate-200">Initials</div>
               <input
+                list={initialOptions.length ? "tt-initials-list" : undefined}
                 className="w-full rounded-xl border border-slate-600 bg-slate-900 px-2 py-2 text-sm uppercase text-slate-50"
                 value={initials}
                 onChange={(e) => setInitials(e.target.value.toUpperCase())}
+                placeholder="e.g. WS"
                 required
               />
+
+              {/* Dropdown suggestions populated from team_members */}
+              {initialOptions.length > 0 && (
+                <datalist id="tt-initials-list">
+                  {initialOptions.map((opt) => (
+                    <option key={opt} value={opt} />
+                  ))}
+                </datalist>
+              )}
+
+              {/* Optional chips for quick tap selection */}
               {initialOptions.length > 0 && (
                 <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-slate-300">
                   {initialOptions.map((opt) => (
