@@ -16,6 +16,14 @@ import RoutineRunModal from "@/components/RoutineRunModal";
 import { CLEANING_CATEGORIES } from "@/components/ManageCleaningTasksModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 
+import {
+  getOfflineTempLogsCount,
+  queueTempLogs,
+  flushOfflineTempLogs,
+  looksLikeNetworkError,
+  type TempLogPayload,
+} from "@/lib/offlineTempQueue";
+
 /* =============== Types =============== */
 type CanonRow = {
   id: string;
@@ -102,7 +110,6 @@ function formatPrettyDate(d: Date) {
   // No comma – always: Friday 14 November 2025
   return `${weekday} ${day} ${month} ${year}`;
 }
-
 
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
@@ -324,6 +331,10 @@ export default function FoodTempLogger({
     !!form.target_key &&
     form.temp_c.trim().length > 0;
 
+  // Offline queue state
+  const [offlineCount, setOfflineCount] = useState(0);
+  const [uploadingOffline, setUploadingOffline] = useState(false);
+
   // Header date (uses form.date, so header follows the selected log date)
   const headerDateObj: Date = (() => {
     if (!form.date) return new Date();
@@ -543,6 +554,70 @@ export default function FoodTempLogger({
     await loadRows();
   }
 
+  /* Offline queue: initialise + auto-upload on mount / when back online */
+  useEffect(() => {
+    setOfflineCount(getOfflineTempLogsCount());
+
+    const tryFlush = async () => {
+      if (typeof navigator !== "undefined" && !navigator.onLine) return;
+      try {
+        const orgId = await getActiveOrgIdClient();
+        if (!orgId) return;
+        setUploadingOffline(true);
+        const uploaded = await flushOfflineTempLogs(supabase, orgId);
+        if (uploaded > 0) {
+          await refreshRows();
+        }
+      } finally {
+        setUploadingOffline(false);
+        setOfflineCount(getOfflineTempLogsCount());
+      }
+    };
+
+    void tryFlush();
+
+    const handler = () => {
+      void tryFlush();
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", handler);
+    }
+
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("online", handler);
+      }
+    };
+  }, []);
+
+  async function handleUploadOfflineNow() {
+    try {
+      const orgId = await getActiveOrgIdClient();
+      if (!orgId) {
+        alert("No organisation found.");
+        return;
+      }
+      setUploadingOffline(true);
+      const uploaded = await flushOfflineTempLogs(supabase, orgId);
+      if (uploaded > 0) {
+        await refreshRows();
+        alert(
+          `${uploaded} offline ${
+            uploaded === 1 ? "entry" : "entries"
+          } uploaded successfully.`
+        );
+      } else {
+        alert("No offline entries to upload or upload failed.");
+      }
+    } catch (e: any) {
+      alert(e?.message || "Failed to upload offline entries.");
+    } finally {
+      setUploadingOffline(false);
+      setOfflineCount(getOfflineTempLogsCount());
+    }
+  }
+
   /* Prefill first item via ?r= */
   useEffect(() => {
     const rid = search.get("r");
@@ -713,7 +788,7 @@ export default function FoodTempLogger({
     }
   }
 
-  /* save one entry */
+  /* save one entry (with offline queue) */
   async function handleAddQuick() {
     const tempNum = Number.isFinite(Number(form.temp_c))
       ? Number(form.temp_c)
@@ -729,23 +804,56 @@ export default function FoodTempLogger({
       return;
     }
 
-    const payload = {
+    const payload: TempLogPayload = {
       org_id,
       at: form.date,
       area: form.location || null,
       note: form.item || null,
       staff_initials: form.staff_initials
         ? form.staff_initials.toUpperCase()
-        : null,
+        : "",
       target_key: form.target_key || null,
       temp_c: tempNum,
       status,
     };
 
-    const { error } = await supabase.from("food_temp_logs").insert(payload);
-    if (error) {
-      alert(`Save failed: ${error.message}`);
-      return;
+    const queueAndNotify = () => {
+      queueTempLogs([payload]);
+      setOfflineCount(getOfflineTempLogsCount());
+      alert(
+        "No signal – entry saved on this device and will upload when you're back online."
+      );
+    };
+
+    let savedOnline = false;
+
+    // If clearly offline, skip Supabase and queue immediately
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      queueAndNotify();
+    } else {
+      try {
+        const { error } = await supabase
+          .from("food_temp_logs")
+          .insert(payload);
+
+        if (error) {
+          if (looksLikeNetworkError(error)) {
+            queueAndNotify();
+          } else {
+            alert(`Save failed: ${error.message}`);
+            return;
+          }
+        } else {
+          savedOnline = true;
+        }
+      } catch (err: any) {
+        if (looksLikeNetworkError(err)) {
+          queueAndNotify();
+        } else {
+          alert(err?.message || "Save failed.");
+          return;
+        }
+      }
     }
 
     try {
@@ -755,13 +863,16 @@ export default function FoodTempLogger({
     } catch {}
 
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
-    await refreshRows();
+
+    if (savedOnline) {
+      await refreshRows();
+    }
   }
 
   const onTempKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
     if (e.key === "Enter" && canSave) {
       e.preventDefault();
-      handleAddQuick();
+      void handleAddQuick();
     }
   };
 
@@ -1113,14 +1224,31 @@ export default function FoodTempLogger({
           </span>
         </div>
 
+        {/* Offline queue banner */}
+        {offlineCount > 0 && (
+          <div className="mt-3 flex items-center justify-between rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <span>
+              {offlineCount} temperature{" "}
+              {offlineCount === 1 ? "entry is" : "entries are"} saved on this
+              device and waiting to upload when you're back online.
+            </span>
+            <button
+              type="button"
+              onClick={handleUploadOfflineNow}
+              disabled={uploadingOffline}
+              className="ml-3 rounded-full border border-amber-400 px-3 py-1 text-[11px] font-semibold hover:bg-amber-100 disabled:opacity-60"
+            >
+              {uploadingOffline ? "Uploading…" : "Upload now"}
+            </button>
+          </div>
+        )}
+
         {err && (
           <div className="mt-2 rounded-md border border-red-200 bg-red-50/90 px-3 py-2 text-sm text-red-800">
             {err}
           </div>
         )}
       </div>
-
-    
 
       {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
       <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">

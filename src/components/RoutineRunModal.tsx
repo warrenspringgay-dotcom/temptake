@@ -5,8 +5,13 @@ import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
-// If you have a local type, adjust this import:
 import type { RoutineRow } from "@/components/RoutinePickerModal";
+
+import {
+  queueTempLogs,
+  looksLikeNetworkError,
+  type TempLogPayload,
+} from "@/lib/offlineTempQueue";
 
 type Props = {
   open: boolean;
@@ -145,19 +150,8 @@ export default function RoutineRunModal({
         return;
       }
 
-      type NewLogRow = {
-        org_id: string;
-        at: string;
-        area: string | null;
-        note: string | null;
-        staff_initials: string;
-        target_key: string | null;
-        temp_c: number | null;
-        status: "pass" | "fail" | null;
-      };
-
-      const rowsToSave: NewLogRow[] = routine.items
-        .map<NewLogRow | null>((it) => {
+      const rowsToSave: TempLogPayload[] = routine.items
+        .map<TempLogPayload | null>((it) => {
           const raw = (temps[it.id] ?? "").trim();
           if (!raw) return null; // skip empty temps
 
@@ -177,7 +171,7 @@ export default function RoutineRunModal({
             status,
           };
         })
-        .filter((row): row is NewLogRow => row !== null);
+        .filter((row): row is TempLogPayload => row !== null);
 
       if (!rowsToSave.length) {
         // nothing filled in – just close
@@ -185,15 +179,45 @@ export default function RoutineRunModal({
         return;
       }
 
-      const { error } = await supabase
-        .from("food_temp_logs")
-        .insert(rowsToSave);
+      const queueAndNotify = () => {
+        queueTempLogs(rowsToSave);
+        alert(
+          "No signal – entries saved on this device and will upload when you're back online."
+        );
+      };
 
-      if (error) {
-        alert(`Save failed: ${error.message}`);
-        return;
+      let savedOnline = false;
+
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        // definitely offline
+        queueAndNotify();
+      } else {
+        try {
+          const { error } = await supabase
+            .from("food_temp_logs")
+            .insert(rowsToSave);
+
+          if (error) {
+            if (looksLikeNetworkError(error)) {
+              queueAndNotify();
+            } else {
+              alert(`Save failed: ${error.message}`);
+              return;
+            }
+          } else {
+            savedOnline = true;
+          }
+        } catch (err: any) {
+          if (looksLikeNetworkError(err)) {
+            queueAndNotify();
+          } else {
+            alert(err?.message || "Save failed.");
+            return;
+          }
+        }
       }
 
+      // Let parent refresh either way (online save or queued offline)
       await onSaved();
       onClose();
     } finally {
