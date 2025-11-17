@@ -9,6 +9,7 @@ import { getUserOrNull } from "@/app/actions/auth";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import Pwa from "@/components/Pwa";
 import OrgName from "@/components/OrgName";
+import LocationSwitcher from "@/components/LocationSwitcher";
 
 export default async function RootLayout({
   children,
@@ -33,45 +34,44 @@ export default async function RootLayout({
       <body className="bg-gray-100 text-gray-900">
         {/* STICKY TOP BAR */}
         <header className="sticky top-0 z-50 border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/70">
-  <div className="mx-auto max-w-6xl px-4">
-    <div className="flex h-12 items-center gap-3">
-      {/* Left: brand */}
-      <Link href="/dashboard" className="flex items-center gap-2">
-        <Image src="/logo.png" width={24} height={24} alt="TempTake" />
-        <span className="font-semibold">TempTake</span>
-      </Link>
+          <div className="mx-auto max-w-6xl px-4">
+            <div className="flex h-12 items-center gap-3">
+              {/* Left: brand */}
+              <Link href="/dashboard" className="flex items-center gap-2">
+                <Image src="/logo.png" width={24} height={24} alt="TempTake" />
+                <span className="font-semibold">TempTake</span>
+              </Link>
 
-      {/* Mobile: business name centred */}
-      <div className="flex-1 md:hidden">
-        <OrgName className="block truncate text-center text-xs font-semibold" />
-      </div>
+              {/* Mobile: business name centred */}
+              <div className="flex-1 md:hidden">
+                <OrgName className="block truncate text-center text-xs font-semibold" />
+              </div>
 
-      {/* Desktop: centred nav tabs */}
-      <div className="mx-auto hidden md:block">
-        <NavTabs />
-      </div>
+              {/* Desktop: centred nav tabs */}
+              <div className="mx-auto hidden md:block">
+                <NavTabs />
+              </div>
 
-      {/* Right side */}
-      <div className="ml-auto flex items-center gap-3">
-        {/* Desktop business name */}
-        <OrgName className="hidden max-w-[220px] truncate text-sm font-medium text-slate-600 md:inline" />
+              {/* Right side */}
+              <div className="ml-auto flex items-center gap-3">
+                {/* Location switcher – the “business name” / site toggle */}
+                <div className="max-w-[180px] flex-1 md:max-w-[220px]">
+                  <LocationSwitcher />
+                </div>
 
-      
+                {/* Desktop: user menu */}
+                <div className="hidden md:block">
+                  <UserMenu user={user} />
+                </div>
 
-        {/* Desktop: user menu */}
-        <div className="hidden md:block">
-          <UserMenu user={user} />
-        </div>
-
-        {/* Mobile: hamburger */}
-        <div className="md:hidden">
-          <MobileMenu user={user} />
-        </div>
-      </div>
-    </div>
-  </div>
-</header>
-
+                {/* Mobile: hamburger */}
+                <div className="md:hidden">
+                  <MobileMenu user={user} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </header>
 
         <Pwa />
 

@@ -80,6 +80,13 @@ const overdue = (info: ReviewInfo): boolean => {
   return Date.now() > next;
 };
 
+const formatDateUK = (iso?: string) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-GB");
+};
+
 /* ---------- Component ---------- */
 export default function AllergenManager() {
   const [hydrated, setHydrated] = useState(false);
@@ -257,27 +264,31 @@ export default function AllergenManager() {
     } catch {}
   }
 
+  // Load last review info from allergen_review_log (history; just take latest)
   async function loadReviewFromSupabase(id = orgId) {
     if (!id) return;
+
     const { data, error } = await supabase
-      .from("allergen_reviews")
-      .select("last_reviewed_on,last_reviewed_by,interval_days,organisation_id,org_id")
-      .or(`organisation_id.eq.${id},org_id.eq.${id}`)
+      .from("allergen_review_log")
+      .select("reviewed_on, reviewer, interval_days")
+      .eq("org_id", id)
+      .order("reviewed_on", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
-    if (error) return;
+    if (error || !data) return;
 
-    if (data) {
-      const nextState: ReviewInfo = {
-        intervalDays: data.interval_days ?? 30,
-        lastReviewedOn: data.last_reviewed_on ?? undefined,
-        lastReviewedBy: data.last_reviewed_by ?? undefined,
-      };
-      setReview(nextState);
-      try {
-        localStorage.setItem(LS_REVIEW, JSON.stringify(nextState));
-      } catch {}
-    }
+    const nextState: ReviewInfo = {
+      intervalDays:
+        typeof data.interval_days === "number" ? data.interval_days : 30,
+      lastReviewedOn: data.reviewed_on ?? undefined,
+      lastReviewedBy: data.reviewer ?? undefined,
+    };
+
+    setReview(nextState);
+    try {
+      localStorage.setItem(LS_REVIEW, JSON.stringify(nextState));
+    } catch {}
   }
 
   /* ---------- persist local shadows ---------- */
@@ -444,21 +455,31 @@ export default function AllergenManager() {
 
     const id = orgId ?? (await getActiveOrgIdClient());
     const today = todayISO();
-    const nextDue = new Date(
-      Date.now() + review.intervalDays * 86_400_000
-    )
-      .toISOString()
-      .slice(0, 10);
 
-    // Who is reviewing?
+    // Who is reviewing (prefer team member name)
     let reviewer = "Manager";
+    let createdBy: string | null = null;
+
     try {
       const userRes = await supabase.auth.getUser();
-      reviewer = userRes.data.user?.email ?? reviewer;
+      const email = userRes.data.user?.email?.toLowerCase() ?? null;
+      createdBy = userRes.data.user?.id ?? null;
+
+      if (email && id) {
+        const { data: tm } = await supabase
+          .from("team_members")
+          .select("name")
+          .eq("email", email)
+          .eq("org_id", id)
+          .maybeSingle();
+
+        reviewer = tm?.name ?? email ?? reviewer;
+      }
     } catch {
       // ignore
     }
 
+    // update local pill state immediately
     setReview((r) => ({
       ...r,
       lastReviewedOn: today,
@@ -467,17 +488,16 @@ export default function AllergenManager() {
 
     if (!id) return;
 
-    const { error } = await supabase.from("allergen_reviews").upsert(
-      {
-        organisation_id: id,
-        org_id: id,
-        last_reviewed_on: today,
-        last_reviewed_by: reviewer,
-        interval_days: review.intervalDays,
-        next_due: nextDue,
-      },
-      { onConflict: "organisation_id" }
-    );
+    // Insert a history row in allergen_review_log
+    const { error } = await supabase.from("allergen_review_log").insert({
+      org_id: id,
+      reviewed_on: today,
+      reviewer,
+      interval_days: review.intervalDays,
+      notes: null,
+      created_at: new Date().toISOString(),
+    });
+
     if (error) {
       alert(`Failed to save review: ${error.message}`);
     }
@@ -568,7 +588,9 @@ export default function AllergenManager() {
             <div className="text-xs text-slate-600">
               Last reviewed:{" "}
               {review.lastReviewedOn ? (
-                <span className="font-medium">{review.lastReviewedOn}</span>
+                <span className="font-medium">
+                  {formatDateUK(review.lastReviewedOn)}
+                </span>
               ) : (
                 <span className="italic">never</span>
               )}

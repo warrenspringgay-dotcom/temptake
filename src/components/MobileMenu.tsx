@@ -1,103 +1,138 @@
 // src/components/MobileMenu.tsx
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 
 type Props = {
   user: any | null;
 };
 
-const NAV_ITEMS = [
+const cls = (...parts: Array<string | false | null | undefined>) =>
+  parts.filter(Boolean).join(" ");
+
+const mobileLinks: { href: string; label: string }[] = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/routines", label: "Routines" },
-  { href: "/allergens", label: "Allergens" },
+  { href: "/foodtemps", label: "Food temperature logs" },
   { href: "/cleaning-rota", label: "Cleaning rota" },
   { href: "/team", label: "Team" },
+  // NEW: Locations entry
+  { href: "/locations", label: "Locations" },
   { href: "/suppliers", label: "Suppliers" },
-  { href: "/leaderboard", label: "Leaderboard" },
+  { href: "/training", label: "Training" },
+  { href: "/allergens", label: "Allergen matrix" },
   { href: "/reports", label: "Reports" },
-  { href: "/settings", label: "Settings" },
+  { href: "/help", label: "Help & support" },
 ];
 
 export default function MobileMenu({ user }: Props) {
   const [open, setOpen] = useState(false);
-  const pathname = usePathname();
+  const [signingOut, setSigningOut] = useState(false);
+  const router = useRouter();
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    window.location.href = "/login";
+  async function handleSignOut() {
+    try {
+      setSigningOut(true);
+      await supabase.auth.signOut();
+      setOpen(false);
+      router.push("/login");
+      router.refresh?.();
+    } catch (e) {
+      console.error(e);
+      alert("Sign out failed. Please try again.");
+    } finally {
+      setSigningOut(false);
+    }
   }
 
   return (
-    <div className="relative">
-      {/* hamburger button */}
+    <>
+      {/* Hamburger button */}
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-300 bg-white text-sm shadow-sm"
+        onClick={() => setOpen(true)}
+        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50"
         aria-label="Open menu"
       >
-        ☰
+        <span className="block h-[1px] w-3 bg-slate-800" />
+        <span className="mt-[3px] block h-[1px] w-3 bg-slate-800" />
+        <span className="mt-[3px] block h-[1px] w-3 bg-slate-800" />
       </button>
 
+      {/* Overlay + sheet */}
       {open && (
-        <div className="absolute right-0 mt-2 w-56 rounded-2xl border bg-white py-2 text-sm shadow-lg">
-          <div className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Navigation
-          </div>
-
-          {NAV_ITEMS.map((item) => {
-            const active =
-              pathname === item.href ||
-              (pathname?.startsWith(item.href + "/") ?? false);
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setOpen(false)}
-                className={`block px-3 py-1.5 ${
-                  active
-                    ? "bg-black text-white"
-                    : "text-gray-800 hover:bg-gray-100"
-                }`}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-
-          <div className="my-2 border-t" />
-
-          <Link
-            href="/help"
-            onClick={() => setOpen(false)}
-            className="block px-3 py-1.5 text-gray-800 hover:bg-gray-100"
-          >
-            Help
-          </Link>
-
-          {/* You can add a /settings page later and hook this up */}
-          {/* <Link
-            href="/settings"
-            onClick={() => setOpen(false)}
-            className="block px-3 py-1.5 text-gray-800 hover:bg-gray-100"
-          >
-            Settings
-          </Link> */}
-
+        <div className="fixed inset-0 z-50">
+          {/* Dim background */}
           <button
             type="button"
-            onClick={handleLogout}
-            className="mt-1 block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50"
-          >
-            Log out
-          </button>
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setOpen(false)}
+            aria-label="Close menu"
+          />
+
+          {/* Sheet */}
+          <div className="absolute inset-y-0 right-0 flex w-72 max-w-full flex-col bg-white shadow-xl">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                Menu
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* User summary */}
+            <div className="border-b border-slate-100 px-4 py-3 text-xs text-slate-600">
+              <div className="font-semibold text-slate-900">
+                {user?.user_metadata?.full_name ||
+                  user?.user_metadata?.name ||
+                  user?.email ||
+                  "Account"}
+              </div>
+              <div className="mt-0.5 text-[11px] text-slate-500">
+                Tap a section below to navigate.
+              </div>
+            </div>
+
+            {/* Links */}
+            <nav className="flex-1 overflow-y-auto px-1 py-2">
+              {mobileLinks.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setOpen(false)}
+                  className={cls(
+                    "block rounded-xl px-3 py-2 text-sm text-slate-800",
+                    "hover:bg-slate-100 active:bg-slate-200"
+                  )}
+                >
+                  {link.label}
+                </Link>
+              ))}
+            </nav>
+
+            {/* Footer: sign out */}
+            <div className="border-t border-slate-200 px-4 py-3">
+              <button
+                type="button"
+                onClick={handleSignOut}
+                disabled={signingOut}
+                className="flex w-full items-center justify-between rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
+              >
+                <span>Sign out</span>
+                <span className="text-xs">{signingOut ? "…" : "⏏"}</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

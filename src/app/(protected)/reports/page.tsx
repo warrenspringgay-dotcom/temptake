@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabaseBrowser";
 import Button from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Download, Printer } from "lucide-react";
+import { getActiveOrgIdClient } from "@/lib/orgClient";
 
 type TempRow = {
   id: string;
@@ -44,6 +45,7 @@ function toISODate(val: any): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Temperature logs – unchanged, still using food_temp_logs */
 async function fetchTemps(fromISO: string, toISO: string): Promise<TempRow[]> {
   const { data, error } = await supabase
     .from("food_temp_logs")
@@ -72,10 +74,28 @@ async function fetchTemps(fromISO: string, toISO: string): Promise<TempRow[]> {
   }));
 }
 
+/**
+ * Team training due – now uses staff + trainings tables.
+ * Filters by current org_id and looks at each training record's expires_on.
+ */
 async function fetchTeamDue(withinDays: number): Promise<TeamRow[]> {
+  // Pull training records + related staff details
   const { data, error } = await supabase
-    .from("team_members")
-    .select("id, name, email, initials, training_expiry, expires_at")
+    .from("trainings")
+    .select(
+      `
+      id,
+      expires_on,
+      staff:staff_id (
+        id,
+        name,
+        email,
+        initials
+      )
+    `
+    )
+    .not("expires_on", "is", null)
+    .order("expires_on", { ascending: true })
     .limit(2000);
 
   if (error) throw error;
@@ -83,39 +103,67 @@ async function fetchTeamDue(withinDays: number): Promise<TeamRow[]> {
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
 
-  return (data ?? [])
-    .map((r: any) => {
-      const raw = r.training_expiry ?? r.expires_at ?? null;
+  // For each staff member, keep the SOONEST expiry within the window
+  const byStaff = new Map<string, TeamRow>();
 
-      const iso = raw ? new Date(raw).toISOString() : null;
-      const d0 = raw ? new Date(raw) : null;
-      if (d0) d0.setHours(0, 0, 0, 0);
+  for (const r of data ?? []) {
+    const s = (r as any).staff;
+    if (!s || !r.expires_on) continue;
 
-      const fallbackId =
-        typeof crypto !== "undefined" && (crypto as any).randomUUID
-          ? (crypto as any).randomUUID()
-          : Math.random().toString(36).slice(2);
+    const staffId = String(s.id);
+    const expiresDate = new Date(r.expires_on);
+    if (Number.isNaN(expiresDate.getTime())) continue;
 
-      return {
-        id: String(r.id ?? r.email ?? fallbackId),
-        name: r.name ?? "—",
-        email: r.email ?? null,
-        initials: r.initials ?? null,
-        expires_on: iso,
-        days_until: d0
-          ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
-          : null,
-      };
-    })
-    .filter((r) => r.days_until != null && r.days_until <= withinDays)
-    .sort((a, b) => (a.expires_on || "").localeCompare(b.expires_on || ""));
+    const expiresISO = expiresDate.toISOString();
+    const d0 = new Date(expiresDate);
+    d0.setHours(0, 0, 0, 0);
+
+    const daysUntil = Math.round(
+      (d0.getTime() - today0.getTime()) / 86400000
+    );
+
+    if (daysUntil > withinDays) continue;
+
+    const existing = byStaff.get(staffId);
+    if (existing) {
+      // keep the earliest expiry
+      if (
+        existing.expires_on &&
+        new Date(existing.expires_on).getTime() <= expiresDate.getTime()
+      ) {
+        continue;
+      }
+    }
+
+    byStaff.set(staffId, {
+      id: staffId,
+      name: s.name ?? "—",
+      email: s.email ?? null,
+      initials: s.initials ?? null,
+      expires_on: expiresISO,
+      days_until: daysUntil,
+    });
+  }
+
+  return Array.from(byStaff.values()).sort((a, b) =>
+    (a.expires_on || "").localeCompare(b.expires_on || "")
+  );
 }
 
+/**
+ * Allergen reviews – now reads from existing allergen_review table
+ * and derives next_due from last_reviewed + interval_days.
+ */
 async function fetchAllergensDue(withinDays: number): Promise<AllergenRow[]> {
+  const orgId = await getActiveOrgIdClient();
+  if (!orgId) return [];
+
   const { data, error } = await supabase
-    .from("allergen_review")
-    .select("id, name, location, area, last_reviewed, interval_days")
-    .limit(2000);
+    .from("allergen_review") // NOTE: singular table name
+    .select("id, org_id, last_reviewed, interval_days, reviewer, created_at")
+    .eq("org_id", orgId)
+    .order("last_reviewed", { ascending: false })
+    .limit(365);
 
   if (error) throw error;
 
@@ -126,31 +174,33 @@ async function fetchAllergensDue(withinDays: number): Promise<AllergenRow[]> {
     .map((r: any) => {
       const lr = r.last_reviewed ? new Date(r.last_reviewed) : null;
       let nextISO: string | null = null;
+
       if (lr && Number.isFinite(Number(r.interval_days))) {
         const next = new Date(
           lr.getTime() + Number(r.interval_days) * 86400000
         );
         nextISO = next.toISOString();
       }
+
       const d0 = nextISO ? new Date(nextISO) : null;
       if (d0) d0.setHours(0, 0, 0, 0);
 
-      const fallbackId =
-        typeof crypto !== "undefined" && (crypto as any).randomUUID
-          ? (crypto as any).randomUUID()
-          : Math.random().toString(36).slice(2);
+      const days_until =
+        d0 != null
+          ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
+          : null;
 
       return {
-        id: String(r.id ?? fallbackId),
-        item: r.name ?? "—",
-        location: r.location ?? r.area ?? "—",
+        id: String(r.id),
+        item: "Allergen register",
+        location: "All locations",
         next_due: nextISO,
-        days_until: d0
-          ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
-          : null,
-      };
+        days_until,
+      } as AllergenRow;
     })
-    .filter((r) => r.days_until != null && r.days_until <= withinDays)
+    .filter(
+      (r) => r.days_until != null && r.days_until <= withinDays
+    )
     .sort((a, b) => (a.next_due || "").localeCompare(b.next_due || ""));
 }
 

@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import ActionMenu from "@/components/ActionMenu";
+import { saveTrainingServer } from "@/app/actions/training";
 
 /* -------------------- Types -------------------- */
 type Member = {
@@ -35,26 +36,31 @@ function fmt(iso?: string | null) {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString();
 }
 
+function safeInitials(m: Member): string {
+  const fromField = (m.initials ?? "").trim().toUpperCase();
+  if (fromField) return fromField;
+
+  const parts = m.name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "";
+  if (parts.length === 1) return parts[0]!.charAt(0).toUpperCase();
+  return (parts[0]!.charAt(0) + parts[1]!.charAt(0)).toUpperCase();
+}
+
 /* ================================================= */
 export default function TeamManager() {
   const [rows, setRows] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [orgId, setOrgId] = useState<string | null>(null);
 
-  // who am I (for permissions)
   const [isOwner, setIsOwner] = useState(false);
-
-  // search
   const [q, setQ] = useState("");
 
-  // modals – member
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewFor, setViewFor] = useState<Member | null>(null);
 
-  // modals – education
   const [eduOpen, setEduOpen] = useState(false);
   const [eduFor, setEduFor] = useState<Member | null>(null);
   const [eduSaving, setEduSaving] = useState(false);
@@ -70,7 +76,6 @@ export default function TeamManager() {
   const [eduList, setEduList] = useState<Training[]>([]);
   const [eduListLoading, setEduListLoading] = useState(false);
 
-  // modals – invite
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteForm, setInviteForm] = useState({
     email: "",
@@ -91,8 +96,7 @@ export default function TeamManager() {
         supabase.auth.getUser(),
       ]);
 
-      const userEmail =
-        userRes.data.user?.email?.toLowerCase() ?? null;
+      const userEmail = userRes.data.user?.email?.toLowerCase() ?? null;
       const userName =
         (userRes.data.user?.user_metadata as any)?.full_name ??
         userRes.data.user?.email ??
@@ -106,7 +110,6 @@ export default function TeamManager() {
         return;
       }
 
-      // 1) Load existing team members
       let members: Member[] = [];
       let ownerFlag = false;
 
@@ -119,8 +122,6 @@ export default function TeamManager() {
       if (error) throw error;
       members = (data ?? []) as Member[];
 
-      // 2) If there are NO members yet but we have a user + org,
-      //    auto-create the current user as the OWNER.
       if (members.length === 0 && id && userEmail) {
         const { data: inserted, error: insErr } = await supabase
           .from("team_members")
@@ -134,26 +135,21 @@ export default function TeamManager() {
             notes: null,
             active: true,
           })
-          .select(
-            "id, initials, name, email, role, phone, active, notes"
-          )
+          .select("id, initials, name, email, role, phone, active, notes")
           .maybeSingle();
 
         if (!insErr && inserted) {
           members = [inserted as Member];
-          ownerFlag = true; // they are definitely owner
+          ownerFlag = true;
         }
       }
 
-      // 3) Work out if current user is owner/admin (if not already forced above)
       if (!ownerFlag && userEmail && members.length) {
         const me = members.find(
-          (m) =>
-            m.email && m.email.toLowerCase() === userEmail
+          (m) => m.email && m.email.toLowerCase() === userEmail
         );
         const role = (me?.role ?? "").toLowerCase();
-        ownerFlag =
-          role === "owner" || role === "admin";
+        ownerFlag = role === "owner" || role === "admin";
       }
 
       setRows(members);
@@ -178,9 +174,7 @@ export default function TeamManager() {
     return rows.filter((r) =>
       [r.initials, r.name, r.email, r.role]
         .filter(Boolean)
-        .some((s) =>
-          (s ?? "").toLowerCase().includes(term)
-        )
+        .some((s) => (s ?? "").toLowerCase().includes(term))
     );
   }, [rows, q]);
 
@@ -191,7 +185,7 @@ export default function TeamManager() {
       initials: "",
       name: "",
       email: "",
-      role: "staff", // default role
+      role: "staff",
       phone: "",
       active: true,
       notes: "",
@@ -208,15 +202,11 @@ export default function TeamManager() {
     if (!editing) return;
     try {
       if (!orgId) return alert("No organisation found.");
-      if (!editing.name.trim())
-        return alert("Name is required.");
+      if (!editing.name.trim()) return alert("Name is required.");
 
-      // normalise role (always store lower-case, default staff)
-      const roleValue =
-        (editing.role ?? "").trim().toLowerCase() || "staff";
+      const roleValue = (editing.role ?? "").trim().toLowerCase() || "staff";
 
       if (editing.id) {
-        // UPDATE existing member
         const updatePayload: any = {
           initials: editing.initials?.trim() || null,
           name: editing.name.trim(),
@@ -226,7 +216,6 @@ export default function TeamManager() {
           active: editing.active ?? true,
         };
 
-        // only owners can edit the role
         if (isOwner) {
           updatePayload.role = roleValue;
         }
@@ -238,24 +227,21 @@ export default function TeamManager() {
           .eq("org_id", orgId);
         if (error) throw error;
       } else {
-        // INSERT new member – owners only
         if (!isOwner) {
           alert("Only the owner can add team members.");
           return;
         }
 
-        const { error } = await supabase
-          .from("team_members")
-          .insert({
-            org_id: orgId,
-            initials: editing.initials?.trim() || null,
-            name: editing.name.trim(),
-            email: editing.email?.trim() || null,
-            role: roleValue,
-            phone: editing.phone?.trim() || null,
-            notes: editing.notes?.trim() || null,
-            active: true,
-          });
+        const { error } = await supabase.from("team_members").insert({
+          org_id: orgId,
+          initials: editing.initials?.trim() || null,
+          name: editing.name.trim(),
+          email: editing.email?.trim() || null,
+          role: roleValue,
+          phone: editing.phone?.trim() || null,
+          notes: editing.notes?.trim() || null,
+          active: true,
+        });
         if (error) throw error;
       }
 
@@ -286,9 +272,30 @@ export default function TeamManager() {
   }
 
   /* -------------------- Training load / save -------------------- */
-  async function loadTrainingsFor(staffId: string) {
+
+  // Load trainings for a given member by resolving staff.id from the staff table
+  async function loadTrainingsFor(member: Member) {
     setEduListLoading(true);
     try {
+      const initials = safeInitials(member);
+      if (!initials) {
+        setEduList([]);
+        return;
+      }
+
+      const { data: staffRow, error: staffErr } = await supabase
+        .from("staff")
+        .select("id")
+        .eq("initials", initials)
+        .maybeSingle();
+
+      if (staffErr || !staffRow?.id) {
+        setEduList([]);
+        return;
+      }
+
+      const staffId = staffRow.id as string;
+
       const { data, error } = await supabase
         .from("trainings")
         .select(
@@ -296,6 +303,7 @@ export default function TeamManager() {
         )
         .eq("staff_id", staffId)
         .order("awarded_on", { ascending: false });
+
       if (error) throw error;
       setEduList((data ?? []) as Training[]);
     } catch {
@@ -308,7 +316,7 @@ export default function TeamManager() {
   function openCard(m: Member) {
     setViewFor(m);
     setViewOpen(true);
-    void loadTrainingsFor(m.id);
+    void loadTrainingsFor(m);
   }
 
   function openEducation(m: Member) {
@@ -329,38 +337,35 @@ export default function TeamManager() {
     if (!eduForm.course.trim()) return;
 
     try {
-      if (!orgId) return alert("No organisation found.");
       setEduSaving(true);
 
-      const me =
-        (await supabase.auth.getUser()).data.user?.id ??
-        null;
+      const initials = safeInitials(eduFor);
+      if (!initials) {
+        alert("This team member has no initials set.");
+        return;
+      }
 
-      const payload: any = {
-        staff_id: eduFor.id,
+      const combinedNotes =
+        [
+          eduForm.provider && `Provider: ${eduForm.provider}`,
+          eduForm.notes && eduForm.notes,
+        ]
+          .filter(Boolean)
+          .join(" · ") || null;
+
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const awarded_on = eduForm.completedOn || todayISO;
+
+      await saveTrainingServer({
         type: eduForm.course.trim(),
-        certificate_url:
-          eduForm.certificateUrl.trim() || null,
-        awarded_on: eduForm.completedOn || null,
+        awarded_on,
         expires_on: eduForm.expiryOn || null,
-        notes:
-          [
-            eduForm.provider &&
-              `Provider: ${eduForm.provider}`,
-            eduForm.notes && eduForm.notes,
-          ]
-            .filter(Boolean)
-            .join(" · ") || null,
-        org_id: orgId,
-        created_by: me,
-      };
+        certificate_url: eduForm.certificateUrl.trim() || null,
+        notes: combinedNotes,
+        staffInitials: initials,
+      });
 
-      const { error } = await supabase
-        .from("trainings")
-        .insert(payload);
-      if (error) throw error;
-
-      await loadTrainingsFor(eduFor.id);
+      await loadTrainingsFor(eduFor);
       setEduOpen(false);
     } catch (e: any) {
       alert(e?.message ?? "Failed to save training.");
@@ -381,10 +386,8 @@ export default function TeamManager() {
     setInviteError(null);
     setInviteInfo(null);
 
-    const cleanEmail =
-      inviteForm.email.trim().toLowerCase();
-    const role =
-      (inviteForm.role.trim() || "staff").toLowerCase();
+    const cleanEmail = inviteForm.email.trim().toLowerCase();
+    const role = (inviteForm.role.trim() || "staff").toLowerCase();
 
     if (!cleanEmail) {
       setInviteError("Enter an email to invite.");
@@ -399,14 +402,13 @@ export default function TeamManager() {
 
       setInviteSending(true);
 
-      // 1) Upsert the team_members row (so the org link exists even if email fails)
       const { error: tmError } = await supabase
         .from("team_members")
         .upsert(
           {
             org_id: orgId,
             email: cleanEmail,
-            name: cleanEmail, // can be edited later
+            name: cleanEmail,
             role,
             active: true,
           },
@@ -414,44 +416,40 @@ export default function TeamManager() {
         );
       if (tmError) throw tmError;
 
-      // 2) Send a magic-link (no password required)
-      const { error: otpErr } =
-        await supabase.auth.signInWithOtp({
-          email: cleanEmail,
-          options: {
-            emailRedirectTo: `${window.location.origin}/login`,
-          },
-        });
+      const { error: otpErr } = await supabase.auth.signInWithOtp({
+        email: cleanEmail,
+        options: {
+          emailRedirectTo: `${window.location.origin}/login`,
+        },
+      });
 
       if (otpErr) {
-        // If magic links aren't enabled, still consider the team link created.
         setInviteInfo(
           "Invite created. Configure Supabase Auth → Email OTP (Magic Link) to send the email."
         );
       } else {
-        setInviteInfo(
-          "Invite sent. They’ll receive a sign-in link by email."
-        );
+        setInviteInfo("Invite sent. They’ll receive a sign-in link by email.");
       }
 
       await load();
     } catch (e: any) {
-      setInviteError(
-        e?.message ?? "Failed to send invite."
-      );
+      setInviteError(e?.message ?? "Failed to send invite.");
     } finally {
       setInviteSending(false);
     }
   }
+
+  /* -------------------- Render (unchanged below) -------------------- */
+  // ... [KEEP THE REST OF THE RENDER / MODALS EXACTLY AS YOU HAVE IT NOW]
+
+
 
   /* -------------------- Render -------------------- */
   return (
     <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-lg font-semibold text-slate-900">
-          Team
-        </h1>
+        <h1 className="text-lg font-semibold text-slate-900">Team</h1>
         <div className="ml-auto flex min-w-0 items-center gap-2">
           <input
             className="h-9 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900 placeholder:text-slate-400 md:w-64"
@@ -487,27 +485,19 @@ export default function TeamManager() {
               <th className="py-2 pr-3">Name</th>
               <th className="w-56 py-2 pr-3">Role</th>
               <th className="w-20 py-2 pr-3">Active</th>
-              <th className="w-40 py-2 pr-0 text-right">
-                Actions
-              </th>
+              <th className="w-40 py-2 pr-0 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td
-                  colSpan={5}
-                  className="py-6 text-center text-slate-500"
-                >
+                <td colSpan={5} className="py-6 text-center text-slate-500">
                   Loading…
                 </td>
               </tr>
             ) : filtered.length ? (
               filtered.map((r) => (
-                <tr
-                  key={r.id}
-                  className="border-t border-slate-100"
-                >
+                <tr key={r.id} className="border-t border-slate-100">
                   <td className="py-2 pr-3 text-center font-medium text-slate-900">
                     {r.initials ?? "—"}
                   </td>
@@ -521,12 +511,8 @@ export default function TeamManager() {
                   </td>
                   <td className="py-2 pr-3 text-slate-900">
                     {r.role
-                      ? r.role
-                          .charAt(0)
-                          .toUpperCase() +
-                        r.role
-                          .slice(1)
-                          .toLowerCase()
+                      ? r.role.charAt(0).toUpperCase() +
+                        r.role.slice(1).toLowerCase()
                       : "—"}
                   </td>
                   <td className="py-2 pr-3 text-slate-900">
@@ -545,17 +531,14 @@ export default function TeamManager() {
                         },
                         {
                           label: "Add education",
-                          onClick: () =>
-                            openEducation(r),
+                          onClick: () => openEducation(r),
                         },
                         ...(isOwner
                           ? [
                               {
                                 label: "Delete",
-                                onClick: () =>
-                                  remove(r.id),
-                                variant:
-                                  "danger" as const,
+                                onClick: () => remove(r.id),
+                                variant: "danger" as const,
                               },
                             ]
                           : []),
@@ -566,10 +549,7 @@ export default function TeamManager() {
               ))
             ) : (
               <tr>
-                <td
-                  colSpan={5}
-                  className="py-6 text-center text-slate-500"
-                >
+                <td colSpan={5} className="py-6 text-center text-slate-500">
                   No team members yet.
                 </td>
               </tr>
@@ -592,17 +572,11 @@ export default function TeamManager() {
             >
               <div className="mb-1 flex items-start justify-between gap-2">
                 <div>
-                  <div className="font-medium">
-                    {r.name}
-                  </div>
+                  <div className="font-medium">{r.name}</div>
                   <div className="text-xs text-slate-500">
                     {r.role
-                      ? r.role
-                          .charAt(0)
-                          .toUpperCase() +
-                        r.role
-                          .slice(1)
-                          .toLowerCase()
+                      ? r.role.charAt(0).toUpperCase() +
+                        r.role.slice(1).toLowerCase()
                       : "—"}{" "}
                     · {r.active ? "Active" : "Inactive"}
                   </div>
@@ -619,17 +593,14 @@ export default function TeamManager() {
                     },
                     {
                       label: "Add education",
-                      onClick: () =>
-                        openEducation(r),
+                      onClick: () => openEducation(r),
                     },
                     ...(isOwner
                       ? [
                           {
                             label: "Delete",
-                            onClick: () =>
-                              remove(r.id),
-                            variant:
-                              "danger" as const,
+                            onClick: () => remove(r.id),
+                            variant: "danger" as const,
                           },
                         ]
                       : []),
@@ -638,21 +609,15 @@ export default function TeamManager() {
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs text-slate-800">
                 <div>
-                  <span className="text-slate-500">
-                    Initials:
-                  </span>{" "}
+                  <span className="text-slate-500">Initials:</span>{" "}
                   {r.initials ?? "—"}
                 </div>
                 <div>
-                  <span className="text-slate-500">
-                    Phone:
-                  </span>{" "}
+                  <span className="text-slate-500">Phone:</span>{" "}
                   {r.phone ?? "—"}
                 </div>
                 <div className="col-span-2 truncate">
-                  <span className="text-slate-500">
-                    Email:
-                  </span>{" "}
+                  <span className="text-slate-500">Email:</span>{" "}
                   {r.email ?? "—"}
                 </div>
                 {r.notes ? (
@@ -682,9 +647,7 @@ export default function TeamManager() {
           >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">
-                {editing.id
-                  ? "Edit member"
-                  : "Add member"}
+                {editing.id ? "Edit member" : "Add member"}
               </div>
               <button
                 onClick={() => setEditOpen(false)}
@@ -769,9 +732,7 @@ export default function TeamManager() {
                   {isOwner ? (
                     <select
                       className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                      value={
-                        (editing.role ?? "staff").toLowerCase()
-                      }
+                      value={(editing.role ?? "staff").toLowerCase()}
                       onChange={(e) =>
                         setEditing({
                           ...editing,
@@ -780,19 +741,14 @@ export default function TeamManager() {
                       }
                     >
                       <option value="staff">Staff</option>
-                      <option value="manager">
-                        Manager
-                      </option>
+                      <option value="manager">Manager</option>
                       <option value="owner">Owner</option>
                     </select>
                   ) : (
                     <input
                       className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm"
                       value={
-                        (editing.role ?? "staff")
-                          .toString()
-                          .charAt(0)
-                          .toUpperCase() +
+                        (editing.role ?? "staff").toString().charAt(0).toUpperCase() +
                         (editing.role ?? "staff")
                           .toString()
                           .slice(1)
@@ -864,12 +820,8 @@ export default function TeamManager() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="bg-slate-900 px-4 py-3 text-white">
-              <div className="text-sm opacity-80">
-                Team member
-              </div>
-              <div className="text-xl font-semibold">
-                {viewFor.name}
-              </div>
+              <div className="text-sm opacity-80">Team member</div>
+              <div className="text-xl font-semibold">{viewFor.name}</div>
               <div className="opacity-80">
                 {viewFor.active ? "Active" : "Inactive"}
               </div>
@@ -877,49 +829,33 @@ export default function TeamManager() {
 
             <div className="space-y-2 p-4 text-sm">
               <div>
-                <span className="font-medium">
-                  Initials:
-                </span>{" "}
+                <span className="font-medium">Initials:</span>{" "}
                 {viewFor.initials ?? "—"}
               </div>
               <div>
                 <span className="font-medium">Role:</span>{" "}
                 {viewFor.role
-                  ? viewFor.role
-                      .charAt(0)
-                      .toUpperCase() +
-                    viewFor.role
-                      .slice(1)
-                      .toLowerCase()
+                  ? viewFor.role.charAt(0).toUpperCase() +
+                    viewFor.role.slice(1).toLowerCase()
                   : "—"}
               </div>
               <div>
-                <span className="font-medium">
-                  Email:
-                </span>{" "}
+                <span className="font-medium">Email:</span>{" "}
                 {viewFor.email ?? "—"}
               </div>
               <div>
-                <span className="font-medium">
-                  Phone:
-                </span>{" "}
+                <span className="font-medium">Phone:</span>{" "}
                 {viewFor.phone ?? "—"}
               </div>
               <div>
-                <span className="font-medium">
-                  Notes:
-                </span>{" "}
+                <span className="font-medium">Notes:</span>{" "}
                 {viewFor.notes ?? "—"}
               </div>
 
               <div className="mt-3">
-                <div className="mb-1 font-medium">
-                  Education
-                </div>
+                <div className="mb-1 font-medium">Education</div>
                 {eduListLoading ? (
-                  <div className="text-slate-500">
-                    Loading…
-                  </div>
+                  <div className="text-slate-500">Loading…</div>
                 ) : eduList.length ? (
                   <ul className="list-disc space-y-1 pl-5">
                     {eduList.map((t) => (
@@ -938,11 +874,9 @@ export default function TeamManager() {
                           </a>
                         )}
                         <div className="text-xs text-slate-600">
-                          Awarded: {fmt(t.awarded_on)} ·
-                          Expires: {fmt(t.expires_on)}
-                          {t.notes
-                            ? ` · ${t.notes}`
-                            : ""}
+                          Awarded: {fmt(t.awarded_on)} · Expires:{" "}
+                          {fmt(t.expires_on)}
+                          {t.notes ? ` · ${t.notes}` : ""}
                         </div>
                       </li>
                     ))}
@@ -1042,8 +976,7 @@ export default function TeamManager() {
                     onChange={(e) =>
                       setEduForm((f) => ({
                         ...f,
-                        certificateUrl:
-                          e.target.value,
+                        certificateUrl: e.target.value,
                       }))
                     }
                     placeholder="Link or reference"
@@ -1112,9 +1045,7 @@ export default function TeamManager() {
                 </button>
                 <button
                   className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-                  disabled={
-                    eduSaving || !eduForm.course.trim()
-                  }
+                  disabled={eduSaving || !eduForm.course.trim()}
                   onClick={saveEducation}
                 >
                   {eduSaving ? "Saving…" : "Save"}
@@ -1187,9 +1118,8 @@ export default function TeamManager() {
               </div>
 
               <p className="text-xs text-slate-500">
-                We’ll add them to this business and send a
-                sign-in link. If they already have an account,
-                they can just sign in with this email.
+                We’ll add them to this business and send a sign-in link. If they
+                already have an account, they can just sign in with this email.
               </p>
 
               {inviteError && (
@@ -1215,9 +1145,7 @@ export default function TeamManager() {
                   disabled={inviteSending}
                   onClick={sendInvite}
                 >
-                  {inviteSending
-                    ? "Sending…"
-                    : "Send invite"}
+                  {inviteSending ? "Sending…" : "Send invite"}
                 </button>
               </div>
             </div>

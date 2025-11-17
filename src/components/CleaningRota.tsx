@@ -4,6 +4,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import ManageCleaningTasksModal, {
   CLEANING_CATEGORIES,
 } from "@/components/ManageCleaningTasksModal";
@@ -68,7 +69,13 @@ type CategoryPillProps = {
   onClick: () => void;
 };
 
-function CategoryPill({ title, total, open, active, onClick }: CategoryPillProps) {
+function CategoryPill({
+  title,
+  total,
+  open,
+  active,
+  onClick,
+}: CategoryPillProps) {
   const hasOpen = open > 0;
   const baseColor = hasOpen
     ? "bg-red-50/80 text-red-700 border-red-200/80"
@@ -85,9 +92,7 @@ function CategoryPill({ title, total, open, active, onClick }: CategoryPillProps
       <div className="text-[13px] leading-tight">{title}</div>
       <div className="mt-1 text-lg font-semibold leading-none">
         {total}
-        <span className="ml-1 text-[11px] opacity-75">
-          ({open} open)
-        </span>
+        <span className="ml-1 text-[11px] opacity-75">({open} open)</span>
       </div>
     </button>
   );
@@ -173,15 +178,18 @@ export default function CleaningRota() {
     })();
   }, []);
 
-  /** Load tasks + today's runs */
+  /** Load tasks + today's runs (org + location scoped) */
   async function loadAll() {
     const orgId = await getActiveOrgIdClient();
+    const locationId = await getActiveLocationIdClient();
+
     if (!orgId) return;
 
+    // tasks are org-wide (no location_id column in table yet)
     const { data: tData } = await supabase
       .from("cleaning_tasks")
       .select(
-        "id, org_id, task, area, category, frequency, weekday, month_day"
+        "id, org_id, task, name, area, category, frequency, weekday, month_day"
       )
       .eq("org_id", orgId);
 
@@ -198,11 +206,18 @@ export default function CleaningRota() {
       }))
     );
 
-    const { data: rData } = await supabase
+    // runs are by org + location
+    let query = supabase
       .from("cleaning_task_runs")
       .select("task_id, run_on, done_by")
       .eq("org_id", orgId)
       .eq("run_on", today);
+
+    if (locationId) {
+      query = query.eq("location_id", locationId);
+    }
+
+    const { data: rData } = await query;
 
     setRuns(
       (rData ?? []).map((r: any) => ({
@@ -282,14 +297,19 @@ export default function CleaningRota() {
     [days7, tasks]
   );
 
-  /** ===== Complete helpers (always include org_id) ===== */
+  /** ===== Complete helpers (always include org_id + location_id) ===== */
 
   async function completeOne(id: string, initialsVal: string) {
     const orgId = await getActiveOrgIdClient();
-    if (!orgId) return;
+    const locationId = await getActiveLocationIdClient();
+    if (!orgId || !locationId) {
+      alert("Select a location first.");
+      return;
+    }
 
     const payload = {
       org_id: orgId,
+      location_id: locationId,
       task_id: id,
       run_on: today,
       done_by: initialsVal.toUpperCase(),
@@ -312,12 +332,17 @@ export default function CleaningRota() {
 
   async function uncompleteOne(id: string) {
     const orgId = await getActiveOrgIdClient();
-    if (!orgId) return;
+    const locationId = await getActiveLocationIdClient();
+    if (!orgId || !locationId) {
+      alert("Select a location first.");
+      return;
+    }
 
     const { error } = await supabase
       .from("cleaning_task_runs")
       .delete()
       .eq("org_id", orgId)
+      .eq("location_id", locationId)
       .eq("task_id", id)
       .eq("run_on", today);
 
@@ -333,10 +358,17 @@ export default function CleaningRota() {
 
   async function completeMany(ids: string[], initialsVal: string) {
     const orgId = await getActiveOrgIdClient();
-    if (!orgId || !ids.length) return;
+    const locationId = await getActiveLocationIdClient();
+    if (!orgId || !locationId || !ids.length) {
+      if (!orgId || !locationId) {
+        alert("Select a location first.");
+      }
+      return;
+    }
 
     const payload = ids.map((id) => ({
       org_id: orgId,
+      location_id: locationId,
       task_id: id,
       run_on: today,
       done_by: initialsVal.toUpperCase(),
@@ -420,8 +452,7 @@ export default function CleaningRota() {
                 completeMany(ids, ini);
               }}
               disabled={
-                !ini ||
-                dueToday.every((t) => runsKey.has(`${t.id}|${today}`))
+                !ini || dueToday.every((t) => runsKey.has(`${t.id}|${today}`))
               }
             >
               Complete all today
@@ -449,9 +480,7 @@ export default function CleaningRota() {
                   className="flex items-start justify-between gap-2 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-sm shadow-sm"
                 >
                   <div className={done ? "text-gray-500 line-through" : ""}>
-                    <div className="font-medium text-slate-900">
-                      {t.task}
-                    </div>
+                    <div className="font-medium text-slate-900">{t.task}</div>
                     <div className="text-xs text-gray-500">
                       {t.category ?? t.area ?? "—"} •{" "}
                       {t.frequency === "weekly" ? "Weekly" : "Monthly"}

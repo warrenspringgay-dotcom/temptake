@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import {
   LOCATION_PRESETS,
   TARGET_PRESETS,
@@ -15,14 +16,6 @@ import {
 import RoutineRunModal from "@/components/RoutineRunModal";
 import { CLEANING_CATEGORIES } from "@/components/ManageCleaningTasksModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
-
-import {
-  getOfflineTempLogsCount,
-  queueTempLogs,
-  flushOfflineTempLogs,
-  looksLikeNetworkError,
-  type TempLogPayload,
-} from "@/lib/offlineTempQueue";
 
 /* =============== Types =============== */
 type CanonRow = {
@@ -113,6 +106,8 @@ function formatPrettyDate(d: Date) {
 
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
+// same key AllergenManager uses
+const LS_ALLERGEN_REVIEW = "tt_allergen_review_prefs";
 
 const cls = (...parts: Array<string | false | undefined>) =>
   parts.filter(Boolean).join(" ");
@@ -331,10 +326,6 @@ export default function FoodTempLogger({
     !!form.target_key &&
     form.temp_c.trim().length > 0;
 
-  // Offline queue state
-  const [offlineCount, setOfflineCount] = useState(0);
-  const [uploadingOffline, setUploadingOffline] = useState(false);
-
   // Header date (uses form.date, so header follows the selected log date)
   const headerDateObj: Date = (() => {
     if (!form.date) return new Date();
@@ -393,11 +384,13 @@ export default function FoodTempLogger({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialsSeed]);
 
-  /* locations list (org-scoped) */
+  /* locations list (org + location-scoped) */
   useEffect(() => {
     (async () => {
       try {
         const orgId = await getActiveOrgIdClient();
+        const locationId = await getActiveLocationIdClient();
+
         if (!orgId) {
           const base = Array.from(
             new Set([...locationsSeed, ...LOCATION_PRESETS])
@@ -408,12 +401,18 @@ export default function FoodTempLogger({
           return;
         }
 
-        const { data } = await supabase
+        let query = supabase
           .from("food_temp_logs")
           .select("area")
           .eq("org_id", orgId)
           .order("at", { ascending: false })
           .limit(500);
+
+        if (locationId) {
+          query = query.eq("location_id", locationId);
+        }
+
+        const { data } = await query;
 
         const fromAreas =
           (data ?? [])
@@ -438,64 +437,77 @@ export default function FoodTempLogger({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationsSeed]);
 
-  /* KPI fetch */
-  useEffect(() => {
-    (async () => {
+  /* KPI fetch (org-level) */
+useEffect(() => {
+  (async () => {
+    try {
+      const orgId = await getActiveOrgIdClient();
+      if (!orgId) return;
+
+      const soon = new Date();
+      soon.setDate(soon.getDate() + 14);
+      const todayD = new Date();
+
+      let trainingDueSoon = 0;
+      let trainingOver = 0;
+      let allergenDueSoon = 0;
+      let allergenOver = 0;
+
+      // --- TRAINING: count from trainings table ---
       try {
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) return;
+        const { data, error } = await supabase
+          .from("trainings")
+          .select("expires_on")
+          .eq("org_id", orgId);
 
-        const soon = new Date();
-        soon.setDate(soon.getDate() + 14);
-        const todayD = new Date();
-
-        let trainingDueSoon = 0;
-        let trainingOver = 0;
-        let allergenDueSoon = 0;
-        let allergenOver = 0;
-
-        try {
-          const { data } = await supabase
-            .from("team_members")
-            .select("training_expires_at,training_expiry,expires_at")
-            .eq("org_id", orgId);
-
-          (data ?? []).forEach((r: any) => {
-            const raw =
-              r.training_expires_at ??
-              r.training_expiry ??
-              r.expires_at ??
-              null;
+        if (!error && data) {
+          (data as any[]).forEach((r) => {
+            const raw = r.expires_on;
             if (!raw) return;
             const d = new Date(raw);
             if (isNaN(d.getTime())) return;
+
             if (d < todayD) trainingOver++;
             else if (d <= soon) trainingDueSoon++;
           });
-        } catch {}
+        }
+      } catch {
+        // leave training counts at 0 if table/schema not ready
+      }
 
-        try {
-          const { data } = await supabase
-            .from("allergen_review")
-            .select("last_reviewed,interval_days")
-            .eq("org_id", orgId);
+      // --- ALLERGEN REVIEW: from allergen_reviews table ---
+      try {
+        const { data, error } = await supabase
+          .from("allergen_reviews")
+          .select("last_reviewed, interval_days")
+          .eq("org_id", orgId)
+          .limit(10);
 
-          (data ?? []).forEach((r: any) => {
+        if (!error && data) {
+          (data as any[]).forEach((r) => {
             const last = r.last_reviewed ? new Date(r.last_reviewed) : null;
             const interval = Number(r.interval_days ?? 0);
             if (!last || !Number.isFinite(interval)) return;
+
             const due = new Date(last);
             due.setDate(due.getDate() + interval);
+
             if (due < todayD) allergenOver++;
             else if (due <= soon) allergenDueSoon++;
           });
-        } catch {}
+        }
+      } catch {
+        // leave allergen counts at 0 if table/schema not ready
+      }
 
-        setKpi({ trainingDueSoon, trainingOver, allergenDueSoon, allergenOver });
-      } catch {}
-    })();
-  }, []);
+      setKpi({ trainingDueSoon, trainingOver, allergenDueSoon, allergenOver });
+    } catch {
+      // ignore – KPI pills just show zeros on failure
+    }
+  })();
+}, []);
 
+    
   /* Employee of the month fetch (leaderboard) */
   useEffect(() => {
     (async () => {
@@ -518,7 +530,7 @@ export default function FoodTempLogger({
     })();
   }, []);
 
-  /* rows (org-scoped) */
+  /* rows (org + location scoped) */
   async function loadRows() {
     setLoading(true);
     setErr(null);
@@ -530,10 +542,18 @@ export default function FoodTempLogger({
         return;
       }
 
-      const { data, error } = await supabase
+      const locationId = await getActiveLocationIdClient();
+
+      let query = supabase
         .from("food_temp_logs")
         .select("*")
-        .eq("org_id", orgId)
+        .eq("org_id", orgId);
+
+      if (locationId) {
+        query = query.eq("location_id", locationId);
+      }
+
+      const { data, error } = await query
         .order("at", { ascending: false })
         .limit(300);
 
@@ -552,70 +572,6 @@ export default function FoodTempLogger({
 
   async function refreshRows() {
     await loadRows();
-  }
-
-  /* Offline queue: initialise + auto-upload on mount / when back online */
-  useEffect(() => {
-    setOfflineCount(getOfflineTempLogsCount());
-
-    const tryFlush = async () => {
-      if (typeof navigator !== "undefined" && !navigator.onLine) return;
-      try {
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) return;
-        setUploadingOffline(true);
-        const uploaded = await flushOfflineTempLogs(supabase, orgId);
-        if (uploaded > 0) {
-          await refreshRows();
-        }
-      } finally {
-        setUploadingOffline(false);
-        setOfflineCount(getOfflineTempLogsCount());
-      }
-    };
-
-    void tryFlush();
-
-    const handler = () => {
-      void tryFlush();
-    };
-
-    if (typeof window !== "undefined") {
-      window.addEventListener("online", handler);
-    }
-
-    return () => {
-      if (typeof window !== "undefined") {
-        window.removeEventListener("online", handler);
-      }
-    };
-  }, []);
-
-  async function handleUploadOfflineNow() {
-    try {
-      const orgId = await getActiveOrgIdClient();
-      if (!orgId) {
-        alert("No organisation found.");
-        return;
-      }
-      setUploadingOffline(true);
-      const uploaded = await flushOfflineTempLogs(supabase, orgId);
-      if (uploaded > 0) {
-        await refreshRows();
-        alert(
-          `${uploaded} offline ${
-            uploaded === 1 ? "entry" : "entries"
-          } uploaded successfully.`
-        );
-      } else {
-        alert("No offline entries to upload or upload failed.");
-      }
-    } catch (e: any) {
-      alert(e?.message || "Failed to upload offline entries.");
-    } finally {
-      setUploadingOffline(false);
-      setOfflineCount(getOfflineTempLogsCount());
-    }
   }
 
   /* Prefill first item via ?r= */
@@ -788,7 +744,7 @@ export default function FoodTempLogger({
     }
   }
 
-  /* save one entry (with offline queue) */
+  /* save one entry (org + location scoped) */
   async function handleAddQuick() {
     const tempNum = Number.isFinite(Number(form.temp_c))
       ? Number(form.temp_c)
@@ -799,61 +755,36 @@ export default function FoodTempLogger({
     const status: "pass" | "fail" | null = inferStatus(tempNum, preset);
 
     const org_id = await getActiveOrgIdClient();
+    const location_id = await getActiveLocationIdClient();
+
     if (!org_id) {
       alert("No organisation found for this user.");
       return;
     }
 
-    const payload: TempLogPayload = {
+    if (!location_id) {
+      alert("No location selected.");
+      return;
+    }
+
+    const payload = {
       org_id,
+      location_id,
       at: form.date,
       area: form.location || null,
       note: form.item || null,
       staff_initials: form.staff_initials
         ? form.staff_initials.toUpperCase()
-        : "",
+        : null,
       target_key: form.target_key || null,
       temp_c: tempNum,
       status,
     };
 
-    const queueAndNotify = () => {
-      queueTempLogs([payload]);
-      setOfflineCount(getOfflineTempLogsCount());
-      alert(
-        "No signal – entry saved on this device and will upload when you're back online."
-      );
-    };
-
-    let savedOnline = false;
-
-    // If clearly offline, skip Supabase and queue immediately
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      queueAndNotify();
-    } else {
-      try {
-        const { error } = await supabase
-          .from("food_temp_logs")
-          .insert(payload);
-
-        if (error) {
-          if (looksLikeNetworkError(error)) {
-            queueAndNotify();
-          } else {
-            alert(`Save failed: ${error.message}`);
-            return;
-          }
-        } else {
-          savedOnline = true;
-        }
-      } catch (err: any) {
-        if (looksLikeNetworkError(err)) {
-          queueAndNotify();
-        } else {
-          alert(err?.message || "Save failed.");
-          return;
-        }
-      }
+    const { error } = await supabase.from("food_temp_logs").insert(payload);
+    if (error) {
+      alert(`Save failed: ${error.message}`);
+      return;
     }
 
     try {
@@ -863,16 +794,13 @@ export default function FoodTempLogger({
     } catch {}
 
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
-
-    if (savedOnline) {
-      await refreshRows();
-    }
+    await refreshRows();
   }
 
   const onTempKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
     if (e.key === "Enter" && canSave) {
       e.preventDefault();
-      void handleAddQuick();
+      handleAddQuick();
     }
   };
 
@@ -889,20 +817,22 @@ export default function FoodTempLogger({
       .map(([date, list]) => ({ date, list }));
   }, [rows]);
 
-  /* Cleaning rota: load today's due + runs */
+  /* Cleaning rota: load today's due + runs (org + location scoped) */
   async function loadRotaToday() {
     try {
       const org_id = await getActiveOrgIdClient();
-      if (!org_id) return;
+      const locationId = await getActiveLocationIdClient();
+      if (!org_id || !locationId) return;
 
       const todayISO = isoToday();
 
       const { data: tData } = await supabase
         .from("cleaning_tasks")
         .select(
-          "id, org_id, area, task, category, frequency, weekday, month_day"
+          "id, org_id, location_id, area, task, category, frequency, weekday, month_day"
         )
-        .eq("org_id", org_id);
+        .eq("org_id", org_id)
+        .eq("location_id", locationId);
 
       const all: CleanTask[] =
         (tData ?? []).map((r: any) => ({
@@ -920,8 +850,9 @@ export default function FoodTempLogger({
 
       const { data: rData } = await supabase
         .from("cleaning_task_runs")
-        .select("task_id,run_on,done_by")
+        .select("task_id,run_on,done_by,location_id")
         .eq("org_id", org_id)
+        .eq("location_id", locationId)
         .eq("run_on", todayISO);
 
       setRuns(
@@ -968,14 +899,11 @@ export default function FoodTempLogger({
 
   // List of tasks included in the current confirm modal (for display)
   const confirmTasks = useMemo(
-    () =>
-      confirm
-        ? tasks.filter((t) => confirm.ids.includes(t.id))
-        : [],
+    () => (confirm ? tasks.filter((t) => confirm.ids.includes(t.id)) : []),
     [confirm, tasks]
   );
 
-  /* complete api (active org_id) */
+  /* complete api (org + location scoped) */
   async function completeTasks(ids: string[], iniVal: string) {
     if (!ids.length) {
       setConfirm(null);
@@ -985,8 +913,14 @@ export default function FoodTempLogger({
 
     try {
       const org_id = await getActiveOrgIdClient();
+      const locationId = await getActiveLocationIdClient();
+
       if (!org_id) {
         alert("No organisation found.");
+        return;
+      }
+      if (!locationId) {
+        alert("No location selected.");
         return;
       }
 
@@ -994,6 +928,7 @@ export default function FoodTempLogger({
 
       const payload = ids.map((id) => ({
         org_id,
+        location_id: locationId,
         task_id: id,
         run_on,
         done_by: iniVal.toUpperCase(),
@@ -1020,11 +955,14 @@ export default function FoodTempLogger({
   async function uncompleteTask(id: string) {
     try {
       const org_id = await getActiveOrgIdClient();
-      if (!org_id) return;
+      const locationId = await getActiveLocationIdClient();
+      if (!org_id || !locationId) return;
+
       const { error } = await supabase
         .from("cleaning_task_runs")
         .delete()
         .eq("org_id", org_id)
+        .eq("location_id", locationId)
         .eq("task_id", id)
         .eq("run_on", todayISO);
       if (error) throw error;
@@ -1224,31 +1162,16 @@ export default function FoodTempLogger({
           </span>
         </div>
 
-        {/* Offline queue banner */}
-        {offlineCount > 0 && (
-          <div className="mt-3 flex items-center justify-between rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            <span>
-              {offlineCount} temperature{" "}
-              {offlineCount === 1 ? "entry is" : "entries are"} saved on this
-              device and waiting to upload when you're back online.
-            </span>
-            <button
-              type="button"
-              onClick={handleUploadOfflineNow}
-              disabled={uploadingOffline}
-              className="ml-3 rounded-full border border-amber-400 px-3 py-1 text-[11px] font-semibold hover:bg-amber-100 disabled:opacity-60"
-            >
-              {uploadingOffline ? "Uploading…" : "Upload now"}
-            </button>
-          </div>
-        )}
-
         {err && (
           <div className="mt-2 rounded-md border border-red-200 bg-red-50/90 px-3 py-2 text-sm text-red-800">
             {err}
           </div>
         )}
       </div>
+
+      {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
+      {/* ...rest of file unchanged... (omitted here because you already have it above) */}
+      {/* NOTE: keep everything from "Today’s Cleaning Tasks" downwards exactly as in the code you pasted. */}
 
       {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
       <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">

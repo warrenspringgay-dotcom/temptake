@@ -1,126 +1,155 @@
 // src/components/UserMenu.tsx
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import React, { useState, useRef, useEffect } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 
-type User = {
-  id: string;
-  email?: string | null;
-  user_metadata?: {
-    full_name?: string;
-  };
-} | null;
+type Props = {
+  user: any | null;
+};
 
-export default function UserMenu({ user }: { user: User }) {
-  const router = useRouter();
-  const pathname = usePathname();
+function getInitials(user: any | null): string {
+  const name =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email ||
+    "";
+  if (!name) return "TT";
+
+  const parts = name
+    .toString()
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+ const initials = parts
+  .slice(0, 3)
+  .map((p: string) => p.charAt(0).toUpperCase())
+  .join("");
+
+
+  return initials || "TT";
+}
+
+const cls = (...parts: Array<string | false | null | undefined>) =>
+  parts.filter(Boolean).join(" ");
+
+export default function UserMenu({ user }: Props) {
   const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+  const router = useRouter();
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Close menu whenever the route changes
+  // Close on outside click
   useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
-
-  // Close when clicking outside
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (!menuRef.current) return;
-      if (!menuRef.current.contains(e.target as Node)) {
+    function onClick(e: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
-
     if (open) {
-      document.addEventListener("mousedown", handleClickOutside);
-    } else {
-      document.removeEventListener("mousedown", handleClickOutside);
+      document.addEventListener("mousedown", onClick);
     }
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
+    return () => document.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  // If no user, just show a Login button
-  if (!user) {
-    return (
-      <button
-        type="button"
-        onClick={() => router.push("/login")}
-        className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium hover:bg-gray-50"
-      >
-        Login
-      </button>
-    );
-  }
-
-  const displayName =
-    user.user_metadata?.full_name ||
-    user.email?.split("@")[0] ||
-    "Account";
-
-  const initials =
-    displayName
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((p) => p[0]?.toUpperCase())
-      .join("")
-      .slice(0, 2) || "U";
+  // Close on ESC
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    if (open) {
+      document.addEventListener("keydown", onKey);
+    }
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
 
   async function handleSignOut() {
     try {
+      setSigningOut(true);
       await supabase.auth.signOut();
-    } finally {
-      setOpen(false);
       router.push("/login");
+      router.refresh?.();
+    } catch (e) {
+      console.error(e);
+      alert("Sign out failed");
+    } finally {
+      setSigningOut(false);
+      setOpen(false);
     }
   }
 
+  const initials = getInitials(user);
+
   return (
-    <div className="relative" ref={menuRef}>
-      {/* JUST THE CIRCLE, NO NAME TEXT */}
+    <div ref={containerRef} className="relative">
+      {/* Trigger button */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center justify-center"
-        aria-label="Account menu"
+        className={cls(
+          "flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold uppercase",
+          "bg-slate-900 text-white shadow hover:bg-slate-800"
+        )}
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
-          {initials}
-        </span>
+        {initials}
       </button>
 
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-40 rounded-xl border border-gray-200 bg-white py-1 text-sm shadow-lg">
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              router.push("/help");
-            }}
-            className="block w-full px-3 py-2 text-left hover:bg-gray-50"
-          >
-            Help
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              router.push("/settings");
-            }}
-            className="block w-full px-3 py-2 text-left hover:bg-gray-50"
-          >
-            Settings
-          </button>
+        <div className="absolute right-0 mt-2 w-52 origin-top-right rounded-2xl border border-slate-200 bg-white/95 p-1 text-sm text-slate-800 shadow-lg backdrop-blur">
+          {/* User summary */}
+          <div className="mb-1 rounded-xl bg-slate-50 px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              Signed in as
+            </div>
+            <div className="mt-0.5 truncate text-xs font-medium text-slate-800">
+              {user?.user_metadata?.full_name ||
+                user?.user_metadata?.name ||
+                user?.email ||
+                "Account"}
+            </div>
+          </div>
+
+          <div className="my-1 h-px bg-slate-100" />
+
+          {/* ONLY the pages you actually want */}
+          <nav className="space-y-0.5">
+
+            {/* Locations */}
+            <Link
+              href="/locations"
+              className="flex w-full items-center rounded-xl px-3 py-1.5 text-xs hover:bg-slate-100"
+              onClick={() => setOpen(false)}
+            >
+              Locations
+            </Link>
+
+            {/* Help */}
+            <Link
+              href="/help"
+              className="flex w-full items-center rounded-xl px-3 py-1.5 text-xs hover:bg-slate-100"
+              onClick={() => setOpen(false)}
+            >
+              Help & support
+            </Link>
+          </nav>
+
+          <div className="my-1 h-px bg-slate-100" />
+
+          {/* Sign out */}
           <button
             type="button"
             onClick={handleSignOut}
-            className="block w-full px-3 py-2 text-left text-red-600 hover:bg-gray-50"
+            disabled={signingOut}
+            className="flex w-full items-center justify-between rounded-xl px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60"
           >
-            Sign out
+            <span>Sign out</span>
+            <span className="text-[10px]">{signingOut ? "…" : "⏏"}</span>
           </button>
         </div>
       )}

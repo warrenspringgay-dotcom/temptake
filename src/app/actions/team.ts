@@ -4,6 +4,10 @@
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { getActiveOrgIdServer } from "@/lib/orgServer";
 
+/* ============================================================
+   Shared types
+============================================================ */
+
 export type TeamMemberInput = {
   id?: string;
   name: string;
@@ -17,10 +21,38 @@ export type TeamMemberInput = {
   allergen_review_due_on?: string | null;
 };
 
-/**
- * Helper: ensure the current user is an OWNER in the active org.
- * Throws if not.
- */
+export type TeamMember = {
+  id?: string;
+  org_id?: string;
+  initials?: string | null;
+  name?: string | null;
+  role?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  active?: boolean | null;
+  notes?: string | null;
+  training_expires_on?: string | null;
+  allergen_review_due_on?: string | null;
+};
+
+export type TrainingRow = {
+  id: string;
+  staff_id: string;
+  type: string | null;
+  awarded_on: string | null;
+  expires_on: string | null;
+};
+
+type TrainingInput = {
+  type: string;
+  awarded_on: string;
+  expires_on: string;
+};
+
+/* ============================================================
+   Helper: require the current user to be OWNER in active org
+============================================================ */
+
 async function requireOwnerOrg() {
   const supabase = await getServerSupabase();
 
@@ -56,7 +88,9 @@ async function requireOwnerOrg() {
   return { orgId, userId: user.id, memberId: member.id };
 }
 
-/* ------------------- Mutations (owner only) ------------------- */
+/* ============================================================
+   Core mutations (original API)
+============================================================ */
 
 export async function saveTeamMember(input: TeamMemberInput) {
   const supabase = await getServerSupabase();
@@ -111,9 +145,11 @@ export async function deleteTeamMember(id: string) {
   if (error) throw new Error(error.message);
 }
 
-/* --------------------- Queries (read) --------------------- */
+/* ============================================================
+   Core queries (original API)
+============================================================ */
 
-export async function listTeamMembers() {
+export async function listTeamMembers(): Promise<TeamMember[]> {
   const supabase = await getServerSupabase();
   const orgId = await getActiveOrgIdServer();
 
@@ -126,7 +162,7 @@ export async function listTeamMembers() {
     .order("name", { ascending: true });
 
   if (error) throw new Error(error.message);
-  return data ?? [];
+  return (data ?? []) as TeamMember[];
 }
 
 /**
@@ -171,4 +207,124 @@ export async function listStaffInitials(): Promise<string[]> {
   });
 
   return Array.from(new Set(vals.filter(Boolean) as string[]));
+}
+
+/* ============================================================
+   New API used by TeamManager.tsx
+   (thin wrappers + training helpers)
+============================================================ */
+
+/** List team for the current org – used by TeamManager.tsx */
+export async function listTeam(): Promise<TeamMember[]> {
+  return listTeamMembers();
+}
+
+/** Upsert a member from the TeamManager form. */
+export async function upsertTeamMember(input: Partial<TeamMember>): Promise<void> {
+  if (!input.name?.trim()) {
+    throw new Error("Name is required");
+  }
+
+  const payload: TeamMemberInput = {
+    id: input.id,
+    name: input.name.trim(),
+    initials: (input.initials ?? "").toString(),
+    role: (input.role ?? "").toString(),
+    phone: input.phone ?? null,
+    email: input.email ?? null,
+    active: input.active ?? true,
+    notes: input.notes ?? null,
+    training_expires_on: input.training_expires_on ?? null,
+    allergen_review_due_on: input.allergen_review_due_on ?? null,
+  };
+
+  await saveTeamMember(payload);
+}
+
+/**
+ * Ensure a staff row exists in the `staff` table for these initials,
+ * and return its *database id* (NOT the initials).
+ *
+ * This is the key part that fixes:
+ *   "insert or update on table 'trainings' violates foreign key constraint
+ *    'trainings_staff_id_fkey'"
+ */
+export async function ensureStaffByInitials(
+  initials: string,
+  name: string
+): Promise<string> {
+  const supabase = await getServerSupabase();
+  const orgId = await getActiveOrgIdServer();
+
+  if (!orgId) {
+    throw new Error("No active organisation found.");
+  }
+
+  const cleanInitials = initials.trim().toUpperCase();
+  const displayName = name?.trim() || cleanInitials;
+
+  // 1) Look up existing staff by org + initials
+  const { data: existing, error: findError } = await supabase
+    .from("staff")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("initials", cleanInitials)
+    .maybeSingle();
+
+  if (findError) throw new Error(findError.message);
+
+  if (existing?.id) {
+    return String(existing.id);
+  }
+
+  // 2) Create a new staff record
+  const { data: created, error: insertError } = await supabase
+    .from("staff")
+    .insert({
+      org_id: orgId,
+      initials: cleanInitials,
+      name: displayName,
+    })
+    .select("id")
+    .single();
+
+  if (insertError) throw new Error(insertError.message);
+
+  return String(created.id);
+}
+
+/** List training records for a given staff id. */
+export async function listTrainingsForStaff(
+  staffId: string
+): Promise<TrainingRow[]> {
+  const supabase = await getServerSupabase();
+
+  const { data, error } = await supabase
+    .from("trainings")
+    .select("id,staff_id,type,awarded_on,expires_on")
+    .eq("staff_id", staffId)
+    .order("awarded_on", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as TrainingRow[];
+}
+
+/**
+ * Insert a training record for the given staff id.
+ * Expects a *real* staff.id (from `ensureStaffByInitials`).
+ */
+export async function insertTraining(
+  staffId: string,
+  input: TrainingInput
+): Promise<void> {
+  const supabase = await getServerSupabase();
+
+  const { error } = await supabase.from("trainings").insert({
+    staff_id: staffId,
+    type: input.type,
+    awarded_on: input.awarded_on,
+    expires_on: input.expires_on,
+  });
+
+  if (error) throw new Error(error.message);
 }

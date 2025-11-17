@@ -1,17 +1,11 @@
-// src/components/RoutineRunModal.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
-
-import {
-  queueTempLogs,
-  looksLikeNetworkError,
-  type TempLogPayload,
-} from "@/lib/offlineTempQueue";
 
 type Props = {
   open: boolean;
@@ -31,35 +25,6 @@ function inferStatus(
   if (minC != null && temp < minC) return "fail";
   if (maxC != null && temp > maxC) return "fail";
   return "pass";
-}
-
-async function getOrgIdSafe(): Promise<string | null> {
-  try {
-    const org = await getActiveOrgIdClient();
-    if (org) return org;
-  } catch {}
-
-  try {
-    const { data: userRes } = await supabase.auth.getUser();
-    const userId = userRes?.user?.id;
-    if (!userId) return null;
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("org_id")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (error || !data?.org_id) return null;
-
-    const orgId = String(data.org_id);
-    try {
-      localStorage.setItem("tt_active_org_id", orgId);
-    } catch {}
-    return orgId;
-  } catch {
-    return null;
-  }
 }
 
 export default function RoutineRunModal({
@@ -142,16 +107,30 @@ export default function RoutineRunModal({
     setSaving(true);
 
     try {
-      const org_id = await getOrgIdSafe();
-      if (!org_id) {
+      const org_id = await getActiveOrgIdClient();
+      const location_id = await getActiveLocationIdClient();
+
+      if (!org_id || !location_id) {
         alert(
-          "No organisation found. Please sign out and back in, or ask your admin to check your organisation."
+          "No location selected. Please choose a location from the top bar before saving logs."
         );
         return;
       }
 
-      const rowsToSave: TempLogPayload[] = routine.items
-        .map<TempLogPayload | null>((it) => {
+      type NewLogRow = {
+        org_id: string;
+        location_id: string;
+        at: string;
+        area: string | null;
+        note: string | null;
+        staff_initials: string;
+        target_key: string | null;
+        temp_c: number | null;
+        status: "pass" | "fail" | null;
+      };
+
+      const rowsToSave: NewLogRow[] = routine.items
+        .map<NewLogRow | null>((it) => {
           const raw = (temps[it.id] ?? "").trim();
           if (!raw) return null; // skip empty temps
 
@@ -162,6 +141,7 @@ export default function RoutineRunModal({
 
           return {
             org_id,
+            location_id,
             at: date,
             area: it.location || null,
             note: it.item || null,
@@ -171,7 +151,7 @@ export default function RoutineRunModal({
             status,
           };
         })
-        .filter((row): row is TempLogPayload => row !== null);
+        .filter((row): row is NewLogRow => row !== null);
 
       if (!rowsToSave.length) {
         // nothing filled in – just close
@@ -179,45 +159,15 @@ export default function RoutineRunModal({
         return;
       }
 
-      const queueAndNotify = () => {
-        queueTempLogs(rowsToSave);
-        alert(
-          "No signal – entries saved on this device and will upload when you're back online."
-        );
-      };
+      const { error } = await supabase
+        .from("food_temp_logs")
+        .insert(rowsToSave);
 
-      let savedOnline = false;
-
-      if (typeof navigator !== "undefined" && !navigator.onLine) {
-        // definitely offline
-        queueAndNotify();
-      } else {
-        try {
-          const { error } = await supabase
-            .from("food_temp_logs")
-            .insert(rowsToSave);
-
-          if (error) {
-            if (looksLikeNetworkError(error)) {
-              queueAndNotify();
-            } else {
-              alert(`Save failed: ${error.message}`);
-              return;
-            }
-          } else {
-            savedOnline = true;
-          }
-        } catch (err: any) {
-          if (looksLikeNetworkError(err)) {
-            queueAndNotify();
-          } else {
-            alert(err?.message || "Save failed.");
-            return;
-          }
-        }
+      if (error) {
+        alert(`Save failed: ${error.message}`);
+        return;
       }
 
-      // Let parent refresh either way (online save or queued offline)
       await onSaved();
       onClose();
     } finally {
