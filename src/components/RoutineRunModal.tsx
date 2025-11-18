@@ -1,3 +1,4 @@
+// src/components/RoutineRunModal.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -177,13 +178,13 @@ export default function RoutineRunModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/40 px-2 py-4 sm:px-4 sm:py-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-2 py-4 sm:px-4 sm:py-6"
       onClick={onClose}
     >
       <form
         onSubmit={handleSave}
         onClick={(e) => e.stopPropagation()}
-        className="mt-2 mb-2 flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-slate-900 text-slate-50 shadow-xl"
+        className="flex w-full max-w-3xl max-h-[80vh] flex-col overflow-hidden rounded-2xl bg-slate-900 text-slate-50 shadow-xl"
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 bg-emerald-700 px-4 py-3">

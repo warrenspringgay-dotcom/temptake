@@ -13,18 +13,17 @@ type Props = {
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
 
+// ✅ Updated to match current app routes
 const mobileLinks: { href: string; label: string }[] = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/foodtemps", label: "Food temperature logs" },
+  { href: "/", label: "Dashboard" },
+  { href: "/routines", label: "Routines" },
+  { href: "/allergens", label: "Allergens" },
   { href: "/cleaning-rota", label: "Cleaning rota" },
   { href: "/team", label: "Team" },
-  // NEW: Locations entry
-  { href: "/locations", label: "Locations" },
   { href: "/suppliers", label: "Suppliers" },
-  { href: "/training", label: "Training" },
-  { href: "/allergens", label: "Allergen matrix" },
+  { href: "/leaderboard", label: "Leaderboard" },
   { href: "/reports", label: "Reports" },
-  { href: "/help", label: "Help & support" },
+  { href: "/locations", label: "Locations & sites" },
 ];
 
 export default function MobileMenu({ user }: Props) {

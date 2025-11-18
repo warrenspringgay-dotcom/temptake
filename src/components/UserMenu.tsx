@@ -1,155 +1,67 @@
-// src/components/UserMenu.tsx
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 
-type Props = {
-  user: any | null;
-};
-
-function getInitials(user: any | null): string {
-  const name =
-    user?.user_metadata?.full_name ||
-    user?.user_metadata?.name ||
-    user?.email ||
-    "";
-  if (!name) return "TT";
-
-  const parts = name
-    .toString()
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-
- const initials = parts
-  .slice(0, 3)
-  .map((p: string) => p.charAt(0).toUpperCase())
-  .join("");
-
-
-  return initials || "TT";
-}
-
-const cls = (...parts: Array<string | false | null | undefined>) =>
-  parts.filter(Boolean).join(" ");
-
-export default function UserMenu({ user }: Props) {
+export default function UserMenu({ user }: { user: any }) {
   const [open, setOpen] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
-  const router = useRouter();
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  // Close on outside click
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (!containerRef.current) return;
-      if (!containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    if (open) {
-      document.addEventListener("mousedown", onClick);
-    }
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [open]);
-
-  // Close on ESC
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    if (open) {
-      document.addEventListener("keydown", onKey);
-    }
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
 
   async function handleSignOut() {
-    try {
-      setSigningOut(true);
-      await supabase.auth.signOut();
-      router.push("/login");
-      router.refresh?.();
-    } catch (e) {
-      console.error(e);
-      alert("Sign out failed");
-    } finally {
-      setSigningOut(false);
-      setOpen(false);
-    }
+    await supabase.auth.signOut();
+    window.location.href = "/login";
   }
 
-  const initials = getInitials(user);
+  const initials =
+    user?.user_metadata?.initials ||
+    user?.email?.[0]?.toUpperCase() ||
+    "U";
 
   return (
-    <div ref={containerRef} className="relative">
-      {/* Trigger button */}
+    <div className="relative">
+      {/* Avatar button */}
       <button
-        type="button"
         onClick={() => setOpen((v) => !v)}
-        className={cls(
-          "flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold uppercase",
-          "bg-slate-900 text-white shadow hover:bg-slate-800"
-        )}
-        aria-haspopup="menu"
-        aria-expanded={open}
+        className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-white"
       >
         {initials}
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-52 origin-top-right rounded-2xl border border-slate-200 bg-white/95 p-1 text-sm text-slate-800 shadow-lg backdrop-blur">
-          {/* User summary */}
-          <div className="mb-1 rounded-xl bg-slate-50 px-3 py-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              Signed in as
-            </div>
-            <div className="mt-0.5 truncate text-xs font-medium text-slate-800">
-              {user?.user_metadata?.full_name ||
-                user?.user_metadata?.name ||
-                user?.email ||
-                "Account"}
+        <div className="absolute right-0 mt-2 w-56 overflow-hidden rounded-xl border bg-white shadow-xl z-50">
+          {/* User info */}
+          <div className="px-4 py-3 border-b">
+            <div className="text-xs text-slate-500">Signed in as</div>
+            <div className="truncate text-sm font-medium">
+              {user?.email}
             </div>
           </div>
 
-          <div className="my-1 h-px bg-slate-100" />
-
-          {/* ONLY the pages you actually want */}
-          <nav className="space-y-0.5">
-
-            {/* Locations */}
+          {/* Settings links */}
+          <div className="px-1 py-2">
             <Link
               href="/locations"
-              className="flex w-full items-center rounded-xl px-3 py-1.5 text-xs hover:bg-slate-100"
+              className="block rounded-lg px-3 py-2 text-sm hover:bg-slate-100"
               onClick={() => setOpen(false)}
             >
               Locations
             </Link>
 
-            {/* Help */}
             <Link
               href="/help"
-              className="flex w-full items-center rounded-xl px-3 py-1.5 text-xs hover:bg-slate-100"
+              className="block rounded-lg px-3 py-2 text-sm hover:bg-slate-100"
               onClick={() => setOpen(false)}
             >
               Help & support
             </Link>
-          </nav>
-
-          <div className="my-1 h-px bg-slate-100" />
+          </div>
 
           {/* Sign out */}
           <button
-            type="button"
             onClick={handleSignOut}
-            disabled={signingOut}
-            className="flex w-full items-center justify-between rounded-xl px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60"
+            className="flex w-full items-center justify-between rounded-none border-t bg-red-50 px-4 py-2 text-left text-sm font-medium text-red-700 hover:bg-red-100"
           >
-            <span>Sign out</span>
-            <span className="text-[10px]">{signingOut ? "…" : "⏏"}</span>
+            Sign out
           </button>
         </div>
       )}
