@@ -1,17 +1,18 @@
 // src/app/reports/page.tsx
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
+import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 
 import Button from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Download, Printer } from "lucide-react";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
 
 type TempRow = {
   id: string;
-  date: string;
+  date: string; // ISO yyyy-mm-dd
   staff: string;
   location: string;
   item: string;
@@ -25,17 +26,24 @@ type TeamRow = {
   name: string;
   email?: string | null;
   initials?: string | null;
-  expires_on: string | null;
+  expires_on: string | null; // ISO date
   days_until?: number | null;
 };
 
 type AllergenRow = {
   id: string;
-  item: string | null;
-  location: string | null;
-  next_due: string | null;
+  reviewed_on: string | null; // ISO date
+  next_due: string | null; // ISO date
+  reviewer: string | null;
   days_until?: number | null;
 };
+
+type LocationOption = {
+  id: string;
+  name: string;
+};
+
+/* ---------- Date helpers ---------- */
 
 function toISODate(val: any): string {
   const d = new Date(val);
@@ -45,11 +53,28 @@ function toISODate(val: any): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Temperature logs – unchanged, still using food_temp_logs */
-async function fetchTemps(fromISO: string, toISO: string): Promise<TempRow[]> {
-  const { data, error } = await supabase
+function formatISOToUK(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+/* ---------- Data fetch helpers (org + optional location) ---------- */
+
+async function fetchTemps(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<TempRow[]> {
+  let query = supabase
     .from("food_temp_logs")
     .select("*")
+    .eq("org_id", orgId)
     .gte("at", new Date(fromISO).toISOString())
     .lte(
       "at",
@@ -60,6 +85,11 @@ async function fetchTemps(fromISO: string, toISO: string): Promise<TempRow[]> {
     .order("at", { ascending: false })
     .limit(3000);
 
+  if (locationId) {
+    query = query.eq("location_id", locationId);
+  }
+
+  const { data, error } = await query;
   if (error) throw error;
 
   return (data ?? []).map((r: any) => ({
@@ -74,26 +104,42 @@ async function fetchTemps(fromISO: string, toISO: string): Promise<TempRow[]> {
   }));
 }
 
+async function fetchCleaningCount(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<number> {
+  let query = supabase
+    .from("cleaning_task_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .gte("run_on", fromISO)
+    .lte("run_on", toISO);
+
+  if (locationId) {
+    query = query.eq("location_id", locationId);
+  }
+
+  const { count, error } = await query;
+  if (error || count == null) return 0;
+  return count;
+}
+
 /**
- * Team training due – now uses staff + trainings tables.
- * Filters by current org_id and looks at each training record's expires_on.
+ * Training due: now uses `trainings` table joined to `staff`.
+ * One row per training record (so a staff member with 2 certs will show twice).
  */
-async function fetchTeamDue(withinDays: number): Promise<TeamRow[]> {
-  // Pull training records + related staff details
+async function fetchTeamDue(
+  withinDays: number,
+  orgId: string
+): Promise<TeamRow[]> {
   const { data, error } = await supabase
     .from("trainings")
     .select(
-      `
-      id,
-      expires_on,
-      staff:staff_id (
-        id,
-        name,
-        email,
-        initials
-      )
-    `
+      "id, type, expires_on, staff:staff_id (id, name, email, initials)"
     )
+    .eq("org_id", orgId)
     .not("expires_on", "is", null)
     .order("expires_on", { ascending: true })
     .limit(2000);
@@ -103,66 +149,40 @@ async function fetchTeamDue(withinDays: number): Promise<TeamRow[]> {
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
 
-  // For each staff member, keep the SOONEST expiry within the window
-  const byStaff = new Map<string, TeamRow>();
+  return (data ?? [])
+    .map((r: any) => {
+      const raw = r.expires_on ?? null;
 
-  for (const r of data ?? []) {
-    const s = (r as any).staff;
-    if (!s || !r.expires_on) continue;
+      const iso = raw ? new Date(raw).toISOString() : null;
+      const d0 = raw ? new Date(raw) : null;
+      if (d0) d0.setHours(0, 0, 0, 0);
 
-    const staffId = String(s.id);
-    const expiresDate = new Date(r.expires_on);
-    if (Number.isNaN(expiresDate.getTime())) continue;
+      const staff = r.staff ?? {};
 
-    const expiresISO = expiresDate.toISOString();
-    const d0 = new Date(expiresDate);
-    d0.setHours(0, 0, 0, 0);
-
-    const daysUntil = Math.round(
-      (d0.getTime() - today0.getTime()) / 86400000
-    );
-
-    if (daysUntil > withinDays) continue;
-
-    const existing = byStaff.get(staffId);
-    if (existing) {
-      // keep the earliest expiry
-      if (
-        existing.expires_on &&
-        new Date(existing.expires_on).getTime() <= expiresDate.getTime()
-      ) {
-        continue;
-      }
-    }
-
-    byStaff.set(staffId, {
-      id: staffId,
-      name: s.name ?? "—",
-      email: s.email ?? null,
-      initials: s.initials ?? null,
-      expires_on: expiresISO,
-      days_until: daysUntil,
-    });
-  }
-
-  return Array.from(byStaff.values()).sort((a, b) =>
-    (a.expires_on || "").localeCompare(b.expires_on || "")
-  );
+      return {
+        id: String(r.id),
+        name: staff.name ?? "—",
+        email: staff.email ?? null,
+        initials: staff.initials ?? null,
+        expires_on: iso,
+        days_until: d0
+          ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
+          : null,
+      };
+    })
+    .filter((r) => r.days_until != null && r.days_until <= withinDays)
+    .sort((a, b) => (a.expires_on || "").localeCompare(b.expires_on || ""));
 }
 
-/**
- * Allergen reviews – now reads from existing allergen_review table
- * and derives next_due from last_reviewed + interval_days.
- */
-async function fetchAllergensDue(withinDays: number): Promise<AllergenRow[]> {
-  const orgId = await getActiveOrgIdClient();
-  if (!orgId) return [];
-
+async function fetchAllergenLog(
+  withinDays: number,
+  orgId: string
+): Promise<AllergenRow[]> {
   const { data, error } = await supabase
-    .from("allergen_review") // NOTE: singular table name
-    .select("id, org_id, last_reviewed, interval_days, reviewer, created_at")
+    .from("allergen_review_log")
+    .select("id, reviewed_on, interval_days, reviewer")
     .eq("org_id", orgId)
-    .order("last_reviewed", { ascending: false })
+    .order("reviewed_on", { ascending: false })
     .limit(365);
 
   if (error) throw error;
@@ -172,37 +192,32 @@ async function fetchAllergensDue(withinDays: number): Promise<AllergenRow[]> {
 
   return (data ?? [])
     .map((r: any) => {
-      const lr = r.last_reviewed ? new Date(r.last_reviewed) : null;
+      const lr = r.reviewed_on ? new Date(r.reviewed_on) : null;
       let nextISO: string | null = null;
-
       if (lr && Number.isFinite(Number(r.interval_days))) {
         const next = new Date(
           lr.getTime() + Number(r.interval_days) * 86400000
         );
         nextISO = next.toISOString();
       }
-
       const d0 = nextISO ? new Date(nextISO) : null;
       if (d0) d0.setHours(0, 0, 0, 0);
 
-      const days_until =
-        d0 != null
-          ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
-          : null;
-
       return {
         id: String(r.id),
-        item: "Allergen register",
-        location: "All locations",
+        reviewed_on: lr ? lr.toISOString() : null,
         next_due: nextISO,
-        days_until,
-      } as AllergenRow;
+        reviewer: r.reviewer ?? null,
+        days_until: d0
+          ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
+          : null,
+      };
     })
-    .filter(
-      (r) => r.days_until != null && r.days_until <= withinDays
-    )
+    .filter((r) => r.days_until != null && r.days_until <= withinDays)
     .sort((a, b) => (a.next_due || "").localeCompare(b.next_due || ""));
 }
+
+/* ---------- CSV ---------- */
 
 function tempsToCSV(rows: TempRow[]) {
   const header = [
@@ -217,7 +232,7 @@ function tempsToCSV(rows: TempRow[]) {
   const lines = [header.join(",")];
   for (const r of rows) {
     const cells = [
-      r.date,
+      formatISOToUK(r.date),
       r.staff,
       r.location,
       (r.item ?? "").replaceAll('"', '""'),
@@ -230,6 +245,8 @@ function tempsToCSV(rows: TempRow[]) {
   return lines.join("\n");
 }
 
+/* ======================================================================= */
+
 export default function ReportsPage() {
   // dates default to last 30 days
   const today = new Date();
@@ -237,64 +254,142 @@ export default function ReportsPage() {
   const [from, setFrom] = useState(toISODate(d30));
   const [to, setTo] = useState(toISODate(today));
 
+  const [orgId, setOrgId] = useState<string | null>(null);
+
+  const [locationFilter, setLocationFilter] = useState<string | "all">("all");
+  const [locations, setLocations] = useState<LocationOption[]>([]);
+
   const [temps, setTemps] = useState<TempRow[] | null>(null);
   const [teamDue, setTeamDue] = useState<TeamRow[] | null>(null);
-  const [allergenDue, setAllergenDue] = useState<AllergenRow[] | null>(null);
+  const [allergenLog, setAllergenLog] = useState<AllergenRow[] | null>(null);
+  const [cleaningCount, setCleaningCount] = useState(0);
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // KEEP THIS ONE ref ONLY
+  const [initialRunDone, setInitialRunDone] = useState(false);
+
   const printRef = useRef<HTMLDivElement>(null);
 
+  // KPI from temps
   const kpi = useMemo(() => {
     const t = temps ?? [];
     const fails = t.filter((r) => r.status === "fail").length;
-    const locations = new Set(t.map((r) => r.location)).size;
-    return { count: t.length, fails, locations };
+    const locationsSet = new Set(t.map((r) => r.location));
+    return { count: t.length, fails, locations: locationsSet.size };
   }, [temps]);
+
+  /* ---------- boot: org + locations ---------- */
+
+  useEffect(() => {
+    (async () => {
+      const id = await getActiveOrgIdClient();
+      setOrgId(id ?? null);
+
+      if (!id) return;
+
+      // load locations for org
+      const { data, error } = await supabase
+        .from("locations")
+        .select("id, name")
+        .eq("org_id", id)
+        .order("name");
+
+      if (!error && data) {
+        setLocations(
+          data.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" }))
+        );
+      }
+
+      // default filter to active location if present
+      const activeLoc = await getActiveLocationIdClient();
+      if (activeLoc) {
+        setLocationFilter(activeLoc);
+      }
+    })();
+  }, []);
+
+  /* ---------- runners ---------- */
 
   async function runRange(
     rangeFrom: string,
     rangeTo: string,
+    orgIdValue: string,
+    locationId: string | null,
     includeAncillary = true
   ) {
     try {
       setErr(null);
       setLoading(true);
-      const t = await fetchTemps(rangeFrom, rangeTo);
+
+      const [t, cleanCount] = await Promise.all([
+        fetchTemps(rangeFrom, rangeTo, orgIdValue, locationId),
+        fetchCleaningCount(rangeFrom, rangeTo, orgIdValue, locationId),
+      ]);
+
       setTemps(t);
+      setCleaningCount(cleanCount);
 
       if (includeAncillary) {
         const withinDays = 90;
         const [m, a] = await Promise.all([
-          fetchTeamDue(withinDays),
-          fetchAllergensDue(withinDays),
+          fetchTeamDue(withinDays, orgIdValue),
+          fetchAllergenLog(withinDays, orgIdValue),
         ]);
         setTeamDue(m);
-        setAllergenDue(a);
+        setAllergenLog(a);
       }
     } catch (e: any) {
       setErr(e?.message ?? "Failed to run report.");
       setTemps(null);
       setTeamDue(null);
-      setAllergenDue(null);
+      setAllergenLog(null);
+      setCleaningCount(0);
     } finally {
       setLoading(false);
     }
   }
 
   async function runInstantAudit90() {
+    if (!orgId) {
+      setErr("No organisation selected.");
+      return;
+    }
     const toISO = toISODate(new Date());
-    const fromISO = toISODate(new Date(Date.now() - 89 * 24 * 3600 * 1000));
+    const fromISO = toISODate(
+      new Date(Date.now() - 89 * 24 * 3600 * 1000)
+    );
     setFrom(fromISO);
     setTo(toISO);
-    await runRange(fromISO, toISO, true);
+
+    const locId =
+      locationFilter && locationFilter !== "all"
+        ? locationFilter
+        : null;
+
+    await runRange(fromISO, toISO, orgId, locId, true);
   }
 
   async function runCustom() {
-    await runRange(from, to, true);
+    if (!orgId) {
+      setErr("No organisation selected.");
+      return;
+    }
+    const locId =
+      locationFilter && locationFilter !== "all"
+        ? locationFilter
+        : null;
+    await runRange(from, to, orgId, locId, true);
   }
+
+  // initial auto-run (once org known)
+  useEffect(() => {
+    if (orgId && !initialRunDone) {
+      runInstantAudit90();
+      setInitialRunDone(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId]);
 
   function downloadCSV() {
     if (!temps?.length) return;
@@ -313,6 +408,13 @@ export default function ReportsPage() {
     // For now just print the page; printable area is wrapped in printRef.
     window.print();
   }
+
+  const currentLocationLabel =
+    locationFilter === "all"
+      ? "All locations"
+      : locations.find((l) => l.id === locationFilter)?.name ?? "This location";
+
+  /* ========================= RENDER ========================= */
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
@@ -345,19 +447,45 @@ export default function ReportsPage() {
               />
               <Button
                 onClick={runCustom}
-                disabled={loading}
-                className="shrink-0 rounded-xl bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-700"
+                disabled={loading || !orgId}
+                className="shrink-0 rounded-xl bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
               >
                 Run
               </Button>
             </div>
           </div>
 
+          {/* Location + actions */}
+          <div className="flex flex-col justify-between gap-2">
+            <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
+              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+                Location
+              </div>
+              <select
+                className="mt-1 w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5 text-sm"
+                value={locationFilter}
+                onChange={(e) =>
+                  setLocationFilter(e.target.value as "all" | string)
+                }
+              >
+                <option value="all">All locations</option>
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-1 text-[11px] text-slate-500">
+                Current: {currentLocationLabel}
+              </div>
+            </div>
+          </div>
+
           <div className="flex flex-col justify-end gap-2">
             <Button
               onClick={runInstantAudit90}
-              disabled={loading}
-              className="w-full rounded-xl bg-emerald-600 text-sm font-medium text-white hover:bg-emerald-700"
+              disabled={loading || !orgId}
+              className="w-full rounded-xl bg-emerald-600 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
             >
               Instant Audit (last 90 days)
             </Button>
@@ -365,7 +493,7 @@ export default function ReportsPage() {
               variant="outline"
               onClick={downloadCSV}
               disabled={!temps?.length}
-              className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50"
+              className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
             >
               <Download className="mr-2 h-4 w-4" /> Export CSV
             </Button>
@@ -373,7 +501,7 @@ export default function ReportsPage() {
               variant="outline"
               onClick={printReport}
               disabled={!temps?.length}
-              className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50"
+              className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
             >
               <Printer className="mr-2 h-4 w-4" /> Print
             </Button>
@@ -414,7 +542,20 @@ export default function ReportsPage() {
               {kpi.locations}
             </div>
           </div>
+          <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Cleaning tasks logged
+            </div>
+            <div className="text-2xl font-semibold text-slate-900">
+              {cleaningCount}
+            </div>
+          </div>
         </div>
+        {!temps && !loading && (
+          <div className="mt-2 text-xs text-slate-500">
+            Run a report to see results.
+          </div>
+        )}
       </Card>
 
       {/* Printable content root */}
@@ -422,7 +563,8 @@ export default function ReportsPage() {
         {/* Temps table */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
-            Temperature Logs {temps ? `(${from} → ${to})` : ""}
+            Temperature Logs{" "}
+            {temps ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -440,20 +582,14 @@ export default function ReportsPage() {
               <tbody>
                 {!temps ? (
                   <tr>
-                    <td
-                      colSpan={7}
-                      className="py-6 text-center text-slate-500"
-                    >
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
                       Run a report to see results
                     </td>
                   </tr>
                 ) : temps.length === 0 ? (
                   <tr>
-                    <td
-                      colSpan={7}
-                      className="py-6 text-center text-slate-500"
-                    >
-                      No results
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      No results for this range / location
                     </td>
                   </tr>
                 ) : (
@@ -462,7 +598,9 @@ export default function ReportsPage() {
                       key={r.id}
                       className="border-t border-slate-100"
                     >
-                      <td className="py-2 pr-3">{r.date}</td>
+                      <td className="py-2 pr-3">
+                        {formatISOToUK(r.date)}
+                      </td>
                       <td className="py-2 pr-3">{r.staff}</td>
                       <td className="py-2 pr-3">{r.location}</td>
                       <td className="py-2 pr-3">{r.item}</td>
@@ -476,6 +614,7 @@ export default function ReportsPage() {
                                 ? "bg-emerald-100 text-emerald-800"
                                 : "bg-red-100 text-red-800"
                             }`}
+
                           >
                             {r.status}
                           </span>
@@ -524,10 +663,14 @@ export default function ReportsPage() {
                       className="border-t border-slate-100"
                     >
                       <td className="py-2 pr-3">{r.name}</td>
-                      <td className="py-2 pr-3">{r.initials ?? "—"}</td>
+                      <td className="py-2 pr-3">
+                        {r.initials ?? "—"}
+                      </td>
                       <td className="py-2 pr-3">{r.email ?? "—"}</td>
                       <td className="py-2 pr-3">
-                        {r.expires_on ? toISODate(r.expires_on) : "—"}
+                        {r.expires_on
+                          ? formatISOToUK(r.expires_on)
+                          : "—"}
                       </td>
                       <td
                         className={`py-2 pr-3 ${
@@ -546,23 +689,23 @@ export default function ReportsPage() {
           </div>
         </Card>
 
-        {/* Allergen reviews due */}
+        {/* Allergen review log / due */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
-            Allergen Reviews — due/overdue (≤90 days)
+            Allergen Register — reviews due/overdue (≤90 days)
           </h3>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50/80">
                 <tr className="text-left text-slate-500">
-                  <th className="py-2 pr-3">Item</th>
-                  <th className="py-2 pr-3">Location</th>
-                  <th className="py-2 pr-3">Next Due</th>
+                  <th className="py-2 pr-3">Reviewed on</th>
+                  <th className="py-2 pr-3">Reviewer</th>
+                  <th className="py-2 pr-3">Next due</th>
                   <th className="py-2 pr-3">Days</th>
                 </tr>
               </thead>
               <tbody>
-                {!allergenDue?.length ? (
+                {!allergenLog?.length ? (
                   <tr>
                     <td
                       colSpan={4}
@@ -572,15 +715,23 @@ export default function ReportsPage() {
                     </td>
                   </tr>
                 ) : (
-                  allergenDue.map((r) => (
+                  allergenLog.map((r) => (
                     <tr
                       key={r.id}
                       className="border-t border-slate-100"
                     >
-                      <td className="py-2 pr-3">{r.item ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.location ?? "—"}</td>
                       <td className="py-2 pr-3">
-                        {r.next_due ? toISODate(r.next_due) : "—"}
+                        {r.reviewed_on
+                          ? formatISOToUK(r.reviewed_on)
+                          : "—"}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.reviewer ?? "—"}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.next_due
+                          ? formatISOToUK(r.next_due)
+                          : "—"}
                       </td>
                       <td
                         className={`py-2 pr-3 ${
