@@ -269,6 +269,8 @@ export default function ReportsPage() {
 
   const [initialRunDone, setInitialRunDone] = useState(false);
 
+  const [showAllTemps, setShowAllTemps] = useState(false);
+
   const printRef = useRef<HTMLDivElement>(null);
 
   // KPI from temps
@@ -278,6 +280,13 @@ export default function ReportsPage() {
     const locationsSet = new Set(t.map((r) => r.location));
     return { count: t.length, fails, locations: locationsSet.size };
   }, [temps]);
+
+  // Which temp rows to show on-screen (first 10 vs all)
+  const displayTemps = useMemo(() => {
+    if (!temps) return null;
+    if (showAllTemps) return temps;
+    return temps.slice(0, 10);
+  }, [temps, showAllTemps]);
 
   /* ---------- boot: org + locations ---------- */
 
@@ -328,6 +337,7 @@ export default function ReportsPage() {
       ]);
 
       setTemps(t);
+      setShowAllTemps(false); // reset to first 10 on each run
       setCleaningCount(cleanCount);
 
       if (includeAncillary) {
@@ -405,7 +415,6 @@ export default function ReportsPage() {
   }
 
   function printReport() {
-    // For now just print the page; printable area is wrapped in printRef.
     window.print();
   }
 
@@ -593,7 +602,7 @@ export default function ReportsPage() {
                     </td>
                   </tr>
                 ) : (
-                  temps.map((r) => (
+                  displayTemps!.map((r) => (
                     <tr
                       key={r.id}
                       className="border-t border-slate-100"
@@ -614,7 +623,6 @@ export default function ReportsPage() {
                                 ? "bg-emerald-100 text-emerald-800"
                                 : "bg-red-100 text-red-800"
                             }`}
-
                           >
                             {r.status}
                           </span>
@@ -628,6 +636,27 @@ export default function ReportsPage() {
               </tbody>
             </table>
           </div>
+
+          {temps && temps.length > 10 && (
+            <div className="mt-3 flex items-center justify-between text-xs text-slate-600">
+              <div>
+                Showing{" "}
+                <span className="font-medium">
+                  {showAllTemps ? temps.length : Math.min(10, temps.length)}
+                </span>{" "}
+                of <span className="font-medium">{temps.length}</span> entries
+              </div>
+              <button
+                type="button"
+                className="font-medium text-emerald-700 hover:underline"
+                onClick={() => setShowAllTemps((v) => !v)}
+              >
+                {showAllTemps
+                  ? "Show first 10 only"
+                  : `Show all ${temps.length} entries`}
+              </button>
+            </div>
+          )}
         </Card>
 
         {/* Team training due */}

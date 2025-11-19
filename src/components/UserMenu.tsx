@@ -4,7 +4,11 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseBrowser";
 
-export default function UserMenu({ user }: { user: any }) {
+type Props = {
+  user: any | null;
+};
+
+export default function UserMenu({ user }: Props) {
   const [open, setOpen] = useState(false);
 
   async function handleSignOut() {
@@ -21,47 +25,54 @@ export default function UserMenu({ user }: { user: any }) {
     <div className="relative">
       {/* Avatar button */}
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-white"
+        className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-white"
+        aria-label="Open account menu"
       >
         {initials}
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-56 overflow-hidden rounded-xl border bg-white shadow-xl z-50">
+        <div
+          className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-200 bg-white text-slate-900 shadow-lg"
+          style={{ zIndex: 60 }}
+        >
           {/* User info */}
-          <div className="px-4 py-3 border-b">
-            <div className="text-xs text-slate-500">Signed in as</div>
-            <div className="truncate text-sm font-medium">
-              {user?.email}
+          <div className="border-b border-slate-100 px-4 py-3">
+            <div className="text-[11px] uppercase tracking-wide text-slate-400">
+              Signed in as
+            </div>
+            <div className="mt-0.5 truncate text-sm font-medium">
+              {user?.email ?? "Account"}
             </div>
           </div>
 
-          {/* Settings links */}
-          <div className="px-1 py-2">
+          {/* Links */}
+          <div className="px-1 py-2 text-sm">
             <Link
               href="/locations"
-              className="block rounded-lg px-3 py-2 text-sm hover:bg-slate-100"
+              className="block rounded-lg px-3 py-2 hover:bg-slate-100"
               onClick={() => setOpen(false)}
             >
-              Locations
+              Locations &amp; sites
             </Link>
-
             <Link
               href="/help"
-              className="block rounded-lg px-3 py-2 text-sm hover:bg-slate-100"
+              className="mt-1 block rounded-lg px-3 py-2 hover:bg-slate-100"
               onClick={() => setOpen(false)}
             >
-              Help & support
+              Help &amp; support
             </Link>
           </div>
 
           {/* Sign out */}
           <button
+            type="button"
             onClick={handleSignOut}
-            className="flex w-full items-center justify-between rounded-none border-t bg-red-50 px-4 py-2 text-left text-sm font-medium text-red-700 hover:bg-red-100"
+            className="flex w-full items-center justify-between rounded-b-xl border-t border-slate-100 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100"
           >
-            Sign out
+            <span>Sign out</span>
           </button>
         </div>
       )}
