@@ -78,9 +78,7 @@ async function fetchTemps(
     .gte("at", new Date(fromISO).toISOString())
     .lte(
       "at",
-      new Date(
-        new Date(toISO).getTime() + 24 * 3600 * 1000 - 1
-      ).toISOString()
+      new Date(new Date(toISO).getTime() + 24 * 3600 * 1000 - 1).toISOString()
     )
     .order("at", { ascending: false })
     .limit(3000);
@@ -127,60 +125,99 @@ async function fetchCleaningCount(
 }
 
 /**
- * Training due: now uses `trainings` table joined to `staff`.
- * One row per training record (so a staff member with 2 certs will show twice).
+ * Training due / overdue in next `withinDays` days.
+ * Now sourced from `trainings` table (expires_on) + `staff` table for names.
  */
 async function fetchTeamDue(
   withinDays: number,
   orgId: string
 ): Promise<TeamRow[]> {
-  const { data, error } = await supabase
+  // 1) Get all trainings for this org that actually have an expiry date
+  const { data: tData, error: tErr } = await supabase
     .from("trainings")
-    .select(
-      "id, type, expires_on, staff:staff_id (id, name, email, initials)"
-    )
-    .eq("org_id", orgId)
-    .not("expires_on", "is", null)
-    .order("expires_on", { ascending: true })
-    .limit(2000);
+    .select("id, staff_id, expires_on")
+    .eq("org_id", orgId);
 
-  if (error) throw error;
+  if (tErr) throw tErr;
+
+  const trainings = (tData ?? []).filter((t: any) => t.expires_on);
+
+  if (!trainings.length) return [];
+
+  // 2) Fetch related staff records in one go
+  const staffIds = Array.from(
+    new Set(
+      trainings
+        .map((t: any) => t.staff_id)
+        .filter((id: any) => typeof id === "string" || typeof id === "number")
+    )
+  );
+
+  const staffMap = new Map<
+    string,
+    { name: string; email: string | null; initials: string | null }
+  >();
+
+  if (staffIds.length) {
+    const { data: sData, error: sErr } = await supabase
+      .from("staff")
+      .select("id, name, email, initials")
+      .in("id", staffIds);
+
+    if (sErr) throw sErr;
+
+    for (const s of sData ?? []) {
+      staffMap.set(String(s.id), {
+        name: s.name ?? "—",
+        email: s.email ?? null,
+        initials: s.initials ?? null,
+      });
+    }
+  }
 
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
 
-  return (data ?? [])
+  // 3) Map trainings -> rows, filter by days_until
+  return trainings
     .map((r: any) => {
-      const raw = r.expires_on ?? null;
+      const staff = staffMap.get(String(r.staff_id)) ?? {
+        name: "—",
+        email: null,
+        initials: null,
+      };
 
+      const raw = r.expires_on ?? null;
       const iso = raw ? new Date(raw).toISOString() : null;
       const d0 = raw ? new Date(raw) : null;
       if (d0) d0.setHours(0, 0, 0, 0);
 
-      const staff = r.staff ?? {};
-
       return {
         id: String(r.id),
-        name: staff.name ?? "—",
-        email: staff.email ?? null,
-        initials: staff.initials ?? null,
+        name: staff.name,
+        email: staff.email,
+        initials: staff.initials,
         expires_on: iso,
         days_until: d0
           ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
           : null,
-      };
+      } as TeamRow;
     })
     .filter((r) => r.days_until != null && r.days_until <= withinDays)
     .sort((a, b) => (a.expires_on || "").localeCompare(b.expires_on || ""));
 }
 
+/**
+ * Allergen reviews due/overdue from `allergen_review_log`
+ * Schema: reviewed_on (date), interval_days, reviewer_name, ...
+ */
 async function fetchAllergenLog(
   withinDays: number,
   orgId: string
 ): Promise<AllergenRow[]> {
   const { data, error } = await supabase
     .from("allergen_review_log")
-    .select("id, reviewed_on, interval_days, reviewer")
+    .select("id, reviewed_on, interval_days, reviewer_name")
     .eq("org_id", orgId)
     .order("reviewed_on", { ascending: false })
     .limit(365);
@@ -193,6 +230,7 @@ async function fetchAllergenLog(
   return (data ?? [])
     .map((r: any) => {
       const lr = r.reviewed_on ? new Date(r.reviewed_on) : null;
+
       let nextISO: string | null = null;
       if (lr && Number.isFinite(Number(r.interval_days))) {
         const next = new Date(
@@ -200,6 +238,7 @@ async function fetchAllergenLog(
         );
         nextISO = next.toISOString();
       }
+
       const d0 = nextISO ? new Date(nextISO) : null;
       if (d0) d0.setHours(0, 0, 0, 0);
 
@@ -207,11 +246,11 @@ async function fetchAllergenLog(
         id: String(r.id),
         reviewed_on: lr ? lr.toISOString() : null,
         next_due: nextISO,
-        reviewer: r.reviewer ?? null,
+        reviewer: r.reviewer_name ?? null,
         days_until: d0
           ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
           : null,
-      };
+      } as AllergenRow;
     })
     .filter((r) => r.days_until != null && r.days_until <= withinDays)
     .sort((a, b) => (a.next_due || "").localeCompare(b.next_due || ""));
@@ -269,8 +308,6 @@ export default function ReportsPage() {
 
   const [initialRunDone, setInitialRunDone] = useState(false);
 
-  const [showAllTemps, setShowAllTemps] = useState(false);
-
   const printRef = useRef<HTMLDivElement>(null);
 
   // KPI from temps
@@ -280,13 +317,6 @@ export default function ReportsPage() {
     const locationsSet = new Set(t.map((r) => r.location));
     return { count: t.length, fails, locations: locationsSet.size };
   }, [temps]);
-
-  // Which temp rows to show on-screen (first 10 vs all)
-  const displayTemps = useMemo(() => {
-    if (!temps) return null;
-    if (showAllTemps) return temps;
-    return temps.slice(0, 10);
-  }, [temps, showAllTemps]);
 
   /* ---------- boot: org + locations ---------- */
 
@@ -337,7 +367,6 @@ export default function ReportsPage() {
       ]);
 
       setTemps(t);
-      setShowAllTemps(false); // reset to first 10 on each run
       setCleaningCount(cleanCount);
 
       if (includeAncillary) {
@@ -366,16 +395,12 @@ export default function ReportsPage() {
       return;
     }
     const toISO = toISODate(new Date());
-    const fromISO = toISODate(
-      new Date(Date.now() - 89 * 24 * 3600 * 1000)
-    );
+    const fromISO = toISODate(new Date(Date.now() - 89 * 24 * 3600 * 1000));
     setFrom(fromISO);
     setTo(toISO);
 
     const locId =
-      locationFilter && locationFilter !== "all"
-        ? locationFilter
-        : null;
+      locationFilter && locationFilter !== "all" ? locationFilter : null;
 
     await runRange(fromISO, toISO, orgId, locId, true);
   }
@@ -386,9 +411,7 @@ export default function ReportsPage() {
       return;
     }
     const locId =
-      locationFilter && locationFilter !== "all"
-        ? locationFilter
-        : null;
+      locationFilter && locationFilter !== "all" ? locationFilter : null;
     await runRange(from, to, orgId, locId, true);
   }
 
@@ -415,6 +438,7 @@ export default function ReportsPage() {
   }
 
   function printReport() {
+    // For now just print the page; printable area is wrapped in printRef.
     window.print();
   }
 
@@ -602,11 +626,8 @@ export default function ReportsPage() {
                     </td>
                   </tr>
                 ) : (
-                  displayTemps!.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="border-t border-slate-100"
-                    >
+                  temps.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
                       <td className="py-2 pr-3">
                         {formatISOToUK(r.date)}
                       </td>
@@ -636,27 +657,6 @@ export default function ReportsPage() {
               </tbody>
             </table>
           </div>
-
-          {temps && temps.length > 10 && (
-            <div className="mt-3 flex items-center justify-between text-xs text-slate-600">
-              <div>
-                Showing{" "}
-                <span className="font-medium">
-                  {showAllTemps ? temps.length : Math.min(10, temps.length)}
-                </span>{" "}
-                of <span className="font-medium">{temps.length}</span> entries
-              </div>
-              <button
-                type="button"
-                className="font-medium text-emerald-700 hover:underline"
-                onClick={() => setShowAllTemps((v) => !v)}
-              >
-                {showAllTemps
-                  ? "Show first 10 only"
-                  : `Show all ${temps.length} entries`}
-              </button>
-            </div>
-          )}
         </Card>
 
         {/* Team training due */}
@@ -678,28 +678,18 @@ export default function ReportsPage() {
               <tbody>
                 {!teamDue?.length ? (
                   <tr>
-                    <td
-                      colSpan={5}
-                      className="py-6 text-center text-slate-500"
-                    >
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
                       None due
                     </td>
                   </tr>
                 ) : (
                   teamDue.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="border-t border-slate-100"
-                    >
+                    <tr key={r.id} className="border-t border-slate-100">
                       <td className="py-2 pr-3">{r.name}</td>
-                      <td className="py-2 pr-3">
-                        {r.initials ?? "—"}
-                      </td>
+                      <td className="py-2 pr-3">{r.initials ?? "—"}</td>
                       <td className="py-2 pr-3">{r.email ?? "—"}</td>
                       <td className="py-2 pr-3">
-                        {r.expires_on
-                          ? formatISOToUK(r.expires_on)
-                          : "—"}
+                        {r.expires_on ? formatISOToUK(r.expires_on) : "—"}
                       </td>
                       <td
                         className={`py-2 pr-3 ${
@@ -736,31 +726,19 @@ export default function ReportsPage() {
               <tbody>
                 {!allergenLog?.length ? (
                   <tr>
-                    <td
-                      colSpan={4}
-                      className="py-6 text-center text-slate-500"
-                    >
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
                       None due
                     </td>
                   </tr>
                 ) : (
                   allergenLog.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="border-t border-slate-100"
-                    >
+                    <tr key={r.id} className="border-t border-slate-100">
                       <td className="py-2 pr-3">
-                        {r.reviewed_on
-                          ? formatISOToUK(r.reviewed_on)
-                          : "—"}
+                        {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
                       </td>
+                      <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
                       <td className="py-2 pr-3">
-                        {r.reviewer ?? "—"}
-                      </td>
-                      <td className="py-2 pr-3">
-                        {r.next_due
-                          ? formatISOToUK(r.next_due)
-                          : "—"}
+                        {r.next_due ? formatISOToUK(r.next_due) : "—"}
                       </td>
                       <td
                         className={`py-2 pr-3 ${
