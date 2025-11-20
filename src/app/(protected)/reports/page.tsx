@@ -38,6 +38,20 @@ type AllergenRow = {
   days_until?: number | null;
 };
 
+type StaffReviewRow = {
+  id: string;
+  review_date: string; // ISO date
+  created_at: string | null; // ISO datetime
+  staff_name: string;
+  staff_initials: string | null;
+  location_name: string | null;
+  reviewer_name: string | null;
+  reviewer_email: string | null;
+  category: string;
+  rating: number;
+  notes: string | null;
+};
+
 type LocationOption = {
   id: string;
   name: string;
@@ -61,6 +75,15 @@ function formatISOToUK(iso: string | null | undefined): string {
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const year = d.getFullYear();
   return `${day}/${month}/${year}`;
+}
+
+function formatTimeHM(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
 }
 
 /* ---------- Data fetch helpers (org + optional location) ---------- */
@@ -126,13 +149,12 @@ async function fetchCleaningCount(
 
 /**
  * Training due / overdue in next `withinDays` days.
- * Now sourced from `trainings` table (expires_on) + `staff` table for names.
+ * Sourced from `trainings` table (expires_on) + `staff` table for names.
  */
 async function fetchTeamDue(
   withinDays: number,
   orgId: string
 ): Promise<TeamRow[]> {
-  // 1) Get all trainings for this org that actually have an expiry date
   const { data: tData, error: tErr } = await supabase
     .from("trainings")
     .select("id, staff_id, expires_on")
@@ -141,10 +163,8 @@ async function fetchTeamDue(
   if (tErr) throw tErr;
 
   const trainings = (tData ?? []).filter((t: any) => t.expires_on);
-
   if (!trainings.length) return [];
 
-  // 2) Fetch related staff records in one go
   const staffIds = Array.from(
     new Set(
       trainings
@@ -178,7 +198,6 @@ async function fetchTeamDue(
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
 
-  // 3) Map trainings -> rows, filter by days_until
   return trainings
     .map((r: any) => {
       const staff = staffMap.get(String(r.staff_id)) ?? {
@@ -256,6 +275,59 @@ async function fetchAllergenLog(
     .sort((a, b) => (a.next_due || "").localeCompare(b.next_due || ""));
 }
 
+/**
+ * Manager / supervisor QC reviews from staff_reviews table.
+ */
+async function fetchStaffReviews(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<StaffReviewRow[]> {
+  let query = supabase
+    .from("staff_reviews")
+    .select(
+      `
+      id,
+      review_date,
+      created_at,
+      category,
+      rating,
+      notes,
+      reviewer_name,
+      reviewer_email,
+      staff:staff_id ( name, initials ),
+      location:location_id ( name )
+    `
+    )
+    .eq("org_id", orgId)
+    .gte("review_date", fromISO)
+    .lte("review_date", toISO)
+    .order("review_date", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  if (locationId) {
+    query = query.eq("location_id", locationId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  return (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    review_date: toISODate(r.review_date),
+    created_at: r.created_at ?? null,
+    staff_name: r.staff?.name ?? "—",
+    staff_initials: r.staff?.initials ?? null,
+    location_name: r.location?.name ?? null,
+    reviewer_name: r.reviewer_name ?? null,
+    reviewer_email: r.reviewer_email ?? null,
+    category: r.category ?? "—",
+    rating: Number(r.rating ?? 0),
+    notes: r.notes ?? null,
+  }));
+}
+
 /* ---------- CSV ---------- */
 
 function tempsToCSV(rows: TempRow[]) {
@@ -301,6 +373,9 @@ export default function ReportsPage() {
   const [temps, setTemps] = useState<TempRow[] | null>(null);
   const [teamDue, setTeamDue] = useState<TeamRow[] | null>(null);
   const [allergenLog, setAllergenLog] = useState<AllergenRow[] | null>(null);
+  const [staffReviews, setStaffReviews] = useState<StaffReviewRow[] | null>(
+    null
+  );
   const [cleaningCount, setCleaningCount] = useState(0);
 
   const [loading, setLoading] = useState(false);
@@ -361,13 +436,15 @@ export default function ReportsPage() {
       setErr(null);
       setLoading(true);
 
-      const [t, cleanCount] = await Promise.all([
+      const [t, cleanCount, reviews] = await Promise.all([
         fetchTemps(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningCount(rangeFrom, rangeTo, orgIdValue, locationId),
+        fetchStaffReviews(rangeFrom, rangeTo, orgIdValue, locationId),
       ]);
 
       setTemps(t);
       setCleaningCount(cleanCount);
+      setStaffReviews(reviews);
 
       if (includeAncillary) {
         const withinDays = 90;
@@ -383,6 +460,7 @@ export default function ReportsPage() {
       setTemps(null);
       setTeamDue(null);
       setAllergenLog(null);
+      setStaffReviews(null);
       setCleaningCount(0);
     } finally {
       setLoading(false);
@@ -438,7 +516,6 @@ export default function ReportsPage() {
   }
 
   function printReport() {
-    // For now just print the page; printable area is wrapped in printRef.
     window.print();
   }
 
@@ -628,9 +705,7 @@ export default function ReportsPage() {
                 ) : (
                   temps.map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">
-                        {formatISOToUK(r.date)}
-                      </td>
+                      <td className="py-2 pr-3">{formatISOToUK(r.date)}</td>
                       <td className="py-2 pr-3">{r.staff}</td>
                       <td className="py-2 pr-3">{r.location}</td>
                       <td className="py-2 pr-3">{r.item}</td>
@@ -748,6 +823,72 @@ export default function ReportsPage() {
                         }`}
                       >
                         {r.days_until != null ? r.days_until : "—"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        {/* Manager / supervisor staff reviews */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-1 text-base font-semibold">
+            Manager / Supervisor QC Reviews
+          </h3>
+          <p className="mb-3 text-xs text-slate-500">
+            Logged from the Manager Dashboard QC review form. Shows who was
+            reviewed, who reviewed them, and the rating and notes.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Location</th>
+                  <th className="py-2 pr-3">Reviewer</th>
+                  <th className="py-2 pr-3">Category</th>
+                  <th className="py-2 pr-3">Rating</th>
+                  <th className="py-2 pr-3">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!staffReviews?.length ? (
+                  <tr>
+                    <td colSpan={8} className="py-6 text-center text-slate-500">
+                      No manager reviews for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  staffReviews.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">
+                        {formatISOToUK(r.review_date)}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {formatTimeHM(r.created_at)}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.staff_name}
+                        {r.staff_initials ? ` (${r.staff_initials})` : ""}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.location_name ?? "—"}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.reviewer_name || r.reviewer_email || "—"}
+                      </td>
+                      <td className="py-2 pr-3">{r.category}</td>
+                      <td className="py-2 pr-3">{r.rating}</td>
+                      <td className="max-w-xs py-2 pr-3">
+                        {r.notes ? (
+                          <span className="line-clamp-2">{r.notes}</span>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                     </tr>
                   ))

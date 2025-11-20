@@ -1,343 +1,366 @@
-// src/components/EditRoutineModal.tsx
+// src/components/RoutineRunModal.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseBrowser";
+import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
+import { TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
+import type { RoutineRow } from "@/components/RoutinePickerModal";
 
+// src/components/EditRoutineModal.tsx
+
+
+// ...your other imports...
+
+// ✅ Add these exports
 export type RoutineItemDraft = {
-  id?: string; // existing DB id (optional)
-  position: number; // 1, 2, 3, ...
+  id?: string;              // optional while drafting
+  position: number;
   location: string | null;
   item: string | null;
-  target_key: string; // e.g. "cooked"
+  target_key: string;       // e.g. "chill", "hot-hold"
 };
 
 export type RoutineDraft = {
-  id?: string; // routine id when editing
+  id?: string;              // optional while drafting
   name: string;
   active: boolean;
   items: RoutineItemDraft[];
 };
 
+
 type Props = {
   open: boolean;
-  initial: RoutineDraft | null;
+  routine: RoutineRow | null;
+  defaultDate: string;
+  defaultInitials: string;
   onClose: () => void;
-  onSave: (draft: RoutineDraft) => Promise<void> | void;
+  onSaved: () => Promise<void> | void;
 };
 
-// Simple target list – adjust to your real targets if needed
-const TARGET_OPTIONS: { key: string; label: string }[] = [
-  { key: "cooked", label: "Cooked" },
-  { key: "chilled", label: "Chilled" },
-  { key: "frozen", label: "Frozen" },
-  { key: "fridge", label: "Fridge" },
-  { key: "freezer", label: "Freezer" },
-  { key: "delivery", label: "Delivery" },
-];
-
-function normaliseDraft(initial: RoutineDraft | null): RoutineDraft {
-  if (!initial) {
-    return {
-      name: "",
-      active: true,
-      items: [],
-    };
-  }
-
-  const sorted = [...(initial.items ?? [])]
-    .map((it, idx) => ({
-      ...it,
-      position: it.position ?? idx + 1,
-      location: it.location ?? "",
-      item: it.item ?? "",
-      target_key: it.target_key || "cooked",
-    }))
-    .sort((a, b) => a.position - b.position);
-
-  return {
-    id: initial.id,
-    name: initial.name ?? "",
-    active: initial.active ?? true,
-    items: sorted,
-  };
+function inferStatus(
+  temp: number | null,
+  preset?: TargetPreset
+): "pass" | "fail" | null {
+  if (temp == null || !preset) return null;
+  const { minC, maxC } = preset;
+  if (minC != null && temp < minC) return "fail";
+  if (maxC != null && temp > maxC) return "fail";
+  return "pass";
 }
 
-export default function EditRoutineModal({
+export default function RoutineRunModal({
   open,
-  initial,
+  routine,
+  defaultDate,
+  defaultInitials,
   onClose,
-  onSave,
+  onSaved,
 }: Props) {
-  const [draft, setDraft] = useState<RoutineDraft>(() =>
-    normaliseDraft(initial)
-  );
+  const [date, setDate] = useState(defaultDate);
+  const [initials, setInitials] = useState(defaultInitials || "");
+  const [temps, setTemps] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [initialOptions, setInitialOptions] = useState<string[]>([]);
 
-  // Reset when opening / initial changes
+  // Reset values when modal opens / routine changes
+  useEffect(() => {
+    if (!open || !routine) return;
+    setDate(defaultDate);
+    setInitials(defaultInitials || "");
+    const init: Record<string, string> = {};
+    for (const it of routine.items) init[it.id] = "";
+    setTemps(init);
+  }, [open, routine, defaultDate, defaultInitials]);
+
+  // Load initials on open
   useEffect(() => {
     if (!open) return;
-    setDraft(normaliseDraft(initial));
-    setSaving(false);
-  }, [open, initial]);
 
-  if (!open) return null;
+    (async () => {
+      try {
+        const orgId = await getActiveOrgIdClient();
+        if (!orgId) return;
 
-  const items = draft.items;
+        const { data } = await supabase
+          .from("team_members")
+          .select("initials, active")
+          .eq("org_id", orgId)
+          .eq("active", true)
+          .order("initials");
 
-  const updateItem = (index: number, patch: Partial<RoutineItemDraft>) => {
-    setDraft((d) => {
-      const copy = [...d.items];
-      copy[index] = { ...copy[index], ...patch };
-      return { ...d, items: copy };
-    });
-  };
+        const list = Array.from(
+          new Set(
+            (data ?? [])
+              .map((r: any) => (r.initials ?? "").toUpperCase())
+              .filter(Boolean)
+          )
+        );
 
-  const addItem = () => {
-    setDraft((d) => {
-      const nextPos =
-        d.items.length === 0
-          ? 1
-          : Math.max(...d.items.map((i) => i.position || 0)) + 1;
-      return {
-        ...d,
-        items: [
-          ...d.items,
-          {
-            position: nextPos,
-            location: "",
-            item: "",
-            target_key: "cooked",
-          },
-        ],
-      };
-    });
-  };
+        setInitialOptions(list);
+        setInitials((prev) => prev || list[0] || "");
+      } catch {
+        // ignore
+      }
+    })();
+  }, [open]);
 
-  const removeItem = (index: number) => {
-    setDraft((d) => {
-      const copy = d.items.filter((_, i) => i !== index);
-      const renumbered = copy.map((it, idx) => ({
-        ...it,
-        position: idx + 1,
-      }));
-      return { ...d, items: renumbered };
-    });
-  };
+  if (!open || !routine) return null;
 
-  const moveItem = (index: number, dir: -1 | 1) => {
-    setDraft((d) => {
-      const copy = [...d.items];
-      const newIndex = index + dir;
-      if (newIndex < 0 || newIndex >= copy.length) return d;
-      const [row] = copy.splice(index, 1);
-      copy.splice(newIndex, 0, row);
-      const renumbered = copy.map((it, idx) => ({
-        ...it,
-        position: idx + 1,
-      }));
-      return { ...d, items: renumbered };
-    });
-  };
-
-  const handleSubmit = async (e?: React.FormEvent) => {
+  async function handleSave(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!draft.name.trim()) return;
+    if (!date || !initials) return;
+    if (!routine) return;
+
     setSaving(true);
+
     try {
-      const cleaned: RoutineDraft = {
-        ...draft,
-        name: draft.name.trim(),
-        items: draft.items.map((it, idx) => ({
-          ...it,
-          position: idx + 1,
-          location: (it.location ?? "").trim() || null,
-          item: (it.item ?? "").trim() || null,
-          target_key: it.target_key || "cooked",
-        })),
-      };
-      await onSave(cleaned);
+      const org_id = await getActiveOrgIdClient();
+      const location_id = await getActiveLocationIdClient();
+
+      if (!org_id || !location_id) {
+        alert("Please select a location first.");
+        return;
+      }
+
+      // Build full timestamp (selected date + current time) per save
+      const now = new Date();
+      const [y, m, d] = date.split("-");
+      let atBase: Date;
+      if (y && m && d) {
+        atBase = new Date(
+          Number(y),
+          Number(m) - 1,
+          Number(d),
+          now.getHours(),
+          now.getMinutes(),
+          now.getSeconds(),
+          now.getMilliseconds()
+        );
+      } else {
+        atBase = now;
+      }
+
+      const rows = routine.items
+        .map((it) => {
+          const raw = (temps[it.id] ?? "").trim();
+          if (!raw) return null;
+
+          const temp = Number.isFinite(Number(raw)) ? Number(raw) : null;
+          const preset = (TARGET_BY_KEY as any)[it.target_key] as
+            | TargetPreset
+            | undefined;
+          const status = inferStatus(temp, preset);
+
+          return {
+            org_id,
+            location_id,
+            at: atBase.toISOString(),
+            area: it.location ?? null,
+            note: it.item ?? null,
+            staff_initials: initials.toUpperCase(),
+            target_key: it.target_key,
+            temp_c: temp,
+            status,
+          };
+        })
+        .filter(Boolean) as any[];
+
+      if (!rows.length) {
+        onClose();
+        return;
+      }
+
+      const { error } = await supabase.from("food_temp_logs").insert(rows);
+
+      if (error) {
+        alert(error.message);
+        return;
+      }
+
+      await onSaved();
       onClose();
     } finally {
       setSaving(false);
     }
-  };
+  }
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 overflow-y-auto overscroll-contain"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3 py-6"
       onClick={onClose}
     >
       <form
-        onSubmit={handleSubmit}
+        onSubmit={handleSave}
         onClick={(e) => e.stopPropagation()}
-        className="mt-4 mb-4 flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+        className="flex w-full max-w-4xl max-h-[85vh] flex-col overflow-hidden rounded-2xl bg-white text-slate-900 shadow-2xl"
       >
-        {/* Header – styled to match Run routine modal */}
-        <div className="flex items-center justify-between border-b bg-slate-900 px-4 py-3 text-white">
-          <div className="text-base font-semibold">Edit routine</div>
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-emerald-600/30 bg-emerald-600 px-4 py-3 text-white">
+          <div>
+            <div className="text-[11px] uppercase tracking-widest text-emerald-100">
+              Run routine
+            </div>
+            <div className="text-base font-semibold">{routine.name}</div>
+          </div>
+
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-white/30 bg-white/10 px-3 py-1.5 text-sm font-medium hover:bg-white/20"
+            className="rounded-md bg-emerald-700 px-3 py-1.5 text-sm hover:bg-emerald-800"
           >
             Close
           </button>
         </div>
 
-        {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
-          {/* Routine name + active toggle */}
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex-1 min-w-[180px] text-sm">
-              <div className="mb-1 text-gray-600">Routine name</div>
+        {/* Body (Scrollable) */}
+        <div className="flex-1 min-h-0 overflow-y-auto bg-white px-4 py-4 space-y-5">
+          {/* Date + Initials */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="text-sm font-medium">
+              Date
               <input
-                className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm"
-                value={draft.name}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, name: e.target.value }))
-                }
-                placeholder="e.g., Cooking checks"
+                type="date"
+                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
                 required
               />
             </label>
-            <label className="inline-flex items-center gap-2 text-sm">
+
+            <label className="text-sm font-medium">
+              Initials
               <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-gray-300"
-                checked={draft.active}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, active: e.target.checked }))
-                }
+                list="initials-list"
+                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm uppercase shadow-sm"
+                value={initials}
+                onChange={(e) => setInitials(e.target.value.toUpperCase())}
+                required
               />
-              <span>Active</span>
+              <datalist id="initials-list">
+                {initialOptions.map((i) => (
+                  <option key={i} value={i} />
+                ))}
+              </datalist>
             </label>
           </div>
 
-          {/* Items header + add button */}
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold">Items</div>
-            <button
-              type="button"
-              onClick={addItem}
-              className="rounded-xl border border-gray-300 px-3 py-1.5 text-xs font-medium hover:bg-gray-50"
-            >
-              + Add item
-            </button>
+          {/* Table (desktop) */}
+          <div className="hidden md:block rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-slate-600">
+                <tr>
+                  <th className="p-2 text-left text-xs font-semibold">#</th>
+                  <th className="p-2 text-left text-xs font-semibold">
+                    Location
+                  </th>
+                  <th className="p-2 text-left text-xs font-semibold">
+                    Item
+                  </th>
+                  <th className="p-2 text-left text-xs font-semibold">
+                    Target
+                  </th>
+                  <th className="p-2 text-left text-xs font-semibold">
+                    Temp (°C)
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {routine.items.map((it, idx) => {
+                  const preset = (TARGET_BY_KEY as any)[
+                    it.target_key
+                  ] as TargetPreset | undefined;
+
+                  return (
+                    <tr key={it.id} className="border-t border-slate-100">
+                      <td className="p-2">{idx + 1}</td>
+                      <td className="p-2">{it.location ?? "—"}</td>
+                      <td className="p-2">{it.item ?? "—"}</td>
+                      <td className="p-2 text-xs text-slate-500">
+                        {preset?.label ?? it.target_key ?? "—"}
+                      </td>
+                      <td className="p-2">
+                        <input
+                          className="w-24 rounded-xl border border-slate-300 bg-white px-2 py-1 shadow-sm"
+                          value={temps[it.id] ?? ""}
+                          onChange={(e) =>
+                            setTemps((t) => ({
+                              ...t,
+                              [it.id]: e.target.value,
+                            }))
+                          }
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
 
-          {/* Items list */}
-          {items.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-300 p-3 text-sm text-gray-500">
-              No items yet. Tap “Add item” to start building this routine.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {items.map((it, idx) => {
-                const currentKey = it.target_key || "cooked";
-                const known = TARGET_OPTIONS.some((t) => t.key === currentKey);
-                const options = known
-                  ? TARGET_OPTIONS
-                  : [
-                      ...TARGET_OPTIONS,
-                      { key: currentKey, label: currentKey || "Custom" },
-                    ];
+          {/* Mobile cards */}
+          <div className="space-y-3 md:hidden">
+            {routine.items.map((it, idx) => {
+              const preset = (TARGET_BY_KEY as any)[
+                it.target_key
+              ] as TargetPreset | undefined;
 
-                return (
-                  <div
-                    key={idx}
-                    className="space-y-2 rounded-xl border border-gray-300 p-3"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs font-semibold text-gray-500">
-                        #{idx + 1}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          className="rounded-full border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50 disabled:opacity-40"
-                          disabled={idx === 0}
-                          onClick={() => moveItem(idx, -1)}
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-full border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50 disabled:opacity-40"
-                          disabled={idx === items.length - 1}
-                          onClick={() => moveItem(idx, +1)}
-                        >
-                          ↓
-                        </button>
-                        <button
-                          type="button"
-                          className="ml-2 rounded-full border border-red-200 px-2 py-0.5 text-xs text-red-700 hover:bg-red-50"
-                          onClick={() => removeItem(idx)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      <label className="text-xs sm:text-sm">
-                        <div className="mb-1 text-gray-600">Location</div>
-                        <input
-                          className="w-full rounded-xl border border-gray-300 px-2 py-1.5 text-sm"
-                          value={it.location ?? ""}
-                          onChange={(e) =>
-                            updateItem(idx, { location: e.target.value })
-                          }
-                        />
-                      </label>
-                      <label className="text-xs sm:text-sm">
-                        <div className="mb-1 text-gray-600">Item</div>
-                        <input
-                          className="w-full rounded-xl border border-gray-300 px-2 py-1.5 text-sm"
-                          value={it.item ?? ""}
-                          onChange={(e) =>
-                            updateItem(idx, { item: e.target.value })
-                          }
-                        />
-                      </label>
-                      <label className="text-xs sm:text-sm">
-                        <div className="mb-1 text-gray-600">Target</div>
-                        <select
-                          className="w-full rounded-xl border border-gray-300 px-2 py-1.5 text-sm"
-                          value={currentKey}
-                          onChange={(e) =>
-                            updateItem(idx, { target_key: e.target.value })
-                          }
-                        >
-                          {options.map((opt) => (
-                            <option key={opt.key} value={opt.key}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
+              return (
+                <div
+                  key={it.id}
+                  className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+                >
+                  <div className="text-xs font-semibold text-slate-500">
+                    #{idx + 1}
                   </div>
-                );
-              })}
-            </div>
-          )}
+
+                  <div className="mt-1 font-medium text-slate-900">
+                    {it.item}
+                  </div>
+
+                  <div className="text-xs text-slate-500">
+                    {it.location}
+                  </div>
+
+                  <div className="mt-2 text-xs text-slate-500">
+                    {preset?.label ?? it.target_key ?? "—"}
+                  </div>
+
+                  <input
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 shadow-sm"
+                    placeholder="e.g. 75"
+                    value={temps[it.id] ?? ""}
+                    onChange={(e) =>
+                      setTemps((t) => ({
+                        ...t,
+                        [it.id]: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Footer (stays visible) */}
-        <div className="flex items-center justify-end gap-2 border-t bg-gray-50 px-4 py-3">
+        {/* Footer */}
+        <div className="flex justify-end gap-2 border-t border-slate-200 bg-white px-4 py-3">
           <button
             type="button"
-            className="rounded-md px-3 py-1.5 text-sm hover:bg-white"
             onClick={onClose}
+            className="rounded-lg px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
           >
             Cancel
           </button>
+
           <button
             type="submit"
             disabled={saving}
-            className="rounded-xl bg-black px-4 py-1.5 text-sm font-medium text-white hover:bg-gray-900 disabled:opacity-60"
+            className="rounded-xl bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
           >
-            {saving ? "Saving…" : "Save routine"}
+            {saving ? "Saving…" : "Save all"}
           </button>
         </div>
       </form>

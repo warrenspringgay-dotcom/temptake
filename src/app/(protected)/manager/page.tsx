@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 
+/* ---------- Types ---------- */
+
 type LocationOption = {
   id: string;
   name: string;
@@ -18,7 +20,6 @@ type StaffOption = {
 };
 
 type ReviewSummary = {
-  today: number;
   last7: number;
   last30: number;
   staffWithReviews: number;
@@ -45,48 +46,69 @@ type ReviewFormState = {
   notes: string;
 };
 
-type SignoffSummary = {
-  todaySigned: boolean;
-  lastSignedDate: string | null; // ISO yyyy-mm-dd
-  countLast30: number;
+type TodayTempRow = {
+  id: string;
+  time: string;
+  staff: string;
+  item: string;
+  area: string;
+  temp_c: number | null;
+  status: string | null;
+};
+
+type TodayCleaningRow = {
+  id: string;
+  time: string | null;
+  routine: string;
+  staff: string | null;
+  notes: string | null;
 };
 
 const CATEGORY_OPTIONS = ["Temps", "Cleaning", "Allergens", "General"];
 
-// deterministic formatter (no locale / no comma) to avoid hydration issues
-function formatPrettyDate(d: Date) {
-  const WEEKDAYS = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-  ];
-  const MONTHS = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
+/* ---------- Helpers ---------- */
 
-  const weekday = WEEKDAYS[d.getDay()];
+const WEEKDAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+function formatPrettyDate(d: Date) {
+  const wd = WEEKDAYS[d.getDay()];
   const day = d.getDate();
   const month = MONTHS[d.getMonth()];
   const year = d.getFullYear();
-
-  // e.g. "Wednesday 19 November 2025"
-  return `${weekday} ${day} ${month} ${year}`;
+  return `${wd} ${day} ${month} ${year}`;
 }
+
+function formatTimeHM(d: Date | null | undefined): string | null {
+  if (!d) return null;
+  const hours = String(d.getHours()).padStart(2, "0");
+  const mins = String(d.getMinutes()).padStart(2, "0");
+  return `${hours}:${mins}`;
+}
+
+/* ===================================================================== */
 
 export default function ManagerDashboardPage() {
   const [orgId, setOrgId] = useState<string | null>(null);
@@ -106,9 +128,10 @@ export default function ManagerDashboardPage() {
   const [reviewSummary, setReviewSummary] =
     useState<ReviewSummary | null>(null);
 
-  const [signoffSummary, setSignoffSummary] =
-    useState<SignoffSummary | null>(null);
-  const [savingSignoff, setSavingSignoff] = useState(false);
+  const [todayTemps, setTodayTemps] = useState<TodayTempRow[]>([]);
+  const [todayCleaningRuns, setTodayCleaningRuns] = useState<
+    TodayCleaningRow[]
+  >([]);
 
   const [loadingCards, setLoadingCards] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -123,28 +146,17 @@ export default function ManagerDashboardPage() {
     notes: "",
   });
 
-  // manager identity (for sign-off audit)
-  const [managerId, setManagerId] = useState<string | null>(null);
-  const [managerEmail, setManagerEmail] = useState<string | null>(null);
-
   const today = useMemo(() => new Date(), []);
   const todayISO = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
-    return d.toISOString().slice(0, 10);
+    return d.toISOString().slice(0, 10); // yyyy-mm-dd
   }, []);
 
-  /* ---------- Boot: org + location + auth ---------- */
+  /* ---------- Boot: org + location ---------- */
 
   useEffect(() => {
     (async () => {
-      // who is logged in (for sign-off)
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData?.user) {
-        setManagerId(userData.user.id);
-        setManagerEmail(userData.user.email ?? null);
-      }
-
       const oId = await getActiveOrgIdClient();
       setOrgId(oId ?? null);
 
@@ -183,7 +195,7 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
-  /* ---------- Load staff for dropdown (team_members) ---------- */
+  /* ---------- Load staff list for reviews ---------- */
 
   useEffect(() => {
     if (!orgId) return;
@@ -191,26 +203,24 @@ export default function ManagerDashboardPage() {
     (async () => {
       try {
         setStaffLoading(true);
-
         const { data, error } = await supabase
-          .from("team_members")
-          .select("id, name, initials, active")
+          .from("staff")
+          .select("id, name, initials, active, email")
           .eq("org_id", orgId)
           .eq("active", true)
-          .order("name", { ascending: true });
+          .order("name");
 
         if (error) throw error;
 
         const staffList: StaffOption[] =
           data?.map((r: any) => ({
             id: String(r.id),
-            name: r.name ?? "Unnamed",
+            name: r.name ?? r.email ?? "Unnamed",
             initials: r.initials ?? null,
           })) ?? [];
 
         setStaffOptions(staffList);
 
-        // reset selection if invalid
         setReviewForm((prev) => {
           if (!prev.staff_id || !staffList.some((s) => s.id === prev.staff_id)) {
             return { ...prev, staff_id: "" };
@@ -225,7 +235,7 @@ export default function ManagerDashboardPage() {
     })();
   }, [orgId]);
 
-  /* ---------- Refresh dashboard cards ---------- */
+  /* ---------- Refresh dashboard cards + activity lists ---------- */
 
   async function refreshCards() {
     if (!orgId || !locationId) {
@@ -237,10 +247,10 @@ export default function ManagerDashboardPage() {
     setErr(null);
 
     try {
-      const sevenDaysAgo = new Date(
+      const sevenDaysAgoISO = new Date(
         today.getTime() - 7 * 24 * 3600 * 1000
       ).toISOString();
-      const thirtyDaysAgo = new Date(
+      const thirtyDaysAgoISO = new Date(
         today.getTime() - 30 * 24 * 3600 * 1000
       ).toISOString();
 
@@ -254,9 +264,10 @@ export default function ManagerDashboardPage() {
         trainingRes,
         cleaningRes,
         reviewsRes,
-        signoffRes,
+        tempsListRes,
+        cleaningListRes,
       ] = await Promise.all([
-        // Temps logged today
+        // Temps logged today (count) - filter by at
         supabase
           .from("food_temp_logs")
           .select("id", { count: "exact", head: true })
@@ -264,62 +275,78 @@ export default function ManagerDashboardPage() {
           .eq("location_id", locationId)
           .gte("at", dateStartToday.toISOString())
           .lt("at", dateEndToday.toISOString()),
-        // Failures in last 7 days
+
+        // Temp fails in last 7 days - filter by at
         supabase
           .from("food_temp_logs")
           .select("id", { count: "exact", head: true })
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .eq("status", "fail")
-          .gte("at", sevenDaysAgo),
-        // Trainings (for org)
+          .gte("at", sevenDaysAgoISO),
+
+        // Trainings (for org) – derive overdue & logged today from data
         supabase
           .from("trainings")
-          .select("id, expires_on, created_at", {
-            count: "exact",
-            head: false,
-          })
+          .select("id, expires_on, created_at", { head: false })
           .eq("org_id", orgId),
-        // Cleaning task runs today
+
+        // Cleaning task runs today (count) - use done_at
         supabase
           .from("cleaning_task_runs")
           .select("id", { count: "exact", head: true })
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .eq("run_on", todayISO),
-        // Staff reviews (last 30 days)
+          .gte("done_at", dateStartToday.toISOString())
+          .lt("done_at", dateEndToday.toISOString()),
+
+        // Staff reviews in last 30 days
         supabase
           .from("staff_reviews")
-          .select("id, staff_id, review_date", {
-            count: "exact",
-            head: false,
-          })
+          .select("id, staff_id, review_date", { count: "exact", head: false })
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .gte("review_date", thirtyDaysAgo.slice(0, 10)),
-        // Daily manager sign-offs (last 30 days)
+          .gte("review_date", thirtyDaysAgoISO.slice(0, 10)),
+
+        // Individual temp logs for today - filter by at, time from created_at/at
         supabase
-          .from("manager_signoffs")
-          .select("signed_date", { count: "exact", head: false })
+          .from("food_temp_logs")
+          .select("*")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .gte("signed_date", thirtyDaysAgo.slice(0, 10)),
+          .gte("at", dateStartToday.toISOString())
+          .lt("at", dateEndToday.toISOString())
+          .order("at", { ascending: false })
+          .limit(200),
+
+        // Individual cleaning runs for today - use done_at for time
+        supabase
+          .from("cleaning_task_runs")
+          .select("*")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .gte("done_at", dateStartToday.toISOString())
+          .lt("done_at", dateEndToday.toISOString())
+          .order("done_at", { ascending: false })
+          .limit(200),
       ]);
 
-      // Temps
+      /* ---- Temps summary ---- */
       setTempsSummary({
         today: tempsRes.count ?? 0,
         fails7d: failsRes.count ?? 0,
       });
 
-      // Training summary
+      /* ---- Training summary ---- */
       const trainingRows: any[] = (trainingRes.data as any[]) ?? [];
       const today0 = new Date(todayISO);
+
       const loggedToday = trainingRows.filter((t) => {
         if (!t.created_at) return false;
         const d = new Date(t.created_at);
         return d.toISOString().slice(0, 10) === todayISO;
       }).length;
+
       const overdue = trainingRows.filter((t) => {
         if (!t.expires_on) return false;
         const d = new Date(t.expires_on);
@@ -331,19 +358,16 @@ export default function ManagerDashboardPage() {
         overdue,
       });
 
-      // Cleaning
+      /* ---- Cleaning summary ---- */
       setCleaningSummary({
         loggedToday: cleaningRes.count ?? 0,
       });
 
-      // Reviews summary
+      /* ---- Reviews summary ---- */
       const reviewRows: any[] = (reviewsRes.data as any[]) ?? [];
-      const todayReviews = reviewRows.filter(
-        (r) => r.review_date === todayISO
-      ).length;
       const last7 = reviewRows.filter((r) => {
         if (!r.review_date) return false;
-        return r.review_date >= sevenDaysAgo.slice(0, 10);
+        return r.review_date >= sevenDaysAgoISO.slice(0, 10);
       }).length;
       const last30 = reviewRows.length;
       const staffSet = new Set(
@@ -351,30 +375,62 @@ export default function ManagerDashboardPage() {
       );
       staffSet.delete("");
       setReviewSummary({
-        today: todayReviews,
         last7,
         last30,
         staffWithReviews: staffSet.size,
       });
 
-      // Manager sign-off summary
-      const signoffRows: any[] = (signoffRes.data as any[]) ?? [];
-      let todaySigned = false;
-      let lastSignedDate: string | null = null;
-      if (signoffRows.length) {
-        todaySigned = signoffRows.some(
-          (r) => r.signed_date === todayISO
-        );
-        lastSignedDate = signoffRows
-          .map((r) => r.signed_date as string)
-          .sort()
-          .slice(-1)[0];
-      }
-      setSignoffSummary({
-        todaySigned,
-        lastSignedDate,
-        countLast30: signoffRows.length,
+      /* ---- Today’s temp logs list ---- */
+      const tempsData: any[] = (tempsListRes.data as any[]) ?? [];
+      const mappedTemps: TodayTempRow[] = tempsData.map((r) => {
+        const ts =
+          r.created_at || r.at
+            ? new Date(r.created_at ?? r.at)
+            : null;
+
+        return {
+          id: String(r.id),
+          time: formatTimeHM(ts) ?? "—",
+          staff: r.staff_initials ?? r.initials ?? "—",
+          item: r.note ?? "—",
+          area: r.area ?? "—",
+          temp_c: r.temp_c != null ? Number(r.temp_c) : null,
+          status: r.status ?? null,
+        };
       });
+      setTodayTemps(mappedTemps);
+
+      /* ---- Today’s cleaning runs list ---- */
+      const cleaningData: any[] = (cleaningListRes.data as any[]) ?? [];
+      const mappedCleaning: TodayCleaningRow[] = cleaningData.map((r) => {
+        const doneAt: Date | null = r.done_at
+          ? new Date(r.done_at)
+          : r.created_at
+          ? new Date(r.created_at)
+          : null;
+
+        const routineName =
+          r.routine_name || r.routine || r.name || "Cleaning routine";
+
+        const staffNameOrInitials =
+          r.completed_by_initials ||
+          r.staff_initials ||
+          r.initials ||
+          r.completed_by ||
+          r.done_by ||
+          null;
+
+        const notesVal = r.notes || r.comment || null;
+
+        return {
+          id: String(r.id),
+          time: formatTimeHM(doneAt),
+          routine: routineName,
+          staff: staffNameOrInitials,
+          notes: notesVal,
+        };
+      });
+      setTodayCleaningRuns(mappedCleaning);
     } catch (e: any) {
       console.error(e);
       setErr(e?.message ?? "Failed to refresh manager dashboard.");
@@ -437,39 +493,8 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  /* ---------- Daily sign-off handler ---------- */
-
-  async function handleDailySignoff() {
-    if (!orgId || !locationId) return;
-    if (signoffSummary?.todaySigned) return;
-
-    try {
-      setSavingSignoff(true);
-      const { error } = await supabase.from("manager_signoffs").insert({
-        org_id: orgId,
-        location_id: locationId,
-        signed_date: todayISO,
-        manager_id: managerId,
-        manager_email: managerEmail,
-      });
-      if (error) throw error;
-
-      await refreshCards();
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message ?? "Failed to record daily review.");
-    } finally {
-      setSavingSignoff(false);
-    }
-  }
-
   const currentLocationName =
     locations.find((l) => l.id === locationId)?.name ?? "This location";
-
-  const prettyLastSignoff =
-    signoffSummary?.lastSignedDate ?? null
-      ? formatPrettyDate(new Date(signoffSummary!.lastSignedDate!))
-      : "—";
 
   /* ====================== RENDER ====================== */
 
@@ -583,12 +608,6 @@ export default function ManagerDashboardPage() {
           </div>
           <div className="mt-1 space-y-1 text-sm text-slate-700">
             <div>
-              Logged today:{" "}
-              <span className="font-semibold">
-                {reviewSummary?.today ?? 0}
-              </span>
-            </div>
-            <div>
               Logged (7d):{" "}
               <span className="font-semibold">
                 {reviewSummary?.last7 ?? 0}
@@ -608,39 +627,6 @@ export default function ManagerDashboardPage() {
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Today summary card */}
-      <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
-        <div className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
-          Today&apos;s activity summary
-        </div>
-        <ul className="mt-2 space-y-1 text-sm text-slate-700">
-          <li>
-            Temps logged:{" "}
-            <span className="font-semibold">
-              {tempsSummary?.today ?? 0}
-            </span>
-          </li>
-          <li>
-            Cleaning tasks completed:{" "}
-            <span className="font-semibold">
-              {cleaningSummary?.loggedToday ?? 0}
-            </span>
-          </li>
-          <li>
-            Training records added today:{" "}
-            <span className="font-semibold">
-              {trainingSummary?.loggedToday ?? 0}
-            </span>
-          </li>
-          <li>
-            QC reviews logged today:{" "}
-            <span className="font-semibold">
-              {reviewSummary?.today ?? 0}
-            </span>
-          </li>
-        </ul>
       </div>
 
       {/* QC section with button */}
@@ -669,54 +655,132 @@ export default function ManagerDashboardPage() {
         </div>
       </div>
 
-      {/* Daily manager sign-off */}
+      {/* Today’s activity */}
       <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between">
           <div>
             <div className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
-              Daily manager review
+              Today&apos;s activity
             </div>
             <div className="text-sm text-slate-700">
-              Confirm that today&apos;s logs and checks have been reviewed.
+              Detailed list of temps and cleaning runs for manager review
             </div>
           </div>
-          <button
-            type="button"
-            onClick={handleDailySignoff}
-            disabled={savingSignoff || signoffSummary?.todaySigned}
-            className={`rounded-xl px-4 py-1.5 text-sm font-medium text-white shadow-sm ${
-              signoffSummary?.todaySigned
-                ? "bg-emerald-500 cursor-default"
-                : "bg-emerald-600 hover:bg-emerald-700"
-            } disabled:opacity-60`}
-          >
-            {signoffSummary?.todaySigned
-              ? "Today reviewed"
-              : savingSignoff
-              ? "Saving…"
-              : "Confirm daily review"}
-          </button>
         </div>
-        <div className="mt-1 text-xs text-slate-600 space-y-1">
+
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* Temps list */}
           <div>
-            Status:{" "}
-            {signoffSummary?.todaySigned ? (
-              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-                Today checked
-              </span>
-            ) : (
-              <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
-                Not yet checked
-              </span>
-            )}
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Temperature logs (today)
+            </h3>
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white/90">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-2 py-1">Time</th>
+                    <th className="px-2 py-1">Staff</th>
+                    <th className="px-2 py-1">Area</th>
+                    <th className="px-2 py-1">Item</th>
+                    <th className="px-2 py-1">Temp</th>
+                    <th className="px-2 py-1">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {todayTemps.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="px-2 py-3 text-center text-slate-500"
+                      >
+                        No temperature logs for today.
+                      </td>
+                    </tr>
+                  ) : (
+                    todayTemps.map((r) => (
+                      <tr
+                        key={r.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
+                        <td className="px-2 py-1">{r.time}</td>
+                        <td className="px-2 py-1">{r.staff}</td>
+                        <td className="px-2 py-1">{r.area}</td>
+                        <td className="px-2 py-1">{r.item}</td>
+                        <td className="px-2 py-1">
+                          {r.temp_c != null ? `${r.temp_c}°C` : "—"}
+                        </td>
+                        <td className="px-2 py-1">
+                          {r.status ? (
+                            <span
+                              className={`inline-flex rounded-full px-2 py-[1px] text-[10px] font-semibold ${
+                                r.status === "pass"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-red-100 text-red-800"
+                              }`}
+                            >
+                              {r.status}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div>Last signed off: {prettyLastSignoff}</div>
+
+          {/* Cleaning runs list */}
           <div>
-            Sign-offs in last 30 days:{" "}
-            <span className="font-semibold">
-              {signoffSummary?.countLast30 ?? 0}
-            </span>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Cleaning routines completed (today)
+            </h3>
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white/90">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-2 py-1">Time</th>
+                    <th className="px-2 py-1">Routine</th>
+                    <th className="px-2 py-1">Staff</th>
+                    <th className="px-2 py-1">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {todayCleaningRuns.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={4}
+                        className="px-2 py-3 text-center text-slate-500"
+                      >
+                        No cleaning routines logged for today.
+                      </td>
+                    </tr>
+                  ) : (
+                    todayCleaningRuns.map((r) => (
+                      <tr
+                        key={r.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
+                        <td className="px-2 py-1">{r.time ?? "—"}</td>
+                        <td className="px-2 py-1">{r.routine}</td>
+                        <td className="px-2 py-1">{r.staff ?? "—"}</td>
+                        <td className="px-2 py-1 max-w-[12rem] truncate">
+                          {r.notes ?? "—"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
+        </div>
+
+        <div className="mt-2 text-[11px] text-slate-500">
+          Managers can quickly scroll these lists before logging their QC review
+          to confirm all work has been completed to standard.
         </div>
       </div>
 
@@ -745,9 +809,11 @@ export default function ManagerDashboardPage() {
               </button>
             </div>
 
-            {/* Staff select – from team_members */}
+            {/* Staff select */}
             <label className="mb-3 block text-sm">
-              <span className="mb-1 block text-slate-700">Staff member</span>
+              <span className="mb-1 block text-slate-700">
+                Staff member
+              </span>
               <select
                 required
                 value={reviewForm.staff_id}

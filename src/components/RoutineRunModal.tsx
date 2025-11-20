@@ -40,21 +40,20 @@ export default function RoutineRunModal({
   const [initials, setInitials] = useState(defaultInitials || "");
   const [temps, setTemps] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-
-  // team initials for quick-fill
   const [initialOptions, setInitialOptions] = useState<string[]>([]);
 
-  // reset when opened / routine changes
+  // Reset when modal opens
   useEffect(() => {
     if (!open || !routine) return;
     setDate(defaultDate);
     setInitials(defaultInitials || "");
+
     const init: Record<string, string> = {};
-    for (const it of routine.items) init[it.id] = "";
+    routine.items.forEach((it) => (init[it.id] = ""));
     setTemps(init);
   }, [open, routine, defaultDate, defaultInitials]);
 
-  // load initials for this org when modal opens
+  // Load initials
   useEffect(() => {
     if (!open) return;
 
@@ -63,32 +62,24 @@ export default function RoutineRunModal({
         const orgId = await getActiveOrgIdClient();
         if (!orgId) return;
 
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from("team_members")
           .select("initials, active")
           .eq("org_id", orgId)
           .eq("active", true)
           .order("initials");
 
-        if (error) throw error;
-
         const list = Array.from(
           new Set(
             (data ?? [])
-              .map((r: any) =>
-                (r.initials ?? "").toString().toUpperCase().trim()
-              )
+              .map((r: any) => (r.initials ?? "").toUpperCase())
               .filter(Boolean)
           )
         );
 
         setInitialOptions(list);
-
-        // if the box is empty, auto-fill with first initials
         setInitials((prev) => prev || list[0] || "");
-      } catch {
-        // ignore – user can still type manually
-      }
+      } catch {}
     })();
   }, [open]);
 
@@ -97,13 +88,13 @@ export default function RoutineRunModal({
   async function handleSave(e?: React.FormEvent) {
     e?.preventDefault();
 
-    // basic validation
-    if (!date || !initials) return;
-
+    // 🔥 Hard guard that prevents TypeScript error
     if (!routine) {
-      alert("No routine loaded – please close this window and try again.");
+      console.error("Routine is null when trying to save routine logs.");
       return;
     }
+
+    if (!date || !initials) return;
 
     setSaving(true);
 
@@ -112,60 +103,65 @@ export default function RoutineRunModal({
       const location_id = await getActiveLocationIdClient();
 
       if (!org_id || !location_id) {
-        alert(
-          "No location selected. Please choose a location from the top bar before saving logs."
-        );
+        alert("Please select a location first.");
         return;
       }
 
-      type NewLogRow = {
-        org_id: string;
-        location_id: string;
-        at: string;
-        area: string | null;
-        note: string | null;
-        staff_initials: string;
-        target_key: string | null;
-        temp_c: number | null;
-        status: "pass" | "fail" | null;
-      };
+      // Build timestamp: selected date + current time
+      let atIso: string;
+      try {
+        const selected = new Date(date);
+        const now = new Date();
+        const at = new Date(
+          selected.getFullYear(),
+          selected.getMonth(),
+          selected.getDate(),
+          now.getHours(),
+          now.getMinutes(),
+          now.getSeconds(),
+          now.getMilliseconds()
+        );
+        atIso = at.toISOString();
+      } catch {
+        atIso = new Date().toISOString();
+      }
 
-      const rowsToSave: NewLogRow[] = routine.items
-        .map<NewLogRow | null>((it) => {
+      // 🔥 routine! is now safe because of earlier guard
+      const rows = routine!.items
+        .map((it) => {
           const raw = (temps[it.id] ?? "").trim();
-          if (!raw) return null; // skip empty temps
+          if (!raw) return null;
 
-          const tempNum = Number.isFinite(Number(raw)) ? Number(raw) : null;
+          const temp = Number.isFinite(Number(raw)) ? Number(raw) : null;
           const preset =
             (TARGET_BY_KEY as any)[it.target_key] as TargetPreset | undefined;
-          const status = inferStatus(tempNum, preset);
+          const status = inferStatus(temp, preset);
 
           return {
             org_id,
             location_id,
-            at: date,
-            area: it.location || null,
-            note: it.item || null,
+            at: atIso,
+            area: it.location ?? null,
+            note: it.item ?? null,
             staff_initials: initials.toUpperCase(),
-            target_key: it.target_key || null,
-            temp_c: tempNum,
+            target_key: it.target_key,
+            temp_c: temp,
             status,
           };
         })
-        .filter((row): row is NewLogRow => row !== null);
+        .filter(Boolean) as any[];
 
-      if (!rowsToSave.length) {
-        // nothing filled in – just close
+      if (!rows.length) {
         onClose();
         return;
       }
 
       const { error } = await supabase
         .from("food_temp_logs")
-        .insert(rowsToSave);
+        .insert(rows);
 
       if (error) {
-        alert(`Save failed: ${error.message}`);
+        alert(error.message);
         return;
       }
 
@@ -178,133 +174,95 @@ export default function RoutineRunModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-2 py-4 sm:px-4 sm:py-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3 py-6"
       onClick={onClose}
     >
       <form
         onSubmit={handleSave}
         onClick={(e) => e.stopPropagation()}
-        className="flex w-full max-w-3xl max-h-[80vh] flex-col overflow-hidden rounded-2xl bg-slate-900 text-slate-50 shadow-xl"
+        className="flex w-full max-w-4xl max-h-[85vh] flex-col overflow-hidden rounded-2xl bg-white text-slate-900 shadow-2xl"
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 bg-emerald-700 px-4 py-3">
+        <div className="flex items-center justify-between border-b border-emerald-600/30 bg-emerald-600 px-4 py-3 text-white">
           <div>
-            <div className="text-[11px] uppercase tracking-wide text-emerald-100/80">
+            <div className="text-[11px] uppercase tracking-widest text-emerald-100">
               Run routine
             </div>
-            <div className="text-base font-semibold text-white">
+            <div className="text-base font-semibold">
               {routine.name}
             </div>
           </div>
+
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md bg-emerald-800/90 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-900"
+            className="rounded-md bg-emerald-700 px-3 py-1.5 text-sm hover:bg-emerald-800"
           >
             Close
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-4 py-3">
-          {/* Date / initials */}
+        <div className="flex-1 min-h-0 overflow-y-auto bg-white px-4 py-4 space-y-5">
+          {/* Date + Initials */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="text-sm">
-              <div className="mb-1 text-slate-200">Date</div>
+            <label className="text-sm font-medium">
+              Date
               <input
                 type="date"
-                className="w-full rounded-xl border border-slate-600 bg-slate-900 px-2 py-2 text-sm text-slate-50"
+                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
                 required
               />
             </label>
 
-            <label className="text-sm">
-              <div className="mb-1 text-slate-200">Initials</div>
+            <label className="text-sm font-medium">
+              Initials
               <input
-                list={initialOptions.length ? "tt-initials-list" : undefined}
-                className="w-full rounded-xl border border-slate-600 bg-slate-900 px-2 py-2 text-sm uppercase text-slate-50"
+                list="initials-list"
+                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm uppercase shadow-sm"
                 value={initials}
                 onChange={(e) => setInitials(e.target.value.toUpperCase())}
-                placeholder="e.g. WS"
                 required
               />
-
-              {/* Dropdown suggestions populated from team_members */}
-              {initialOptions.length > 0 && (
-                <datalist id="tt-initials-list">
-                  {initialOptions.map((opt) => (
-                    <option key={opt} value={opt} />
-                  ))}
-                </datalist>
-              )}
-
-              {/* Optional chips for quick tap selection */}
-              {initialOptions.length > 0 && (
-                <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-slate-300">
-                  {initialOptions.map((opt) => (
-                    <button
-                      key={opt}
-                      type="button"
-                      className="rounded-full border border-slate-600 bg-slate-800 px-2 py-0.5 uppercase hover:bg-slate-700"
-                      onClick={() => setInitials(opt)}
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <datalist id="initials-list">
+                {initialOptions.map((i) => (
+                  <option key={i} value={i} />
+                ))}
+              </datalist>
             </label>
           </div>
 
-          <p className="text-xs text-slate-300">
-            Enter temps for any items you’re logging now, then tap{" "}
-            <span className="font-semibold">“Save all”</span>.
-          </p>
-
-          {/* Desktop/tablet table */}
-          <div className="hidden rounded-lg border border-slate-700 bg-slate-900 md:block">
-            <table className="w-full table-fixed text-sm">
-              <thead className="bg-slate-800 text-slate-300">
+          {/* DESKTOP TABLE */}
+          <div className="hidden md:block rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-slate-600">
                 <tr>
-                  <th className="w-10 px-3 py-2 text-left">#</th>
-                  <th className="w-32 px-3 py-2 text-left">Location</th>
-                  <th className="w-40 px-3 py-2 text-left">Item</th>
-                  <th className="px-3 py-2 text-left">Target</th>
-                  <th className="w-32 px-3 py-2 text-left">Temp (°C)</th>
+                  <th className="p-2 text-left text-xs font-semibold">#</th>
+                  <th className="p-2 text-left text-xs font-semibold">Location</th>
+                  <th className="p-2 text-left text-xs font-semibold">Item</th>
+                  <th className="p-2 text-left text-xs font-semibold">Target</th>
+                  <th className="p-2 text-left text-xs font-semibold">Temp (°C)</th>
                 </tr>
               </thead>
+
               <tbody>
                 {routine.items.map((it, idx) => {
                   const preset =
-                    (TARGET_BY_KEY as any)[it.target_key] as
-                      | TargetPreset
-                      | undefined;
+                    (TARGET_BY_KEY as any)[it.target_key] as TargetPreset;
+
                   return (
-                    <tr key={it.id} className="border-t border-slate-800">
-                      <td className="px-3 py-2 align-top">{idx + 1}</td>
-                      <td className="px-3 py-2 align-top">
-                        {it.location ?? "—"}
+                    <tr key={it.id} className="border-t border-slate-100">
+                      <td className="p-2">{idx + 1}</td>
+                      <td className="p-2">{it.location ?? "—"}</td>
+                      <td className="p-2">{it.item ?? "—"}</td>
+                      <td className="p-2 text-xs text-slate-500">
+                        {preset?.label ?? it.target_key ?? "—"}
                       </td>
-                      <td className="px-3 py-2 align-top">
-                        {it.item ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 align-top text-xs text-slate-300">
-                        {preset
-                          ? `${preset.label}${
-                              preset.minC != null || preset.maxC != null
-                                ? ` (${preset.minC ?? "−∞"}–${
-                                    preset.maxC ?? "+∞"
-                                  } °C)`
-                                : ""
-                            }`
-                          : it.target_key || "—"}
-                      </td>
-                      <td className="px-3 py-2 align-top">
+                      <td className="p-2">
                         <input
-                          className="w-24 rounded-xl border border-slate-600 bg-slate-900 px-2 py-1 text-sm text-slate-50"
-                          inputMode="decimal"
+                          className="w-24 rounded-xl border border-slate-300 bg-white px-2 py-1 shadow-sm"
                           value={temps[it.id] ?? ""}
                           onChange={(e) =>
                             setTemps((t) => ({
@@ -321,58 +279,44 @@ export default function RoutineRunModal({
             </table>
           </div>
 
-          {/* Mobile cards */}
-          <div className="space-y-2 md:hidden">
+          {/* MOBILE CARDS */}
+          <div className="space-y-3 md:hidden">
             {routine.items.map((it, idx) => {
               const preset =
-                (TARGET_BY_KEY as any)[it.target_key] as
-                  | TargetPreset
-                  | undefined;
+                (TARGET_BY_KEY as any)[it.target_key] as TargetPreset;
+
               return (
                 <div
                   key={it.id}
-                  className="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm"
+                  className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs text-slate-400">#{idx + 1}</div>
+                  <div className="text-xs font-semibold text-slate-500">
+                    #{idx + 1}
                   </div>
 
-                  <div className="mt-1 text-sm font-medium text-slate-50">
+                  <div className="mt-1 font-medium text-slate-900">
                     {it.item ?? "—"}
                   </div>
-                  <div className="text-xs text-slate-300">
+
+                  <div className="text-xs text-slate-500">
                     {it.location ?? "—"}
                   </div>
 
-                  <div className="mt-2 text-[11px] text-slate-400">
-                    {preset
-                      ? `${preset.label}${
-                          preset.minC != null || preset.maxC != null
-                            ? ` (${preset.minC ?? "−∞"}–${
-                                preset.maxC ?? "+∞"
-                              } °C)`
-                            : ""
-                        }`
-                      : it.target_key || "—"}
+                  <div className="mt-2 text-xs text-slate-500">
+                    {preset?.label ?? it.target_key ?? "—"}
                   </div>
 
-                  <div className="mt-2">
-                    <label className="text-xs text-slate-300">
-                      Temp (°C)
-                      <input
-                        className="mt-1 w-full rounded-xl border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-slate-50"
-                        inputMode="decimal"
-                        value={temps[it.id] ?? ""}
-                        onChange={(e) =>
-                          setTemps((t) => ({
-                            ...t,
-                            [it.id]: e.target.value,
-                          }))
-                        }
-                        placeholder="e.g. 75"
-                      />
-                    </label>
-                  </div>
+                  <input
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 shadow-sm"
+                    placeholder="e.g. 75"
+                    value={temps[it.id] ?? ""}
+                    onChange={(e) =>
+                      setTemps((t) => ({
+                        ...t,
+                        [it.id]: e.target.value,
+                      }))
+                    }
+                  />
                 </div>
               );
             })}
@@ -380,18 +324,19 @@ export default function RoutineRunModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t border-slate-800 bg-slate-900 px-4 py-3">
+        <div className="flex justify-end gap-2 border-t border-slate-200 bg-white px-4 py-3">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-800"
+            className="rounded-lg px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
           >
             Cancel
           </button>
+
           <button
             type="submit"
             disabled={saving}
-            className="rounded-xl bg-emerald-500 px-4 py-1.5 text-sm font-semibold text-slate-900 hover:bg-emerald-400 disabled:opacity-60"
+            className="rounded-xl bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save all"}
           </button>

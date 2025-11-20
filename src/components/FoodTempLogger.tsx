@@ -17,16 +17,30 @@ import RoutineRunModal from "@/components/RoutineRunModal";
 import { CLEANING_CATEGORIES } from "@/components/ManageCleaningTasksModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 
+/* =============== Constants =============== */
+
+const LS_LAST_INITIALS = "tt_last_initials";
+const LS_LAST_LOCATION = "tt_last_location";
+// same key AllergenManager uses
+const LS_ALLERGEN_REVIEW = "tt_allergen_review_prefs";
+
+const DEFAULT_TARGET_KEY =
+  (TARGET_PRESETS[0]?.key as string) ?? "chill";
+
 /* =============== Types =============== */
+
 type CanonRow = {
   id: string;
+  at: string | null; // full ISO timestamp
   date: string | null; // yyyy-mm-dd
+  time: string | null; // HH:mm display
   staff_initials: string | null;
   location: string | null;
   item: string | null;
   target_key: string | null;
   temp_c: number | null;
   status: "pass" | "fail" | null;
+  voided?: boolean;
 };
 
 type Props = {
@@ -60,7 +74,24 @@ type CleanRun = {
   done_by: string | null;
 };
 
+/* Edit & void helpers */
+
+type EditFormState = {
+  id: string;
+  staff_initials: string;
+  location: string;
+  item: string;
+  target_key: string;
+  temp_c: string;
+};
+
 /* =============== Small helpers =============== */
+
+const cls = (...parts: Array<string | false | undefined>) =>
+  parts.filter(Boolean).join(" ");
+
+const firstLetter = (s: string | null | undefined) =>
+  (s?.trim()?.charAt(0) || "").toUpperCase();
 
 function sameDay(a: Date, b: Date) {
   return (
@@ -104,17 +135,6 @@ function formatPrettyDate(d: Date) {
   return `${weekday} ${day} ${month} ${year}`;
 }
 
-const LS_LAST_INITIALS = "tt_last_initials";
-const LS_LAST_LOCATION = "tt_last_location";
-// same key AllergenManager uses
-const LS_ALLERGEN_REVIEW = "tt_allergen_review_prefs";
-
-const cls = (...parts: Array<string | false | undefined>) =>
-  parts.filter(Boolean).join(" ");
-
-const firstLetter = (s: string | null | undefined) =>
-  (s?.trim()?.charAt(0) || "").toUpperCase();
-
 function toISODate(val: any): string | null {
   if (!val) return null;
   const d = new Date(val);
@@ -143,8 +163,21 @@ function inferStatus(
   return "pass";
 }
 
+/** Normalise rows from DB, keeping full timestamp + display time */
 function normalizeRowsFromFood(data: any[]): CanonRow[] {
   return data.map((r) => {
+    const atRaw = r.at ?? r.created_at ?? null;
+    const atDate = atRaw ? new Date(atRaw) : null;
+    const valid = atDate && !isNaN(atDate.getTime());
+    const atIso = valid ? atDate!.toISOString() : null;
+    const date = atIso ? atIso.slice(0, 10) : null;
+    const time = valid
+      ? atDate!.toLocaleTimeString("en-GB", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : null;
+
     const temp =
       typeof r.temp_c === "number"
         ? r.temp_c
@@ -154,7 +187,9 @@ function normalizeRowsFromFood(data: any[]): CanonRow[] {
 
     return {
       id: String(r.id ?? crypto.randomUUID()),
-      date: toISODate(r.at ?? r.created_at ?? null),
+      at: atIso,
+      date,
+      time,
       staff_initials:
         (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
       location: (r.area ?? r.location ?? null)?.toString() ?? null,
@@ -162,6 +197,7 @@ function normalizeRowsFromFood(data: any[]): CanonRow[] {
       target_key: r.target_key != null ? String(r.target_key) : null,
       temp_c: temp,
       status: (r.status as any) ?? null,
+      voided: !!r.voided,
     };
   });
 }
@@ -249,6 +285,7 @@ function Pill({ done, onClick }: { done: boolean; onClick: () => void }) {
 }
 
 /* =============== Component =============== */
+
 export default function FoodTempLogger({
   initials: initialsSeed = [],
   locations: locationsSeed = [],
@@ -315,7 +352,7 @@ export default function FoodTempLogger({
     staff_initials: "",
     location: "",
     item: "",
-    target_key: (TARGET_PRESETS[0]?.key as string) ?? "chill",
+    target_key: DEFAULT_TARGET_KEY,
     temp_c: "",
   });
 
@@ -325,6 +362,22 @@ export default function FoodTempLogger({
     !!form.item &&
     !!form.target_key &&
     form.temp_c.trim().length > 0;
+
+  // Edit / Void state
+  const [editingRow, setEditingRow] = useState<CanonRow | null>(null);
+  const [editForm, setEditForm] = useState<EditFormState>({
+    id: "",
+    staff_initials: "",
+    location: "",
+    item: "",
+    target_key: DEFAULT_TARGET_KEY,
+    temp_c: "",
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const [voidRow, setVoidRow] = useState<CanonRow | null>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [savingVoid, setSavingVoid] = useState(false);
 
   // Header date (uses form.date, so header follows the selected log date)
   const headerDateObj: Date = (() => {
@@ -438,76 +491,75 @@ export default function FoodTempLogger({
   }, [locationsSeed]);
 
   /* KPI fetch (org-level) */
-useEffect(() => {
-  (async () => {
-    try {
-      const orgId = await getActiveOrgIdClient();
-      if (!orgId) return;
-
-      const soon = new Date();
-      soon.setDate(soon.getDate() + 14);
-      const todayD = new Date();
-
-      let trainingDueSoon = 0;
-      let trainingOver = 0;
-      let allergenDueSoon = 0;
-      let allergenOver = 0;
-
-      // --- TRAINING: count from trainings table ---
+  useEffect(() => {
+    (async () => {
       try {
-        const { data, error } = await supabase
-          .from("trainings")
-          .select("expires_on")
-          .eq("org_id", orgId);
+        const orgId = await getActiveOrgIdClient();
+        if (!orgId) return;
 
-        if (!error && data) {
-          (data as any[]).forEach((r) => {
-            const raw = r.expires_on;
-            if (!raw) return;
-            const d = new Date(raw);
-            if (isNaN(d.getTime())) return;
+        const soon = new Date();
+        soon.setDate(soon.getDate() + 14);
+        const todayD = new Date();
 
-            if (d < todayD) trainingOver++;
-            else if (d <= soon) trainingDueSoon++;
-          });
+        let trainingDueSoon = 0;
+        let trainingOver = 0;
+        let allergenDueSoon = 0;
+        let allergenOver = 0;
+
+        // --- TRAINING: count from trainings table ---
+        try {
+          const { data, error } = await supabase
+            .from("trainings")
+            .select("expires_on")
+            .eq("org_id", orgId);
+
+          if (!error && data) {
+            (data as any[]).forEach((r) => {
+              const raw = r.expires_on;
+              if (!raw) return;
+              const d = new Date(raw);
+              if (isNaN(d.getTime())) return;
+
+              if (d < todayD) trainingOver++;
+              else if (d <= soon) trainingDueSoon++;
+            });
+          }
+        } catch {
+          // leave training counts at 0 if table/schema not ready
         }
-      } catch {
-        // leave training counts at 0 if table/schema not ready
-      }
 
-      // --- ALLERGEN REVIEW: from allergen_reviews table ---
-      try {
-        const { data, error } = await supabase
-          .from("allergen_reviews")
-          .select("last_reviewed, interval_days")
-          .eq("org_id", orgId)
-          .limit(10);
+        // --- ALLERGEN REVIEW: from allergen_reviews table ---
+        try {
+          const { data, error } = await supabase
+            .from("allergen_reviews")
+            .select("last_reviewed, interval_days")
+            .eq("org_id", orgId)
+            .limit(10);
 
-        if (!error && data) {
-          (data as any[]).forEach((r) => {
-            const last = r.last_reviewed ? new Date(r.last_reviewed) : null;
-            const interval = Number(r.interval_days ?? 0);
-            if (!last || !Number.isFinite(interval)) return;
+          if (!error && data) {
+            (data as any[]).forEach((r) => {
+              const last = r.last_reviewed ? new Date(r.last_reviewed) : null;
+              const interval = Number(r.interval_days ?? 0);
+              if (!last || !Number.isFinite(interval)) return;
 
-            const due = new Date(last);
-            due.setDate(due.getDate() + interval);
+              const due = new Date(last);
+              due.setDate(due.getDate() + interval);
 
-            if (due < todayD) allergenOver++;
-            else if (due <= soon) allergenDueSoon++;
-          });
+              if (due < todayD) allergenOver++;
+              else if (due <= soon) allergenDueSoon++;
+            });
+          }
+        } catch {
+          // leave allergen counts at 0 if table/schema not ready
         }
+
+        setKpi({ trainingDueSoon, trainingOver, allergenDueSoon, allergenOver });
       } catch {
-        // leave allergen counts at 0 if table/schema not ready
+        // ignore – KPI pills just show zeros on failure
       }
+    })();
+  }, []);
 
-      setKpi({ trainingDueSoon, trainingOver, allergenDueSoon, allergenOver });
-    } catch {
-      // ignore – KPI pills just show zeros on failure
-    }
-  })();
-}, []);
-
-    
   /* Employee of the month fetch (leaderboard) */
   useEffect(() => {
     (async () => {
@@ -558,7 +610,10 @@ useEffect(() => {
         .limit(300);
 
       if (error) throw error;
-      setRows(normalizeRowsFromFood(data ?? []));
+
+      const normalised = normalizeRowsFromFood(data ?? []);
+      // Hide voided entries if the column exists / is used
+      setRows(normalised.filter((r) => !r.voided));
     } catch (e: any) {
       setErr(e?.message || "Failed to fetch logs.");
       setRows([]);
@@ -767,10 +822,32 @@ useEffect(() => {
       return;
     }
 
+    // Build a timestamp using the selected date + current time
+    let atIso: string;
+    try {
+      const selectedDate = new Date(form.date); // yyyy-mm-dd from the form
+      const now = new Date();
+
+      const at = new Date(
+        selectedDate.getFullYear(),
+        selectedDate.getMonth(),
+        selectedDate.getDate(),
+        now.getHours(),
+        now.getMinutes(),
+        now.getSeconds(),
+        now.getMilliseconds()
+      );
+
+      atIso = at.toISOString();
+    } catch {
+      // Fallback to "now" if anything goes wrong
+      atIso = new Date().toISOString();
+    }
+
     const payload = {
       org_id,
       location_id,
-      at: form.date,
+      at: atIso, // full timestamp
       area: form.location || null,
       note: form.item || null,
       staff_initials: form.staff_initials
@@ -803,6 +880,114 @@ useEffect(() => {
       handleAddQuick();
     }
   };
+
+  /* Edit helpers */
+
+  function openEdit(row: CanonRow) {
+    setEditingRow(row);
+    setEditForm({
+      id: row.id,
+      staff_initials: row.staff_initials ?? "",
+      location: row.location ?? "",
+      item: row.item ?? "",
+      target_key: row.target_key ?? DEFAULT_TARGET_KEY,
+      temp_c: row.temp_c != null ? String(row.temp_c) : "",
+    });
+  }
+
+  async function handleSaveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingRow) return;
+
+    const org_id = await getActiveOrgIdClient();
+    if (!org_id) {
+      alert("No organisation found for this user.");
+      return;
+    }
+
+    const tempNum = Number.isFinite(Number(editForm.temp_c))
+      ? Number(editForm.temp_c)
+      : null;
+
+    const preset = (
+      TARGET_BY_KEY as Record<string, TargetPreset | undefined>
+    )[editForm.target_key];
+    const status: "pass" | "fail" | null = inferStatus(tempNum, preset);
+
+    try {
+      setSavingEdit(true);
+
+      const { error } = await supabase
+        .from("food_temp_logs")
+        .update({
+          staff_initials: editForm.staff_initials
+            ? editForm.staff_initials.toUpperCase()
+            : null,
+          area: editForm.location || null,
+          note: editForm.item || null,
+          target_key: editForm.target_key || null,
+          temp_c: tempNum,
+          status,
+        })
+        .eq("id", editingRow.id)
+        .eq("org_id", org_id);
+
+      if (error) throw error;
+
+      setEditingRow(null);
+      await refreshRows();
+    } catch (error: any) {
+      alert(error?.message || "Failed to save changes.");
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  /* Void helpers */
+
+  function openVoid(row: CanonRow) {
+    setVoidRow(row);
+    setVoidReason("");
+  }
+
+  async function handleConfirmVoid(e: React.FormEvent) {
+    e.preventDefault();
+    if (!voidRow) return;
+
+    const org_id = await getActiveOrgIdClient();
+    if (!org_id) {
+      alert("No organisation found for this user.");
+      return;
+    }
+
+    try {
+      setSavingVoid(true);
+
+      const payload: any = {
+        voided: true,
+        voided_at: new Date().toISOString(),
+      };
+      if (voidReason.trim()) {
+        payload.void_reason = voidReason.trim();
+      }
+
+      const { error } = await supabase
+        .from("food_temp_logs")
+        .update(payload)
+        .eq("id", voidRow.id)
+        .eq("org_id", org_id);
+
+      if (error) throw error;
+
+      setVoidRow(null);
+      setVoidReason("");
+      await refreshRows();
+    } catch (error: any) {
+      alert(error?.message || "Failed to void entry.");
+    } finally {
+      setSavingVoid(false);
+    }
+  }
 
   /* grouped rows by date */
   const grouped = useMemo(() => {
@@ -868,10 +1053,10 @@ useEffect(() => {
     loadRotaToday();
   }, []);
 
-  const todayISO = isoToday();
+  const todayISOKey = isoToday();
   const dueTodayAll = useMemo(
-    () => tasks.filter((t) => isDueOn(t, todayISO)),
-    [tasks, todayISO]
+    () => tasks.filter((t) => isDueOn(t, todayISOKey)),
+    [tasks, todayISOKey]
   );
   const dueDaily = useMemo(
     () => dueTodayAll.filter((t) => t.frequency === "daily"),
@@ -882,8 +1067,8 @@ useEffect(() => {
     [dueTodayAll]
   );
   const doneCount = useMemo(
-    () => dueTodayAll.filter((t) => runsKey.has(`${t.id}|${todayISO}`)).length,
-    [dueTodayAll, runsKey, todayISO]
+    () => dueTodayAll.filter((t) => runsKey.has(`${t.id}|${todayISOKey}`)).length,
+    [dueTodayAll, runsKey, todayISOKey]
   );
 
   const dailyByCat = useMemo(() => {
@@ -924,7 +1109,7 @@ useEffect(() => {
         return;
       }
 
-      const run_on = todayISO;
+      const run_on = todayISOKey;
 
       const payload = ids.map((id) => ({
         org_id,
@@ -964,15 +1149,17 @@ useEffect(() => {
         .eq("org_id", org_id)
         .eq("location_id", locationId)
         .eq("task_id", id)
-        .eq("run_on", todayISO);
+        .eq("run_on", todayISOKey);
       if (error) throw error;
       setRuns((prev) =>
-        prev.filter((r) => !(r.task_id === id && r.run_on === todayISO))
+        prev.filter((r) => !(r.task_id === id && r.run_on === todayISOKey))
       );
     } catch (e: any) {
       alert(e?.message || "Failed to undo completion.");
     }
   }
+
+  /* ========================= RENDER ========================= */
 
   return (
     <div className="space-y-6">
@@ -1000,9 +1187,7 @@ useEffect(() => {
           const in7d = (d: string | null) =>
             d ? new Date(d) >= since : false;
 
-          const entriesToday = rows.filter(
-            (r) => r.date === todayISO
-          ).length;
+          const entriesToday = rows.filter((r) => r.date === todayISO).length;
           const last7 = rows.filter((r) => in7d(r.date)).length;
           const fails7 = rows.filter(
             (r) => in7d(r.date) && r.status === "fail"
@@ -1019,11 +1204,7 @@ useEffect(() => {
           const hasCleaning = dueTodayAll.length > 0;
           const allCleaningDone =
             hasCleaning && doneCount === dueTodayAll.length;
-          const cleaningIcon = !hasCleaning
-            ? "ℹ️"
-            : allCleaningDone
-            ? "✅"
-            : "❌";
+          const cleaningIcon = !hasCleaning ? "ℹ️" : allCleaningDone ? "✅" : "❌";
           const cleaningColor = !hasCleaning
             ? "border-gray-200 bg-white/80 text-gray-800"
             : allCleaningDone
@@ -1039,14 +1220,10 @@ useEffect(() => {
               : "border-gray-200 bg-white/80 text-gray-800";
           const failsIcon = fails7 > 0 ? "⚠️" : "✅";
 
-          const eomName =
-            employeeOfMonth?.display_name || "—";
-          const eomPoints =
-            employeeOfMonth?.points ?? 0;
-          const eomTemp =
-            employeeOfMonth?.temp_logs_count ?? 0;
-          const eomClean =
-            employeeOfMonth?.cleaning_count ?? 0;
+          const eomName = employeeOfMonth?.display_name || "—";
+          const eomPoints = employeeOfMonth?.points ?? 0;
+          const eomTemp = employeeOfMonth?.temp_logs_count ?? 0;
+          const eomClean = employeeOfMonth?.cleaning_count ?? 0;
 
           return (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
@@ -1097,7 +1274,7 @@ useEffect(() => {
                   <span>Employee of the month</span>
                   <span className="text-lg">🏆</span>
                 </div>
-                <div className="mt-1 text-lg font-semibold truncate">
+                <div className="mt-1 truncate text-lg font-semibold">
                   {eomName}
                 </div>
                 <div className="mt-1 text-[11px] opacity-80 md:block">
@@ -1112,9 +1289,9 @@ useEffect(() => {
                 type="button"
                 onClick={() => {
                   const ids = dueTodayAll
-                    .filter((t) => !runsKey.has(`${t.id}|${todayISO}`))
+                    .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
                     .map((t) => t.id);
-                  setConfirm({ ids, run_on: todayISO });
+                  setConfirm({ ids, run_on: todayISOKey });
                   setConfirmLabel("Complete all today");
                   setConfirmInitials(
                     form.staff_initials || ini || initials[0] || ""
@@ -1170,10 +1347,6 @@ useEffect(() => {
       </div>
 
       {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
-      {/* ...rest of file unchanged... (omitted here because you already have it above) */}
-      {/* NOTE: keep everything from "Today’s Cleaning Tasks" downwards exactly as in the code you pasted. */}
-
-      {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
       <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
         <div className="mb-2 flex items-center gap-2">
           <h2 className="text-lg font-semibold">Today’s Cleaning Tasks</h2>
@@ -1186,9 +1359,9 @@ useEffect(() => {
               className="inline-flex items-center justify-center whitespace-nowrap rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30 hover:brightness-105 disabled:opacity-60"
               onClick={() => {
                 const ids = dueTodayAll
-                  .filter((t) => !runsKey.has(`${t.id}|${todayISO}`))
+                  .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
                   .map((t) => t.id);
-                setConfirm({ ids, run_on: todayISO });
+                setConfirm({ ids, run_on: todayISOKey });
                 setConfirmLabel("Complete all today");
                 setConfirmInitials(
                   ini || form.staff_initials || initials[0] || ""
@@ -1196,7 +1369,9 @@ useEffect(() => {
               }}
               disabled={
                 !dueTodayAll.length ||
-                dueTodayAll.every((t) => runsKey.has(`${t.id}|${todayISO}`))
+                dueTodayAll.every((t) =>
+                  runsKey.has(`${t.id}|${todayISOKey}`)
+                )
               }
             >
               Complete All
@@ -1216,7 +1391,7 @@ useEffect(() => {
           ) : (
             <>
               {dueNonDaily.map((t) => {
-                const key = `${t.id}|${todayISO}`;
+                const key = `${t.id}|${todayISOKey}`;
                 const done = runsKey.has(key);
                 const run = runsKey.get(key) || null;
                 return (
@@ -1263,7 +1438,7 @@ useEffect(() => {
             {CLEANING_CATEGORIES.map((cat) => {
               const list = dailyByCat.get(cat) ?? [];
               const open = list.filter(
-                (t) => !runsKey.has(`${t.id}|${todayISO}`)
+                (t) => !runsKey.has(`${t.id}|${todayISOKey}`)
               ).length;
               return (
                 <CategoryPill
@@ -1273,9 +1448,9 @@ useEffect(() => {
                   open={open}
                   onClick={() => {
                     const ids = list
-                      .filter((t) => !runsKey.has(`${t.id}|${todayISO}`))
+                      .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
                       .map((t) => t.id);
-                    setConfirm({ ids, run_on: todayISO });
+                    setConfirm({ ids, run_on: todayISOKey });
                     setConfirmLabel(`Complete: ${cat}`);
                     setConfirmInitials(
                       ini || form.staff_initials || initials[0] || ""
@@ -1495,9 +1670,7 @@ useEffect(() => {
                       <div>
                         <div className="font-medium">{r.name}</div>
                         {!r.active && (
-                          <div className="text-xs text-gray-500">
-                            Inactive
-                          </div>
+                          <div className="text-xs text-gray-500">Inactive</div>
                         )}
                       </div>
                       <span className="text-gray-400">{">"}</span>
@@ -1548,19 +1721,20 @@ useEffect(() => {
           <table className="w-full table-fixed text-sm">
             <thead className="bg-slate-50/80 text-slate-600">
               <tr className="text-left text-[11px] font-semibold uppercase tracking-wide">
-                <th className="w-[8.5rem] px-3 py-2">Date</th>
+                <th className="w-[6rem] px-3 py-2">Time</th>
                 <th className="w-16 px-3 py-2">Initials</th>
                 <th className="w-[9rem] px-3 py-2">Location</th>
                 <th className="w-[10rem] px-3 py-2">Item</th>
                 <th className="w-[10rem] px-3 py-2">Target</th>
                 <th className="w-[7rem] px-3 py-2">Temp (°C)</th>
                 <th className="w-[6.5rem] px-3 py-2 text-right">Status</th>
+                <th className="w-[7rem] px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
+                  <td colSpan={8} className="py-6 text-center text-gray-500">
                     Loading…
                   </td>
                 </tr>
@@ -1570,7 +1744,7 @@ useEffect(() => {
                     {/* Date header row */}
                     <tr className="border-t bg-slate-50/80">
                       <td
-                        colSpan={7}
+                        colSpan={8}
                         className="px-3 py-2 text-sm font-semibold text-slate-700"
                       >
                         {formatDDMMYYYY(g.date)}
@@ -1584,7 +1758,9 @@ useEffect(() => {
                       const st = r.status ?? inferStatus(r.temp_c, preset);
                       return (
                         <tr key={r.id} className="border-t bg-white/80">
-                          <td className="px-3 py-2 text-xs text-gray-400"></td>
+                          <td className="px-3 py-2 text-xs text-gray-600">
+                            {r.time ?? "—"}
+                          </td>
                           <td className="px-3 py-2 font-medium uppercase">
                             {r.staff_initials ?? "—"}
                           </td>
@@ -1595,8 +1771,7 @@ useEffect(() => {
                           <td className="px-3 py-2">
                             {preset
                               ? `${preset.label}${
-                                  preset.minC != null ||
-                                  preset.maxC != null
+                                  preset.minC != null || preset.maxC != null
                                     ? ` (${preset.minC ?? "−∞"}–${
                                         preset.maxC ?? "+∞"
                                       } °C)`
@@ -1623,6 +1798,24 @@ useEffect(() => {
                               "—"
                             )}
                           </td>
+                          <td className="px-3 py-2 text-right">
+                            <div className="flex justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() => openEdit(r)}
+                                className="rounded-full border border-slate-200 px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openVoid(r)}
+                                className="rounded-full border border-red-200 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50"
+                              >
+                                Void
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       );
                     })}
@@ -1630,7 +1823,7 @@ useEffect(() => {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
+                  <td colSpan={8} className="py-6 text-center text-gray-500">
                     No entries
                   </td>
                 </tr>
@@ -1684,6 +1877,9 @@ useEffect(() => {
                           {r.temp_c ?? "—"}°C
                         </div>
                         <div className="mt-1 text-[11px] text-gray-500">
+                          Time: {r.time ?? "—"}
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
                           Target:{" "}
                           {preset
                             ? `${preset.label}${
@@ -1694,6 +1890,22 @@ useEffect(() => {
                                   : ""
                               }`
                             : "—"}
+                        </div>
+                        <div className="mt-2 flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(r)}
+                            className="rounded-full border border-slate-200 px-3 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openVoid(r)}
+                            className="rounded-full border border-red-200 px-3 py-0.5 text-[11px] text-red-700 hover:bg-red-50"
+                          >
+                            Void
+                          </button>
                         </div>
                       </div>
                     );
@@ -1708,6 +1920,258 @@ useEffect(() => {
           )}
         </div>
       </div>
+
+      {/* Edit log modal */}
+      {editingRow && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
+          onClick={() => !savingEdit && setEditingRow(null)}
+        >
+          <form
+            onSubmit={handleSaveEdit}
+            onClick={(e) => e.stopPropagation()}
+            className="mx-auto mt-6 flex h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-white/30 bg-white/90 shadow-xl shadow-slate-900/25 backdrop-blur sm:mt-24 sm:h-auto sm:rounded-2xl"
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white/90 px-4 py-3">
+              <div className="text-base font-semibold text-slate-900">
+                Edit temperature log
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingRow(null)}
+                disabled={savingEdit}
+                className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grow space-y-3 overflow-y-auto px-4 py-3 text-sm">
+              <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-2 text-xs text-slate-600">
+                Original time:{" "}
+                <span className="font-semibold">
+                  {editingRow.time ?? "—"}
+                </span>{" "}
+                · Date:{" "}
+                <span className="font-semibold">
+                  {formatDDMMYYYY(editingRow.date)}
+                </span>
+              </div>
+
+              {/* Staff initials */}
+              <label className="block text-sm">
+                <span className="mb-1 block text-slate-700">Initials</span>
+                <select
+                  value={editForm.staff_initials}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({
+                      ...prev,
+                      staff_initials: e.target.value.toUpperCase(),
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-300 bg-white/90 px-3 py-2 uppercase shadow-sm"
+                >
+                  <option value="">—</option>
+                  {initials.map((i) => (
+                    <option key={i} value={i}>
+                      {i}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {/* Location */}
+              <label className="block text-sm">
+                <span className="mb-1 block text-slate-700">Location</span>
+                <select
+                  value={editForm.location}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({
+                      ...prev,
+                      location: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-300 bg-white/90 px-3 py-2 shadow-sm"
+                >
+                  <option value="">—</option>
+                  {locations.map((loc) => (
+                    <option key={loc} value={loc}>
+                      {loc}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {/* Item */}
+              <label className="block text-sm">
+                <span className="mb-1 block text-slate-700">Item</span>
+                <input
+                  value={editForm.item}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({
+                      ...prev,
+                      item: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-300 bg-white/90 px-3 py-2 shadow-sm"
+                  placeholder="e.g. Chicken curry"
+                />
+              </label>
+
+              {/* Target */}
+              <label className="block text-sm">
+                <span className="mb-1 block text-slate-700">Target</span>
+                <select
+                  value={editForm.target_key}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({
+                      ...prev,
+                      target_key: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-xs shadow-sm"
+                >
+                  {TARGET_PRESETS.map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.label}
+                      {p.minC != null || p.maxC != null
+                        ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {/* Temp */}
+              <label className="block text-sm">
+                <span className="mb-1 block text-slate-700">
+                  Temp (°C)
+                </span>
+                <input
+                  value={editForm.temp_c}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({
+                      ...prev,
+                      temp_c: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-300 bg-white/90 px-3 py-2 shadow-sm"
+                  inputMode="decimal"
+                  placeholder="e.g. 5.0"
+                />
+              </label>
+            </div>
+
+            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white/90 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setEditingRow(null)}
+                disabled={savingEdit}
+                className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingEdit}
+                className="rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30 hover:brightness-105 disabled:opacity-60"
+              >
+                {savingEdit ? "Saving…" : "Save changes"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Void log modal */}
+      {voidRow && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
+          onClick={() => !savingVoid && setVoidRow(null)}
+        >
+          <form
+            onSubmit={handleConfirmVoid}
+            onClick={(e) => e.stopPropagation()}
+            className="mx-auto mt-6 flex h-[60vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-white/30 bg-white/90 shadow-xl shadow-slate-900/25 backdrop-blur sm:mt-24 sm:h-auto sm:rounded-2xl"
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white/90 px-4 py-3">
+              <div className="text-base font-semibold text-red-700">
+                Void temperature log
+              </div>
+              <button
+                type="button"
+                onClick={() => setVoidRow(null)}
+                disabled={savingVoid}
+                className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grow space-y-3 overflow-y-auto px-4 py-3 text-sm">
+              <div className="rounded-xl border border-red-200 bg-red-50/90 p-2 text-xs text-red-800">
+                This will mark the log as{" "}
+                <span className="font-semibold">void</span>, but it will remain
+                in the database for audit. It will be hidden from normal views.
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-2 text-xs text-slate-700">
+                <div>
+                  <span className="font-semibold">Time:</span>{" "}
+                  {voidRow.time ?? "—"}
+                </div>
+                <div>
+                  <span className="font-semibold">Date:</span>{" "}
+                  {formatDDMMYYYY(voidRow.date)}
+                </div>
+                <div>
+                  <span className="font-semibold">Item:</span>{" "}
+                  {voidRow.item ?? "—"}
+                </div>
+                <div>
+                  <span className="font-semibold">Location:</span>{" "}
+                  {voidRow.location ?? "—"}
+                </div>
+                <div>
+                  <span className="font-semibold">Temp:</span>{" "}
+                  {voidRow.temp_c ?? "—"}°C
+                </div>
+              </div>
+
+              <label className="block text-sm">
+                <span className="mb-1 block text-slate-700">
+                  Reason (optional)
+                </span>
+                <textarea
+                  rows={4}
+                  value={voidReason}
+                  onChange={(e) => setVoidReason(e.target.value)}
+                  placeholder="e.g. Entered against wrong item, duplicate entry, etc."
+                  className="w-full rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
+                />
+              </label>
+            </div>
+
+            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white/90 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setVoidRow(null)}
+                disabled={savingVoid}
+                className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingVoid}
+                className="rounded-2xl bg-red-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-60"
+              >
+                {savingVoid ? "Voiding…" : "Confirm void"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Cleaning completion modal – shows individual tasks */}
       {confirm && (

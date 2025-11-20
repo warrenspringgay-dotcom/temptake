@@ -1,11 +1,12 @@
+// src/components/EditCleaningTaskModal.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 
 /** Matches your table shape */
 export type CleaningTaskRow = {
-  id: string;                 // uuid
-  org_id: string;             // uuid
+  id: string; // uuid
+  org_id: string; // uuid
   area: string | null;
   task: string | null;
   schedule_type: "daily" | "weekly" | "monthly";
@@ -157,7 +158,9 @@ export default function EditCleaningTaskModal({
                 className="h-10 w-full rounded-xl border px-3"
                 placeholder="e.g., Kitchen"
                 value={draft.area}
-                onChange={(e) => setDraft((d) => ({ ...d, area: e.target.value }))}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, area: e.target.value }))
+                }
               />
             </label>
 
@@ -167,7 +170,9 @@ export default function EditCleaningTaskModal({
                 className="h-10 w-full rounded-xl border px-3"
                 placeholder="e.g., Sanitise preparation surfaces"
                 value={draft.task}
-                onChange={(e) => setDraft((d) => ({ ...d, task: e.target.value }))}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, task: e.target.value }))
+                }
               />
             </label>
 
@@ -180,7 +185,8 @@ export default function EditCleaningTaskModal({
                   onChange={(e) =>
                     setDraft((d) => ({
                       ...d,
-                      schedule_type: e.target.value as CleaningTaskDraft["schedule_type"],
+                      schedule_type:
+                        e.target.value as CleaningTaskDraft["schedule_type"],
                     }))
                   }
                 >
@@ -197,7 +203,10 @@ export default function EditCleaningTaskModal({
                     className="h-10 w-full rounded-xl border px-3"
                     value={draft.weekday ?? 0}
                     onChange={(e) =>
-                      setDraft((d) => ({ ...d, weekday: Number(e.target.value) }))
+                      setDraft((d) => ({
+                        ...d,
+                        weekday: Number(e.target.value),
+                      }))
                     }
                   >
                     {WEEKDAYS.map((w) => (
@@ -221,7 +230,10 @@ export default function EditCleaningTaskModal({
                     onChange={(e) =>
                       setDraft((d) => ({
                         ...d,
-                        month_day: Math.max(1, Math.min(31, Number(e.target.value || 1))),
+                        month_day: Math.max(
+                          1,
+                          Math.min(31, Number(e.target.value || 1))
+                        ),
                       }))
                     }
                   />
@@ -235,7 +247,9 @@ export default function EditCleaningTaskModal({
                 rows={3}
                 className="w-full rounded-xl border px-3 py-2"
                 value={draft.notes ?? ""}
-                onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, notes: e.target.value }))
+                }
               />
             </label>
 
@@ -243,7 +257,9 @@ export default function EditCleaningTaskModal({
               <input
                 type="checkbox"
                 checked={draft.active}
-                onChange={(e) => setDraft((d) => ({ ...d, active: e.target.checked }))}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, active: e.target.checked }))
+                }
               />
               Active
             </label>
