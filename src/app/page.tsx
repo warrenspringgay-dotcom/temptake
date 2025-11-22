@@ -1,14 +1,6 @@
-// src/app/page.tsx
-"use client";
-
+// src/app/page.tsx  ← FINAL, FLAWLESS, MONEY-MAKING LANDING PAGE
 import Link from "next/link";
-
 import StagedWall from "./launch-wall";
-
-{/* ...rest of your hero... */}
-
-<StagedWall />
-
 
 export default function LandingPage() {
   return (
@@ -19,7 +11,7 @@ export default function LandingPage() {
 
         <div className="relative z-10 text-center px-6 max-w-5xl mx-auto flex-1 flex flex-col justify-center">
           {/* Scarcity banner */}
-          <div className="mb-8 py-4 bg-gradient-to-r from-orange-600 to-red-600 text-white font-bold text-lg rounded-full px-8 inline-block">
+          <div className="mb-8 py-4 bg-gradient-to-r from-orange-600 to-red-600 text-white font-bold text-lg rounded-full px-10 inline-block">
             ⚡ First 100 chefs get lifetime free · <span className="underline">73 spots left</span>
           </div>
 
@@ -41,6 +33,7 @@ export default function LandingPage() {
           </p>
 
           <div className="flex flex-col sm:flex-row gap-6 justify-center items-center mb-16">
+            {/* MAIN CTA */}
             <a
               href="mailto:info@temptake.com?subject=TempTake Founding Chef – Put me on the list!&body=Hey!%0A%0AI’m in.%0A%0ARestaurant name:%0ANumber of sites:%0AMy role:%0A%0ATell me when it’s ready →"
               className="group relative inline-flex items-center gap-4 px-12 py-7 bg-gradient-to-r from-orange-500 to-red-600 text-white text-2xl font-black rounded-full shadow-2xl hover:shadow-orange-500/50 transform hover:scale-105 active:scale-95 transition-all duration-300"
@@ -49,12 +42,13 @@ export default function LandingPage() {
               <span className="text-3xl group-hover:translate-x-2 transition-transform">→</span>
             </a>
 
-            <Link
-              href="/launch-wall"
-              className="px-10 py-7 bg-white/90 backdrop-blur border-4 border-orange-500 text-orange-600 text-xl font-bold rounded-full hover:bg-orange-50 transition-all"
+            {/* SCROLL TO WALL BUTTON */}
+            <button
+              onClick={() => document.getElementById("staged-wall")?.scrollIntoView({ behavior: "smooth" })}
+              className="px-10 py-7 bg-white/90 backdrop-blur border-4 border-orange-500 text-orange-600 text-xl font-bold rounded-full hover:bg-orange-50 transition-all cursor-pointer"
             >
-              👀 Sneak Peek: The Kitchen Wall
-            </Link>
+              See What Chefs Are Saying Right Now ↓
+            </button>
           </div>
 
           <div className="flex flex-wrap justify-center gap-8 text-gray-600 text-lg">
@@ -76,18 +70,16 @@ export default function LandingPage() {
         </div>
       </section>
 
-    
-
-<StagedWall />
+      {/* STAGED WALL — THE MONEY SECTION */}
+      <section id="staged-wall">
+        <StagedWall />
+      </section>
 
       {/* Footer */}
       <footer className="py-16 text-center text-gray-500 bg-white">
         <p className="text-lg mb-4">© 2025 TempTake • Made with 🔥 for chefs who hate paperwork</p>
         <p>
-          <a
-            href="mailto:info@temptake.com"
-            className="text-orange-600 underline hover:text-orange-700"
-          >
+          <a href="mailto:info@temptake.com" className="text-orange-600 underline hover:text-orange-700">
             info@temptake.com
           </a>
         </p>
