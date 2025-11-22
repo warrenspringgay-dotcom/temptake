@@ -40,7 +40,7 @@ export default function LandingPage() {
             </a>
 
             <Link
-              href="/launch-wall"
+              href="/wall"
               className="px-10 py-7 bg-white/90 backdrop-blur border-4 border-orange-500 text-orange-600 text-xl font-bold rounded-full hover:bg-orange-50 transition-all"
             >
               👀 Sneak Peek: The Kitchen Wall
