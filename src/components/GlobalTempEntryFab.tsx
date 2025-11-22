@@ -23,7 +23,15 @@ type FormState = {
 };
 
 export default function TempFab() {
-  const { toast } = useToast();
+ // AFTER
+const toastCtx = useToast() as any;
+const toast =
+  typeof toastCtx === "function"
+    ? toastCtx
+    : typeof toastCtx?.toast === "function"
+    ? toastCtx.toast
+    : null;
+
   const router = useRouter();
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -185,9 +193,19 @@ export default function TempFab() {
         </div>
       )}
 
-      {/* Routine picker & runner — unchanged */}
-      {showPicker && (/* your picker modal */)}
-      <RoutineRunModal open={!!runRoutine} routine={runRoutine} onClose={() => setRunRoutine(null)} onSaved={() => { toast({ title: "Done!" }); refreshEntriesToday(); }} />
+     
+      <RoutineRunModal
+  open={!!runRoutine}
+  routine={runRoutine}
+  onClose={() => setRunRoutine(null)}
+  defaultDate={form.date}
+  defaultInitials={form.staff_initials}
+  onSaved={() => {
+    toast?.({ title: "Done!" });
+    refreshEntriesToday();
+  }}
+/>
+
     </>
   );
 }

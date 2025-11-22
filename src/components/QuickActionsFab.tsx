@@ -42,7 +42,7 @@ function inferStatus(
 }
 
 export default function TempFab() {
-  const { toast } = useToast();
+  const { addToast } = useToast();
   const router = useRouter();
 
   const [open, setOpen] = useState(false);
@@ -214,19 +214,19 @@ export default function TempFab() {
     const location_id = await getActiveLocationIdClient();
 
     if (!org_id) {
-      toast({
-        variant: "destructive",
+      addToast({
         title: "No organisation found",
-        description: "Please check your account and try again.",
+        message: "Please check your account and try again.",
+        type: "error",
       });
       return;
     }
 
     if (!location_id) {
-      toast({
-        variant: "destructive",
+      addToast({
         title: "No location selected",
-        description: "Pick a site/location first.",
+        message: "Pick a site/location first.",
+        type: "error",
       });
       return;
     }
@@ -266,10 +266,10 @@ export default function TempFab() {
 
     const { error } = await supabase.from("food_temp_logs").insert(payload);
     if (error) {
-      toast({
-        variant: "destructive",
+      addToast({
         title: "Save failed",
-        description: error.message,
+        message: error.message,
+        type: "error",
       });
       return;
     }
@@ -280,7 +280,10 @@ export default function TempFab() {
       if (form.location) localStorage.setItem(LS_LAST_LOCATION, form.location);
     } catch {}
 
-    toast({ title: "Temperature saved" });
+    addToast({
+      title: "Temperature saved",
+      type: "success",
+    });
 
     // reset item + temp, keep date/initials/location
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
@@ -379,10 +382,10 @@ export default function TempFab() {
         items: filled.items.sort((a, b) => a.position - b.position),
       });
     } catch (e: any) {
-      toast({
-        variant: "destructive",
+      addToast({
         title: "Failed to load routine",
-        description: e?.message || "Please try again.",
+        message: e?.message || "Please try again.",
+        type: "error",
       });
     }
   }
@@ -695,7 +698,7 @@ export default function TempFab() {
         defaultInitials={form.staff_initials}
         onClose={() => setRunRoutine(null)}
         onSaved={async () => {
-          toast({ title: "Routine logged" });
+          addToast({ title: "Routine logged", type: "success" });
           setRunRoutine(null);
           await refreshEntriesToday();
           setOpen(false);
