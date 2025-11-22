@@ -1,6 +1,9 @@
 // src/app/page.tsx  ← FINAL, 100% WORKING WITH WALL AT BOTTOM
-import Link from "next/link";
+
 "use client";   // ← THIS IS THE ONLY LINE YOU WERE MISSING
+
+import Link from "next/link";
+
 
 export const metadata = {
   title: "TempTake • Food Safety That Doesn’t Suck",
