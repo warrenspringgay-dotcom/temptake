@@ -73,14 +73,14 @@ export default function ClientLanding() {
 
         <div className="max-w-7xl mx-auto px-6 grid gap-10 md:grid-cols-2 lg:grid-cols-3">
           {[
-            { initials: "JB", message: "The pulsing FAB is actual chef crack 🔥", color: "bg-red-200" },
+            { initials: "JB", message: "The wall is actual chef crack 🔥", color: "bg-red-200" },
             { initials: "SC", message: "Finally… something my team actually wants to use", color: "bg-orange-200" },
-            { initials: "MK", message: "Paper logs can die in a fire", color: "bg-yellow-200" },
+            { initials: "MK", message: "Paper logs are So 2024 ", color: "bg-yellow-200" },
             { initials: "TR", message: "Take my money already", color: "bg-pink-200" },
-            { initials: "DW", message: "Saved me 90 mins today. 90!", color: "bg-amber-200" },
-            { initials: "RH", message: "My CDP just high-fived me for logging a temp", color: "bg-orange-300" },
+            { initials: "DW", message: "Saved me a load of time", color: "bg-amber-200" },
+            { initials: "RH", message: "My team love the gameification", color: "bg-orange-300" },
             { initials: "LF", message: "EHO walked in, pressed one button, walked out happy", color: "bg-red-300" },
-            { initials: "NP", message: "This is the Slack we actually needed", color: "bg-yellow-300" },
+            { initials: "NP", message: "This is the app we actually needed", color: "bg-yellow-300" },
           ].map((note, i) => (
             <div
               key={i}
