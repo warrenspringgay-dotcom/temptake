@@ -419,7 +419,7 @@ export default function TeamManager() {
       const { error: otpErr } = await supabase.auth.signInWithOtp({
         email: cleanEmail,
         options: {
-          emailRedirectTo: `${window.location.origin}/login`,
+          emailRedirectTo: `${window.location.origin}/welcome`,
         },
       });
 
