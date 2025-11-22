@@ -1,5 +1,5 @@
 // src/app/page.tsx ← SERVER COMPONENT ONLY
-import StagedWall from "./launch-wall"; // ← renamed to make it obvious
+import StagedWall from "./marketing/launch-wall"; // ← renamed to make it obvious
 
 export default function LandingPage() {
   return (
