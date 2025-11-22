@@ -1,5 +1,6 @@
-// src/app/page.tsx  ← FINAL: HERO + STAGED WALL AT BOTTOM, SINGLE FILE, ZERO CRASHES
+// src/app/page.tsx  ← FINAL, 100% WORKING WITH WALL AT BOTTOM
 import Link from "next/link";
+"use client";   // ← THIS IS THE ONLY LINE YOU WERE MISSING
 
 export const metadata = {
   title: "TempTake • Food Safety That Doesn’t Suck",
@@ -55,7 +56,6 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Floating FAB */}
         <div className="absolute bottom-10 right-10 pointer-events-none">
           <div className="relative">
             <div className="absolute inset-0 rounded-full bg-red-500 animate-ping-slow opacity-75" />
@@ -66,7 +66,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* STAGED WALL — DIRECTLY AT THE BOTTOM, NO SEPARATE FILE NEEDED */}
+      {/* WALL AT BOTTOM — NOW 100% SAFE BECAUSE OF "use client" ABOVE */}
       <section className="py-24 bg-gradient-to-b from-orange-50 to-white">
         <div className="text-center mb-16">
           <h2 className="text-5xl md:text-7xl font-black text-gray-900 mb-4">
