@@ -62,6 +62,8 @@ export default function Leaderboard() {
   }, [entries]);
 
   return (
+
+    
     <div className="max-w-5xl mx-auto px-3 sm:px-4 py-4 space-y-4">
       {/* Header + Employee of the month card */}
       <div className="flex flex-wrap items-start gap-4">
@@ -161,11 +163,19 @@ export default function Leaderboard() {
           </div>
         )}
 
+<div className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-xl bg-white/80 px-4 py-2 text-xs text-slate-700 border border-amber-200">
+  <span className="font-semibold mr-2">Points key:</span>
+  <span>✅ 1 point per completed cleaning task</span>
+  <span className="mx-1 text-slate-400">•</span>
+  <span>🌡️ 1 point per food temperature logged</span>
+</div>
+
         <p className="mt-4 text-center text-xs text-slate-500">
           Points are updated automatically when staff complete cleaning tasks
           or log food temperatures.
         </p>
       </div>
     </div>
+
   );
 }

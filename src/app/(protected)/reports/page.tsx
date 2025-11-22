@@ -385,13 +385,23 @@ export default function ReportsPage() {
 
   const printRef = useRef<HTMLDivElement>(null);
 
-  // KPI from temps
+  // NEW: control how many temp rows are visible
+  const [showAllTemps, setShowAllTemps] = useState(false);
+
+  // KPI from temps (still uses full dataset)
   const kpi = useMemo(() => {
     const t = temps ?? [];
     const fails = t.filter((r) => r.status === "fail").length;
     const locationsSet = new Set(t.map((r) => r.location));
     return { count: t.length, fails, locations: locationsSet.size };
   }, [temps]);
+
+  // Visible temps for the table: 10 by default, all when toggled
+  const visibleTemps = useMemo(() => {
+    if (!temps) return null;
+    if (showAllTemps) return temps;
+    return temps.slice(0, 10);
+  }, [temps, showAllTemps]);
 
   /* ---------- boot: org + locations ---------- */
 
@@ -445,6 +455,7 @@ export default function ReportsPage() {
       setTemps(t);
       setCleaningCount(cleanCount);
       setStaffReviews(reviews);
+      setShowAllTemps(false); // reset view mode when running a new report
 
       if (includeAncillary) {
         const withinDays = 90;
@@ -703,7 +714,7 @@ export default function ReportsPage() {
                     </td>
                   </tr>
                 ) : (
-                  temps.map((r) => (
+                  visibleTemps!.map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
                       <td className="py-2 pr-3">{formatISOToUK(r.date)}</td>
                       <td className="py-2 pr-3">{r.staff}</td>
@@ -732,6 +743,27 @@ export default function ReportsPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Row limit / view all toggle */}
+          {temps && temps.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllTemps ? temps.length : Math.min(10, temps.length)} of{" "}
+                {temps.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllTemps((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllTemps ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
         </Card>
 
         {/* Team training due */}

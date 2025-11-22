@@ -11,6 +11,22 @@
   * { color: #000 !important; }
 }
 
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+/* When there are no temps today, make the FAB gently pulse */
+.no-temps-today .fab {
+  animation: pulse 2s infinite;
+}
+
+
 
 @layer base {
   :root {

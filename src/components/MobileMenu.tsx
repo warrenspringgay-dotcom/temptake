@@ -32,6 +32,11 @@ export default function MobileMenu({ user }: Props) {
   const router = useRouter();
   const pathname = usePathname();
 
+  // 🔐 Manager check – adjust to match your metadata shape if needed
+  const isManager =
+    user?.user_metadata?.role === "manager" ||
+    user?.user_metadata?.is_manager === true;
+
   async function handleSignOut() {
     try {
       setSigningOut(true);
@@ -124,6 +129,23 @@ export default function MobileMenu({ user }: Props) {
                   </Link>
                 );
               })}
+
+              {/* 🔐 Manager-only link */}
+              {isManager && (
+                <Link
+                  href="/manager"
+                  onClick={() => setOpen(false)}
+                  className={cn(
+                    "mt-1 block rounded-xl px-3 py-2 text-sm",
+                    pathname === "/manager" ||
+                      (pathname?.startsWith("/manager/") ?? false)
+                      ? "bg-slate-100 font-semibold text-slate-900"
+                      : "text-slate-800 hover:bg-slate-50"
+                  )}
+                >
+                  Manager dashboard
+                </Link>
+              )}
             </nav>
 
             {/* Sign out (no emoji) */}
