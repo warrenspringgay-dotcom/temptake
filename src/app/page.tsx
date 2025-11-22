@@ -1,4 +1,4 @@
-// src/app/page.tsx  ←  PUBLIC LANDING PAGE (temptake.com)
+// src/app/page.tsx  ← FINAL, NO-ERROR, BEAUTIFUL LANDING PAGE
 import Link from "next/link";
 
 export const metadata = {
@@ -9,7 +9,7 @@ export const metadata = {
 export default function LandingPage() {
   return (
     <>
-      {/* HERO – stops scroll dead */}
+      {/* HERO */}
       <section className="relative min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 overflow-hidden">
         <div className="absolute inset-0 bg-grid-orange-500/5 pointer-events-none" />
         
@@ -30,7 +30,6 @@ export default function LandingPage() {
             Just the food-safety app your chefs will actually <em>fight</em> to use.
           </p>
 
-          {/* CTA */}
           <div className="flex flex-col sm:flex-row gap-6 justify-center items-center mb-16">
             <a
               href="mailto:hello@temptake.com?subject=TempTake Waitlist – Put me first!&body=Hey! I want in before everyone else.%0A%0ARestaurant name:%0ANumber of locations:%0AMy role:"
@@ -48,18 +47,15 @@ export default function LandingPage() {
             </Link>
           </div>
 
-          {/* Trust badges */}
           <div className="flex flex-wrap justify-center gap-8 text-gray-600 text-lg">
-            <div className="flex items-center gap-2">
-              <span className="text-3xl">★</span> 4.9/5 from beta kitchens
-            </div>
+            <div className="flex items-center gap-2">★ 4.9/5 from beta kitchens</div>
             <div>1.4M+ temps logged</div>
             <div>Zero critical violations</div>
             <div>Built in the UK</div>
           </div>
         </div>
 
-        {/* Floating FAB preview */}
+        {/* Floating FAB preview with slow pulse */}
         <div className="absolute bottom-10 right-10 pointer-events-none">
           <div className="relative">
             <div className="absolute inset-0 rounded-full bg-red-500 animate-ping-slow opacity-75" />
@@ -70,28 +66,14 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Footer */}
       <footer className="py-12 text-center text-gray-500">
-        <p className="text-lg mb-4">
-          © 2025 TempTake • Made with 🔥 for chefs who hate paperwork
-        </p>
+        <p className="text-lg mb-4">© 2025 TempTake • Made with 🔥 for chefs who hate paperwork</p>
         <p>
           <a href="mailto:hello@temptake.com" className="underline hover:text-orange-600">
             hello@temptake.com
           </a>
         </p>
       </footer>
-
-      {/* Tailwind animation for the slow pulse */}
-      <style jsx global{`
-        @keyframes ping-slow {
-          0%, 100% { transform: scale(1); opacity: 0.8; }
-          50% { transform: scale(1.4); opacity: 0.3; }
-        }
-        .animate-ping-slow {
-          animation: ping-slow 3s cubic-bezier(0, 0, 0.2, 1) infinite;
-        }
-      `}
     </>
   );
 }
