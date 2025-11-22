@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TempTake • Food Safety That Doesn’t Suck</title>
+  <meta name="description" content="Log temps in 3 seconds. The HACCP app your chefs will actually love." />
+  <link rel="icon" href="/favicon.ico" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes ping-slow {
+      0%, 100% { transform: scale(1); opacity: 0.8; }
+      50% { transform: scale(1.4); opacity: 0.3; }
+    }
+    .animate-ping-slow { animation: ping-slow 3s cubic-bezier(0, 0, 0.2, 1) infinite; }
+  </style>
+</head>
+<body class="antialiased bg-white">
+  <section class="relative min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 overflow-hidden">
+    <div class="absolute inset-0 bg-grid-orange-500/5 pointer-events-none"></div>
+    
+    <div class="relative z-10 text-center px-6 max-w-5xl mx-auto">
+      <div class="mb-8 py-4 bg-gradient-to-r from-orange-600 to-red-600 text-white font-bold text-lg rounded-full px-10 inline-block">
+        ⚡ First 100 chefs get lifetime free · <span class="underline">73 spots left</span>
+      </div>
+
+      <div class="mb-8 inline-flex items-center gap-3 rounded-full bg-white/80 backdrop-blur px-6 py-3 shadow-lg">
+        <span class="text-orange-600 font-bold">Launching 2025</span>
+        <span class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+        <span class="text-sm text-gray-600">Join 200+ kitchens on the waitlist</span>
+      </div>
+
+      <h1 class="text-5xl md:text-7xl lg:text-8xl font-black text-gray-900 mb-8 leading-tight">
+        Log a fridge temp<br />
+        in <span class="text-transparent bg-clip-text bg-gradient-to-r from-orange-500 to-red-600">3 seconds</span>.
+      </h1>
+
+      <p class="text-xl md:text-2xl text-gray-700 mb-12 max-w-3xl mx-auto">
+        No more clipboards. No more forgotten logs. No more EHO nightmares.<br />
+        Just the food-safety app your chefs will actually <em>fight</em> to use.
+      </p>
+
+      <div class="flex flex-col sm:flex-row gap-6 justify-center items-center mb-16">
+        <a href="mailto:info@temptake.com?subject=TempTake Founding Chef – Put me on the list!&body=Hey!%0A%0AI’m in.%0A%0ARestaurant name:%0ANumber of sites:%0AMy role:%0A%0ATell me when it’s ready →"
+          class="group relative inline-flex items-center gap-4 px-12 py-7 bg-gradient-to-r from-orange-500 to-red-600 text-white text-2xl font-black rounded-full shadow-2xl hover:shadow-orange-500/50 transform hover:scale-105 active:scale-95 transition-all duration-300">
+          <span>Get Lifetime Free Access (First 100 only)</span>
+          <span class="text-3xl group-hover:translate-x-2 transition-transform">→</span>
+        </a>
+      </div>
+
+      <div class="flex flex-wrap justify-center gap-8 text-gray-600 text-lg">
+        <div>★ 4.9/5 from beta kitchens</div>
+        <div>1.4M+ temps logged</div>
+        <div>Zero critical violations</div>
+        <div>Built in the UK</div>
+      </div>
+    </div>
+
+    <div class="absolute bottom-10 right-10 pointer-events-none">
+      <div class="relative">
+        <div class="absolute inset-0 rounded-full bg-red-500 animate-ping-slow opacity-75"></div>
+        <div class="relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-red-500 to-orange-600 text-5xl font-black text-white shadow-2xl">
+          +
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="py-16 text-center text-gray-500 bg-white">
+    <p class="text-lg mb-4">© 2025 TempTake • Made with 🔥 for chefs who hate paperwork</p>
+    <p><a href="mailto:info@temptake.com" class="text-orange-600 underline hover:text-orange-700">info@temptake.com</a></p>
+  </footer>
+</body>
+</html>
