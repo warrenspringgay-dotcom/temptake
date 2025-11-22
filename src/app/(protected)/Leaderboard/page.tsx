@@ -4,6 +4,8 @@ import TempFab from "@/components/QuickActionsFab";
 import { ensureOrgForCurrentUser } from "@/lib/ensureOrg";
 
 
+
+
 // keep this so we can safely call Supabase / org helpers
 export const dynamic = "force-dynamic";
 

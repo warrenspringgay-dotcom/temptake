@@ -4,6 +4,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { useRouter } from "next/navigation";
+
+
+
+
+
 
 type LeaderboardEntry = {
   name: string;
@@ -11,6 +17,7 @@ type LeaderboardEntry = {
   cleaning_points: number;
   temp_points: number;
 };
+
 
 export default function Leaderboard() {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);

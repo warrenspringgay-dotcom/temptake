@@ -24,6 +24,21 @@ export default function LocationsManager() {
 
   const [savingId, setSavingId] = useState<string | null>(null);
 
+  // 🔐 auth gate – hide Locations UI if not signed in
+  const [user, setUser] = useState<any | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data?.user ?? null);
+      setAuthChecking(false);
+    });
+  }, []);
+
+  // while checking auth, render nothing to avoid flicker
+  if (authChecking) return null;
+  if (!user) return null; // or return a small message if you prefer
+
   async function loadLocations() {
     setLoading(true);
     setErr(null);

@@ -2,8 +2,12 @@
 "use client";
 
 import Link from "next/link";
-import LaunchWall from "./launch-wall"; // ← THIS WAS MISSING
 
+import StagedWall from "./launch-wall";
+
+{/* ...rest of your hero... */}
+
+<StagedWall />
 
 
 export default function LandingPage() {
@@ -72,8 +76,9 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* PUBLIC LAUNCH WALL */}
-      <LaunchWall />
+    
+
+<StagedWall />
 
       {/* Footer */}
       <footer className="py-16 text-center text-gray-500 bg-white">
