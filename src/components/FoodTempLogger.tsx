@@ -260,9 +260,7 @@ export default function FoodTempLogger({
 }: Props) {
   // DATA
   const [rows, setRows] = useState<CanonRow[]>([]);
-  const [initials, setInitials] = useState<string[]>(() =>
-    Array.from(new Set([...initialsSeed]))
-  );
+  const [initials, setInitials] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -311,9 +309,10 @@ export default function FoodTempLogger({
     try {
       const lsIni = localStorage.getItem(LS_LAST_INITIALS) || "";
       if (lsIni) {
-        setIni(lsIni.toUpperCase());
+        const upper = lsIni.toUpperCase();
+        setIni(upper);
         setInitials((prev) =>
-          Array.from(new Set([lsIni.toUpperCase(), ...prev]))
+          Array.from(new Set([upper, ...prev.map((v) => v.toUpperCase())]))
         );
       }
     } catch {
@@ -321,7 +320,7 @@ export default function FoodTempLogger({
     }
   }, []);
 
-  /* initials list (org-scoped) */
+  /* initials list (org + team, merge with any existing) */
   useEffect(() => {
     (async () => {
       try {
@@ -344,14 +343,90 @@ export default function FoodTempLogger({
             )
             .filter(Boolean) || [];
 
-        const merged = Array.from(new Set([...initialsSeed, ...fromDb]));
-        if (merged.length) setInitials(merged);
+        const seedUpper = initialsSeed.map((v) =>
+          v ? v.toUpperCase() : v
+        );
+
+        setInitials((prev) => {
+          const seen = new Set<string>();
+          const merged: string[] = [];
+
+          const push = (val: string | null | undefined) => {
+            const v = (val ?? "").toString().toUpperCase().trim();
+            if (!v || seen.has(v)) return;
+            seen.add(v);
+            merged.push(v);
+          };
+
+          prev.forEach(push);
+          seedUpper.forEach(push);
+          fromDb.forEach(push);
+
+          return merged;
+        });
       } catch {
         // ignore
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialsSeed]);
+
+  /* Logged-in user initials first in the list */
+  useEffect(() => {
+    (async () => {
+      try {
+        const orgId = await getActiveOrgIdClient();
+        const { data: authData, error: authError } =
+          await supabase.auth.getUser();
+
+        if (authError || !authData?.user || !orgId) return;
+
+        const email = authData.user.email?.toLowerCase() ?? "";
+        if (!email) return;
+
+        const { data: tm } = await supabase
+          .from("team_members")
+          .select("initials,name,email")
+          .eq("org_id", orgId)
+          .eq("email", email)
+          .limit(1);
+
+        const row = tm?.[0];
+        if (!row) return;
+
+        const base =
+          row.initials?.toString().trim() ||
+          (row.name ?? "")
+            .toString()
+            .trim()
+            .split(/\s+/)
+            .map((p: string) => p[0] ?? "")
+            .join("") ||
+          email[0] ||
+          "";
+
+        const loggedIni = base.toUpperCase().slice(0, 4);
+        if (!loggedIni) return;
+
+        setInitials((prev) => {
+          const upperPrev = prev.map((v) => v.toUpperCase());
+          const rest = upperPrev.filter((v) => v !== loggedIni);
+          return [loggedIni, ...rest];
+        });
+
+        setIni((prev) => prev || loggedIni);
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
+
+  /* default ini if still empty but we have initials */
+  useEffect(() => {
+    if (!ini && initials.length) {
+      setIni(initials[0]);
+    }
+  }, [initials, ini]);
 
   /* KPI fetch (org-level) */
   useEffect(() => {

@@ -1,19 +1,25 @@
-// src/app/page.tsx  ← FINAL, NO-ERROR, BEAUTIFUL LANDING PAGE
-import Link from "next/link";
+// src/app/page.tsx
+"use client";
 
-export const metadata = {
-  title: "TempTake • Food Safety That Doesn’t Suck",
-  description: "Log temps in 3 seconds. The HACCP app your chefs will actually love.",
-};
+import Link from "next/link";
+import LaunchWall from "./launch-wall"; // ← THIS WAS MISSING
+
+
 
 export default function LandingPage() {
   return (
     <>
       {/* HERO */}
-      <section className="relative min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 overflow-hidden">
+      <section className="relative min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 overflow-hidden">
         <div className="absolute inset-0 bg-grid-orange-500/5 pointer-events-none" />
-        
-        <div className="relative z-10 text-center px-6 max-w-5xl mx-auto">
+
+        <div className="relative z-10 text-center px-6 max-w-5xl mx-auto flex-1 flex flex-col justify-center">
+          {/* Scarcity banner */}
+          <div className="mb-8 py-4 bg-gradient-to-r from-orange-600 to-red-600 text-white font-bold text-lg rounded-full px-8 inline-block">
+            ⚡ First 100 chefs get lifetime free · <span className="underline">73 spots left</span>
+          </div>
+
+          {/* Badge */}
           <div className="mb-8 inline-flex items-center gap-3 rounded-full bg-white/80 backdrop-blur px-6 py-3 shadow-lg">
             <span className="text-orange-600 font-bold">Launching 2025</span>
             <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
@@ -32,10 +38,10 @@ export default function LandingPage() {
 
           <div className="flex flex-col sm:flex-row gap-6 justify-center items-center mb-16">
             <a
-              href="mailto:hello@temptake.com?subject=TempTake Waitlist – Put me first!&body=Hey! I want in before everyone else.%0A%0ARestaurant name:%0ANumber of locations:%0AMy role:"
+              href="mailto:info@temptake.com?subject=TempTake Founding Chef – Put me on the list!&body=Hey!%0A%0AI’m in.%0A%0ARestaurant name:%0ANumber of sites:%0AMy role:%0A%0ATell me when it’s ready →"
               className="group relative inline-flex items-center gap-4 px-12 py-7 bg-gradient-to-r from-orange-500 to-red-600 text-white text-2xl font-black rounded-full shadow-2xl hover:shadow-orange-500/50 transform hover:scale-105 active:scale-95 transition-all duration-300"
             >
-              <span>Get Early Access – Free Forever for First 2025</span>
+              <span>Get Lifetime Free Access (First 100 only)</span>
               <span className="text-3xl group-hover:translate-x-2 transition-transform">→</span>
             </a>
 
@@ -55,7 +61,7 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Floating FAB preview with slow pulse */}
+        {/* Floating FAB */}
         <div className="absolute bottom-10 right-10 pointer-events-none">
           <div className="relative">
             <div className="absolute inset-0 rounded-full bg-red-500 animate-ping-slow opacity-75" />
@@ -66,11 +72,18 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <footer className="py-12 text-center text-gray-500">
+      {/* PUBLIC LAUNCH WALL */}
+      <LaunchWall />
+
+      {/* Footer */}
+      <footer className="py-16 text-center text-gray-500 bg-white">
         <p className="text-lg mb-4">© 2025 TempTake • Made with 🔥 for chefs who hate paperwork</p>
         <p>
-          <a href="mailto:hello@temptake.com" className="underline hover:text-orange-600">
-            hello@temptake.com
+          <a
+            href="mailto:info@temptake.com"
+            className="text-orange-600 underline hover:text-orange-700"
+          >
+            info@temptake.com
           </a>
         </p>
       </footer>

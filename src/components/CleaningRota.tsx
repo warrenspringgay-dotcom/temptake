@@ -8,6 +8,7 @@ import { getActiveLocationIdClient } from "@/lib/locationClient";
 import ManageCleaningTasksModal, {
   CLEANING_CATEGORIES,
 } from "@/components/ManageCleaningTasksModal";
+import { useInitials } from "@/hooks/useInitials";
 
 const PAGE = "max-w-[1100px] mx-auto px-3 sm:px-4";
 
@@ -120,6 +121,9 @@ export default function CleaningRota() {
   // which daily category is selected to show detail
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
+  // 🔹 Sorted initials with logged-in user first
+  const sortedInitials = useInitials(initials);
+
   /** Load initials for the org */
   useEffect(() => {
     (async () => {
@@ -141,10 +145,16 @@ export default function CleaningRota() {
         )
       );
       setInitials(list);
-      if (!ini && list[0]) setIni(list[0]);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 🔹 Default the dropdown value to the first sorted initials (logged-in user where possible)
+  useEffect(() => {
+    if (!ini && sortedInitials.length) {
+      setIni(sortedInitials[0]);
+    }
+  }, [sortedInitials, ini]);
 
   /** Load role (owner/manager/admin?) */
   useEffect(() => {
@@ -430,7 +440,7 @@ export default function CleaningRota() {
               onChange={(e) => setIni(e.target.value.toUpperCase())}
               className="h-8 rounded-xl border border-gray-300 bg-white/70 px-5 py-1.5 uppercase shadow-sm"
             >
-              {initials.map((v) => (
+              {sortedInitials.map((v) => (
                 <option key={v} value={v}>
                   {v}
                 </option>
