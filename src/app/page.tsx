@@ -32,7 +32,7 @@ export default function LandingPage() {
 
           <div className="flex flex-col sm:flex-row gap-6 justify-center items-center mb-16">
             <a
-              href="mailto:hello@temptake.com?subject=TempTake Waitlist – Put me first!&body=Hey! I want in before everyone else.%0A%0ARestaurant name:%0ANumber of locations:%0AMy role:"
+              href="mailto:info@temptake.com?subject=TempTake Waitlist – Put me first!&body=Hey! I want in before everyone else.%0A%0ARestaurant name:%0ANumber of locations:%0AMy role:"
               className="group relative inline-flex items-center gap-4 px-12 py-7 bg-gradient-to-r from-orange-500 to-red-600 text-white text-2xl font-black rounded-full shadow-2xl hover:shadow-orange-500/50 transform hover:scale-105 active:scale-95 transition-all duration-300"
             >
               <span>Get Early Access – Free Forever for First 2025</span>
@@ -40,7 +40,7 @@ export default function LandingPage() {
             </a>
 
             <Link
-              href="/wall"
+              href="/launch-wall"
               className="px-10 py-7 bg-white/90 backdrop-blur border-4 border-orange-500 text-orange-600 text-xl font-bold rounded-full hover:bg-orange-50 transition-all"
             >
               👀 Sneak Peek: The Kitchen Wall
@@ -70,7 +70,7 @@ export default function LandingPage() {
         <p className="text-lg mb-4">© 2025 TempTake • Made with 🔥 for chefs who hate paperwork</p>
         <p>
           <a href="mailto:hello@temptake.com" className="underline hover:text-orange-600">
-            hello@temptake.com
+            info@temptake.com
           </a>
         </p>
       </footer>
