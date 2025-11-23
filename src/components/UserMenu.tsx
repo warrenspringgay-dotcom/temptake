@@ -1,7 +1,7 @@
 // src/components/UserMenu.tsx
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
@@ -13,6 +13,7 @@ type Props = {
 export default function UserMenu({ user }: Props) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   async function handleSignOut() {
     await supabase.auth.signOut();
@@ -26,8 +27,32 @@ export default function UserMenu({ user }: Props) {
     user?.user_metadata?.full_name?.charAt(0).toUpperCase() ||
     "A";
 
+  /* -------------------- CLICK OUTSIDE HANDLER -------------------- */
+  useEffect(() => {
+    if (!open) return;
+
+    function handleClickOutside(e: MouseEvent) {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function handleEsc(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEsc);
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEsc);
+    };
+  }, [open]);
+
   return (
-    <div className="relative">
+    <div className="relative" ref={menuRef}>
       {/* Circle button */}
       <button
         type="button"
@@ -52,10 +77,16 @@ export default function UserMenu({ user }: Props) {
               <Link
                 href="/locations"
                 className="block px-3 py-2 hover:bg-slate-50"
+                onClick={() => setOpen(false)}
               >
                 Locations
               </Link>
-              <Link href="/help" className="block px-3 py-2 hover:bg-slate-50">
+
+              <Link
+                href="/help"
+                className="block px-3 py-2 hover:bg-slate-50"
+                onClick={() => setOpen(false)}
+              >
                 Help &amp; support
               </Link>
 
@@ -77,16 +108,24 @@ export default function UserMenu({ user }: Props) {
               <Link
                 href="/login"
                 className="block px-3 py-2 hover:bg-slate-50"
+                onClick={() => setOpen(false)}
               >
                 Login
               </Link>
+
               <Link
                 href="/signup"
                 className="block px-3 py-2 hover:bg-slate-50"
+                onClick={() => setOpen(false)}
               >
                 Create account
               </Link>
-              <Link href="/help" className="block px-3 py-2 hover:bg-slate-50">
+
+              <Link
+                href="/help"
+                className="block px-3 py-2 hover:bg-slate-50"
+                onClick={() => setOpen(false)}
+              >
                 Help &amp; support
               </Link>
             </>
