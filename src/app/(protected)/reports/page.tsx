@@ -52,6 +52,20 @@ type StaffReviewRow = {
   notes: string | null;
 };
 
+type EducationRow = {
+  id: string;
+  staff_name: string;
+  staff_initials: string | null;
+  staff_email: string | null;
+  type: string | null;
+  awarded_on: string | null; // ISO date
+  expires_on: string | null; // ISO date
+  days_until: number | null;
+  status: "valid" | "expired" | "no-expiry";
+  notes: string | null;
+  certificate_url: string | null;
+};
+
 type LocationOption = {
   id: string;
   name: string;
@@ -328,6 +342,65 @@ async function fetchStaffReviews(
   }));
 }
 
+/**
+ * All staff education / qualification records from `trainings`.
+ * Joins to `staff` for names, email, initials.
+ */
+async function fetchEducation(orgId: string): Promise<EducationRow[]> {
+  const { data, error } = await supabase
+    .from("trainings")
+    .select(
+      `
+      id,
+      type,
+      awarded_on,
+      expires_on,
+      certificate_url,
+      notes,
+      staff:staff_id ( name, email, initials )
+    `
+    )
+    .eq("org_id", orgId)
+    .order("expires_on", { ascending: true })
+    .order("awarded_on", { ascending: true });
+
+  if (error) throw error;
+
+  const today0 = new Date();
+  today0.setHours(0, 0, 0, 0);
+
+  return (data ?? []).map((r: any) => {
+    const staff = r.staff ?? {};
+    const awarded = r.awarded_on ? new Date(r.awarded_on) : null;
+    const expires = r.expires_on ? new Date(r.expires_on) : null;
+
+    if (awarded) awarded.setHours(0, 0, 0, 0);
+    if (expires) expires.setHours(0, 0, 0, 0);
+
+    let daysUntil: number | null = null;
+    let status: EducationRow["status"] = "no-expiry";
+
+    if (expires) {
+      daysUntil = Math.round((expires.getTime() - today0.getTime()) / 86400000);
+      status = daysUntil < 0 ? "expired" : "valid";
+    }
+
+    return {
+      id: String(r.id),
+      staff_name: staff.name ?? "—",
+      staff_initials: staff.initials ?? null,
+      staff_email: staff.email ?? null,
+      type: r.type ?? null,
+      awarded_on: awarded ? awarded.toISOString() : null,
+      expires_on: expires ? expires.toISOString() : null,
+      days_until: daysUntil,
+      status,
+      notes: r.notes ?? null,
+      certificate_url: r.certificate_url ?? null,
+    } as EducationRow;
+  });
+}
+
 /* ---------- CSV ---------- */
 
 function tempsToCSV(rows: TempRow[]) {
@@ -376,6 +449,7 @@ export default function ReportsPage() {
   const [staffReviews, setStaffReviews] = useState<StaffReviewRow[] | null>(
     null
   );
+  const [education, setEducation] = useState<EducationRow[] | null>(null);
   const [cleaningCount, setCleaningCount] = useState(0);
 
   const [loading, setLoading] = useState(false);
@@ -385,8 +459,9 @@ export default function ReportsPage() {
 
   const printRef = useRef<HTMLDivElement>(null);
 
-  // NEW: control how many temp rows are visible
+  // controls how many rows are visible
   const [showAllTemps, setShowAllTemps] = useState(false);
+  const [showAllEducation, setShowAllEducation] = useState(false);
 
   // KPI from temps (still uses full dataset)
   const kpi = useMemo(() => {
@@ -402,6 +477,13 @@ export default function ReportsPage() {
     if (showAllTemps) return temps;
     return temps.slice(0, 10);
   }, [temps, showAllTemps]);
+
+  // Visible education rows: 10 by default, all when toggled
+  const visibleEducation = useMemo(() => {
+    if (!education) return null;
+    if (showAllEducation) return education;
+    return education.slice(0, 10);
+  }, [education, showAllEducation]);
 
   /* ---------- boot: org + locations ---------- */
 
@@ -459,12 +541,15 @@ export default function ReportsPage() {
 
       if (includeAncillary) {
         const withinDays = 90;
-        const [m, a] = await Promise.all([
+        const [m, a, e] = await Promise.all([
           fetchTeamDue(withinDays, orgIdValue),
           fetchAllergenLog(withinDays, orgIdValue),
+          fetchEducation(orgIdValue),
         ]);
         setTeamDue(m);
         setAllergenLog(a);
+        setEducation(e);
+        setShowAllEducation(false);
       }
     } catch (e: any) {
       setErr(e?.message ?? "Failed to run report.");
@@ -472,6 +557,7 @@ export default function ReportsPage() {
       setTeamDue(null);
       setAllergenLog(null);
       setStaffReviews(null);
+      setEducation(null);
       setCleaningCount(0);
     } finally {
       setLoading(false);
@@ -813,6 +899,118 @@ export default function ReportsPage() {
               </tbody>
             </table>
           </div>
+        </Card>
+
+        {/* NEW: All staff education / qualifications */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Staff Education / Qualifications (all records)
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Initials</th>
+                  <th className="py-2 pr-3">Email</th>
+                  <th className="py-2 pr-3">Type</th>
+                  <th className="py-2 pr-3">Awarded</th>
+                  <th className="py-2 pr-3">Expires</th>
+                  <th className="py-2 pr-3">Days</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Notes</th>
+                  <th className="py-2 pr-3">Certificate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!education?.length ? (
+                  <tr>
+                    <td colSpan={10} className="py-6 text-center text-slate-500">
+                      No education / training records for this organisation.
+                    </td>
+                  </tr>
+                ) : (
+                  visibleEducation!.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">{r.staff_name}</td>
+                      <td className="py-2 pr-3">
+                        {r.staff_initials ?? "—"}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.staff_email ?? "—"}
+                      </td>
+                      <td className="py-2 pr-3">{r.type ?? "—"}</td>
+                      <td className="py-2 pr-3">
+                        {r.awarded_on ? formatISOToUK(r.awarded_on) : "—"}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.expires_on ? formatISOToUK(r.expires_on) : "—"}
+                      </td>
+                      <td
+                        className={`py-2 pr-3 ${
+                          r.days_until != null && r.days_until < 0
+                            ? "text-red-700"
+                            : ""
+                        }`}
+                      >
+                        {r.days_until != null ? r.days_until : "—"}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.status === "no-expiry"
+                          ? "No expiry"
+                          : r.status === "expired"
+                          ? "Expired"
+                          : "Valid"}
+                      </td>
+                      <td className="max-w-xs py-2 pr-3">
+                        {r.notes ? (
+                          <span className="line-clamp-2">{r.notes}</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.certificate_url ? (
+                          <a
+                            href={r.certificate_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs font-medium text-sky-700 underline"
+                          >
+                            View
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {education && education.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllEducation
+                  ? education.length
+                  : Math.min(10, education.length)}{" "}
+                of {education.length} records
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllEducation((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllEducation ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
         </Card>
 
         {/* Allergen review log / due */}
