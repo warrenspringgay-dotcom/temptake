@@ -14,6 +14,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
+import { Thermometer, Brush } from "lucide-react";
 
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
@@ -41,15 +42,13 @@ function inferStatus(
   return "pass";
 }
 
-const firstLetter = (s: string | null | undefined) =>
-  (s?.trim()?.charAt(0) || "").toUpperCase();
-
 export default function TempFab() {
   const { addToast } = useToast();
   const router = useRouter();
 
   const [open, setOpen] = useState(false);
   const [entriesToday, setEntriesToday] = useState<number | null>(null);
+  const [openCleaning, setOpenCleaning] = useState<number | null>(null);
   const [showMenu, setShowMenu] = useState(false);
 
   const [initials, setInitials] = useState<string[]>([]);
@@ -115,9 +114,48 @@ export default function TempFab() {
     }
   }
 
-  /* --------- boot: date + last used values from localStorage --------- */
+  // Count today’s open cleaning tasks
+  async function refreshCleaningOpen() {
+    try {
+      const orgId = await getActiveOrgIdClient();
+      if (!orgId) {
+        setOpenCleaning(0);
+        return;
+      }
+      const locationId = await getActiveLocationIdClient();
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+
+      let query = supabase
+        .from("cleaning_task_runs")
+        .select("id", { count: "exact", head: true })
+        .eq("org_id", orgId)
+        .gte("due_at", today.toISOString())
+        .lt("due_at", tomorrow.toISOString())
+        .is("completed_at", null);
+
+      if (locationId) {
+        query = query.eq("location_id", locationId);
+      }
+
+      const { count, error } = await query;
+      if (error || count == null) {
+        setOpenCleaning(0);
+        return;
+      }
+      setOpenCleaning(count);
+    } catch {
+      setOpenCleaning(0);
+    }
+  }
+
+  /* --------- boot: initials + locations + last used values --------- */
 
   useEffect(() => {
+    // basic date, then localStorage
     setForm((f) => ({
       ...f,
       date: new Date().toISOString().slice(0, 10),
@@ -128,7 +166,7 @@ export default function TempFab() {
       const lsLoc = localStorage.getItem(LS_LAST_LOCATION) || "";
       setForm((f) => ({
         ...f,
-        staff_initials: lsIni ? lsIni.toUpperCase() : f.staff_initials,
+        staff_initials: lsIni || f.staff_initials,
         location: lsLoc || f.location,
       }));
     } catch {
@@ -136,99 +174,31 @@ export default function TempFab() {
     }
   }, []);
 
-  /* --------- boot: initials (with logged-in user first) + locations --------- */
-
   useEffect(() => {
     (async () => {
       try {
         const orgId = await getActiveOrgIdClient();
         const locationId = await getActiveLocationIdClient();
 
-        /* --- Derive primary initials from logged-in user, if possible --- */
-        let primaryIni = "";
-        try {
-          const { data: authData, error: authError } =
-            await supabase.auth.getUser();
-          if (!authError && authData?.user) {
-            const email = authData.user.email ?? "";
-            if (orgId && email) {
-              const { data: tmRow } = await supabase
-                .from("team_members")
-                .select("initials,name,email")
-                .eq("org_id", orgId)
-                .eq("email", email)
-                .limit(1);
-
-              const row = tmRow?.[0];
-              if (row) {
-                const base =
-                  row.initials?.toString().trim() ||
-                  (row.name ?? "")
-                    .toString()
-                    .trim()
-                    .split(/\s+/)
-                    .map((p: string) => p[0] ?? "")
-                    .join("") ||
-                  (email ?? "").trim()[0] ||
-                  "";
-                primaryIni = base.toUpperCase().slice(0, 4);
-              }
-            }
-          }
-        } catch {
-          // ignore auth errors – we'll still show the generic list
-        }
-
-        /* --- initials from team_members --- */
-        let iniList: string[] = [];
+        // initials from team_members
         if (orgId) {
           const { data: tm } = await supabase
             .from("team_members")
-            .select("initials,name,email")
+            .select("initials")
             .eq("org_id", orgId)
             .order("initials", { ascending: true });
 
-          iniList =
+          const iniList =
             (tm ?? [])
-              .map((r: any) => {
-                const fromIni = (r.initials ?? "")
-                  .toString()
-                  .trim()
-                  .toUpperCase();
-                if (fromIni) return fromIni;
-                const fromName = firstLetter(r.name);
-                if (fromName) return fromName;
-                const fromEmail = firstLetter(r.email);
-                return fromEmail;
-              })
+              .map((r: any) => r.initials?.toString().toUpperCase())
               .filter(Boolean) || [];
+          setInitials(iniList);
+          if (!form.staff_initials && iniList[0]) {
+            setForm((f) => ({ ...f, staff_initials: iniList[0] }));
+          }
         }
 
-        // unique + ensure primaryIni (logged-in user) is first if present
-        let finalInitials = Array.from(new Set(iniList));
-        if (primaryIni) {
-          finalInitials = [
-            primaryIni,
-            ...finalInitials.filter((v) => v !== primaryIni),
-          ];
-        }
-
-        setInitials(finalInitials);
-
-        // Default form.staff_initials if still empty:
-        setForm((f) => {
-          if (f.staff_initials) return f;
-
-          const next =
-            primaryIni ||
-            f.staff_initials ||
-            finalInitials[0] ||
-            f.staff_initials;
-
-          return next ? { ...f, staff_initials: next } : f;
-        });
-
-        /* --- locations from recent logs --- */
+        // locations from recent logs
         if (orgId) {
           let q = supabase
             .from("food_temp_logs")
@@ -245,22 +215,18 @@ export default function TempFab() {
               .map((r: any) => (r.area ?? "").toString().trim())
               .filter((s: string) => s.length > 0) || [];
           const unique = Array.from(new Set(fromAreas));
-          const locList = unique.length ? unique : ["Kitchen"];
-          setLocations(locList);
-
-          setForm((f) => {
-            if (f.location) return f;
-            return { ...f, location: locList[0] || "Kitchen" };
-          });
+          setLocations(unique.length ? unique : ["Kitchen"]);
+          if (!form.location) {
+            setForm((f) => ({ ...f, location: unique[0] || "Kitchen" }));
+          }
         }
       } catch {
-        // fallback locations if everything else failed
+        // fallback
         if (!locations.length) {
-          const fallback = ["Kitchen"];
-          setLocations(fallback);
-          setForm((f) =>
-            f.location ? f : { ...f, location: fallback[0] || "Kitchen" }
-          );
+          setLocations(["Kitchen"]);
+          if (!form.location) {
+            setForm((f) => ({ ...f, location: "Kitchen" }));
+          }
         }
       }
     })();
@@ -268,7 +234,8 @@ export default function TempFab() {
   }, []);
 
   useEffect(() => {
-    refreshEntriesToday();
+    void refreshEntriesToday();
+    void refreshCleaningOpen();
   }, []);
 
   /* --------- save entry --------- */
@@ -352,9 +319,7 @@ export default function TempFab() {
       if (form.staff_initials)
         localStorage.setItem(LS_LAST_INITIALS, form.staff_initials);
       if (form.location) localStorage.setItem(LS_LAST_LOCATION, form.location);
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     addToast({
       title: "Temperature saved",
@@ -471,6 +436,11 @@ export default function TempFab() {
   const wrapperClass =
     entriesToday !== null && entriesToday === 0 ? "no-temps-today" : "";
 
+  const showTempWarning =
+    entriesToday !== null && entriesToday === 0; // no temps yet today
+  const showCleaningWarning =
+    openCleaning !== null && openCleaning > 0; // there are open cleaning tasks
+
   return (
     <>
       {/* FAB + zero-entries pulse wrapper */}
@@ -481,9 +451,30 @@ export default function TempFab() {
           className="fab fixed bottom-6 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 text-3xl font-bold leading-none text-white shadow-lg shadow-emerald-500/40 hover:brightness-110"
         >
           <span>+</span>
-          {entriesToday !== null && (
-            <div className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center">
-              {entriesToday}
+
+          {/* 2 o'clock – temperature orb */}
+          {showTempWarning && (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                router.push("/dashboard");
+              }}
+              className="absolute -top-2 -right-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white shadow-md shadow-red-500/60 active:scale-90 transition cursor-pointer"
+            >
+              <Thermometer className="h-4 w-4" />
+            </div>
+          )}
+
+          {/* 10 o'clock – cleaning orb */}
+          {showCleaningWarning && (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                router.push("/cleaning-rota");
+              }}
+              className="absolute -top-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white shadow-md shadow-sky-500/60 active:scale-90 transition cursor-pointer"
+            >
+              <Brush className="h-4 w-4" />
             </div>
           )}
         </button>
@@ -492,7 +483,7 @@ export default function TempFab() {
       {/* Quick choice menu (Wall vs Quick log) */}
       {showMenu && (
         <div className="fixed bottom-24 right-4 z-50 flex flex-col items-end">
-          <div className="rounded-2xl border border-emerald-100 bg-white/95 p-3 shadow-xl shadow-emerald-500/20 w-64">
+          <div className="w-64 rounded-2xl border border-emerald-100 bg-white/95 p-3 shadow-xl shadow-emerald-500/20">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
               What would you like to do?
             </div>
@@ -574,9 +565,7 @@ export default function TempFab() {
                       setForm((f) => ({ ...f, staff_initials: v }));
                       try {
                         localStorage.setItem(LS_LAST_INITIALS, v);
-                      } catch {
-                        // ignore
-                      }
+                      } catch {}
                     }}
                     className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 uppercase shadow-sm"
                   >
@@ -604,9 +593,7 @@ export default function TempFab() {
                       setForm((f) => ({ ...f, location: v }));
                       try {
                         localStorage.setItem(LS_LAST_LOCATION, v);
-                      } catch {
-                        // ignore
-                      }
+                      } catch {}
                     }}
                     className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-sm"
                   >
@@ -781,6 +768,7 @@ export default function TempFab() {
           addToast({ title: "Routine logged", type: "success" });
           setRunRoutine(null);
           await refreshEntriesToday();
+          await refreshCleaningOpen();
           setOpen(false);
         }}
       />

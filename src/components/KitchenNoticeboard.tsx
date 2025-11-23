@@ -42,6 +42,9 @@ export default function KitchenWall() {
   const [myInitials, setMyInitials] = useState("");
   const [myName, setMyName] = useState<string>("");
 
+  // Manager / owner / admin flag
+  const [isManager, setIsManager] = useState(false);
+
   // Leaderboard-related
   const [lbRows, setLbRows] = useState<LeaderboardRow[]>([]);
   const [myRank, setMyRank] = useState<number | null>(null);
@@ -61,7 +64,7 @@ export default function KitchenWall() {
       const id = await getActiveOrgIdClient();
       setOrgId(id);
 
-      // Load latest posts
+      // Load latest posts + leaderboard
       if (id) {
         await loadPosts(id);
         await loadLeaderboard(id);
@@ -70,6 +73,7 @@ export default function KitchenWall() {
       // Try to derive initials + name from the logged-in team member
       let detectedInitials = "";
       let detectedName = "";
+      let managerFlag = false;
 
       try {
         const { data: authData, error: authError } =
@@ -79,7 +83,7 @@ export default function KitchenWall() {
           if (id && email) {
             const { data: tm } = await supabase
               .from("team_members")
-              .select("initials,name,email")
+              .select("initials,name,email,role")
               .eq("org_id", id)
               .eq("email", email)
               .limit(1);
@@ -98,12 +102,18 @@ export default function KitchenWall() {
                 "";
 
               detectedInitials = base.toUpperCase().slice(0, 4);
+
+              const role = (row.role ?? "").toLowerCase();
+              managerFlag =
+                role === "owner" || role === "manager" || role === "admin";
             }
           }
         }
       } catch {
         // ignore – we'll fall back to localStorage
       }
+
+      setIsManager(managerFlag);
 
       // Fallback: previous initials stored locally
       const saved =
@@ -117,8 +127,6 @@ export default function KitchenWall() {
       setInitials(finalInitials);
       setMyInitials(finalInitials);
       setMyName(detectedName);
-
-      // Once we have myName + leaderboard rows, compute my rank/badges
     })();
   }, []);
 
@@ -262,6 +270,26 @@ export default function KitchenWall() {
     if (orgId) await loadPosts(orgId);
   }
 
+  // Manager-only: delete a note from the wall
+  async function deletePost(id: string) {
+    if (!orgId) return;
+    if (!window.confirm("Remove this note from the wall?")) return;
+
+    try {
+      const { error } = await supabase
+        .from("kitchen_wall")
+        .delete()
+        .eq("id", id)
+        .eq("org_id", orgId);
+
+      if (error) throw error;
+
+      setPosts((prev) => prev.filter((p) => p.id !== id));
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to remove note.");
+    }
+  }
+
   if (!orgId) return null;
 
   const topThree = lbRows.slice(0, 3);
@@ -298,7 +326,8 @@ export default function KitchenWall() {
                 </div>
               ) : (
                 <div className="text-sm text-amber-800">
-                  Your rank: <span className="font-semibold">No points yet</span>
+                  Your rank:{" "}
+                  <span className="font-semibold">No points yet</span>
                 </div>
               )}
               {myBadges.length > 0 && (
@@ -400,6 +429,18 @@ export default function KitchenWall() {
             >
               {post.is_pinned && (
                 <Pin className="absolute -top-6 -right-6 h-14 w-14 text-red-600 fill-red-600 drop-shadow-2xl" />
+              )}
+
+              {/* Manager-only remove button */}
+              {isManager && (
+                <button
+                  type="button"
+                  onClick={() => deletePost(post.id)}
+                  className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/80 text-sm font-bold text-slate-600 hover:bg-red-50 hover:text-red-600 shadow-sm"
+                  aria-label="Remove note"
+                >
+                  ×
+                </button>
               )}
 
               <div className="text-5xl font-black mb-6 opacity-90">
