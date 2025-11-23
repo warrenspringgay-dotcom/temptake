@@ -35,11 +35,11 @@ export default function ClientLanding() {
             </a>
 
             <button
-              onClick={() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })}
-              className="px-10 py-7 bg-white/90 backdrop-blur border-4 border-orange-500 text-orange-600 text-xl font-bold rounded-full hover:bg-orange-50 transition-all cursor-pointer"
-            >
-              See What Chefs Are Saying ↓
-            </button>
+  onClick={() => document.querySelector('#chef-wall')?.scrollIntoView({ behavior: 'smooth' })}
+  className="px-8 py-6 whitespace-nowrap bg-white/90 backdrop-blur border-4 border-orange-500 text-orange-600 text-lg md:text-xl font-bold rounded-full hover:bg-orange-50 transition-all cursor-pointer flex items-center justify-center min-w-0"
+>
+  See What Chefs Are Saying ↓
+</button>
           </div>
 
           <div className="flex flex-wrap justify-center gap-8 text-gray-600 text-lg">

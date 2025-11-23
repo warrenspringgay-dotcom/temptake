@@ -1,64 +1,67 @@
 // src/lib/orgClient.ts
-import { supabase as browserClient } from "@/lib/supabaseBrowser";
+"use client";
 
-/**
- * Client-only: get org_id for the current user.
- *
- * Priority:
- *  1) user_orgs.active = true
- *  2) first user_orgs row (if any)
- *  3) user_metadata.org_id (legacy)
- *  4) profiles.org_id (legacy)
- */
+import { supabase } from "@/lib/supabaseBrowser";
+
+const LS_ACTIVE_ORG = "tt_active_org";
+
 export async function getActiveOrgIdClient(): Promise<string | null> {
-  // 0) Get current session
-  const {
-    data: { session },
-  } = await browserClient.auth.getSession();
-
-  const user = session?.user;
+  // 1) Who is logged in?
+  const { data: userRes } = await supabase.auth.getUser();
+  const user = userRes.user;
   if (!user) return null;
 
-  const userId = user.id;
-
-  // 1) Try user_orgs (new, correct way)
-  try {
-    // Prefer active = true, otherwise just take the first mapping
-    const { data: orgLinks, error: orgLinksError } = await browserClient
-      .from("user_orgs")
-      .select("org_id, active, created_at")
-      .eq("user_id", userId)
-      .order("active", { ascending: false }) // active=true first
-      .order("created_at", { ascending: true })
-      .limit(1);
-
-    if (!orgLinksError && orgLinks && orgLinks.length > 0) {
-      const orgId = orgLinks[0].org_id as string | null;
-      if (orgId) return orgId;
-    }
-  } catch {
-    // swallow and fall through to legacy behaviour
+  // 2) Check localStorage first
+  if (typeof window !== "undefined") {
+    const stored = window.localStorage.getItem(LS_ACTIVE_ORG);
+    if (stored) return stored;
   }
 
-  // 2) Legacy fallback: org_id stored in JWT metadata
-  const md = (user.user_metadata ?? {}) as Record<string, any>;
-  const orgFromJwt = (md.org_id as string) || null;
-  if (orgFromJwt) return orgFromJwt;
+  let orgId: string | null = null;
 
-  // 3) Legacy fallback: org_id on profiles table
-  try {
-    const { data: profile, error: profileError } = await browserClient
-      .from("profiles")
+  // 3) Try existing user_orgs mapping
+  const { data: uoRow, error: uoErr } = await supabase
+    .from("user_orgs")
+    .select("org_id")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: true })
+    .maybeSingle();
+
+  if (!uoErr && uoRow?.org_id) {
+    orgId = uoRow.org_id as string;
+  }
+
+  // 4) If no mapping yet, try to infer from team_members by email
+  if (!orgId && user.email) {
+    const email = user.email.toLowerCase();
+
+    const { data: tmRow, error: tmErr } = await supabase
+      .from("team_members")
       .select("org_id")
-      .eq("id", userId)
+      .eq("email", email)
+      .order("created_at", { ascending: true })
       .maybeSingle();
 
-    if (!profileError && profile?.org_id) {
-      return profile.org_id as string;
+    if (!tmErr && tmRow?.org_id) {
+      orgId = tmRow.org_id as string;
+
+      // Create user_orgs mapping so next time is fast & consistent
+      await supabase
+        .from("user_orgs")
+        .upsert(
+          {
+            user_id: user.id,
+            org_id: orgId,
+          },
+          { onConflict: "user_id,org_id" }
+        );
     }
-  } catch {
-    // ignore
   }
 
-  return null;
+  // 5) Cache in localStorage for the session
+  if (orgId && typeof window !== "undefined") {
+    window.localStorage.setItem(LS_ACTIVE_ORG, orgId);
+  }
+
+  return orgId;
 }
