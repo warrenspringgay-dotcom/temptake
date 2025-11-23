@@ -1,5 +1,5 @@
 // src/app/(protected)/leaderboard/page.tsx
-import Leaderboard from "@/components/Leaderboard";
+import Leaderboard from "@/app/(protected)/Leaderboard/Leaderboard";
 import TempFab from "@/components/QuickActionsFab";
 import { ensureOrgForCurrentUser } from "@/lib/ensureOrg";
 

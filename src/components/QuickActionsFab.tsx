@@ -180,21 +180,65 @@ export default function TempFab() {
         const orgId = await getActiveOrgIdClient();
         const locationId = await getActiveLocationIdClient();
 
-        // initials from team_members
+        // initials from team_members (and logged-in user)
         if (orgId) {
-          const { data: tm } = await supabase
-            .from("team_members")
-            .select("initials")
-            .eq("org_id", orgId)
-            .order("initials", { ascending: true });
+          const [{ data: authData }, { data: tmData }] = await Promise.all([
+            supabase.auth.getUser(),
+            supabase
+              .from("team_members")
+              .select("initials,email")
+              .eq("org_id", orgId)
+              .order("initials", { ascending: true }),
+          ]);
 
-          const iniList =
-            (tm ?? [])
-              .map((r: any) => r.initials?.toString().toUpperCase())
+          const email = authData?.user?.email?.toLowerCase() ?? null;
+
+          const iniList: string[] =
+            (tmData ?? [])
+              .map((r: any) =>
+                r.initials ? r.initials.toString().toUpperCase().trim() : ""
+              )
               .filter(Boolean) || [];
-          setInitials(iniList);
-          if (!form.staff_initials && iniList[0]) {
-            setForm((f) => ({ ...f, staff_initials: iniList[0] }));
+
+          // Logged-in user's initials from team_members
+          let mine =
+            (tmData ?? [])
+              .find(
+                (r: any) =>
+                  r.email &&
+                  email &&
+                  r.email.toString().toLowerCase() === email
+              )
+              ?.initials?.toString()
+              .toUpperCase()
+              .trim() || "";
+
+          // Fallback to last used initials from localStorage
+          if (!mine) {
+            try {
+              if (typeof window !== "undefined") {
+                const fromLs =
+                  localStorage.getItem(LS_LAST_INITIALS) || "";
+                mine = fromLs.toUpperCase().trim();
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          let sorted = iniList;
+          if (mine && iniList.includes(mine)) {
+            sorted = [mine, ...iniList.filter((i) => i !== mine)];
+          }
+
+          setInitials(sorted);
+
+          // If no initials selected yet, choose user's initials first, otherwise first option
+          if (!form.staff_initials) {
+            const chosen = mine || sorted[0] || "";
+            if (chosen) {
+              setForm((f) => ({ ...f, staff_initials: chosen }));
+            }
           }
         }
 
@@ -319,7 +363,9 @@ export default function TempFab() {
       if (form.staff_initials)
         localStorage.setItem(LS_LAST_INITIALS, form.staff_initials);
       if (form.location) localStorage.setItem(LS_LAST_LOCATION, form.location);
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     addToast({
       title: "Temperature saved",
@@ -443,71 +489,79 @@ export default function TempFab() {
 
   return (
     <>
-      {/* FAB + zero-entries pulse wrapper */}
-      <div className={wrapperClass}>
+      {/* FAB + orbs wrapper */}
+      <div className={cls(wrapperClass, "fixed bottom-6 right-4 z-40")}>
+        {/* Main FAB */}
         <button
           type="button"
           onClick={() => setShowMenu((v) => !v)}
-          className="fab fixed bottom-6 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 text-3xl font-bold leading-none text-white shadow-lg shadow-emerald-500/40 hover:brightness-110"
+          className="fab relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 text-3xl font-bold leading-none text-white shadow-lg shadow-emerald-500/40 hover:brightness-110"
         >
           <span>+</span>
-
-          {/* 2 o'clock – temperature orb */}
-          {showTempWarning && (
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                router.push("/dashboard");
-              }}
-              className="absolute -top-2 -right-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white shadow-md shadow-red-500/60 active:scale-90 transition cursor-pointer"
-            >
-              <Thermometer className="h-4 w-4" />
-            </div>
-          )}
-
-          {/* 10 o'clock – cleaning orb */}
-          {showCleaningWarning && (
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                router.push("/cleaning-rota");
-              }}
-              className="absolute -top-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white shadow-md shadow-sky-500/60 active:scale-90 transition cursor-pointer"
-            >
-              <Brush className="h-4 w-4" />
-            </div>
-          )}
         </button>
+
+        {/* 2 o'clock – temperature orb (opens quick entry modal) */}
+        {showTempWarning && (
+          <button
+            type="button"
+            onClick={() => {
+              setShowMenu(false);
+              setOpen(true);
+            }}
+            className="absolute -top-2 -right-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white shadow-md shadow-red-500/60 active:scale-90 transition cursor-pointer"
+          >
+            <Thermometer className="h-4 w-4" />
+          </button>
+        )}
+
+        {/* 10 o'clock – cleaning orb */}
+        {showCleaningWarning && (
+          <button
+            type="button"
+            onClick={() => router.push("/cleaning-rota")}
+            className="absolute -top-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white shadow-md shadow-sky-500/60 active:scale-90 transition cursor-pointer"
+          >
+            <Brush className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
-      {/* Quick choice menu (Wall vs Quick log) */}
+      {/* Quick choice menu (closes when clicking outside) */}
       {showMenu && (
-        <div className="fixed bottom-24 right-4 z-50 flex flex-col items-end">
-          <div className="w-64 rounded-2xl border border-emerald-100 bg-white/95 p-3 shadow-xl shadow-emerald-500/20">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              What would you like to do?
-            </div>
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowMenu(false);
-                  setOpen(true);
-                }}
-                className="w-full rounded-xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/40 hover:brightness-105"
-              >
-                Quick temp log
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowMenu(false);
-                  router.push("/wall");
-                }}
-                className="w-full rounded-xl bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-500/40 hover:brightness-105"
-              >
-                Open wall
-              </button>
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-end"
+          onClick={() => setShowMenu(false)}
+        >
+          <div
+            className="mb-24 mr-4 flex flex-col items-end"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-64 rounded-2xl border border-emerald-100 bg-white/95 p-3 shadow-xl shadow-emerald-500/20">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                What would you like to do?
+              </div>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMenu(false);
+                    setOpen(true);
+                  }}
+                  className="w-full rounded-xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/40 hover:brightness-105"
+                >
+                  Quick temp log
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMenu(false);
+                    router.push("/wall");
+                  }}
+                  className="w-full rounded-xl bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-500/40 hover:brightness-105"
+                >
+                  Open wall
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -565,7 +619,9 @@ export default function TempFab() {
                       setForm((f) => ({ ...f, staff_initials: v }));
                       try {
                         localStorage.setItem(LS_LAST_INITIALS, v);
-                      } catch {}
+                      } catch {
+                        // ignore
+                      }
                     }}
                     className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 uppercase shadow-sm"
                   >
@@ -593,7 +649,9 @@ export default function TempFab() {
                       setForm((f) => ({ ...f, location: v }));
                       try {
                         localStorage.setItem(LS_LAST_LOCATION, v);
-                      } catch {}
+                      } catch {
+                        // ignore
+                      }
                     }}
                     className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-sm"
                   >
@@ -730,7 +788,7 @@ export default function TempFab() {
                     <button
                       key={r.id}
                       onClick={() => pickRoutine(r)}
-                      className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-left text-sm shadow-sm hover:bg-white"
+                      className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-left text-sm shadow-sm hover:bg:white"
                     >
                       <div>
                         <div className="font-medium">{r.name}</div>

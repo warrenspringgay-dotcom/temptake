@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
@@ -64,7 +65,26 @@ type TodayCleaningRow = {
   notes: string | null;
 };
 
+type ActivityDayMeta = {
+  iso: string;   // yyyy-mm-dd
+  label: string; // e.g. Mon 23
+};
+
+type ActivityDay = {
+  temps: number;
+  cleaning: number;
+};
+
+type StaffActivityRow = {
+  staffKey: string;
+  name: string;
+  initials: string;
+  days: ActivityDay[];
+  total: number;
+};
+
 const CATEGORY_OPTIONS = ["Temps", "Cleaning", "Allergens", "General"];
+const DAY_WINDOW = 10;
 
 /* ---------- Helpers ---------- */
 
@@ -111,6 +131,8 @@ function formatTimeHM(d: Date | null | undefined): string | null {
 /* ===================================================================== */
 
 export default function ManagerDashboardPage() {
+  const router = useRouter();
+
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
@@ -132,6 +154,9 @@ export default function ManagerDashboardPage() {
   const [todayCleaningRuns, setTodayCleaningRuns] = useState<
     TodayCleaningRow[]
   >([]);
+
+  const [activityDays, setActivityDays] = useState<ActivityDayMeta[]>([]);
+  const [staffActivity, setStaffActivity] = useState<StaffActivityRow[]>([]);
 
   const [loadingCards, setLoadingCards] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -195,7 +220,7 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
-  /* ---------- Load staff list for reviews ---------- */
+  /* ---------- Load staff list for reviews (from team_members) ---------- */
 
   useEffect(() => {
     if (!orgId) return;
@@ -204,10 +229,9 @@ export default function ManagerDashboardPage() {
       try {
         setStaffLoading(true);
         const { data, error } = await supabase
-          .from("staff")
-          .select("id, name, initials, active, email")
+          .from("team_members")
+          .select("id, name, initials, email")
           .eq("org_id", orgId)
-          .eq("active", true)
           .order("name");
 
         if (error) throw error;
@@ -258,6 +282,11 @@ export default function ManagerDashboardPage() {
       const dateEndToday = new Date(dateStartToday);
       dateEndToday.setDate(dateEndToday.getDate() + 1);
 
+      // Activity window: last 10 days including today
+      const activityStart = new Date(dateStartToday);
+      activityStart.setDate(activityStart.getDate() - (DAY_WINDOW - 1));
+      const activityEnd = new Date(dateEndToday);
+
       const [
         tempsRes,
         failsRes,
@@ -266,6 +295,8 @@ export default function ManagerDashboardPage() {
         reviewsRes,
         tempsListRes,
         cleaningListRes,
+        tempsActivityRes,
+        cleaningActivityRes,
       ] = await Promise.all([
         // Temps logged today (count) - filter by at
         supabase
@@ -329,6 +360,28 @@ export default function ManagerDashboardPage() {
           .lt("done_at", dateEndToday.toISOString())
           .order("done_at", { ascending: false })
           .limit(200),
+
+        // Activity window temps (last 10 days)
+        supabase
+          .from("food_temp_logs")
+          .select("at, created_at, staff_initials, initials")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .gte("at", activityStart.toISOString())
+          .lt("at", activityEnd.toISOString())
+          .limit(5000),
+
+        // Activity window cleaning runs (last 10 days)
+        supabase
+          .from("cleaning_task_runs")
+          .select(
+            "done_at, created_at, completed_by_initials, staff_initials, initials, completed_by, done_by"
+          )
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .gte("done_at", activityStart.toISOString())
+          .lt("done_at", activityEnd.toISOString())
+          .limit(5000),
       ]);
 
       /* ---- Temps summary ---- */
@@ -431,6 +484,105 @@ export default function ManagerDashboardPage() {
         };
       });
       setTodayCleaningRuns(mappedCleaning);
+
+      /* ---- Staff activity (last 10 days) ---- */
+
+      const daysMeta: ActivityDayMeta[] = [];
+      for (let i = 0; i < DAY_WINDOW; i++) {
+        const d = new Date(activityStart);
+        d.setDate(activityStart.getDate() + i);
+        const iso = d.toISOString().slice(0, 10);
+        const label = `${WEEKDAYS[d.getDay()].slice(0, 3)} ${d.getDate()}`;
+        daysMeta.push({ iso, label });
+      }
+      setActivityDays(daysMeta);
+
+      const tempsActivity: any[] = (tempsActivityRes.data as any[]) ?? [];
+      const cleaningActivity: any[] = (cleaningActivityRes.data as any[]) ?? [];
+
+      const staffMap = new Map<
+        string,
+        { name: string; initials: string; days: ActivityDay[] }
+      >();
+
+      const getStaffRecord = (initialsRaw: string): {
+        name: string;
+        initials: string;
+        days: ActivityDay[];
+      } => {
+        const trimmed = (initialsRaw || "").toUpperCase().trim();
+        const key = trimmed || "UNKNOWN";
+
+        if (!staffMap.has(key)) {
+          const match = staffOptions.find(
+            (s) => (s.initials || "").toUpperCase() === trimmed
+          );
+          const name = match?.name ?? (trimmed || "Unknown");
+          const days: ActivityDay[] = Array.from(
+            { length: DAY_WINDOW },
+            () => ({ temps: 0, cleaning: 0 })
+          );
+          staffMap.set(key, { name, initials: trimmed || "—", days });
+        }
+
+        // non-null since we just set it
+        return staffMap.get(key)!;
+      };
+
+      // Temps
+      for (const r of tempsActivity) {
+        const ts = r.at || r.created_at ? new Date(r.at ?? r.created_at) : null;
+        if (!ts) continue;
+        const iso = ts.toISOString().slice(0, 10);
+        const dayIdx = daysMeta.findIndex((d) => d.iso === iso);
+        if (dayIdx === -1) continue;
+
+        const initialsRaw =
+          (r.staff_initials || r.initials || "").toString().trim();
+
+        const staff = getStaffRecord(initialsRaw);
+        staff.days[dayIdx].temps += 1;
+      }
+
+      // Cleaning
+      for (const r of cleaningActivity) {
+        const ts =
+          r.done_at || r.created_at ? new Date(r.done_at ?? r.created_at) : null;
+        if (!ts) continue;
+        const iso = ts.toISOString().slice(0, 10);
+        const dayIdx = daysMeta.findIndex((d) => d.iso === iso);
+        if (dayIdx === -1) continue;
+
+        const initialsRaw =
+          (r.completed_by_initials ||
+            r.staff_initials ||
+            r.initials ||
+            r.completed_by ||
+            r.done_by ||
+            "").toString().trim();
+
+        const staff = getStaffRecord(initialsRaw);
+        staff.days[dayIdx].cleaning += 1;
+      }
+
+      const activityRows: StaffActivityRow[] = Array.from(
+        staffMap.entries()
+      ).map(([key, value]) => {
+        const total = value.days.reduce(
+          (acc, d) => acc + d.temps + d.cleaning,
+          0
+        );
+        return {
+          staffKey: key,
+          name: value.name,
+          initials: value.initials,
+          days: value.days,
+          total,
+        };
+      });
+
+      activityRows.sort((a, b) => b.total - a.total);
+      setStaffActivity(activityRows);
     } catch (e: any) {
       console.error(e);
       setErr(e?.message ?? "Failed to refresh manager dashboard.");
@@ -441,7 +593,7 @@ export default function ManagerDashboardPage() {
 
   useEffect(() => {
     if (orgId && locationId) {
-      refreshCards();
+      void refreshCards();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, locationId]);
@@ -784,10 +936,94 @@ export default function ManagerDashboardPage() {
         </div>
       </div>
 
+      {/* Staff activity – last 10 days */}
+      <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <div className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+              Staff activity
+            </div>
+            <div className="text-sm text-slate-700">
+              Who&apos;s been active on the app in the last 10 days
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => router.push("/reports")}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            View more in reports
+          </button>
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white/95">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-2 py-1 sticky left-0 bg-slate-50/90">
+                  Staff
+                </th>
+                {activityDays.map((d) => (
+                  <th key={d.iso} className="px-2 py-1 text-center">
+                    {d.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {staffActivity.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={activityDays.length + 1}
+                    className="px-2 py-3 text-center text-slate-500"
+                  >
+                    No activity recorded in the last 10 days.
+                  </td>
+                </tr>
+              ) : (
+                staffActivity.map((row) => (
+                  <tr
+                    key={row.staffKey}
+                    className="border-t border-slate-100 text-slate-800"
+                  >
+                    <td className="px-2 py-1 sticky left-0 bg-white/95 font-semibold">
+                      {row.name}
+                      {row.initials && row.initials !== "—"
+                        ? ` (${row.initials})`
+                        : ""}
+                    </td>
+                    {row.days.map((d, idx) => {
+                      const hasActivity = d.temps > 0 || d.cleaning > 0;
+                      return (
+                        <td
+                          key={idx}
+                          className={`px-2 py-1 text-center ${
+                            hasActivity
+                              ? "bg-emerald-50 text-emerald-900 font-medium"
+                              : "text-slate-400"
+                          }`}
+                        >
+                          {hasActivity ? `${d.temps}T / ${d.cleaning}C` : "—"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-2 text-[11px] text-slate-500">
+          T = temperature logs, C = completed cleaning routines. A quick way to
+          see who&apos;s consistently active on the app.
+        </div>
+      </div>
+
       {/* Review modal */}
       {reviewOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
+          className="fixed inset-0 z-50 flex items-up justify-center bg-black/40 px-3"
           onClick={() => !savingReview && setReviewOpen(false)}
         >
           <form
