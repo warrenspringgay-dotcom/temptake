@@ -62,13 +62,7 @@ export default function ClientLanding() {
             </div>
           </button>
 
-          {/* Secondary button */}
-          <button
-            onClick={() => document.querySelector('#chef-wall')?.scrollIntoView({ behavior: 'smooth' })}
-            className="w-full max-w-lg mx-auto px-10 py-12 bg-white rounded-full border-8 border-orange-500 text-orange-600 text-2xl font-black shadow-xl hover:bg-orange-50 transition-all"
-          >
-            What Chefs Are Saying ↓
-          </button>
+        
 
           {/* Social proof */}
           <div className="space-y-4 text-center text-base sm:text-lg font-bold">
