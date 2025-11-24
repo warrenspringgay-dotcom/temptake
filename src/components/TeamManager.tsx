@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import ActionMenu from "@/components/ActionMenu";
@@ -48,6 +49,9 @@ function safeInitials(m: Member): string {
 
 /* ================================================= */
 export default function TeamManager() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
   const [rows, setRows] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [orgId, setOrgId] = useState<string | null>(null);
@@ -84,6 +88,9 @@ export default function TeamManager() {
   const [inviteSending, setInviteSending] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
+
+  // Highlight for deep-linked member (from ?staff=)
+  const [highlightId, setHighlightId] = useState<string | null>(null);
 
   /* -------------------- Load team + determine owner -------------------- */
   async function load() {
@@ -166,6 +173,37 @@ export default function TeamManager() {
   useEffect(() => {
     load();
   }, []);
+
+  /* -------------------- Deep-link handling (?staff=...) -------------------- */
+  useEffect(() => {
+    const staffParam = searchParams.get("staff");
+    if (!staffParam || !rows.length) return;
+
+    const needle = staffParam.trim().toUpperCase();
+
+    // Try match by team member id first
+    let match =
+      rows.find((m) => m.id === staffParam) ??
+      rows.find(
+        (m) => safeInitials(m).toUpperCase() === needle
+      );
+
+    if (!match) return;
+
+    setViewFor(match);
+    setViewOpen(true);
+    setHighlightId(match.id);
+
+    // Clean the URL so future refreshes don't keep reopening
+    router.replace("/team");
+  }, [searchParams, rows, router]);
+
+  // Auto fade highlight after a few seconds
+  useEffect(() => {
+    if (!highlightId) return;
+    const timer = setTimeout(() => setHighlightId(null), 8000);
+    return () => clearTimeout(timer);
+  }, [highlightId]);
 
   /* -------------------- Filtering -------------------- */
   const filtered = useMemo(() => {
@@ -439,11 +477,6 @@ export default function TeamManager() {
     }
   }
 
-  /* -------------------- Render (unchanged below) -------------------- */
-  // ... [KEEP THE REST OF THE RENDER / MODALS EXACTLY AS YOU HAVE IT NOW]
-
-
-
   /* -------------------- Render -------------------- */
   return (
     <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
@@ -497,7 +530,14 @@ export default function TeamManager() {
               </tr>
             ) : filtered.length ? (
               filtered.map((r) => (
-                <tr key={r.id} className="border-t border-slate-100">
+                <tr
+                  key={r.id}
+                  className={`border-t border-slate-100 transition ${
+                    highlightId === r.id
+                      ? "bg-emerald-50/80 ring-1 ring-emerald-300/60 animate-pulse"
+                      : ""
+                  }`}
+                >
                   <td className="py-2 pr-3 text-center font-medium text-slate-900">
                     {r.initials ?? "—"}
                   </td>
@@ -568,11 +608,20 @@ export default function TeamManager() {
           filtered.map((r) => (
             <div
               key={r.id}
-              className="rounded-xl border border-slate-200 bg-white/80 p-3 text-sm text-slate-900 backdrop-blur-sm"
+              className={`rounded-xl border border-slate-200 bg-white/80 p-3 text-sm text-slate-900 backdrop-blur-sm transition ${
+                highlightId === r.id
+                  ? "bg-emerald-50/80 ring-1 ring-emerald-300/60 animate-pulse"
+                  : ""
+              }`}
             >
               <div className="mb-1 flex items-start justify-between gap-2">
                 <div>
-                  <div className="font-medium">{r.name}</div>
+                  <button
+                    className="font-medium text-emerald-700 underline decoration-emerald-400 underline-offset-2 hover:text-emerald-800"
+                    onClick={() => openCard(r)}
+                  >
+                    {r.name}
+                  </button>
                   <div className="text-xs text-slate-500">
                     {r.role
                       ? r.role.charAt(0).toUpperCase() +
@@ -748,7 +797,10 @@ export default function TeamManager() {
                     <input
                       className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm"
                       value={
-                        (editing.role ?? "staff").toString().charAt(0).toUpperCase() +
+                        (editing.role ?? "staff")
+                          .toString()
+                          .charAt(0)
+                          .toUpperCase() +
                         (editing.role ?? "staff")
                           .toString()
                           .slice(1)

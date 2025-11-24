@@ -31,6 +31,32 @@ type FormState = {
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
 
+// ===== Cleaning helpers (aligned with FoodTempLogger) =====
+const isoToday = () => new Date().toISOString().slice(0, 10);
+const getDow1to7 = (ymd: string) => {
+  const date = new Date(ymd);
+  return ((date.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
+};
+const getDom = (ymd: string) => new Date(ymd).getDate();
+
+function isDueOn(
+  frequency: "daily" | "weekly" | "monthly",
+  weekday: number | null,
+  month_day: number | null,
+  ymd: string
+) {
+  switch (frequency) {
+    case "daily":
+      return true;
+    case "weekly":
+      return weekday === getDow1to7(ymd);
+    case "monthly":
+      return month_day === getDom(ymd);
+    default:
+      return false;
+  }
+}
+
 function inferStatus(
   temp: number | null,
   preset?: TargetPreset
@@ -114,7 +140,8 @@ export default function TempFab() {
     }
   }
 
-  // Count today’s open cleaning tasks
+  // Count today’s *open* cleaning tasks:
+  // tasks due today minus runs recorded today
   async function refreshCleaningOpen() {
     try {
       const orgId = await getActiveOrgIdClient();
@@ -123,30 +150,70 @@ export default function TempFab() {
         return;
       }
       const locationId = await getActiveLocationIdClient();
-
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(today.getDate() + 1);
-
-      let query = supabase
-        .from("cleaning_task_runs")
-        .select("id", { count: "exact", head: true })
-        .eq("org_id", orgId)
-        .gte("due_at", today.toISOString())
-        .lt("due_at", tomorrow.toISOString())
-        .is("completed_at", null);
-
-      if (locationId) {
-        query = query.eq("location_id", locationId);
-      }
-
-      const { count, error } = await query;
-      if (error || count == null) {
+      if (!locationId) {
         setOpenCleaning(0);
         return;
       }
-      setOpenCleaning(count);
+
+      const todayISO = isoToday();
+
+      // 1) Load all cleaning tasks for this org + location
+      const { data: tData, error: tErr } = await supabase
+        .from("cleaning_tasks")
+        .select("id, frequency, weekday, month_day")
+        .eq("org_id", orgId)
+        .eq("location_id", locationId);
+
+      if (tErr || !tData) {
+        setOpenCleaning(0);
+        return;
+      }
+
+      type TaskRow = {
+        id: string | number;
+        frequency: "daily" | "weekly" | "monthly" | null;
+        weekday: number | null;
+        month_day: number | null;
+      };
+
+      const tasks: TaskRow[] = tData as TaskRow[];
+
+      const dueToday = tasks.filter((t) =>
+        isDueOn(
+          (t.frequency ?? "daily") as "daily" | "weekly" | "monthly",
+          t.weekday ?? null,
+          t.month_day ?? null,
+          todayISO
+        )
+      );
+
+      if (dueToday.length === 0) {
+        setOpenCleaning(0);
+        return;
+      }
+
+      // 2) Load runs for today
+      const { data: rData, error: rErr } = await supabase
+        .from("cleaning_task_runs")
+        .select("task_id, run_on")
+        .eq("org_id", orgId)
+        .eq("location_id", locationId)
+        .eq("run_on", todayISO);
+
+      if (rErr) {
+        setOpenCleaning(0);
+        return;
+      }
+
+      const doneIds = new Set<string>(
+        (rData ?? []).map((r: any) => String(r.task_id))
+      );
+
+      const openCount = dueToday.filter(
+        (t) => !doneIds.has(String(t.id))
+      ).length;
+
+      setOpenCleaning(openCount);
     } catch {
       setOpenCleaning(0);
     }
@@ -277,9 +344,18 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Initial fetch
   useEffect(() => {
     void refreshEntriesToday();
     void refreshCleaningOpen();
+  }, []);
+
+  // Small poll so broom disappears shortly after cleaning is confirmed
+  useEffect(() => {
+    const id = setInterval(() => {
+      void refreshCleaningOpen();
+    }, 20000); // 20s – tweak if you want faster/slower
+    return () => clearInterval(id);
   }, []);
 
   /* --------- save entry --------- */
@@ -788,7 +864,7 @@ export default function TempFab() {
                     <button
                       key={r.id}
                       onClick={() => pickRoutine(r)}
-                      className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-left text-sm shadow-sm hover:bg:white"
+                      className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-left text-sm shadow-sm hover:bg-white"
                     >
                       <div>
                         <div className="font-medium">{r.name}</div>

@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
@@ -65,26 +65,18 @@ type TodayCleaningRow = {
   notes: string | null;
 };
 
-type ActivityDayMeta = {
-  iso: string;   // yyyy-mm-dd
-  label: string; // e.g. Mon 23
-};
-
-type ActivityDay = {
-  temps: number;
-  cleaning: number;
-};
-
-type StaffActivityRow = {
-  staffKey: string;
-  name: string;
-  initials: string;
-  days: ActivityDay[];
-  total: number;
+type EducationRow = {
+  id: string;
+  staffId: string | null;
+  staffName: string;
+  staffInitials: string | null;
+  type: string | null;
+  awardedOn: string | null;
+  expiresOn: string | null;
+  daysOverdue: number | null;
 };
 
 const CATEGORY_OPTIONS = ["Temps", "Cleaning", "Allergens", "General"];
-const DAY_WINDOW = 10;
 
 /* ---------- Helpers ---------- */
 
@@ -128,11 +120,19 @@ function formatTimeHM(d: Date | null | undefined): string | null {
   return `${hours}:${mins}`;
 }
 
+function formatISOToUK(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
 /* ===================================================================== */
 
 export default function ManagerDashboardPage() {
-  const router = useRouter();
-
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
@@ -155,8 +155,7 @@ export default function ManagerDashboardPage() {
     TodayCleaningRow[]
   >([]);
 
-  const [activityDays, setActivityDays] = useState<ActivityDayMeta[]>([]);
-  const [staffActivity, setStaffActivity] = useState<StaffActivityRow[]>([]);
+  const [educationDue, setEducationDue] = useState<EducationRow[]>([]);
 
   const [loadingCards, setLoadingCards] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -170,6 +169,9 @@ export default function ManagerDashboardPage() {
     rating: 5,
     notes: "",
   });
+
+  // Education modal
+  const [educationModalOpen, setEducationModalOpen] = useState(false);
 
   const today = useMemo(() => new Date(), []);
   const todayISO = useMemo(() => {
@@ -220,7 +222,7 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
-  /* ---------- Load staff list for reviews (from team_members) ---------- */
+  /* ---------- Load staff list for QC reviews ---------- */
 
   useEffect(() => {
     if (!orgId) return;
@@ -229,9 +231,10 @@ export default function ManagerDashboardPage() {
       try {
         setStaffLoading(true);
         const { data, error } = await supabase
-          .from("team_members")
-          .select("id, name, initials, email")
+          .from("staff")
+          .select("id, name, initials, active, email")
           .eq("org_id", orgId)
+          .eq("active", true)
           .order("name");
 
         if (error) throw error;
@@ -282,11 +285,6 @@ export default function ManagerDashboardPage() {
       const dateEndToday = new Date(dateStartToday);
       dateEndToday.setDate(dateEndToday.getDate() + 1);
 
-      // Activity window: last 10 days including today
-      const activityStart = new Date(dateStartToday);
-      activityStart.setDate(activityStart.getDate() - (DAY_WINDOW - 1));
-      const activityEnd = new Date(dateEndToday);
-
       const [
         tempsRes,
         failsRes,
@@ -295,10 +293,8 @@ export default function ManagerDashboardPage() {
         reviewsRes,
         tempsListRes,
         cleaningListRes,
-        tempsActivityRes,
-        cleaningActivityRes,
       ] = await Promise.all([
-        // Temps logged today (count) - filter by at
+        // Temps logged today (count)
         supabase
           .from("food_temp_logs")
           .select("id", { count: "exact", head: true })
@@ -307,7 +303,7 @@ export default function ManagerDashboardPage() {
           .gte("at", dateStartToday.toISOString())
           .lt("at", dateEndToday.toISOString()),
 
-        // Temp fails in last 7 days - filter by at
+        // Temp fails in last 7 days
         supabase
           .from("food_temp_logs")
           .select("id", { count: "exact", head: true })
@@ -316,10 +312,10 @@ export default function ManagerDashboardPage() {
           .eq("status", "fail")
           .gte("at", sevenDaysAgoISO),
 
-        // Trainings (for org) – derive overdue & logged today from data
+        // Trainings – used for summary + education modal
         supabase
           .from("trainings")
-          .select("id, expires_on, created_at", { head: false })
+          .select("id, staff_id, type, awarded_on, expires_on, created_at")
           .eq("org_id", orgId),
 
         // Cleaning task runs today (count) - use done_at
@@ -334,12 +330,15 @@ export default function ManagerDashboardPage() {
         // Staff reviews in last 30 days
         supabase
           .from("staff_reviews")
-          .select("id, staff_id, review_date", { count: "exact", head: false })
+          .select("id, staff_id, review_date", {
+            count: "exact",
+            head: false,
+          })
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .gte("review_date", thirtyDaysAgoISO.slice(0, 10)),
 
-        // Individual temp logs for today - filter by at, time from created_at/at
+        // Individual temp logs for today
         supabase
           .from("food_temp_logs")
           .select("*")
@@ -350,7 +349,7 @@ export default function ManagerDashboardPage() {
           .order("at", { ascending: false })
           .limit(200),
 
-        // Individual cleaning runs for today - use done_at for time
+        // Individual cleaning runs for today
         supabase
           .from("cleaning_task_runs")
           .select("*")
@@ -360,28 +359,6 @@ export default function ManagerDashboardPage() {
           .lt("done_at", dateEndToday.toISOString())
           .order("done_at", { ascending: false })
           .limit(200),
-
-        // Activity window temps (last 10 days)
-        supabase
-          .from("food_temp_logs")
-          .select("at, created_at, staff_initials, initials")
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .gte("at", activityStart.toISOString())
-          .lt("at", activityEnd.toISOString())
-          .limit(5000),
-
-        // Activity window cleaning runs (last 10 days)
-        supabase
-          .from("cleaning_task_runs")
-          .select(
-            "done_at, created_at, completed_by_initials, staff_initials, initials, completed_by, done_by"
-          )
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .gte("done_at", activityStart.toISOString())
-          .lt("done_at", activityEnd.toISOString())
-          .limit(5000),
       ]);
 
       /* ---- Temps summary ---- */
@@ -390,9 +367,39 @@ export default function ManagerDashboardPage() {
         fails7d: failsRes.count ?? 0,
       });
 
-      /* ---- Training summary ---- */
+      /* ---- Training summary + educationDue ---- */
       const trainingRows: any[] = (trainingRes.data as any[]) ?? [];
       const today0 = new Date(todayISO);
+      today0.setHours(0, 0, 0, 0);
+
+      // staff IDs we need names for
+      const staffIds = Array.from(
+        new Set(
+          trainingRows
+            .map((t) => t.staff_id)
+            .filter((id) => id != null)
+            .map((id) => String(id))
+        )
+      );
+
+      const staffMap = new Map<
+        string,
+        { name: string; initials: string | null }
+      >();
+
+      if (staffIds.length) {
+        const { data: staffData } = await supabase
+          .from("staff")
+          .select("id, name, initials")
+          .in("id", staffIds);
+
+        for (const s of staffData ?? []) {
+          staffMap.set(String(s.id), {
+            name: s.name ?? "Unknown",
+            initials: s.initials ?? null,
+          });
+        }
+      }
 
       const loggedToday = trainingRows.filter((t) => {
         if (!t.created_at) return false;
@@ -400,16 +407,39 @@ export default function ManagerDashboardPage() {
         return d.toISOString().slice(0, 10) === todayISO;
       }).length;
 
-      const overdue = trainingRows.filter((t) => {
-        if (!t.expires_on) return false;
-        const d = new Date(t.expires_on);
-        return d < today0;
-      }).length;
+      const overdueRows: EducationRow[] = trainingRows
+        .filter((t) => t.expires_on)
+        .map((t) => {
+          const staff = staffMap.get(String(t.staff_id));
+          const exp = new Date(t.expires_on);
+          exp.setHours(0, 0, 0, 0);
+
+          const daysOver =
+            Math.round((today0.getTime() - exp.getTime()) / 86400000) || 0;
+
+          return {
+            id: String(t.id),
+            staffId: t.staff_id ? String(t.staff_id) : null,
+            staffName: staff?.name ?? "Unknown",
+            staffInitials: staff?.initials ?? null,
+            type: t.type ?? null,
+            awardedOn: t.awarded_on
+              ? new Date(t.awarded_on).toISOString().slice(0, 10)
+              : null,
+            expiresOn: exp.toISOString().slice(0, 10),
+            daysOverdue: daysOver > 0 ? daysOver : null,
+          } as EducationRow;
+        })
+        .filter((r) => r.daysOverdue != null && r.daysOverdue > 0)
+        .sort(
+          (a, b) => (b.daysOverdue ?? 0) - (a.daysOverdue ?? 0)
+        );
 
       setTrainingSummary({
         loggedToday,
-        overdue,
+        overdue: overdueRows.length,
       });
+      setEducationDue(overdueRows);
 
       /* ---- Cleaning summary ---- */
       setCleaningSummary({
@@ -484,105 +514,6 @@ export default function ManagerDashboardPage() {
         };
       });
       setTodayCleaningRuns(mappedCleaning);
-
-      /* ---- Staff activity (last 10 days) ---- */
-
-      const daysMeta: ActivityDayMeta[] = [];
-      for (let i = 0; i < DAY_WINDOW; i++) {
-        const d = new Date(activityStart);
-        d.setDate(activityStart.getDate() + i);
-        const iso = d.toISOString().slice(0, 10);
-        const label = `${WEEKDAYS[d.getDay()].slice(0, 3)} ${d.getDate()}`;
-        daysMeta.push({ iso, label });
-      }
-      setActivityDays(daysMeta);
-
-      const tempsActivity: any[] = (tempsActivityRes.data as any[]) ?? [];
-      const cleaningActivity: any[] = (cleaningActivityRes.data as any[]) ?? [];
-
-      const staffMap = new Map<
-        string,
-        { name: string; initials: string; days: ActivityDay[] }
-      >();
-
-      const getStaffRecord = (initialsRaw: string): {
-        name: string;
-        initials: string;
-        days: ActivityDay[];
-      } => {
-        const trimmed = (initialsRaw || "").toUpperCase().trim();
-        const key = trimmed || "UNKNOWN";
-
-        if (!staffMap.has(key)) {
-          const match = staffOptions.find(
-            (s) => (s.initials || "").toUpperCase() === trimmed
-          );
-          const name = match?.name ?? (trimmed || "Unknown");
-          const days: ActivityDay[] = Array.from(
-            { length: DAY_WINDOW },
-            () => ({ temps: 0, cleaning: 0 })
-          );
-          staffMap.set(key, { name, initials: trimmed || "—", days });
-        }
-
-        // non-null since we just set it
-        return staffMap.get(key)!;
-      };
-
-      // Temps
-      for (const r of tempsActivity) {
-        const ts = r.at || r.created_at ? new Date(r.at ?? r.created_at) : null;
-        if (!ts) continue;
-        const iso = ts.toISOString().slice(0, 10);
-        const dayIdx = daysMeta.findIndex((d) => d.iso === iso);
-        if (dayIdx === -1) continue;
-
-        const initialsRaw =
-          (r.staff_initials || r.initials || "").toString().trim();
-
-        const staff = getStaffRecord(initialsRaw);
-        staff.days[dayIdx].temps += 1;
-      }
-
-      // Cleaning
-      for (const r of cleaningActivity) {
-        const ts =
-          r.done_at || r.created_at ? new Date(r.done_at ?? r.created_at) : null;
-        if (!ts) continue;
-        const iso = ts.toISOString().slice(0, 10);
-        const dayIdx = daysMeta.findIndex((d) => d.iso === iso);
-        if (dayIdx === -1) continue;
-
-        const initialsRaw =
-          (r.completed_by_initials ||
-            r.staff_initials ||
-            r.initials ||
-            r.completed_by ||
-            r.done_by ||
-            "").toString().trim();
-
-        const staff = getStaffRecord(initialsRaw);
-        staff.days[dayIdx].cleaning += 1;
-      }
-
-      const activityRows: StaffActivityRow[] = Array.from(
-        staffMap.entries()
-      ).map(([key, value]) => {
-        const total = value.days.reduce(
-          (acc, d) => acc + d.temps + d.cleaning,
-          0
-        );
-        return {
-          staffKey: key,
-          name: value.name,
-          initials: value.initials,
-          days: value.days,
-          total,
-        };
-      });
-
-      activityRows.sort((a, b) => b.total - a.total);
-      setStaffActivity(activityRows);
     } catch (e: any) {
       console.error(e);
       setErr(e?.message ?? "Failed to refresh manager dashboard.");
@@ -593,7 +524,7 @@ export default function ManagerDashboardPage() {
 
   useEffect(() => {
     if (orgId && locationId) {
-      void refreshCards();
+      refreshCards();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, locationId]);
@@ -647,6 +578,8 @@ export default function ManagerDashboardPage() {
 
   const currentLocationName =
     locations.find((l) => l.id === locationId)?.name ?? "This location";
+
+  const trainingOverdueCount = trainingSummary?.overdue ?? 0;
 
   /* ====================== RENDER ====================== */
 
@@ -732,10 +665,28 @@ export default function ManagerDashboardPage() {
           </div>
         </div>
 
-        {/* Training */}
-        <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
+        {/* Training / Education */}
+        <button
+          type="button"
+          onClick={() =>
+            trainingOverdueCount > 0 && setEducationModalOpen(true)
+          }
+          className={`relative rounded-2xl border border-slate-200 bg-white/90 p-3 text-left shadow-sm transition ${
+            trainingOverdueCount > 0
+              ? "ring-2 ring-red-400/70 hover:ring-red-500/80"
+              : "hover:border-slate-300"
+          }`}
+        >
+          {trainingOverdueCount > 0 && (
+            <div className="absolute right-3 top-3">
+              <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm animate-pulse">
+                <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                Action needed
+              </span>
+            </div>
+          )}
           <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Training status
+            Training / Education
           </div>
           <div className="mt-1 text-sm text-slate-700">
             <div>
@@ -745,13 +696,32 @@ export default function ManagerDashboardPage() {
               </span>
             </div>
             <div>
-              <span className="text-red-600">Overdue:</span>{" "}
-              <span className="font-semibold text-red-600">
-                {trainingSummary?.overdue ?? 0}
+              <span
+                className={
+                  trainingOverdueCount > 0
+                    ? "text-red-600 font-semibold"
+                    : "text-slate-700"
+                }
+              >
+                Overdue:
+              </span>{" "}
+              <span
+                className={
+                  trainingOverdueCount > 0
+                    ? "font-semibold text-red-600"
+                    : "font-semibold"
+                }
+              >
+                {trainingOverdueCount}
               </span>
+              {trainingOverdueCount > 0 && (
+                <span className="ml-1 text-[11px] text-red-700/80">
+                  (tap for details)
+                </span>
+              )}
             </div>
           </div>
-        </div>
+        </button>
 
         {/* QC Reviews summary */}
         <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
@@ -936,94 +906,111 @@ export default function ManagerDashboardPage() {
         </div>
       </div>
 
-      {/* Staff activity – last 10 days */}
-      <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <div className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
-              Staff activity
+      {/* Education overdue modal */}
+      {educationModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
+          onClick={() => setEducationModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-3xl rounded-2xl bg-white p-4 shadow-xl"
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold text-slate-900">
+                  Staff training / education overdue
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  Use this list to chase certificates and refresher training.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEducationModalOpen(false)}
+                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600 hover:bg-slate-100"
+              >
+                Close
+              </button>
             </div>
-            <div className="text-sm text-slate-700">
-              Who&apos;s been active on the app in the last 10 days
+
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white/90">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2">Awarded</th>
+                    <th className="px-3 py-2">Expired on</th>
+                    <th className="px-3 py-2">Days overdue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {educationDue.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="px-3 py-4 text-center text-slate-500"
+                      >
+                        No overdue training found.
+                      </td>
+                    </tr>
+                  ) : (
+                    educationDue.map((row) => (
+                      <tr
+                        key={row.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
+                        <td className="px-3 py-2">
+                          {row.staffId ? (
+                            <Link
+                              href={`/team?staff=${row.staffId}`}
+                              className="font-medium text-emerald-700 hover:underline"
+                            >
+                              {row.staffName}
+                              {row.staffInitials
+                                ? ` (${row.staffInitials.toUpperCase()})`
+                                : ""}
+                            </Link>
+                          ) : (
+                            <>
+                              {row.staffName}
+                              {row.staffInitials
+                                ? ` (${row.staffInitials.toUpperCase()})`
+                                : ""}
+                            </>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
+                          {row.type ?? "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {row.awardedOn
+                            ? formatISOToUK(row.awardedOn)
+                            : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-red-700">
+                          {row.expiresOn
+                            ? formatISOToUK(row.expiresOn)
+                            : "—"}
+                        </td>
+                        <td className="px-3 py-2 font-semibold text-red-700">
+                          {row.daysOverdue ?? "—"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => router.push("/reports")}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-          >
-            View more in reports
-          </button>
         </div>
+      )}
 
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white/95">
-          <table className="min-w-full text-xs">
-            <thead className="bg-slate-50">
-              <tr className="text-left text-slate-500">
-                <th className="px-2 py-1 sticky left-0 bg-slate-50/90">
-                  Staff
-                </th>
-                {activityDays.map((d) => (
-                  <th key={d.iso} className="px-2 py-1 text-center">
-                    {d.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {staffActivity.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={activityDays.length + 1}
-                    className="px-2 py-3 text-center text-slate-500"
-                  >
-                    No activity recorded in the last 10 days.
-                  </td>
-                </tr>
-              ) : (
-                staffActivity.map((row) => (
-                  <tr
-                    key={row.staffKey}
-                    className="border-t border-slate-100 text-slate-800"
-                  >
-                    <td className="px-2 py-1 sticky left-0 bg-white/95 font-semibold">
-                      {row.name}
-                      {row.initials && row.initials !== "—"
-                        ? ` (${row.initials})`
-                        : ""}
-                    </td>
-                    {row.days.map((d, idx) => {
-                      const hasActivity = d.temps > 0 || d.cleaning > 0;
-                      return (
-                        <td
-                          key={idx}
-                          className={`px-2 py-1 text-center ${
-                            hasActivity
-                              ? "bg-emerald-50 text-emerald-900 font-medium"
-                              : "text-slate-400"
-                          }`}
-                        >
-                          {hasActivity ? `${d.temps}T / ${d.cleaning}C` : "—"}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-2 text-[11px] text-slate-500">
-          T = temperature logs, C = completed cleaning routines. A quick way to
-          see who&apos;s consistently active on the app.
-        </div>
-      </div>
-
-      {/* Review modal */}
+      {/* QC Review modal */}
       {reviewOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-up justify-center bg-black/40 px-3"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
           onClick={() => !savingReview && setReviewOpen(false)}
         >
           <form

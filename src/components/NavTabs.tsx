@@ -20,9 +20,7 @@ const BASE_TABS: Tab[] = [
   { href: "/routines", label: "Routines" },
   { href: "/allergens", label: "Allergens" },
   { href: "/cleaning-rota", label: "Cleaning Rota" },
-  { href: "/team", label: "Team" },
-  { href: "/suppliers", label: "Suppliers" },
-
+  
   // Manager dashboard – manager-only
   {
     href: "/manager",
@@ -35,6 +33,9 @@ const BASE_TABS: Tab[] = [
     label: "Leaderboard",
     icon: <Trophy className="h-4 w-4 text-amber-500" />,
   },
+  { href: "/team", label: "Team" },
+  { href: "/suppliers", label: "Suppliers" },
+
   { href: "/reports", label: "Reports" },
 ];
 

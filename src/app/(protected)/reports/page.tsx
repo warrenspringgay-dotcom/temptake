@@ -852,54 +852,7 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Team training due */}
-        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-3 text-base font-semibold">
-            Team Training — due/overdue (≤90 days)
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50/80">
-                <tr className="text-left text-slate-500">
-                  <th className="py-2 pr-3">Name</th>
-                  <th className="py-2 pr-3">Initials</th>
-                  <th className="py-2 pr-3">Email</th>
-                  <th className="py-2 pr-3">Expiry</th>
-                  <th className="py-2 pr-3">Days</th>
-                </tr>
-              </thead>
-              <tbody>
-                {!teamDue?.length ? (
-                  <tr>
-                    <td colSpan={5} className="py-6 text-center text-slate-500">
-                      None due
-                    </td>
-                  </tr>
-                ) : (
-                  teamDue.map((r) => (
-                    <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">{r.name}</td>
-                      <td className="py-2 pr-3">{r.initials ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.email ?? "—"}</td>
-                      <td className="py-2 pr-3">
-                        {r.expires_on ? formatISOToUK(r.expires_on) : "—"}
-                      </td>
-                      <td
-                        className={`py-2 pr-3 ${
-                          r.days_until != null && r.days_until < 0
-                            ? "text-red-700"
-                            : ""
-                        }`}
-                      >
-                        {r.days_until != null ? r.days_until : "—"}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+    
 
         {/* NEW: All staff education / qualifications */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
