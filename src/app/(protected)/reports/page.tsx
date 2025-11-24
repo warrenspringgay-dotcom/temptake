@@ -663,7 +663,7 @@ export default function ReportsPage() {
           </div>
 
           {/* Location + actions */}
-          <div className="flex flex-col justify-between gap-2">
+          <div className="flex flex-col justify-between gap-2 sm:col-span-2 lg:col-span-1">
             <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
               <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
                 Location
@@ -688,7 +688,7 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          <div className="flex flex-col justify-end gap-2">
+          <div className="flex flex-col justify-end gap-2 sm:col-span-2 lg:col-span-1">
             <Button
               onClick={runInstantAudit90}
               disabled={loading || !orgId}
@@ -851,8 +851,6 @@ export default function ReportsPage() {
             </div>
           )}
         </Card>
-
-    
 
         {/* NEW: All staff education / qualifications */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">

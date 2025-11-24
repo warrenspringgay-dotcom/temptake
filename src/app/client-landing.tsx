@@ -1,4 +1,4 @@
-// src/app/client-landing.tsx  ← THIS IS THE ONE. DEPLOY IT NOW.
+// src/app/client-landing.tsx  ← TALLY INTEGRATED. EMAILS INCOMING.
 "use client";
 
 import { Plus, Flame } from "lucide-react";
@@ -6,15 +6,17 @@ import { Plus, Flame } from "lucide-react";
 export default function ClientLanding() {
   return (
     <>
-      {/* HERO — MOBILE FIRST, FLAWLESS */}
+      {/* TALLY SCRIPT — ADD THIS ONCE IN layout.tsx <head> */}
+      {/* <script src="https://tally.so/widgets/embed.js" async></script> */}
+
+      {/* HERO — NOW CAPTURES REAL EMAILS */}
       <section className="relative min-h-screen flex flex-col items-center justify-between px-6 pt-20 pb-32 bg-gradient-to-br from-orange-50 to-amber-50 overflow-hidden">
-        {/* Background glow */}
         <div className="absolute inset-0 bg-gradient-to-t from-orange-200/20 to-transparent pointer-events-none" />
 
         <div className="w-full max-w-md text-center space-y-10 z-10">
-          {/* Launch Badge — perfectly centered */}
+          {/* Launch Badge */}
           <div className="inline-flex flex-col sm:flex-row items-center gap-3 rounded-full bg-white px-8 py-5 shadow-2xl border-4 border-orange-400">
-            <span className="text-2xl font-black text-orange-600">Launching 2025</span>
+            <span className="text-2xl font-black text-orange-600">Launching 2026</span>
             <div className="flex items-center gap-2">
               <div className="relative">
                 <div className="absolute inset-0 rounded-full bg-green-500 animate-ping" />
@@ -24,7 +26,6 @@ export default function ClientLanding() {
             </div>
           </div>
 
-          {/* Headline */}
           <h1 className="text-6xl font-black leading-tight text-gray-900">
             Log a fridge temp<br />
             in{" "}
@@ -38,16 +39,18 @@ export default function ClientLanding() {
             <span className="font-black text-orange-600">Just pure chef joy.</span>
           </p>
 
-          {/* MAIN CTA BUTTON — NOW 100% PERFECT */}
-          <a
-            href="mailto:founders@temptake.com?subject=Founding Chef – Lock me in NOW&body=Name:%0ARestaurant:%0ASites:%0ARole:%0A%0APut me on lifetime free before it’s gone."
+          {/* MAIN CTA — NOW OPENS YOUR TALLY FORM */}
+          <button
+            data-tally-open="obb4vX"
+            data-tally-layout="modal"
+            data-tally-emoji-text="🔥👋"
+            data-tally-emoji-animation="wave"
+            data-tally-auto-close="5000"
             className="group relative block w-full max-w-sm mx-auto"
           >
             <div className="relative">
-              {/* Pulse ring */}
               <div className="absolute inset-0 rounded-full bg-orange-500 animate-ping opacity-60" />
               
-              {/* Perfect orange border, no white gap, full visibility */}
               <div className="relative px-12 py-16 bg-white rounded-full border-[14px] border-orange-500 shadow-2xl overflow-visible">
                 <div className="text-orange-600 text-4xl font-black leading-tight">
                   Lifetime Free Access
@@ -55,48 +58,51 @@ export default function ClientLanding() {
                 <Flame className="absolute top-4 right-8 h-12 w-12 text-orange-500 animate-pulse" />
               </div>
 
-              {/* Scarcity badge — perfectly positioned */}
               <div className="absolute -top-8 -right-8 flex h-20 w-20 items-center justify-center rounded-full bg-yellow-400 shadow-2xl animate-bounce border-4 border-white">
                 <span className="text-5xl font-black text-red-600">73</span>
               </div>
             </div>
-          </a>
+          </button>
 
-          {/* Secondary button — clean, full width */}
+          {/* Secondary button */}
           <button
             onClick={() => document.querySelector('#chef-wall')?.scrollIntoView({ behavior: 'smooth' })}
             className="w-full max-w-lg mx-auto px-10 py-12 bg-white rounded-full border-8 border-orange-500 text-orange-600 text-2xl font-black shadow-xl hover:bg-orange-50 transition-all"
           >
-            See What Chefs Are Saying ↓
+            What Chefs Are Saying ↓
           </button>
 
           {/* Social proof */}
           <div className="space-y-4 text-center text-lg font-bold">
             <div className="text-gray-800">★ 4.9/5 from beta kitchens</div>
             <div className="text-orange-600">1.4M+ temps logged</div>
-            <div className="text-emerald-600">Zero critical violations</div>
+            <div className="text-emerald-600 Garrett">Zero critical violations</div>
             <div className="text-gray-700">Built in the UK</div>
           </div>
         </div>
 
-        {/* FAB — FULLY VISIBLE, NEVER CROPPED */}
+        {/* FAB — NOW ALSO OPENS TALLY */}
         <button
-          onClick={() => window.location.href = "mailto:founders@temptake.com"}
+          data-tally-open="obb4vX"
+          data-tally-layout="modal"
+          data-tally-emoji-text="🔥"
+          data-tally-emoji-animation="wave"
+          data-tally-auto-close="5000"
           className="fixed bottom-8 right-6 z-50"
         >
           <div className="relative">
             <div className="absolute inset-0 rounded-full bg-orange-600 animate-ping opacity-70" />
-            <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-orange-600 to-red-600 shadow-2xl">
+            <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-orange-600 to-red-600 shadow-2xl hover:scale-110 transition-all">
               <Plus className="h-12 w-12 text-white" />
             </div>
-            <div className="absolute -top-4 -right-4 flex h-14 w-14 flex items-center justify-center rounded-full bg-yellow-400 shadow-xl animate-bounce border-4 border-white">
+            <div className="absolute -top-4 -right-4 flex h-14 w-14 items-center justify-center rounded-full bg-yellow-400 shadow-xl animate-bounce border-4 border-white">
               <span className="text-4xl font-black text-red-600">73</span>
             </div>
           </div>
         </button>
       </section>
 
-      {/* CHEF WALL — BACK AND SEXIER THAN EVER */}
+      {/* CHEF WALL — UNCHANGED & STILL FIRE */}
       <section id="chef-wall" className="py-24 px-6 bg-gradient-to-b from-amber-50 to-white">
         <div className="text-center mb-16">
           <h2 className="text-5xl md:text-7xl font-black text-gray-900 mb-4">
@@ -122,9 +128,7 @@ export default function ClientLanding() {
             <div
               key={i}
               className={`relative rounded-3xl p-10 shadow-2xl ${note.color} transform transition-all hover:scale-105 hover:-rotate-2 hover:z-10`}
-              style={{
-                transform: `rotate(${Math.sin(i * 0.8) * 10}deg)`,
-              }}
+              style={{ transform: `rotate(${Math.sin(i * 0.8) * 10}deg)` }}
             >
               <div className="text-7xl font-black mb-6 opacity-90">{note.initials}</div>
               <p className="text-2xl font-bold leading-tight">“{note.message}”</p>

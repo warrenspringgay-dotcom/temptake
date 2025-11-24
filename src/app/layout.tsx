@@ -14,7 +14,7 @@ import { ToastProvider } from "@/components/ui/use-toast";
 import { GlobalLoadingProvider } from "@/components/GlobalLoadingProvider"; // 👈 ADD
 import TempFab from "@/components/QuickActionsFab";
 import { PHProvider } from "@/components/PosthogProvider";
-
+import { Analytics } from "@vercel/analytics/next"
 export default async function RootLayout({
   children,
 }: {
@@ -89,7 +89,7 @@ export default async function RootLayout({
 
             <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
 
-
+<script src="https://tally.so/widgets/embed.js" async></script>
 
             <ServiceWorkerRegister />
           </GlobalLoadingProvider>
