@@ -95,6 +95,7 @@ export default async function RootLayout({
           </GlobalLoadingProvider>
         </ToastProvider>
         </PHProvider>
+        <Analytics />
       </body>
     </html>
   );

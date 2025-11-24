@@ -55,7 +55,7 @@ export default function ClientLanding() {
                 <div className="text-orange-600 text-4xl font-black leading-tight">
                   Lifetime Free Access
                 </div>
-                <Flame className="absolute top-4 right-8 h-12 w-12 text-orange-500 animate-pulse" />
+                <Flame className="absolute top-4 right-8 h-8 w-8 text-orange-500 animate-pulse" />
               </div>
 
               <div className="absolute -top-8 -right-8 flex h-20 w-20 items-center justify-center rounded-full bg-yellow-400 shadow-2xl animate-bounce border-4 border-white">
