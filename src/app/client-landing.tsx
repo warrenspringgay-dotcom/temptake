@@ -65,7 +65,7 @@ export default function ClientLanding() {
           {/* Secondary button — clean, full width */}
           <button
             onClick={() => document.querySelector('#chef-wall')?.scrollIntoView({ behavior: 'smooth' })}
-            className="w-full max-w-sm mx-auto px-10 py-12 bg-white rounded-full border-8 border-orange-500 text-orange-600 text-2xl font-black shadow-xl hover:bg-orange-50 transition-all"
+            className="w-full max-w-lg mx-auto px-10 py-12 bg-white rounded-full border-8 border-orange-500 text-orange-600 text-2xl font-black shadow-xl hover:bg-orange-50 transition-all"
           >
             See What Chefs Are Saying ↓
           </button>
