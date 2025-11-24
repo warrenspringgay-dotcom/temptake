@@ -215,7 +215,7 @@ export default function HelpPage() {
       {/* Small footer note */}
       <footer className="mt-4 border-t border-slate-200 pt-4 text-xs text-slate-500">
         Need more help or want to suggest a new feature?{" "}
-        <Link href="/contact" className="underline">
+        <Link href="mailto:info@temptake.com" className="underline">
           Contact support
         </Link>{" "}
         or speak to your manager.

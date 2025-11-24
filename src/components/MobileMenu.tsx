@@ -22,17 +22,16 @@ const authedLinks: Tab[] = [
   { href: "/routines", label: "Routines" },
   { href: "/allergens", label: "Allergens" },
   { href: "/cleaning-rota", label: "Cleaning rota" },
+{ href: "/manager", label: "Manager", requiresManager: true },
+  { href: "/leaderboard", label: "Leaderboard" },
   { href: "/team", label: "Team" },
   { href: "/suppliers", label: "Suppliers" },
-  {
-    href: "/manager",
-    label: "Manager dashboard",
-    requiresManager: true,
-  },
-  { href: "/leaderboard", label: "Leaderboard" },
   { href: "/reports", label: "Reports" },
   { href: "/locations", label: "Locations & sites" },
   { href: "/help", label: "Help & support" },
+
+  // 🔐 Manager-only page
+  
 ];
 
 const publicLinks: { href: string; label: string }[] = [

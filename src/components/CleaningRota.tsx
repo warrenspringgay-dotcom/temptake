@@ -62,43 +62,6 @@ const niceFull = (d: string) =>
     year: "numeric",
   });
 
-type CategoryPillProps = {
-  title: string;
-  total: number;
-  open: number;
-  active: boolean;
-  onClick: () => void;
-};
-
-function CategoryPill({
-  title,
-  total,
-  open,
-  active,
-  onClick,
-}: CategoryPillProps) {
-  const hasOpen = open > 0;
-  const baseColor = hasOpen
-    ? "bg-red-50/80 text-red-700 border-red-200/80"
-    : "bg-emerald-50/80 text-emerald-700 border-emerald-200/80";
-
-  const activeRing = active ? "ring-2 ring-indigo-400/70" : "";
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex min-h-[64px] flex-col justify-between rounded-2xl border px-3 py-2 text-left transition-transform hover:scale-[1.02] hover:shadow-md ${baseColor} ${activeRing}`}
-    >
-      <div className="text-[13px] leading-tight">{title}</div>
-      <div className="mt-1 text-lg font-semibold leading-none">
-        {total}
-        <span className="ml-1 text-[11px] opacity-75">({open} open)</span>
-      </div>
-    </button>
-  );
-}
-
 export default function CleaningRota() {
   const today = ISO_TODAY();
 
@@ -117,9 +80,6 @@ export default function CleaningRota() {
 
   // permissions: who can manage tasks?
   const [canManage, setCanManage] = useState(true); // default true so first user isn’t locked out
-
-  // which daily category is selected to show detail
-  const [selectedCat, setSelectedCat] = useState<string | null>(null);
 
   // 🔹 Sorted initials with logged-in user first
   const sortedInitials = useInitials(initials);
@@ -269,18 +229,6 @@ export default function CleaningRota() {
       map.set(k, list.sort((a, b) => a.task.localeCompare(b.task)));
     return map;
   }, [dailyToday]);
-
-  // pick a sensible default selected category when the data changes
-  useEffect(() => {
-    if (selectedCat) return;
-    for (const cat of CLEANING_CATEGORIES) {
-      const list = dailyByCat.get(cat) ?? [];
-      if (list.length) {
-        setSelectedCat(cat);
-        return;
-      }
-    }
-  }, [dailyByCat, selectedCat]);
 
   const doneCount = useMemo(
     () => dueToday.filter((t) => runsKey.has(`${t.id}|${today}`)).length,
@@ -470,150 +418,186 @@ export default function CleaningRota() {
           </div>
         </div>
 
-        {/* ===== Weekly / Monthly due today ===== */}
-        <div className="space-y-2">
+        {/* ===== Today’s Weekly / Monthly tasks ===== */}
+        <div className="mt-2 space-y-2">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-            Weekly / Monthly
+            Weekly / Monthly due today
           </div>
           {nonDailyToday.length === 0 ? (
             <div className="rounded-2xl border border-gray-200/80 bg-white/70 p-3 text-sm text-gray-500">
-              No tasks.
+              No weekly or monthly tasks due today.
             </div>
           ) : (
-            nonDailyToday.map((t) => {
-              const key = `${t.id}|${today}`;
-              const done = runsKey.has(key);
-              const run = runsKey.get(key) || null;
-              return (
-                <div
-                  key={t.id}
-                  className="flex items-start justify-between gap-2 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-sm shadow-sm"
-                >
-                  <div className={done ? "text-gray-500 line-through" : ""}>
-                    <div className="font-medium text-slate-900">{t.task}</div>
-                    <div className="text-xs text-gray-500">
-                      {t.category ?? t.area ?? "—"} •{" "}
-                      {t.frequency === "weekly" ? "Weekly" : "Monthly"}
-                    </div>
-                    {run?.done_by && (
-                      <div className="text-[11px] text-gray-400">
-                        Done by {run.done_by}
+            <div className="space-y-2">
+              {nonDailyToday.map((t) => {
+                const key = `${t.id}|${today}`;
+                const done = runsKey.has(key);
+                const run = runsKey.get(key) || null;
+                return (
+                  <div
+                    key={t.id}
+                    className="flex items-start justify-between gap-2 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-sm shadow-sm"
+                  >
+                    <div className={done ? "text-gray-500 line-through" : ""}>
+                      <div className="font-medium text-slate-900">
+                        {t.task}
                       </div>
+                      <div className="text-xs text-gray-500">
+                        {t.category ?? t.area ?? "—"} •{" "}
+                        {t.frequency === "weekly" ? "Weekly" : "Monthly"}
+                      </div>
+                      {run?.done_by && (
+                        <div className="text-[11px] text-gray-400">
+                          Done by {run.done_by}
+                        </div>
+                      )}
+                    </div>
+                    {done ? (
+                      <button
+                        className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800"
+                        onClick={() => uncompleteOne(t.id)}
+                      >
+                        Undo
+                      </button>
+                    ) : (
+                      <button
+                        className="shrink-0 rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700"
+                        onClick={() => completeOne(t.id, ini)}
+                      >
+                        Complete
+                      </button>
                     )}
                   </div>
-                  {done ? (
-                    <button
-                      className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
-                      onClick={() => uncompleteOne(t.id)}
-                    >
-                      Complete
-                    </button>
-                  ) : (
-                    <button
-                      className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"
-                      onClick={() => completeOne(t.id, ini)}
-                    >
-                      Incomplete
-                    </button>
-                  )}
-                </div>
-              );
-            })
+                );
+              })}
+            </div>
           )}
         </div>
 
-        {/* ===== Daily summary by category (pills) ===== */}
+        {/* ===== Today’s daily tasks – board by category ===== */}
         <div className="mt-4">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-            Daily tasks (by category)
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+              Daily tasks (checklist by category)
+            </div>
           </div>
-          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
             {CLEANING_CATEGORIES.map((cat) => {
-              const list = dailyByCat.get(cat) ?? [];
-              const open = list.filter(
-                (t) => !runsKey.has(`${t.id}|${today}`)
+              const list = (dailyByCat.get(cat) ?? []).sort((a, b) =>
+                a.task.localeCompare(b.task)
+              );
+              const total = list.length;
+              const done = list.filter((t) =>
+                runsKey.has(`${t.id}|${today}`)
               ).length;
+              const open = total - done;
+
+              if (total === 0) {
+                return (
+                  <div
+                    key={cat}
+                    className="rounded-2xl border border-slate-200/70 bg-white/70 p-3 text-sm text-slate-500"
+                  >
+                    <div className="mb-1 flex items-center justify-between">
+                      <div className="font-semibold text-slate-900">{cat}</div>
+                      <span className="text-[11px] rounded-full bg-slate-100 px-2 py-0.5">
+                        0 tasks
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      No daily tasks in this category.
+                    </div>
+                  </div>
+                );
+              }
+
               return (
-                <CategoryPill
+                <div
                   key={cat}
-                  title={cat}
-                  total={list.length}
-                  open={open}
-                  active={selectedCat === cat}
-                  onClick={() => setSelectedCat(cat)}
-                />
+                  className="flex flex-col rounded-2xl border border-slate-200/80 bg-white/80 p-3 text-sm shadow-sm"
+                >
+                  {/* header */}
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        {cat}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {done}/{total} complete · {open} open
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-full bg-emerald-600/90 px-3 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-40"
+                      disabled={open === 0 || !ini}
+                      onClick={() => {
+                        const ids = list
+                          .filter((t) => !runsKey.has(`${t.id}|${today}`))
+                          .map((t) => t.id);
+                        completeMany(ids, ini);
+                      }}
+                    >
+                      Complete all
+                    </button>
+                  </div>
+
+                  {/* checklist */}
+                  <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                    {list.map((t) => {
+                      const key = `${t.id}|${today}`;
+                      const isDone = runsKey.has(key);
+                      const run = runsKey.get(key) || null;
+
+                      return (
+                        <div
+                          key={t.id}
+                          className="flex items-start justify-between gap-2 rounded-xl border border-slate-100 bg-white/90 px-2 py-1.5"
+                        >
+                          <div
+                            className={
+                              isDone
+                                ? "text-xs text-slate-500 line-through"
+                                : "text-xs"
+                            }
+                          >
+                            <div className="font-medium text-slate-900">
+                              {t.task}
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              {t.area ?? "—"} • Daily
+                            </div>
+                            {run?.done_by && (
+                              <div className="text-[10px] text-slate-400">
+                                Done by {run.done_by}
+                              </div>
+                            )}
+                          </div>
+                          {isDone ? (
+                            <button
+                              type="button"
+                              className="mt-0.5 shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800"
+                              onClick={() => uncompleteOne(t.id)}
+                            >
+                              Undo
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="mt-0.5 shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700"
+                              onClick={() => completeOne(t.id, ini)}
+                            >
+                              Tick
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               );
             })}
           </div>
-
-          {/* Detail list for selected category – individual tasks with completion toggles */}
-          {selectedCat && (
-            <div className="mt-4 rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="text-sm font-semibold text-slate-900">
-                  Today’s daily tasks – {selectedCat}
-                </div>
-                <div className="text-xs text-gray-500">
-                  {(
-                    dailyByCat.get(selectedCat) ?? []
-                  ).filter((t) => !runsKey.has(`${t.id}|${today}`)).length}{" "}
-                  open of {(dailyByCat.get(selectedCat) ?? []).length}
-                </div>
-              </div>
-              <div className="space-y-2">
-                {(dailyByCat.get(selectedCat) ?? []).length === 0 ? (
-                  <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-gray-500">
-                    No daily tasks in this category today.
-                  </div>
-                ) : (
-                  (dailyByCat.get(selectedCat) ?? []).map((t) => {
-                    const key = `${t.id}|${today}`;
-                    const done = runsKey.has(key);
-                    const run = runsKey.get(key) || null;
-                    return (
-                      <div
-                        key={t.id}
-                        className="flex items-start justify-between gap-2 rounded-xl border border-gray-200/80 bg-white/90 px-3 py-2 text-sm"
-                      >
-                        <div
-                          className={
-                            done
-                              ? "text-gray-500 line-through"
-                              : "text-slate-900"
-                          }
-                        >
-                          <div className="font-medium">{t.task}</div>
-                          <div className="text-xs text-gray-500">
-                            {t.area ?? "—"} • Daily
-                          </div>
-                          {run?.done_by && (
-                            <div className="text-[11px] text-gray-400">
-                              Done by {run.done_by}
-                            </div>
-                          )}
-                        </div>
-                        {done ? (
-                          <button
-                            className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
-                            onClick={() => uncompleteOne(t.id)}
-                          >
-                            Complete
-                          </button>
-                        ) : (
-                          <button
-                            className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"
-                            onClick={() => completeOne(t.id, ini)}
-                          >
-                            Incomplete
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
