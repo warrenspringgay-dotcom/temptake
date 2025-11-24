@@ -570,7 +570,7 @@ export default function ReportsPage() {
       return;
     }
     const toISO = toISODate(new Date());
-    const fromISO = toISODate(new Date(Date.now() - 89 * 24 * 3600 * 1000));
+    the frontconst fromISO = toISODate(new Date(Date.now() - 89 * 24 * 3600 * 1000));
     setFrom(fromISO);
     setTo(toISO);
 
@@ -662,33 +662,7 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* Location + actions */}
-          <div className="flex flex-col justify-between gap-2 sm:col-span-2 lg:col-span-1">
-            <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
-              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
-                Location
-              </div>
-              <select
-                className="mt-1 w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5 text-sm"
-                value={locationFilter}
-                onChange={(e) =>
-                  setLocationFilter(e.target.value as "all" | string)
-                }
-              >
-                <option value="all">All locations</option>
-                {locations.map((loc) => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-1 text-[11px] text-slate-500">
-                Current: {currentLocationLabel}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col justify-end gap-2 sm:col-span-2 lg:col-span-1">
+          <div className="flex flex-col justify-end gap-2 sm:col-span-2 lg:col-span-2">
             <Button
               onClick={runInstantAudit90}
               disabled={loading || !orgId}
@@ -712,6 +686,32 @@ export default function ReportsPage() {
             >
               <Printer className="mr-2 h-4 w-4" /> Print
             </Button>
+          </div>
+        </div>
+
+        {/* Location on its own row */}
+        <div className="mt-3 rounded-2xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm">
+          <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
+            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+              Location
+            </div>
+            <select
+              className="mt-1 w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5 text-sm"
+              value={locationFilter}
+              onChange={(e) =>
+                setLocationFilter(e.target.value as "all" | string)
+              }
+            >
+              <option value="all">All locations</option>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Current: {currentLocationLabel}
+            </div>
           </div>
         </div>
 
@@ -852,7 +852,7 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* NEW: All staff education / qualifications */}
+        {/* All staff education / qualifications */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Staff Education / Qualifications (all records)
