@@ -1,3 +1,4 @@
+// src/components/FoodTempLogger.tsx
 "use client";
 import posthog from "posthog-js";
 
@@ -343,9 +344,7 @@ export default function FoodTempLogger({
             )
             .filter(Boolean) || [];
 
-        const seedUpper = initialsSeed.map((v) =>
-          v ? v.toUpperCase() : v
-        );
+        const seedUpper = initialsSeed.map((v) => (v ? v.toUpperCase() : v));
 
         setInitials((prev) => {
           const seen = new Set<string>();
@@ -774,9 +773,140 @@ export default function FoodTempLogger({
       </div>
 
       {/* KPI grid + pills */}
-      {/* ... the rest of your render code is unchanged from what you posted ... */}
-      {/* I’m leaving it as-is since the main fixes were around completeTasks/uncompleteTask */}
-    
+      <div className="space-y-4 rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
+        {(() => {
+          const todayISO = new Date().toISOString().slice(0, 10);
+          const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+          const in7d = (d: string | null) =>
+            d ? new Date(d) >= since : false;
+
+          const entriesToday = rows.filter((r) => r.date === todayISO).length;
+          const fails7 = rows.filter(
+            (r) => in7d(r.date) && r.status === "fail"
+          ).length;
+
+          const entriesTodayIsEmpty = entriesToday === 0;
+          const entriesTodayIcon = entriesTodayIsEmpty ? "❌" : "✅";
+          const entriesTodayTile =
+            "rounded-xl p-3 min-h-[76px] flex flex-col justify-between border shadow-sm backdrop-blur-sm " +
+            (entriesTodayIsEmpty
+              ? "border-red-200 bg-red-50/90 text-red-800"
+              : "border-emerald-200 bg-emerald-50/90 text-emerald-900");
+
+          const hasCleaning = dueTodayAll.length > 0;
+          const allCleaningDone =
+            hasCleaning && doneCount === dueTodayAll.length;
+          const cleaningIcon = !hasCleaning
+            ? "ℹ️"
+            : allCleaningDone
+            ? "✅"
+            : "❌";
+          const cleaningColor = !hasCleaning
+            ? "border-gray-200 bg-white/80 text-gray-800"
+            : allCleaningDone
+            ? "border-emerald-200 bg-emerald-50/90 text-emerald-900"
+            : "border-red-200 bg-red-50/90 text-red-800";
+
+          const cleaningTileBase =
+            "rounded-xl p-3 min-h-[76px] text-left flex flex-col justify-between border shadow-sm backdrop-blur-sm transition hover:brightness-105";
+
+          const failsTileColor =
+            fails7 > 0
+              ? "border-red-200 bg-red-50/90 text-red-800"
+              : "border-gray-200 bg-white/80 text-gray-800";
+          const failsIcon = fails7 > 0 ? "⚠️" : "✅";
+
+          const eomName = employeeOfMonth?.display_name || "—";
+          const eomPoints = employeeOfMonth?.points ?? 0;
+          const eomTemp = employeeOfMonth?.temp_logs_count ?? 0;
+          const eomClean = employeeOfMonth?.cleaning_count ?? 0;
+
+          return (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {/* tile 1: Entries today */}
+              <div className={entriesTodayTile}>
+                <div className="flex items-center justify-between text-xs">
+                  <span>Entries today</span>
+                  <span className="text-base">{entriesTodayIcon}</span>
+                </div>
+                <div className="mt-1 text-2xl font-semibold">
+                  {entriesToday}
+                </div>
+                <div className="mt-1 hidden text-[11px] opacity-80 md:block">
+                  {entriesTodayIsEmpty
+                    ? "No temperatures logged yet today."
+                    : "Great — at least one log recorded."}
+                </div>
+              </div>
+
+              {/* tile 2: Failures (7d) */}
+              <div
+                className={
+                  "flex min-h-[76px] flex-col justify-between rounded-xl border p-3 text-xs shadow-sm backdrop-blur-sm " +
+                  failsTileColor
+                }
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span>Failures (7d)</span>
+                  <span className="text-base">{failsIcon}</span>
+                </div>
+                <div className="mt-1 text-2xl font-semibold">{fails7}</div>
+                <div className="mt-1 hidden text-[11px] opacity-80 md:block">
+                  {fails7 > 0
+                    ? "Check and record any corrective actions."
+                    : "No failed temperature checks in the last week."}
+                </div>
+              </div>
+
+              {/* tile 3: Employee of the month (from leaderboard) */}
+              <div className="flex min-h-[76px] flex-col justify-between rounded-xl border border-amber-200 bg-amber-50/90 p-3 text-amber-900 shadow-sm backdrop-blur-sm">
+                <div className="flex items-center justify-between text-xs">
+                  <span>Employee of the month</span>
+                  <span className="text-lg">🏆</span>
+                </div>
+                <div className="mt-1 truncate text-lg font-semibold">
+                  {eomName}
+                </div>
+                <div className="mt-1 text-[11px] opacity-80 md:block">
+                  {eomPoints
+                    ? `${eomPoints} pts · Temps ${eomTemp} · Cleaning ${eomClean}`
+                    : "Based on points from cleaning & temp logs."}
+                </div>
+              </div>
+
+              {/* tile 4: Cleaning (today) */}
+              <button
+                type="button"
+                onClick={() => {
+                  const ids = dueTodayAll
+                    .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
+                    .map((t) => t.id);
+                  setConfirm({ ids, run_on: todayISOKey });
+                  setConfirmLabel("Complete all today");
+                  setConfirmInitials(ini || initials[0] || "");
+                }}
+                className={`${cleaningTileBase} ${cleaningColor}`}
+                title="View and complete today’s cleaning tasks"
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span>Cleaning (today)</span>
+                  <span className="text-base">{cleaningIcon}</span>
+                </div>
+                <div className="mt-1 text-2xl font-semibold">
+                  {doneCount}/{dueTodayAll.length}
+                </div>
+                <div className="mt-1 hidden text-[11px] underline opacity-80 md:block">
+                  {hasCleaning
+                    ? allCleaningDone
+                      ? "All cleaning tasks completed."
+                      : "Click to complete remaining tasks."
+                    : "No cleaning tasks scheduled for today."}
+                </div>
+              </button>
+            </div>
+          );
+        })()}
+
         {/* KPI pills row – simple training/allergen overview */}
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
           <span className="rounded-full bg-amber-50 px-2 py-0.5">
@@ -802,7 +932,7 @@ export default function FoodTempLogger({
             {err}
           </div>
         )}
-      
+      </div>
 
       {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
       <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
@@ -825,9 +955,7 @@ export default function FoodTempLogger({
               }}
               disabled={
                 !dueTodayAll.length ||
-                dueTodayAll.every((t) =>
-                  runsKey.has(`${t.id}|${todayISOKey}`)
-                )
+                dueTodayAll.every((t) => runsKey.has(`${t.id}|${todayISOKey}`))
               }
             >
               Complete All
@@ -872,10 +1000,7 @@ export default function FoodTempLogger({
                       onClick={() =>
                         done
                           ? uncompleteTask(t.id)
-                          : completeTasks(
-                              [t.id],
-                              ini || initials[0] || ""
-                            )
+                          : completeTasks([t.id], ini || initials[0] || "")
                       }
                     />
                   </div>
