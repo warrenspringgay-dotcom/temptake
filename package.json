@@ -7,7 +7,6 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-
     "test:rls": "vitest run supabase.rls.test.ts"
   },
   "dependencies": {
@@ -30,6 +29,8 @@
     "lucide-react": "^0.540.0",
     "next": "15.4.7",
     "next-themes": "^0.4.6",
+    "posthog-js": "^1.298.0",
+    "posthog-node": "^5.14.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-hot-toast": "^2.6.0",

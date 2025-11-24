@@ -1,5 +1,6 @@
 // src/components/TempFab.tsx
 "use client";
+import posthog from "posthog-js";
 
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -15,6 +16,7 @@ import { useToast } from "@/components/ui/use-toast";
 import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 import { Thermometer, Brush } from "lucide-react";
+import { usePostHog } from "@/components/PosthogProvider";
 
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
@@ -448,6 +450,13 @@ export default function TempFab() {
       type: "success",
     });
 
+posthog.capture("temp_quick_log_saved", {
+  source: "fab_quick",
+  target_key: form.target_key,
+  temp_c: tempNum,
+  status,
+});
+
     // reset item + temp, keep date/initials/location
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
     await refreshEntriesToday();
@@ -570,7 +579,11 @@ export default function TempFab() {
         {/* Main FAB */}
         <button
           type="button"
-          onClick={() => setShowMenu((v) => !v)}
+         onClick={() => {
+  setShowMenu((v) => !v);
+  posthog.capture("fab_opened");
+}}
+
           className="fab relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 text-3xl font-bold leading-none text-white shadow-lg shadow-emerald-500/40 hover:brightness-110"
         >
           <span>+</span>
@@ -580,10 +593,12 @@ export default function TempFab() {
         {showTempWarning && (
           <button
             type="button"
-            onClick={() => {
-              setShowMenu(false);
-              setOpen(true);
-            }}
+           onClick={() => {
+  setShowMenu(false);
+  setOpen(true);
+  posthog.capture("temp_warning_orb_clicked");
+}}
+
             className="absolute -top-2 -right-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white shadow-md shadow-red-500/60 active:scale-90 transition cursor-pointer"
           >
             <Thermometer className="h-4 w-4" />
@@ -594,7 +609,11 @@ export default function TempFab() {
         {showCleaningWarning && (
           <button
             type="button"
-            onClick={() => router.push("/cleaning-rota")}
+            onClick={() => {
+  router.push("/cleaning-rota");
+  posthog.capture("cleaning_warning_orb_clicked");
+}}
+
             className="absolute -top-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white shadow-md shadow-sky-500/60 active:scale-90 transition cursor-pointer"
           >
             <Brush className="h-4 w-4" />
@@ -620,9 +639,11 @@ export default function TempFab() {
                 <button
                   type="button"
                   onClick={() => {
-                    setShowMenu(false);
-                    setOpen(true);
-                  }}
+  setShowMenu(false);
+  setOpen(true);
+  posthog.capture("fab_choose_quick_temp");
+}}
+
                   className="w-full rounded-xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/40 hover:brightness-105"
                 >
                   Quick temp log
@@ -630,9 +651,11 @@ export default function TempFab() {
                 <button
                   type="button"
                   onClick={() => {
-                    setShowMenu(false);
-                    router.push("/wall");
-                  }}
+  setShowMenu(false);
+  router.push("/wall");
+  posthog.capture("fab_choose_wall");
+}}
+
                   className="w-full rounded-xl bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-500/40 hover:brightness-105"
                 >
                   Open wall
@@ -900,6 +923,7 @@ export default function TempFab() {
         onClose={() => setRunRoutine(null)}
         onSaved={async () => {
           addToast({ title: "Routine logged", type: "success" });
+            posthog.capture("routine_logged_from_fab");
           setRunRoutine(null);
           await refreshEntriesToday();
           await refreshCleaningOpen();

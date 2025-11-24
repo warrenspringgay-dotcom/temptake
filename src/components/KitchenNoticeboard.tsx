@@ -1,6 +1,6 @@
-// src/components/KitchenWall.tsx
 "use client";
 
+import posthog from "posthog-js";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -234,6 +234,11 @@ export default function KitchenWall() {
       localStorage.setItem("kitchen_wall_initials", normInitials);
     }
 
+    posthog.capture("wall_post_created", {
+      initials: normInitials,
+      length: message.trim().length,
+    });
+
     setMessage("");
     setMyInitials(normInitials);
     await loadPosts(orgId);
@@ -266,6 +271,12 @@ export default function KitchenWall() {
       .from("kitchen_wall")
       .update({ reactions: newReactions })
       .eq("id", postId);
+
+    posthog.capture("wall_reaction_toggled", {
+      post_id: postId,
+      emoji,
+      added: !hasReacted,
+    });
 
     if (orgId) await loadPosts(orgId);
   }

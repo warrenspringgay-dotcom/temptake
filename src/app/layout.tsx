@@ -13,7 +13,7 @@ import LocationSwitcher from "@/components/LocationSwitcher";
 import { ToastProvider } from "@/components/ui/use-toast";
 import { GlobalLoadingProvider } from "@/components/GlobalLoadingProvider"; // 👈 ADD
 import TempFab from "@/components/QuickActionsFab";
-
+import { PHProvider } from "@/components/PosthogProvider";
 
 export default async function RootLayout({
   children,
@@ -37,6 +37,7 @@ export default async function RootLayout({
       </head>
 
       <body className="bg-gray-100 text-gray-900">
+        <PHProvider>
         <ToastProvider>
           <GlobalLoadingProvider>
             {/* STICKY TOP BAR */}
@@ -93,6 +94,7 @@ export default async function RootLayout({
             <ServiceWorkerRegister />
           </GlobalLoadingProvider>
         </ToastProvider>
+        </PHProvider>
       </body>
     </html>
   );
