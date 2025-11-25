@@ -79,6 +79,9 @@ export default function ManageCleaningTasksModal({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<typeof emptyDraft>(emptyDraft);
 
+  // separate popup editor
+  const [editorOpen, setEditorOpen] = useState(false);
+
   // Reset when closed
   useEffect(() => {
     if (!open) {
@@ -86,6 +89,7 @@ export default function ManageCleaningTasksModal({
       setError(null);
       setEditingId(null);
       setDraft(emptyDraft);
+      setEditorOpen(false);
     }
   }, [open]);
 
@@ -143,12 +147,13 @@ export default function ManageCleaningTasksModal({
     })();
   }, [open]);
 
-  function startNew() {
+  function openNewEditor() {
     setEditingId(null);
     setDraft(emptyDraft);
+    setEditorOpen(true);
   }
 
-  function startEdit(task: CleaningTask) {
+  function openEditEditor(task: CleaningTask) {
     setEditingId(task.id);
     setDraft({
       area: task.area ?? "",
@@ -158,6 +163,13 @@ export default function ManageCleaningTasksModal({
       weekday: task.weekday ?? 1,
       month_day: task.month_day ?? 1,
     });
+    setEditorOpen(true);
+  }
+
+  function closeEditor() {
+    setEditorOpen(false);
+    setEditingId(null);
+    setDraft(emptyDraft);
   }
 
   async function handleDelete(id: string) {
@@ -178,7 +190,6 @@ export default function ManageCleaningTasksModal({
         .eq("org_id", org_id)
         .eq("id", id);
 
-      // keep location scoped if available
       const { error } = location_id
         ? await query.eq("location_id", location_id)
         : await query;
@@ -281,8 +292,7 @@ export default function ManageCleaningTasksModal({
         setTasks((prev) => [...prev, ...rows]);
       }
 
-      setEditingId(null);
-      setDraft(emptyDraft);
+      closeEditor();
       await onSaved();
     } catch (e: any) {
       console.error(e);
@@ -300,7 +310,7 @@ export default function ManageCleaningTasksModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-4xl max-h-[90vh] rounded-2xl bg-white shadow-2xl flex flex-col overflow-hidden"
+        className="relative w-full max-w-4xl max-h-[90vh] rounded-2xl bg-white shadow-2xl flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -338,7 +348,7 @@ export default function ManageCleaningTasksModal({
               </h2>
               <button
                 type="button"
-                onClick={startNew}
+                onClick={openNewEditor}
                 className="rounded-xl border border-emerald-600 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
               >
                 + Add new task
@@ -397,7 +407,7 @@ export default function ManageCleaningTasksModal({
                         <td className="px-2 py-1 text-right text-xs">
                           <button
                             type="button"
-                            onClick={() => startEdit(t)}
+                            onClick={() => openEditEditor(t)}
                             className="mr-2 rounded-lg border border-slate-200 px-2 py-0.5 hover:bg-slate-50"
                           >
                             Edit
@@ -417,153 +427,163 @@ export default function ManageCleaningTasksModal({
               )}
             </div>
           </div>
+        </div>
 
-          {/* Edit / create form */}
-          <form
-            onSubmit={handleSave}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-3 space-y-3"
+        {/* Popup editor modal inside manage modal */}
+        {editorOpen && (
+          <div
+            className="absolute inset-0 z-20 flex items-center justify-center bg-black/40 px-3"
+            onClick={closeEditor}
           >
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-900">
-                {editingId ? "Edit task" : "Add new task"}
-              </div>
-              {editingId && (
+            <div
+              className="w-full max-w-lg rounded-2xl bg-white p-4 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-sm font-semibold text-slate-900">
+                  {editingId ? "Edit cleaning task" : "Add new cleaning task"}
+                </div>
                 <button
                   type="button"
-                  onClick={startNew}
+                  onClick={closeEditor}
                   className="text-xs text-slate-500 hover:underline"
                 >
-                  Clear form
+                  Close
                 </button>
-              )}
-            </div>
+              </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="text-xs font-medium text-slate-700">
-                Area (optional)
-                <input
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
-                  value={draft.area ?? ""}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, area: e.target.value }))
-                  }
-                  placeholder="e.g. Kitchen, Bar"
-                />
-              </label>
+              <form onSubmit={handleSave} className="space-y-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="text-xs font-medium text-slate-700">
+                    Area (optional)
+                    <input
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
+                      value={draft.area ?? ""}
+                      onChange={(e) =>
+                        setDraft((d) => ({ ...d, area: e.target.value }))
+                      }
+                      placeholder="e.g. Kitchen, Bar"
+                    />
+                  </label>
 
-              <label className="text-xs font-medium text-slate-700 sm:col-span-1">
-                Task
-                <input
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
-                  value={draft.task}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, task: e.target.value }))
-                  }
-                  placeholder="e.g. Clean grill, Mop floor"
-                  required
-                />
-              </label>
-            </div>
+                  <label className="text-xs font-medium text-slate-700 sm:col-span-1">
+                    Task
+                    <input
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
+                      value={draft.task}
+                      onChange={(e) =>
+                        setDraft((d) => ({ ...d, task: e.target.value }))
+                      }
+                      placeholder="e.g. Clean grill, Mop floor"
+                      required
+                    />
+                  </label>
+                </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <label className="text-xs font-medium text-slate-700">
-                Category
-                <select
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
-                  value={draft.category ?? ""}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, category: e.target.value }))
-                  }
-                >
-                  {CLEANING_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <label className="text-xs font-medium text-slate-700">
+                    Category
+                    <select
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
+                      value={draft.category ?? ""}
+                      onChange={(e) =>
+                        setDraft((d) => ({ ...d, category: e.target.value }))
+                      }
+                    >
+                      {CLEANING_CATEGORIES.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-              <label className="text-xs font-medium text-slate-700">
-                Frequency
-                <select
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
-                  value={draft.frequency}
-                  onChange={(e) =>
-                    setDraft((d) => ({
-                      ...d,
-                      frequency: e.target.value as Frequency,
-                    }))
-                  }
-                >
-                  {FREQUENCY_OPTIONS.map((f) => (
-                    <option key={f.value} value={f.value}>
-                      {f.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <label className="text-xs font-medium text-slate-700">
+                    Frequency
+                    <select
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
+                      value={draft.frequency}
+                      onChange={(e) =>
+                        setDraft((d) => ({
+                          ...d,
+                          frequency: e.target.value as Frequency,
+                        }))
+                      }
+                    >
+                      {FREQUENCY_OPTIONS.map((f) => (
+                        <option key={f.value} value={f.value}>
+                          {f.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-              {/* When (weekly/monthly) */}
-              {draft.frequency === "weekly" && (
-                <label className="text-xs font-medium text-slate-700">
-                  Day of week
-                  <select
-                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
-                    value={draft.weekday ?? 1}
-                    onChange={(e) =>
-                      setDraft((d) => ({
-                        ...d,
-                        weekday: Number(e.target.value) || 1,
-                      }))
-                    }
+                  {draft.frequency === "weekly" && (
+                    <label className="text-xs font-medium text-slate-700">
+                      Day of week
+                      <select
+                        className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
+                        value={draft.weekday ?? 1}
+                        onChange={(e) =>
+                          setDraft((d) => ({
+                            ...d,
+                            weekday: Number(e.target.value) || 1,
+                          }))
+                        }
+                      >
+                        {WEEKDAY_OPTIONS.map((w) => (
+                          <option key={w.value} value={w.value}>
+                            {w.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+
+                  {draft.frequency === "monthly" && (
+                    <label className="text-xs font-medium text-slate-700">
+                      Day of month
+                      <input
+                        type="number"
+                        min={1}
+                        max={31}
+                        className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
+                        value={draft.month_day ?? 1}
+                        onChange={(e) =>
+                          setDraft((d) => ({
+                            ...d,
+                            month_day: Number(e.target.value) || 1,
+                          }))
+                        }
+                      />
+                    </label>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={closeEditor}
+                    className="rounded-lg px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
                   >
-                    {WEEKDAY_OPTIONS.map((w) => (
-                      <option key={w.value} value={w.value}>
-                        {w.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              {draft.frequency === "monthly" && (
-                <label className="text-xs font-medium text-slate-700">
-                  Day of month
-                  <input
-                    type="number"
-                    min={1}
-                    max={31}
-                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm"
-                    value={draft.month_day ?? 1}
-                    onChange={(e) =>
-                      setDraft((d) => ({
-                        ...d,
-                        month_day: Number(e.target.value) || 1,
-                      }))
-                    }
-                  />
-                </label>
-              )}
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="rounded-xl bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
+                  >
+                    {saving
+                      ? "Saving…"
+                      : editingId
+                      ? "Save changes"
+                      : "Add task"}
+                  </button>
+                </div>
+              </form>
             </div>
-
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-lg px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
-              >
-                Close
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="rounded-xl bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
-              >
-                {saving ? "Saving…" : editingId ? "Save changes" : "Add task"}
-              </button>
-            </div>
-          </form>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

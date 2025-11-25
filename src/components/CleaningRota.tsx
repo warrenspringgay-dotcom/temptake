@@ -1,14 +1,13 @@
-// src/app/(protected)/cleaning/cleaning-rota-client.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import ManageCleaningTasksModal, {
   CLEANING_CATEGORIES,
 } from "@/components/ManageCleaningTasksModal";
-import { useInitials } from "@/hooks/useInitials";
 
 const PAGE = "max-w-[1100px] mx-auto px-3 sm:px-4";
 
@@ -62,6 +61,101 @@ const niceFull = (d: string) =>
     year: "numeric",
   });
 
+/* ================= Swipe Card ================= */
+
+type SwipeCardProps = {
+  task: Task;
+  done: boolean;
+  run: Run | null;
+  today: string;
+  initials: string;
+  onComplete: (taskId: string, initials: string) => void;
+  onUndo: (taskId: string) => void;
+};
+
+function SwipeCard({
+  task,
+  done,
+  run,
+  today,
+  initials,
+  onComplete,
+  onUndo,
+}: SwipeCardProps) {
+  const SWIPE_THRESHOLD = 80;
+
+  return (
+    <motion.div
+      className="relative mb-2 rounded-xl border border-slate-100 bg-white/90 px-3 py-2 text-sm shadow-sm"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 8 }}
+      layout
+      drag="x"
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.2}
+      dragSnapToOrigin
+      onDragEnd={(_, info) => {
+        const offsetX = info.offset.x;
+
+        if (offsetX > SWIPE_THRESHOLD && !done && initials) {
+          onComplete(task.id, initials);
+          return;
+        }
+
+        if (offsetX < -SWIPE_THRESHOLD && done) {
+          onUndo(task.id);
+          return;
+        }
+      }}
+    >
+      <div
+        className={
+          done ? "text-xs text-slate-500 line-through" : "text-xs text-slate-900"
+        }
+      >
+        <div className="text-sm font-medium text-slate-900">{task.task}</div>
+        <div className="text-[11px] text-slate-500">
+          {task.area ?? "—"} •{" "}
+          {task.frequency === "daily"
+            ? "Daily"
+            : task.frequency === "weekly"
+            ? "Weekly"
+            : "Monthly"}
+        </div>
+        {run?.done_by && (
+          <div className="text-[10px] text-slate-400">
+            Done by {run.done_by} on {niceShort(today)}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-1 flex justify-end">
+        {done ? (
+          <button
+            type="button"
+            className="shrink-0 rounded-full bg-emerald-100 px-3 py-0.5 text-[11px] font-semibold text-emerald-800"
+            onClick={() => onUndo(task.id)}
+          >
+            Undo
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="shrink-0 rounded-full bg-red-100 px-3 py-0.5 text-[11px] font-semibold text-red-700 disabled:opacity-50"
+            disabled={!initials}
+            onClick={() => initials && onComplete(task.id, initials)}
+          >
+            Tick
+          </button>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+/* ================= Main Component ================= */
+
 export default function CleaningRota() {
   const today = ISO_TODAY();
 
@@ -73,7 +167,7 @@ export default function CleaningRota() {
     return m;
   }, [runs]);
 
-  const [initials, setInitials] = useState<string[]>([]);
+  const [initialsList, setInitialsList] = useState<string[]>([]);
   const [ini, setIni] = useState<string>("");
 
   const [manageOpen, setManageOpen] = useState(false);
@@ -81,21 +175,22 @@ export default function CleaningRota() {
   // permissions: who can manage tasks?
   const [canManage, setCanManage] = useState(true); // default true so first user isn’t locked out
 
-  // 🔹 Sorted initials with logged-in user first
-  const sortedInitials = useInitials(initials);
+  // which daily category is expanded to show swipe cards
+  const [openCategory, setOpenCategory] = useState<string | null>(null);
 
-  /** Load initials for the org */
+  /** Load initials and put logged-in user first */
   useEffect(() => {
     (async () => {
       const orgId = await getActiveOrgIdClient();
       if (!orgId) return;
+
       const { data } = await supabase
         .from("team_members")
-        .select("initials")
+        .select("initials,email")
         .eq("org_id", orgId)
         .order("initials");
 
-      const list = Array.from(
+      let list: string[] = Array.from(
         new Set(
           (data ?? [])
             .map((r: any) =>
@@ -104,17 +199,33 @@ export default function CleaningRota() {
             .filter(Boolean)
         )
       );
-      setInitials(list);
+
+      try {
+        const { data: authData } = await supabase.auth.getUser();
+        const email = authData.user?.email?.toLowerCase() ?? null;
+
+        if (email && data && data.length) {
+          const meRow = data.find(
+            (r: any) => (r.email ?? "").toLowerCase() === email
+          );
+          const myIni = meRow?.initials
+            ?.toString()
+            .toUpperCase()
+            .trim();
+
+          if (myIni && list.includes(myIni)) {
+            list = [myIni, ...list.filter((x) => x !== myIni)];
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      setInitialsList(list);
+      if (!ini && list.length) setIni(list[0]);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // 🔹 Default the dropdown value to the first sorted initials (logged-in user where possible)
-  useEffect(() => {
-    if (!ini && sortedInitials.length) {
-      setIni(sortedInitials[0]);
-    }
-  }, [sortedInitials, ini]);
 
   /** Load role (owner/manager/admin?) */
   useEffect(() => {
@@ -155,7 +266,6 @@ export default function CleaningRota() {
 
     if (!orgId) return;
 
-    // tasks are org-wide (no location_id column in table yet)
     const { data: tData } = await supabase
       .from("cleaning_tasks")
       .select(
@@ -176,7 +286,6 @@ export default function CleaningRota() {
       }))
     );
 
-    // runs are by org + location
     let query = supabase
       .from("cleaning_task_runs")
       .select("task_id, run_on, done_by")
@@ -200,6 +309,7 @@ export default function CleaningRota() {
 
   useEffect(() => {
     loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [today]);
 
   /** Derived: what’s due today */
@@ -226,9 +336,28 @@ export default function CleaningRota() {
       map.get(key)!.push(t);
     }
     for (const [k, list] of map)
-      map.set(k, list.sort((a, b) => a.task.localeCompare(b.task)));
+      map.set(
+        k,
+        list.slice().sort((a, b) => a.task.localeCompare(b.task))
+      );
     return map;
   }, [dailyToday]);
+
+  // Only categories that actually have tasks today
+  const categoriesWithTasks = useMemo(
+    () =>
+      CLEANING_CATEGORIES.filter(
+        (cat) => (dailyByCat.get(cat) ?? []).length > 0
+      ),
+    [dailyByCat]
+  );
+
+  // Default openCategory to the first non-empty category
+  useEffect(() => {
+    if (!openCategory && categoriesWithTasks.length > 0) {
+      setOpenCategory(categoriesWithTasks[0]);
+    }
+  }, [categoriesWithTasks, openCategory]);
 
   const doneCount = useMemo(
     () => dueToday.filter((t) => runsKey.has(`${t.id}|${today}`)).length,
@@ -388,7 +517,7 @@ export default function CleaningRota() {
               onChange={(e) => setIni(e.target.value.toUpperCase())}
               className="h-8 rounded-xl border border-gray-300 bg-white/70 px-5 py-1.5 uppercase shadow-sm"
             >
-              {sortedInitials.map((v) => (
+              {initialsList.map((v) => (
                 <option key={v} value={v}>
                   {v}
                 </option>
@@ -474,130 +603,99 @@ export default function CleaningRota() {
           )}
         </div>
 
-        {/* ===== Today’s daily tasks – board by category ===== */}
+        {/* ===== Today’s daily tasks – by category with swipe cards ===== */}
         <div className="mt-4">
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-1 flex items-center justify-between">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
               Daily tasks (checklist by category)
             </div>
           </div>
+          <div className="mb-3 text-[11px] text-slate-600">
+            Tip: on phones you can{" "}
+            <span className="font-semibold">
+              swipe a task card right to complete and left to undo
+            </span>
+            , or just use the Tick / Undo buttons.
+          </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {CLEANING_CATEGORIES.map((cat) => {
-              const list = (dailyByCat.get(cat) ?? []).sort((a, b) =>
-                a.task.localeCompare(b.task)
-              );
-              const total = list.length;
-              const done = list.filter((t) =>
-                runsKey.has(`${t.id}|${today}`)
-              ).length;
-              const open = total - done;
+          {categoriesWithTasks.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200/80 bg-white/70 p-3 text-sm text-slate-500">
+              No daily tasks due today.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {categoriesWithTasks.map((cat) => {
+                const list = dailyByCat.get(cat) ?? [];
+                const total = list.length;
+                const done = list.filter((t) =>
+                  runsKey.has(`${t.id}|${today}`)
+                ).length;
+                const open = total - done;
+                const expanded = openCategory === cat;
 
-              if (total === 0) {
                 return (
                   <div
                     key={cat}
-                    className="rounded-2xl border border-slate-200/70 bg-white/70 p-3 text-sm text-slate-500"
+                    className="flex flex-col rounded-2xl border border-slate-200/80 bg-white/80 p-3 text-sm shadow-sm"
                   >
-                    <div className="mb-1 flex items-center justify-between">
-                      <div className="font-semibold text-slate-900">{cat}</div>
-                      <span className="text-[11px] rounded-full bg-slate-100 px-2 py-0.5">
-                        0 tasks
-                      </span>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div
+                        className="flex-1 cursor-pointer"
+                        onClick={() =>
+                          setOpenCategory(expanded ? null : cat)
+                        }
+                      >
+                        <div className="text-sm font-semibold text-slate-900">
+                          {cat}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {done}/{total} complete · {open} open
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-full bg-emerald-600/90 px-3 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-40"
+                        disabled={open === 0 || !ini}
+                        onClick={() => {
+                          const ids = list
+                            .filter(
+                              (t) => !runsKey.has(`${t.id}|${today}`)
+                            )
+                            .map((t) => t.id);
+                          completeMany(ids, ini);
+                        }}
+                      >
+                        Complete all
+                      </button>
                     </div>
-                    <div className="text-xs text-slate-500">
-                      No daily tasks in this category.
-                    </div>
+
+                    {expanded && (
+                      <div className="mt-1 max-h-72 space-y-2 overflow-y-auto">
+                        {list.map((t) => {
+                          const key = `${t.id}|${today}`;
+                          const isDone = runsKey.has(key);
+                          const run = runsKey.get(key) || null;
+
+                          return (
+                            <SwipeCard
+                              key={t.id}
+                              task={t}
+                              done={isDone}
+                              run={run}
+                              today={today}
+                              initials={ini}
+                              onComplete={completeOne}
+                              onUndo={uncompleteOne}
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
-              }
-
-              return (
-                <div
-                  key={cat}
-                  className="flex flex-col rounded-2xl border border-slate-200/80 bg-white/80 p-3 text-sm shadow-sm"
-                >
-                  {/* header */}
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900">
-                        {cat}
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        {done}/{total} complete · {open} open
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-full bg-emerald-600/90 px-3 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-40"
-                      disabled={open === 0 || !ini}
-                      onClick={() => {
-                        const ids = list
-                          .filter((t) => !runsKey.has(`${t.id}|${today}`))
-                          .map((t) => t.id);
-                        completeMany(ids, ini);
-                      }}
-                    >
-                      Complete all
-                    </button>
-                  </div>
-
-                  {/* checklist */}
-                  <div className="space-y-1.5 max-h-64 overflow-y-auto">
-                    {list.map((t) => {
-                      const key = `${t.id}|${today}`;
-                      const isDone = runsKey.has(key);
-                      const run = runsKey.get(key) || null;
-
-                      return (
-                        <div
-                          key={t.id}
-                          className="flex items-start justify-between gap-2 rounded-xl border border-slate-100 bg-white/90 px-2 py-1.5"
-                        >
-                          <div
-                            className={
-                              isDone
-                                ? "text-xs text-slate-500 line-through"
-                                : "text-xs"
-                            }
-                          >
-                            <div className="font-medium text-slate-900">
-                              {t.task}
-                            </div>
-                            <div className="text-[11px] text-slate-500">
-                              {t.area ?? "—"} • Daily
-                            </div>
-                            {run?.done_by && (
-                              <div className="text-[10px] text-slate-400">
-                                Done by {run.done_by}
-                              </div>
-                            )}
-                          </div>
-                          {isDone ? (
-                            <button
-                              type="button"
-                              className="mt-0.5 shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800"
-                              onClick={() => uncompleteOne(t.id)}
-                            >
-                              Undo
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className="mt-0.5 shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700"
-                              onClick={() => completeOne(t.id, ini)}
-                            >
-                              Tick
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+              })}
+            </div>
+          )}
         </div>
       </div>
 
