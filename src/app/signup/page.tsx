@@ -1,10 +1,9 @@
 // src/app/signup/page.tsx
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseBrowser";
-import { setActiveLocationIdClient } from "@/lib/locationClient";
+import { signUpAction } from "@/app/actions/auth"; // server action
 
 function makeInitials(name: string) {
   return name
@@ -17,6 +16,7 @@ function makeInitials(name: string) {
 
 export default function SignupPage() {
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
 
   const [fullName, setFullName] = useState("");
   const [businessName, setBusinessName] = useState("");
@@ -27,7 +27,8 @@ export default function SignupPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+
+  const loading = isPending;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -42,111 +43,55 @@ export default function SignupPage() {
       setError("Please enter your name and business name.");
       return;
     }
+    if (!email.trim()) {
+      setError("Please enter your email.");
+      return;
+    }
+    if (!password || !confirm) {
+      setError("Please enter and confirm your password.");
+      return;
+    }
     if (password !== confirm) {
       setError("Passwords do not match.");
       return;
     }
 
-    setLoading(true);
-    try {
-      // 1) Create auth user
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
-        password,
-        options: {
-          data: {
-            full_name: fullName.trim(),
-          },
-        },
-      });
+    const initials = makeInitials(fullName);
 
-      if (signUpError) throw signUpError;
+    const formData = new FormData();
+    formData.set("name", fullName.trim());
+    formData.set("orgName", businessName.trim());
+    formData.set("email", email.trim().toLowerCase());
+    formData.set("password", password);
+    formData.set("initials", initials);
+    // optional: where to go after signup
+    formData.set("next", "/dashboard");
 
-      const user = data.user;
-      if (!user) {
-        // Email confirmation mode – user must confirm before we have a session
-        setInfo(
-          "Account created. Please check your email for a confirmation link."
-        );
-        return;
-      }
-
-      // 2) Create org
-      const { data: orgRow, error: orgError } = await supabase
-        .from("orgs")
-        .insert({ name: businessName.trim() })
-        .select("id")
-        .single();
-
-      if (orgError || !orgRow) {
-        console.error("Org insert error", orgError);
-        throw new Error("Could not create organisation.");
-      }
-
-      const orgId = orgRow.id as string;
-
-      // 3) Create primary location for this org using the business name
-      const { data: locRow, error: locError } = await supabase
-        .from("locations")
-        .insert({
-          org_id: orgId,
-          name: businessName.trim(),
-          active: true,
-        })
-        .select("id")
-        .single();
-
-      if (locError || !locRow) {
-        console.error("Location insert error", locError);
-        throw new Error("Could not create default location.");
-      }
-
-      const locationId = String(locRow.id);
-
-      // Mark this as the active location on the client (localStorage)
+    startTransition(async () => {
       try {
-        setActiveLocationIdClient(locationId);
-      } catch {
-        // non-fatal – switcher can still auto-pick
-      }
+        const result = await signUpAction(
+          { ok: false },
+          formData
+        );
 
-      // 4) Attach profile to org
-      const { error: profileError } = await supabase.from("profiles").upsert({
-        id: user.id,
-        full_name: fullName.trim(),
-        email: email.trim().toLowerCase(),
-        org_id: orgId,
-      });
-
-      if (profileError) throw profileError;
-
-      // 5) Add them to team_members as owner
-      const initials = makeInitials(fullName);
-      const { error: teamError } = await supabase.from("team_members").upsert(
-        {
-          org_id: orgId,
-          user_id: user.id,
-          name: fullName.trim(),
-          email: email.trim().toLowerCase(),
-          initials,
-          role: "owner",
-          active: true,
-        },
-        {
-          onConflict: "org_id,email",
+        if (!result.ok) {
+          setError(result.message ?? "Sign up failed. Please try again.");
+          return;
         }
-      );
 
-      if (teamError) throw teamError;
+        if (result.message && !result.redirect) {
+          // e.g. “check your email to confirm”
+          setInfo(result.message);
+        }
 
-      // 6) Go to dashboard
-      router.push("/dashboard");
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message ?? "Sign up failed. Please try again.");
-    } finally {
-      setLoading(false);
-    }
+        if (result.redirect) {
+          router.push(result.redirect);
+        }
+      } catch (err: any) {
+        console.error(err);
+        setError(err?.message ?? "Sign up failed. Please try again.");
+      }
+    });
   }
 
   return (

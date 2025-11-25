@@ -1,4 +1,3 @@
-// src/components/TeamManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -7,6 +6,7 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import ActionMenu from "@/components/ActionMenu";
 import { saveTrainingServer } from "@/app/actions/training";
+import { inviteTeamMemberServer } from "@/app/actions/team"; // NEW
 
 /* -------------------- Types -------------------- */
 type Member = {
@@ -184,9 +184,7 @@ export default function TeamManager() {
     // Try match by team member id first
     let match =
       rows.find((m) => m.id === staffParam) ??
-      rows.find(
-        (m) => safeInitials(m).toUpperCase() === needle
-      );
+      rows.find((m) => safeInitials(m).toUpperCase() === needle);
 
     if (!match) return;
 
@@ -412,7 +410,7 @@ export default function TeamManager() {
     }
   }
 
-  /* -------------------- Invite flow (magic link) -------------------- */
+  /* -------------------- Invite flow (admin invite link) -------------------- */
   function openInvite() {
     setInviteForm({ email: "", role: "staff" });
     setInviteError(null);
@@ -433,49 +431,28 @@ export default function TeamManager() {
     }
 
     try {
-      if (!orgId) {
-        setInviteError("No organisation found.");
-        return;
-      }
-
       setInviteSending(true);
 
-      const { error: tmError } = await supabase
-        .from("team_members")
-        .upsert(
-          {
-            org_id: orgId,
-            email: cleanEmail,
-            name: cleanEmail,
-            role,
-            active: true,
-          },
-          { onConflict: "org_id,email" }
-        );
-      if (tmError) throw tmError;
-
-      const { error: otpErr } = await supabase.auth.signInWithOtp({
+      const res = await inviteTeamMemberServer({
         email: cleanEmail,
-        options: {
-          emailRedirectTo: `${window.location.origin}/welcome`,
-        },
+        role,
       });
 
-      if (otpErr) {
-        setInviteInfo(
-          "Invite created. Configure Supabase Auth → Email OTP (Magic Link) to send the email."
-        );
+      if (!res.ok) {
+        setInviteError(res.message ?? "Failed to send invite.");
       } else {
-        setInviteInfo("Invite sent. They’ll receive a sign-in link by email.");
+        setInviteInfo(
+          "Invite sent. They’ll get an email to set their password and log in."
+        );
+        await load();
       }
-
-      await load();
     } catch (e: any) {
       setInviteError(e?.message ?? "Failed to send invite.");
     } finally {
       setInviteSending(false);
     }
   }
+
 
   /* -------------------- Render -------------------- */
   return (

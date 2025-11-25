@@ -1,8 +1,24 @@
-// src/app/actions/team.ts
 "use server";
 
+import { createClient } from "@supabase/supabase-js";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { getActiveOrgIdServer } from "@/lib/orgServer";
+
+/* ============================================================
+   Admin client (service role) for invites
+   – only used on the server in this file
+============================================================ */
+
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
+);
 
 /* ============================================================
    Shared types
@@ -220,7 +236,9 @@ export async function listTeam(): Promise<TeamMember[]> {
 }
 
 /** Upsert a member from the TeamManager form. */
-export async function upsertTeamMember(input: Partial<TeamMember>): Promise<void> {
+export async function upsertTeamMember(
+  input: Partial<TeamMember>
+): Promise<void> {
   if (!input.name?.trim()) {
     throw new Error("Name is required");
   }
@@ -244,10 +262,6 @@ export async function upsertTeamMember(input: Partial<TeamMember>): Promise<void
 /**
  * Ensure a staff row exists in the `staff` table for these initials,
  * and return its *database id* (NOT the initials).
- *
- * This is the key part that fixes:
- *   "insert or update on table 'trainings' violates foreign key constraint
- *    'trainings_staff_id_fkey'"
  */
 export async function ensureStaffByInitials(
   initials: string,
@@ -327,4 +341,76 @@ export async function insertTraining(
   });
 
   if (error) throw new Error(error.message);
+}
+
+/* ============================================================
+   Invite flow using Supabase Admin API
+   – creates auth user + sends invite email with password set
+============================================================ */
+
+export type InviteTeamMemberResult = {
+  ok: boolean;
+  message?: string;
+};
+
+export async function inviteTeamMemberServer(args: {
+  email: string;
+  role?: string;
+  name?: string;
+  initials?: string;
+}): Promise<InviteTeamMemberResult> {
+  const { orgId } = await requireOwnerOrg();
+  const db = await getServerSupabase();
+
+  const email = args.email.trim().toLowerCase();
+  if (!email) return { ok: false, message: "Email is required." };
+
+  const name = (args.name ?? "").trim() || email;
+  const role = (args.role ?? "staff").trim().toLowerCase() || "staff";
+
+  const initialsRaw =
+    args.initials ||
+    name
+      .split(/[@\s.]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0])
+      .join("");
+  const initials = initialsRaw.toUpperCase().slice(0, 4);
+
+  // 1) Create user + send invite email
+  const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(
+    email,
+    {
+      data: { name },
+    }
+  );
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  const user = data?.user ?? null;
+
+  // 2) Upsert into team_members
+  const { error: tmErr } = await db.from("team_members").upsert(
+    {
+      org_id: orgId,
+      user_id: user?.id ?? null,
+      email,
+      name,
+      initials,
+      role,
+      active: true,
+    },
+    {
+      onConflict: "org_id,email",
+    }
+  );
+
+  if (tmErr) {
+    return { ok: false, message: tmErr.message };
+  }
+
+  return { ok: true };
 }

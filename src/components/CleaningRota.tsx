@@ -266,24 +266,33 @@ export default function CleaningRota() {
 
     if (!orgId) return;
 
-    const { data: tData } = await supabase
+    let tQuery = supabase
       .from("cleaning_tasks")
       .select(
-        "id, org_id, task, name, area, category, frequency, weekday, month_day"
+        "id, org_id, task, name, area, category, frequency, weekday, month_day, location_id"
       )
       .eq("org_id", orgId);
 
+    if (locationId) {
+      tQuery = tQuery.eq("location_id", locationId);
+    }
+
+    const { data: tData } = await tQuery;
+
     setTasks(
-      (tData ?? []).map((r: any) => ({
-        id: String(r.id),
-        org_id: String(r.org_id),
-        task: r.task ?? r.name ?? "",
-        area: r.area ?? null,
-        category: r.category ?? null,
-        frequency: (r.frequency ?? "daily") as Frequency,
-        weekday: r.weekday ? Number(r.weekday) : null,
-        month_day: r.month_day ? Number(r.month_day) : null,
-      }))
+      (tData ?? []).map((r: any) => {
+        const freq = String(r.frequency ?? "daily").toLowerCase() as Frequency;
+        return {
+          id: String(r.id),
+          org_id: String(r.org_id),
+          task: r.task ?? r.name ?? "",
+          area: r.area ?? null,
+          category: r.category ?? null,
+          frequency: freq,
+          weekday: r.weekday ? Number(r.weekday) : null,
+          month_day: r.month_day ? Number(r.month_day) : null,
+        };
+      })
     );
 
     let query = supabase
