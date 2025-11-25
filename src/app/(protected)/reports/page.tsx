@@ -517,6 +517,19 @@ export default function ReportsPage() {
 
   /* ---------- runners ---------- */
 
+async function runCustom() {
+  if (!orgId) {
+    setErr("No organisation selected.");
+    return;
+  }
+
+  const locId =
+    locationFilter && locationFilter !== "all" ? locationFilter : null;
+
+  await runRange(from, to, orgId, locId, true);
+}
+
+
   async function runRange(
     rangeFrom: string,
     rangeTo: string,
@@ -565,30 +578,25 @@ export default function ReportsPage() {
   }
 
   async function runInstantAudit90() {
-    if (!orgId) {
-      setErr("No organisation selected.");
-      return;
-    }
-    const toISO = toISODate(new Date());
-    the frontconst fromISO = toISODate(new Date(Date.now() - 89 * 24 * 3600 * 1000));
-    setFrom(fromISO);
-    setTo(toISO);
-
-    const locId =
-      locationFilter && locationFilter !== "all" ? locationFilter : null;
-
-    await runRange(fromISO, toISO, orgId, locId, true);
+  if (!orgId) {
+    setErr("No organisation selected.");
+    return;
   }
 
-  async function runCustom() {
-    if (!orgId) {
-      setErr("No organisation selected.");
-      return;
-    }
-    const locId =
-      locationFilter && locationFilter !== "all" ? locationFilter : null;
-    await runRange(from, to, orgId, locId, true);
-  }
+  const toISO = toISODate(new Date());
+  const fromISO = toISODate(
+    new Date(Date.now() - 89 * 24 * 3600 * 1000)
+  );
+
+  setFrom(fromISO);
+  setTo(toISO);
+
+  const locId =
+    locationFilter && locationFilter !== "all" ? locationFilter : null;
+
+  await runRange(fromISO, toISO, orgId, locId, true);
+}
+
 
   // initial auto-run (once org known)
   useEffect(() => {
