@@ -537,43 +537,108 @@ export default function ManagerDashboardPage() {
 
       /* ---- Food hygiene rating / reminder (18-month cycle) ---- */
       try {
-        const { data: hygieneData } = await supabase
-          .from("food_hygiene_inspections")
-          .select("inspected_on, rating")
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .order("inspected_on", { ascending: false })
-          .limit(1);
+        const todayZero = new Date(todayISO);
+        todayZero.setHours(0, 0, 0, 0);
 
-        const row = hygieneData?.[0];
-        if (!row?.inspected_on) {
+        type HygieneRow = {
+          inspected_on?: string | null;
+          inspection_date?: string | null;
+          visit_date?: string | null;
+          rating?: any;
+          location_id?: string | null;
+          created_at?: string | null;
+        };
+
+        let chosen: HygieneRow | null = null;
+
+        // 1) Try inspections table (if you ever use it)
+        const { data: inspRows } = await supabase
+          .from("food_hygiene_inspections")
+          .select(
+            "inspected_on, inspection_date, rating, location_id, created_at"
+          )
+          .eq("org_id", orgId)
+          .order("inspected_on", { ascending: false })
+          .order("inspection_date", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(20);
+
+        const allInsp = (inspRows ?? []) as HygieneRow[];
+
+        if (allInsp.length) {
+          if (locationId) {
+            chosen =
+              allInsp.find((r) => r.location_id === locationId) ?? allInsp[0];
+          } else {
+            chosen = allInsp[0];
+          }
+        }
+
+        // 2) Fallback to ratings table (this is what you're using now)
+        if (!chosen) {
+          const { data: ratingRows } = await supabase
+            .from("food_hygiene_ratings")
+            .select("visit_date, rating, location_id, created_at")
+            .eq("org_id", orgId)
+            .order("visit_date", { ascending: false })
+            .order("created_at", { ascending: false })
+            .limit(50);
+
+          const allRatings = (ratingRows ?? []) as HygieneRow[];
+
+          if (allRatings.length) {
+            if (locationId) {
+              chosen =
+                allRatings.find((r) => r.location_id === locationId) ??
+                allRatings[0];
+            } else {
+              chosen = allRatings[0];
+            }
+          }
+        }
+
+        if (!chosen) {
           setFoodHygiene(null);
         } else {
-          const lastDate = new Date(row.inspected_on);
-          const nextDue = addMonths(lastDate, 18); // 18-month cycle
-          const todayZero = new Date(todayISO);
-          const diffDays = Math.round(
-            (nextDue.getTime() - todayZero.getTime()) / 86400000
-          );
+          const rawDate =
+            chosen.inspected_on ??
+            chosen.inspection_date ??
+            chosen.visit_date ??
+            chosen.created_at ??
+            null;
 
-          const status: FoodHygieneStatus = {
-            lastInspectedOn: lastDate.toISOString().slice(0, 10),
-            rating:
-              typeof row.rating === "number"
-                ? row.rating
-                : row.rating != null
-                ? Number(row.rating)
-                : null,
-            nextDueOn: nextDue.toISOString().slice(0, 10),
-            daysToDue: diffDays,
-            overdue: diffDays < 0,
-            // "soon" = within next 90 days
-            dueSoon: diffDays >= 0 && diffDays <= 90,
-          };
-          setFoodHygiene(status);
+          if (!rawDate) {
+            setFoodHygiene(null);
+          } else {
+            const lastDate = new Date(rawDate);
+            if (Number.isNaN(lastDate.getTime())) {
+              setFoodHygiene(null);
+            } else {
+              const nextDue = addMonths(lastDate, 18);
+              const diffDays = Math.round(
+                (nextDue.getTime() - todayZero.getTime()) / 86400000
+              );
+
+              setFoodHygiene({
+                lastInspectedOn: lastDate.toISOString().slice(0, 10),
+                rating:
+                  typeof chosen.rating === "number"
+                    ? chosen.rating
+                    : chosen.rating != null
+                    ? Number(chosen.rating)
+                    : null,
+                nextDueOn: nextDue.toISOString().slice(0, 10),
+                daysToDue: diffDays,
+                overdue: diffDays < 0,
+                // "soon" = within next 90 days
+                dueSoon: diffDays >= 0 && diffDays <= 90,
+              });
+            }
+          }
         }
-      } catch {
-        // swallow hygiene errors so they don't break the dashboard
+      } catch (e) {
+        console.error("Food hygiene fetch error", e);
+        setFoodHygiene(null);
       }
     } catch (e: any) {
       console.error(e);
