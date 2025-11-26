@@ -58,6 +58,15 @@ type CleanRun = {
   done_by: string | null;
 };
 
+type FoodHygieneStatus = {
+  lastInspectedOn: string | null;
+  rating: number | null;
+  nextDueOn: string | null;
+  daysToDue: number | null;
+  overdue: boolean;
+  dueSoon: boolean;
+};
+
 /* =============== Small helpers =============== */
 
 function sameDay(a: Date, b: Date) {
@@ -90,6 +99,7 @@ function formatPrettyDate(d: Date) {
     "September",
     "October",
     "November",
+    "December",
   ];
 
   const weekday = WEEKDAYS[d.getDay()];
@@ -199,6 +209,17 @@ function isDueOn(t: CleanTask, ymd: string) {
   }
 }
 
+function addMonths(date: Date, months: number): Date {
+  const d = new Date(date);
+  const day = d.getDate();
+  d.setMonth(d.getMonth() + months);
+  // Handle end-of-month rollover
+  if (d.getDate() < day) {
+    d.setDate(0);
+  }
+  return d;
+}
+
 function CategoryPill({
   title,
   total,
@@ -275,6 +296,11 @@ export default function FoodTempLogger({
     allergenDueSoon: 0,
     allergenOver: 0,
   });
+
+  // Food hygiene reminder (18-month cycle)
+  const [foodHygiene, setFoodHygiene] = useState<FoodHygieneStatus | null>(
+    null
+  );
 
   // Cleaning rota (today)
   const [tasks, setTasks] = useState<CleanTask[]>([]);
@@ -369,7 +395,7 @@ export default function FoodTempLogger({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialsSeed]);
 
-  /* Logged-in user initials FIRST (override LS + defaults) */
+  /* Logged-in user initials first in the list */
   useEffect(() => {
     (async () => {
       try {
@@ -406,23 +432,15 @@ export default function FoodTempLogger({
         const loggedIni = base.toUpperCase().slice(0, 4);
         if (!loggedIni) return;
 
-        // Put logged-in initials at the front of the list
         setInitials((prev) => {
           const upperPrev = prev.map((v) => v.toUpperCase());
           const rest = upperPrev.filter((v) => v !== loggedIni);
           return [loggedIni, ...rest];
         });
 
-        // FORCE the active + modal initials to be the logged-in user
-        setIni(loggedIni);
-        setConfirmInitials(loggedIni);
-
-        // Update localStorage so next load starts with correct initials
-        try {
-          localStorage.setItem(LS_LAST_INITIALS, loggedIni);
-        } catch {
-          // ignore
-        }
+        setIni((prev) => prev || loggedIni);
+        // ensure the cleaning modal defaults to logged-in initials when used
+        setConfirmInitials((prev) => prev || loggedIni);
       } catch {
         // ignore
       }
@@ -438,12 +456,14 @@ export default function FoodTempLogger({
     }
   }, [initials, ini]);
 
-  /* KPI fetch (org-level) */
+    /* KPI fetch (org-level) + food hygiene reminder */
   useEffect(() => {
     (async () => {
       try {
         const orgId = await getActiveOrgIdClient();
         if (!orgId) return;
+
+        const locationId = await getActiveLocationIdClient();
 
         const soon = new Date();
         soon.setDate(soon.getDate() + 14);
@@ -454,6 +474,7 @@ export default function FoodTempLogger({
         let allergenDueSoon = 0;
         let allergenOver = 0;
 
+        // Training KPIs
         try {
           const { data } = await supabase
             .from("team_members")
@@ -472,8 +493,11 @@ export default function FoodTempLogger({
             if (d < todayD) trainingOver++;
             else if (d <= soon) trainingDueSoon++;
           });
-        } catch {}
+        } catch {
+          // ignore training errors
+        }
 
+        // Allergen KPIs
         try {
           const { data } = await supabase
             .from("allergen_review")
@@ -489,11 +513,119 @@ export default function FoodTempLogger({
             if (due < todayD) allergenOver++;
             else if (due <= soon) allergenDueSoon++;
           });
-        } catch {}
+        } catch {
+          // ignore allergen errors
+        }
 
         setKpi({ trainingDueSoon, trainingOver, allergenDueSoon, allergenOver });
+
+        // Food hygiene: 18-month cycle
+        try {
+          const todayZero = new Date();
+          todayZero.setHours(0, 0, 0, 0);
+
+          type HygieneRow = {
+            inspected_on?: string | null;
+            inspection_date?: string | null;
+            rating?: any;
+            location_id?: string | null;
+            created_at?: string | null;
+          };
+
+          let chosen: HygieneRow | null = null;
+
+          // 1) Try inspections table
+          const { data: inspRows } = await supabase
+            .from("food_hygiene_inspections")
+            .select(
+              "inspected_on, inspection_date, rating, location_id, created_at"
+            )
+            .eq("org_id", orgId)
+            .order("inspected_on", { ascending: false })
+            .order("inspection_date", { ascending: false })
+            .order("created_at", { ascending: false })
+            .limit(20);
+
+          const allInsp = (inspRows ?? []) as HygieneRow[];
+
+          if (allInsp.length) {
+            if (locationId) {
+              chosen =
+                allInsp.find((r) => r.location_id === locationId) ??
+                allInsp[0];
+            } else {
+              chosen = allInsp[0];
+            }
+          }
+
+          // 2) Fallback to ratings table if nothing found
+          if (!chosen) {
+            const { data: ratingRows } = await supabase
+              .from("food_hygiene_ratings")
+              .select(
+                "inspected_on, inspection_date, rating, location_id, created_at"
+              )
+              .eq("org_id", orgId)
+              .order("inspected_on", { ascending: false })
+              .order("inspection_date", { ascending: false })
+              .order("created_at", { ascending: false })
+              .limit(20);
+
+            const allRatings = (ratingRows ?? []) as HygieneRow[];
+            if (allRatings.length) {
+              if (locationId) {
+                chosen =
+                  allRatings.find((r) => r.location_id === locationId) ??
+                  allRatings[0];
+              } else {
+                chosen = allRatings[0];
+              }
+            }
+          }
+
+          if (!chosen) {
+            setFoodHygiene(null);
+          } else {
+            const rawDate =
+              chosen.inspected_on ??
+              chosen.inspection_date ??
+              chosen.created_at ??
+              null;
+
+            if (!rawDate) {
+              setFoodHygiene(null);
+            } else {
+              const lastDate = new Date(rawDate);
+              if (Number.isNaN(lastDate.getTime())) {
+                setFoodHygiene(null);
+              } else {
+                const nextDue = addMonths(lastDate, 18);
+                const diffDays = Math.round(
+                  (nextDue.getTime() - todayZero.getTime()) / 86400000
+                );
+
+                setFoodHygiene({
+                  lastInspectedOn: lastDate.toISOString().slice(0, 10),
+                  rating:
+                    typeof chosen.rating === "number"
+                      ? chosen.rating
+                      : chosen.rating != null
+                      ? Number(chosen.rating)
+                      : null,
+                  nextDueOn: nextDue.toISOString().slice(0, 10),
+                  daysToDue: diffDays,
+                  overdue: diffDays < 0,
+                  dueSoon: diffDays >= 0 && diffDays <= 90,
+                });
+              }
+            }
+          }
+        } catch {
+          // don't break the page if hygiene fetch fails
+          setFoodHygiene(null);
+        }
       } catch {
-        // ignore
+        // ignore outer errors
       }
     })();
   }, []);
@@ -680,13 +812,6 @@ export default function FoodTempLogger({
       .sort((a, b) => (a[0] < b[0] ? 1 : -1))
       .map(([date, list]) => ({ date, list }));
   }, [rowsToShow]);
-
-  // initials for dropdown, logged-in user first
-  const sortedInitials = useMemo(() => {
-    if (!initials.length) return [];
-    if (!ini) return initials;
-    return [ini, ...initials.filter((i) => i !== ini)];
-  }, [initials, ini]);
 
   /* complete api (org + location scoped) */
   async function completeTasks(ids: string[], iniVal: string) {
@@ -953,6 +1078,59 @@ export default function FoodTempLogger({
             <span className="font-semibold">{kpi.allergenOver}</span>
           </span>
         </div>
+
+        {/* Food hygiene banner – only show when due soon or overdue */}
+        {foodHygiene && (foodHygiene.overdue || foodHygiene.dueSoon) && (
+          <div
+            className={cls(
+              "mt-3 flex flex-wrap items-center gap-3 rounded-2xl border px-3 py-2 text-xs shadow-sm",
+              foodHygiene.overdue
+                ? "border-red-300 bg-red-50/90 text-red-800"
+                : "border-amber-300 bg-amber-50/90 text-amber-900"
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-base" aria-hidden="true">
+                {foodHygiene.overdue ? "⚠️" : "⏰"}
+              </span>
+              <div className="font-semibold">
+                Food hygiene inspection{" "}
+                {foodHygiene.overdue ? "OVERDUE" : "due soon"}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-3 text-[11px]">
+              <span>
+                Rating:{" "}
+                <span className="font-semibold">
+                  {foodHygiene.rating ?? "—"}
+                </span>
+              </span>
+              <span>
+                Last inspected:{" "}
+                <span className="font-semibold">
+                  {foodHygiene.lastInspectedOn
+                    ? formatDDMMYYYY(foodHygiene.lastInspectedOn)
+                    : "—"}
+                </span>
+              </span>
+              <span>
+                Next due (18m):{" "}
+                <span className="font-semibold">
+                  {foodHygiene.nextDueOn
+                    ? formatDDMMYYYY(foodHygiene.nextDueOn)
+                    : "—"}
+                </span>
+              </span>
+              {foodHygiene.daysToDue != null && (
+                <span>
+                  {foodHygiene.daysToDue < 0
+                    ? `${Math.abs(foodHygiene.daysToDue)} days overdue`
+                    : `Due in ${foodHygiene.daysToDue} days`}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {err && (
           <div className="mt-2 rounded-md border border-red-200 bg-red-50/90 px-3 py-2 text-sm text-red-800">
@@ -1347,7 +1525,7 @@ export default function FoodTempLogger({
                   <option value="" disabled>
                     Select…
                   </option>
-                  {sortedInitials.map((i) => (
+                  {initials.map((i) => (
                     <option key={i} value={i}>
                       {i}
                     </option>

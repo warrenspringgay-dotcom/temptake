@@ -90,6 +90,13 @@ export default function UserMenu({ user }: Props) {
                 Help &amp; support
               </Link>
 
+               <Link
+    href="/food-hygiene"
+    className="block rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+  >
+    Food hygiene rating log
+  </Link>
+
               <button
                 type="button"
                 onClick={handleSignOut}

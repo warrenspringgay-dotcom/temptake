@@ -76,6 +76,15 @@ type EducationRow = {
   daysOverdue: number | null;
 };
 
+type FoodHygieneStatus = {
+  lastInspectedOn: string | null;
+  rating: number | null;
+  nextDueOn: string | null;
+  daysToDue: number | null;
+  overdue: boolean;
+  dueSoon: boolean;
+};
+
 const CATEGORY_OPTIONS = ["Temps", "Cleaning", "Allergens", "General"];
 
 /* ---------- Helpers ---------- */
@@ -130,6 +139,18 @@ function formatISOToUK(iso: string | null | undefined): string {
   return `${day}/${month}/${year}`;
 }
 
+function addMonths(date: Date, months: number): Date {
+  const d = new Date(date);
+  const day = d.getDate();
+  d.setMonth(d.getMonth() + months);
+
+  // Handle end-of-month rollover (e.g. 31st -> last day of month)
+  if (d.getDate() < day) {
+    d.setDate(0);
+  }
+  return d;
+}
+
 /* ===================================================================== */
 
 export default function ManagerDashboardPage() {
@@ -156,6 +177,9 @@ export default function ManagerDashboardPage() {
   >([]);
 
   const [educationDue, setEducationDue] = useState<EducationRow[]>([]);
+  const [foodHygiene, setFoodHygiene] = useState<FoodHygieneStatus | null>(
+    null
+  );
 
   const [loadingCards, setLoadingCards] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -431,9 +455,7 @@ export default function ManagerDashboardPage() {
           } as EducationRow;
         })
         .filter((r) => r.daysOverdue != null && r.daysOverdue > 0)
-        .sort(
-          (a, b) => (b.daysOverdue ?? 0) - (a.daysOverdue ?? 0)
-        );
+        .sort((a, b) => (b.daysOverdue ?? 0) - (a.daysOverdue ?? 0));
 
       setTrainingSummary({
         loggedToday,
@@ -467,9 +489,7 @@ export default function ManagerDashboardPage() {
       const tempsData: any[] = (tempsListRes.data as any[]) ?? [];
       const mappedTemps: TodayTempRow[] = tempsData.map((r) => {
         const ts =
-          r.created_at || r.at
-            ? new Date(r.created_at ?? r.at)
-            : null;
+          r.created_at || r.at ? new Date(r.created_at ?? r.at) : null;
 
         return {
           id: String(r.id),
@@ -514,6 +534,47 @@ export default function ManagerDashboardPage() {
         };
       });
       setTodayCleaningRuns(mappedCleaning);
+
+      /* ---- Food hygiene rating / reminder (18-month cycle) ---- */
+      try {
+        const { data: hygieneData } = await supabase
+          .from("food_hygiene_inspections")
+          .select("inspected_on, rating")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .order("inspected_on", { ascending: false })
+          .limit(1);
+
+        const row = hygieneData?.[0];
+        if (!row?.inspected_on) {
+          setFoodHygiene(null);
+        } else {
+          const lastDate = new Date(row.inspected_on);
+          const nextDue = addMonths(lastDate, 18); // 18-month cycle
+          const todayZero = new Date(todayISO);
+          const diffDays = Math.round(
+            (nextDue.getTime() - todayZero.getTime()) / 86400000
+          );
+
+          const status: FoodHygieneStatus = {
+            lastInspectedOn: lastDate.toISOString().slice(0, 10),
+            rating:
+              typeof row.rating === "number"
+                ? row.rating
+                : row.rating != null
+                ? Number(row.rating)
+                : null,
+            nextDueOn: nextDue.toISOString().slice(0, 10),
+            daysToDue: diffDays,
+            overdue: diffDays < 0,
+            // "soon" = within next 90 days
+            dueSoon: diffDays >= 0 && diffDays <= 90,
+          };
+          setFoodHygiene(status);
+        }
+      } catch {
+        // swallow hygiene errors so they don't break the dashboard
+      }
     } catch (e: any) {
       console.error(e);
       setErr(e?.message ?? "Failed to refresh manager dashboard.");
@@ -638,7 +699,7 @@ export default function ManagerDashboardPage() {
       )}
 
       {/* KPI cards */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {/* Temps */}
         <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
           <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -748,6 +809,61 @@ export default function ManagerDashboardPage() {
               </span>
             </div>
           </div>
+        </div>
+
+        {/* Food hygiene rating / reminder */}
+        <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
+          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            Food hygiene rating
+          </div>
+          {foodHygiene ? (
+            <div className="mt-1 space-y-1 text-sm text-slate-700">
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-semibold">
+                  {foodHygiene.rating ?? "—"}
+                </span>
+                <span
+                  className={`inline-flex rounded-full px-2 py-[1px] text-[10px] font-semibold ${
+                    foodHygiene.overdue
+                      ? "bg-red-100 text-red-700"
+                      : foodHygiene.dueSoon
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-emerald-100 text-emerald-800"
+                  }`}
+                >
+                  {foodHygiene.overdue
+                    ? "Overdue"
+                    : foodHygiene.dueSoon
+                    ? "Due soon"
+                    : "Up to date"}
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-600">
+                Last inspected:{" "}
+                {foodHygiene.lastInspectedOn
+                  ? formatISOToUK(foodHygiene.lastInspectedOn)
+                  : "—"}
+              </div>
+              <div className="text-[11px] text-slate-600">
+                Next due (18m):{" "}
+                {foodHygiene.nextDueOn
+                  ? formatISOToUK(foodHygiene.nextDueOn)
+                  : "—"}
+              </div>
+              {foodHygiene.daysToDue != null && (
+                <div className="text-[11px] text-slate-500">
+                  {foodHygiene.daysToDue < 0
+                    ? `${Math.abs(foodHygiene.daysToDue)} days overdue`
+                    : `Due in ${foodHygiene.daysToDue} days`}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="mt-1 text-[11px] text-slate-500">
+              No inspection logged yet. Log your latest rating so we can remind
+              you when the next one is due.
+            </div>
+          )}
         </div>
       </div>
 
@@ -1034,9 +1150,7 @@ export default function ManagerDashboardPage() {
 
             {/* Staff select */}
             <label className="mb-3 block text-sm">
-              <span className="mb-1 block text-slate-700">
-                Staff member
-              </span>
+              <span className="mb-1 block text-slate-700">Staff member</span>
               <select
                 required
                 value={reviewForm.staff_id}
