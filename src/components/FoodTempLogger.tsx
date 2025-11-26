@@ -90,7 +90,6 @@ function formatPrettyDate(d: Date) {
     "September",
     "October",
     "November",
-    "December",
   ];
 
   const weekday = WEEKDAYS[d.getDay()];
@@ -370,7 +369,7 @@ export default function FoodTempLogger({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialsSeed]);
 
-  /* Logged-in user initials first in the list */
+  /* Logged-in user initials FIRST (override LS + defaults) */
   useEffect(() => {
     (async () => {
       try {
@@ -407,15 +406,23 @@ export default function FoodTempLogger({
         const loggedIni = base.toUpperCase().slice(0, 4);
         if (!loggedIni) return;
 
+        // Put logged-in initials at the front of the list
         setInitials((prev) => {
           const upperPrev = prev.map((v) => v.toUpperCase());
           const rest = upperPrev.filter((v) => v !== loggedIni);
           return [loggedIni, ...rest];
         });
 
-        setIni((prev) => prev || loggedIni);
-        // ensure the cleaning modal defaults to logged-in initials when used
-        setConfirmInitials((prev) => prev || loggedIni);
+        // FORCE the active + modal initials to be the logged-in user
+        setIni(loggedIni);
+        setConfirmInitials(loggedIni);
+
+        // Update localStorage so next load starts with correct initials
+        try {
+          localStorage.setItem(LS_LAST_INITIALS, loggedIni);
+        } catch {
+          // ignore
+        }
       } catch {
         // ignore
       }
@@ -674,7 +681,7 @@ export default function FoodTempLogger({
       .map(([date, list]) => ({ date, list }));
   }, [rowsToShow]);
 
-  // Sort initials so logged-in user (ini) is always first in the dropdown
+  // initials for dropdown, logged-in user first
   const sortedInitials = useMemo(() => {
     if (!initials.length) return [];
     if (!ini) return initials;
