@@ -414,6 +414,8 @@ export default function FoodTempLogger({
         });
 
         setIni((prev) => prev || loggedIni);
+        // ensure the cleaning modal defaults to logged-in initials when used
+        setConfirmInitials((prev) => prev || loggedIni);
       } catch {
         // ignore
       }
@@ -423,7 +425,9 @@ export default function FoodTempLogger({
   /* default ini if still empty but we have initials */
   useEffect(() => {
     if (!ini && initials.length) {
-      setIni(initials[0]);
+      const first = initials[0];
+      setIni(first);
+      setConfirmInitials((prev) => prev || first);
     }
   }, [initials, ini]);
 
@@ -636,6 +640,15 @@ export default function FoodTempLogger({
     return map;
   }, [dueDaily]);
 
+  // Only categories that actually have daily tasks due today
+  const categoriesWithDaily = useMemo(() => {
+    const cats: string[] = [];
+    dailyByCat.forEach((list, cat) => {
+      if (list.length > 0) cats.push(cat);
+    });
+    return cats;
+  }, [dailyByCat]);
+
   // List of tasks included in the current confirm modal (for display)
   const confirmTasks = useMemo(
     () => (confirm ? tasks.filter((t) => confirm.ids.includes(t.id)) : []),
@@ -660,6 +673,13 @@ export default function FoodTempLogger({
       .sort((a, b) => (a[0] < b[0] ? 1 : -1))
       .map(([date, list]) => ({ date, list }));
   }, [rowsToShow]);
+
+  // Sort initials so logged-in user (ini) is always first in the dropdown
+  const sortedInitials = useMemo(() => {
+    if (!initials.length) return [];
+    if (!ini) return initials;
+    return [ini, ...initials.filter((i) => i !== ini)];
+  }, [initials, ini]);
 
   /* complete api (org + location scoped) */
   async function completeTasks(ids: string[], iniVal: string) {
@@ -1010,13 +1030,13 @@ export default function FoodTempLogger({
           )}
         </div>
 
-        {/* Daily – category summary only */}
+        {/* Daily – category summary only (only categories that have tasks today) */}
         <div className="mt-4 space-y-2">
           <div className="text-[11px] font-semibold uppercase text-gray-500">
             Daily tasks (by category)
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            {CLEANING_CATEGORIES.map((cat) => {
+            {categoriesWithDaily.map((cat) => {
               const list = dailyByCat.get(cat) ?? [];
               const open = list.filter(
                 (t) => !runsKey.has(`${t.id}|${todayISOKey}`)
@@ -1038,6 +1058,11 @@ export default function FoodTempLogger({
                 />
               );
             })}
+            {categoriesWithDaily.length === 0 && (
+              <div className="col-span-full rounded-xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-500">
+                No daily tasks due today.
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1048,7 +1073,7 @@ export default function FoodTempLogger({
           <h2 className="text-lg font-semibold">Temperature Logs</h2>
           <button
             onClick={refreshRows}
-            className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-1.5 text-sm text-slate-800 shadow-sm hover:bg-white"
+            className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-1.5 text-sm text-slate-800 shadow-sm hover:bg:white"
           >
             Refresh
           </button>
@@ -1229,7 +1254,7 @@ export default function FoodTempLogger({
             {rows.length > rowsToShow.length ? (
               <button
                 type="button"
-                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-white"
+                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg:white"
                 onClick={() => setShowAllLogs(true)}
               >
                 View all
@@ -1237,7 +1262,7 @@ export default function FoodTempLogger({
             ) : rows.length > 10 ? (
               <button
                 type="button"
-                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-white"
+                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg:white"
                 onClick={() => setShowAllLogs(false)}
               >
                 Show latest 10
@@ -1315,7 +1340,7 @@ export default function FoodTempLogger({
                   <option value="" disabled>
                     Select…
                   </option>
-                  {initials.map((i) => (
+                  {sortedInitials.map((i) => (
                     <option key={i} value={i}>
                       {i}
                     </option>
