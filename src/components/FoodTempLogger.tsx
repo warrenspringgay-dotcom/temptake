@@ -3,6 +3,7 @@
 import posthog from "posthog-js";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useSwipeable } from "react-swipeable";
 
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -439,7 +440,6 @@ export default function FoodTempLogger({
         });
 
         setIni((prev) => prev || loggedIni);
-        // ensure the cleaning modal defaults to logged-in initials when used
         setConfirmInitials((prev) => prev || loggedIni);
       } catch {
         // ignore
@@ -456,7 +456,7 @@ export default function FoodTempLogger({
     }
   }, [initials, ini]);
 
-    /* KPI fetch (org-level) + food hygiene reminder */
+  /* KPI fetch (org-level) + food hygiene reminder */
   useEffect(() => {
     (async () => {
       try {
@@ -1059,7 +1059,7 @@ export default function FoodTempLogger({
           );
         })()}
 
-                {/* KPI pills row – only show pills when something is due/overdue */}
+        {/* KPI pills row – only show pills when something is due/overdue */}
         {(kpi.trainingDueSoon > 0 ||
           kpi.trainingOver > 0 ||
           kpi.allergenDueSoon > 0 ||
@@ -1094,7 +1094,6 @@ export default function FoodTempLogger({
             )}
           </div>
         )}
-
 
         {/* Food hygiene banner – only show when due soon or overdue */}
         {foodHygiene && (foodHygiene.overdue || foodHygiene.dueSoon) && (
@@ -1155,25 +1154,26 @@ export default function FoodTempLogger({
           </div>
         )}
       </div>
+
       {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
       <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
         <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center">
           <h2 className="text-lg font-semibold">Today’s Cleaning Tasks</h2>
 
           <div className="sm:ml-auto flex flex-wrap items-center gap-2">
-            {/* Completed / total pill */}
             <div className="rounded-xl border border-gray-200 bg-white/70 px-3 py-1.5 text-sm shadow-sm">
               {doneCount}/{dueTodayAll.length}
             </div>
 
-            {/* Initials + Complete All (sat together, works nicely on mobile) */}
-            <div className="flex flex-wrap items-center gap-2">
+            {/* Initials dropdown next to Complete All – especially useful on mobile */}
+            <div className="flex items-center gap-2">
               <select
-                className="rounded-xl border border-slate-200 bg-white/80 px-2 py-1.5 text-xs sm:text-sm uppercase shadow-sm"
+                className="rounded-xl border border-slate-200 bg-white/80 px-2 py-1.5 text-sm uppercase shadow-sm"
                 value={ini}
                 onChange={(e) => {
                   const v = e.target.value.toUpperCase();
                   setIni(v);
+                  setConfirmInitials(v);
                   try {
                     localStorage.setItem(LS_LAST_INITIALS, v);
                   } catch {
@@ -1181,7 +1181,9 @@ export default function FoodTempLogger({
                   }
                 }}
               >
-                <option value="">{initials.length ? "Initials…" : "No staff"}</option>
+                <option value="" disabled>
+                  Initials…
+                </option>
                 {initials.map((i) => (
                   <option key={i} value={i}>
                     {i}
@@ -1201,8 +1203,9 @@ export default function FoodTempLogger({
                 }}
                 disabled={
                   !dueTodayAll.length ||
-                  !ini ||
-                  dueTodayAll.every((t) => runsKey.has(`${t.id}|${todayISOKey}`))
+                  dueTodayAll.every((t) =>
+                    runsKey.has(`${t.id}|${todayISOKey}`)
+                  )
                 }
               >
                 Complete All
@@ -1211,14 +1214,16 @@ export default function FoodTempLogger({
           </div>
         </div>
 
-
         {/* Weekly/Monthly only */}
-        <div className="space-y-2">
+        <div className="space-y-1">
           <div className="text-[11px] font-semibold uppercase text-gray-500">
             Weekly / Monthly
           </div>
+          <div className="text-[10px] text-gray-400 sm:hidden">
+            Swipe left to complete, right to undo.
+          </div>
           {dueNonDaily.length === 0 ? (
-            <div className="rounded-xl border border-gray-200 bg-white/70 p-3 text-sm text-gray-500 shadow-sm">
+            <div className="mt-1 rounded-xl border border-gray-200 bg-white/70 p-3 text-sm text-gray-500 shadow-sm">
               No tasks.
             </div>
           ) : (
@@ -1227,10 +1232,31 @@ export default function FoodTempLogger({
                 const key = `${t.id}|${todayISOKey}`;
                 const done = runsKey.has(key);
                 const run = runsKey.get(key) || null;
+
+                const handlers = useSwipeable({
+                  onSwipedLeft: () => {
+                    if (!done) {
+                      completeTasks(
+                        [t.id],
+                        ini || initials[0] || confirmInitials || ""
+                      );
+                    }
+                  },
+                  onSwipedRight: () => {
+                    if (done) {
+                      uncompleteTask(t.id);
+                    }
+                  },
+                  trackTouch: true,
+                  trackMouse: false,
+                  delta: 40,
+                });
+
                 return (
                   <div
                     key={t.id}
-                    className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 bg-white/80 px-2 py-2 text-sm shadow-sm backdrop-blur-sm"
+                    {...handlers}
+                    className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 bg-white/80 px-2 py-2 text-sm shadow-sm backdrop-blur-sm touch-pan-y"
                   >
                     <div className={done ? "text-gray-500 line-through" : ""}>
                       <div className="font-medium">{t.task}</div>
@@ -1249,7 +1275,10 @@ export default function FoodTempLogger({
                       onClick={() =>
                         done
                           ? uncompleteTask(t.id)
-                          : completeTasks([t.id], ini || initials[0] || "")
+                          : completeTasks(
+                              [t.id],
+                              ini || initials[0] || confirmInitials || ""
+                            )
                       }
                     />
                   </div>
