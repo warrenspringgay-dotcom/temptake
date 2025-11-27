@@ -1155,35 +1155,62 @@ export default function FoodTempLogger({
           </div>
         )}
       </div>
-
       {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
       <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
-        <div className="mb-2 flex items-center gap-2">
+        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center">
           <h2 className="text-lg font-semibold">Today’s Cleaning Tasks</h2>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="sm:ml-auto flex flex-wrap items-center gap-2">
+            {/* Completed / total pill */}
             <div className="rounded-xl border border-gray-200 bg-white/70 px-3 py-1.5 text-sm shadow-sm">
               {doneCount}/{dueTodayAll.length}
             </div>
-            <button
-              className="inline-flex items-center justify-center whitespace-nowrap rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30 hover:brightness-105 disabled:opacity-60"
-              onClick={() => {
-                const ids = dueTodayAll
-                  .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
-                  .map((t) => t.id);
-                setConfirm({ ids, run_on: todayISOKey });
-                setConfirmLabel("Complete all today");
-                setConfirmInitials(ini || initials[0] || "");
-              }}
-              disabled={
-                !dueTodayAll.length ||
-                dueTodayAll.every((t) => runsKey.has(`${t.id}|${todayISOKey}`))
-              }
-            >
-              Complete All
-            </button>
+
+            {/* Initials + Complete All (sat together, works nicely on mobile) */}
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                className="rounded-xl border border-slate-200 bg-white/80 px-2 py-1.5 text-xs sm:text-sm uppercase shadow-sm"
+                value={ini}
+                onChange={(e) => {
+                  const v = e.target.value.toUpperCase();
+                  setIni(v);
+                  try {
+                    localStorage.setItem(LS_LAST_INITIALS, v);
+                  } catch {
+                    // ignore
+                  }
+                }}
+              >
+                <option value="">{initials.length ? "Initials…" : "No staff"}</option>
+                {initials.map((i) => (
+                  <option key={i} value={i}>
+                    {i}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                className="inline-flex items-center justify-center whitespace-nowrap rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30 hover:brightness-105 disabled:opacity-60"
+                onClick={() => {
+                  const ids = dueTodayAll
+                    .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
+                    .map((t) => t.id);
+                  setConfirm({ ids, run_on: todayISOKey });
+                  setConfirmLabel("Complete all today");
+                  setConfirmInitials(ini || initials[0] || "");
+                }}
+                disabled={
+                  !dueTodayAll.length ||
+                  !ini ||
+                  dueTodayAll.every((t) => runsKey.has(`${t.id}|${todayISOKey}`))
+                }
+              >
+                Complete All
+              </button>
+            </div>
           </div>
         </div>
+
 
         {/* Weekly/Monthly only */}
         <div className="space-y-2">
