@@ -63,7 +63,7 @@ export default function UserMenu({ user }: Props) {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg z-50">
+        <div className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg">
           {user ? (
             <>
               {/* Logged-in state */}
@@ -73,6 +73,24 @@ export default function UserMenu({ user }: Props) {
                   {user.email ?? "User"}
                 </div>
               </div>
+
+              {/* Settings */}
+              <Link
+                href="/settings"
+                className="block px-3 py-2 hover:bg-slate-50"
+                onClick={() => setOpen(false)}
+              >
+                Settings
+              </Link>
+
+              {/* Food hygiene rating log */}
+              <Link
+                href="/food-hygiene"
+                className="block px-3 py-2 hover:bg-slate-50"
+                onClick={() => setOpen(false)}
+              >
+                Food hygiene rating log
+              </Link>
 
               <Link
                 href="/locations"
@@ -89,13 +107,6 @@ export default function UserMenu({ user }: Props) {
               >
                 Help &amp; support
               </Link>
-
-               <Link
-    href="/food-hygiene"
-    className="block rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-  >
-    Food hygiene rating log
-  </Link>
 
               <button
                 type="button"

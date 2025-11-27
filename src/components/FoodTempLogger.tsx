@@ -1059,25 +1059,42 @@ export default function FoodTempLogger({
           );
         })()}
 
-        {/* KPI pills row – simple training/allergen overview */}
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-          <span className="rounded-full bg-amber-50 px-2 py-0.5">
-            Training due soon:{" "}
-            <span className="font-semibold">{kpi.trainingDueSoon}</span>
-          </span>
-          <span className="rounded-full bg-red-50 px-2 py-0.5">
-            Training overdue:{" "}
-            <span className="font-semibold">{kpi.trainingOver}</span>
-          </span>
-          <span className="rounded-full bg-amber-50 px-2 py-0.5">
-            Allergen review due soon:{" "}
-            <span className="font-semibold">{kpi.allergenDueSoon}</span>
-          </span>
-          <span className="rounded-full bg-red-50 px-2 py-0.5">
-            Allergen review overdue:{" "}
-            <span className="font-semibold">{kpi.allergenOver}</span>
-          </span>
-        </div>
+                {/* KPI pills row – only show pills when something is due/overdue */}
+        {(kpi.trainingDueSoon > 0 ||
+          kpi.trainingOver > 0 ||
+          kpi.allergenDueSoon > 0 ||
+          kpi.allergenOver > 0) && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            {kpi.trainingDueSoon > 0 && (
+              <span className="rounded-full bg-amber-50 px-2 py-0.5">
+                Training due soon:{" "}
+                <span className="font-semibold">{kpi.trainingDueSoon}</span>
+              </span>
+            )}
+
+            {kpi.trainingOver > 0 && (
+              <span className="rounded-full bg-red-50 px-2 py-0.5">
+                Training overdue:{" "}
+                <span className="font-semibold">{kpi.trainingOver}</span>
+              </span>
+            )}
+
+            {kpi.allergenDueSoon > 0 && (
+              <span className="rounded-full bg-amber-50 px-2 py-0.5">
+                Allergen review due soon:{" "}
+                <span className="font-semibold">{kpi.allergenDueSoon}</span>
+              </span>
+            )}
+
+            {kpi.allergenOver > 0 && (
+              <span className="rounded-full bg-red-50 px-2 py-0.5">
+                Allergen review overdue:{" "}
+                <span className="font-semibold">{kpi.allergenOver}</span>
+              </span>
+            )}
+          </div>
+        )}
+
 
         {/* Food hygiene banner – only show when due soon or overdue */}
         {foodHygiene && (foodHygiene.overdue || foodHygiene.dueSoon) && (

@@ -22,16 +22,16 @@ const authedLinks: Tab[] = [
   { href: "/routines", label: "Routines" },
   { href: "/allergens", label: "Allergens" },
   { href: "/cleaning-rota", label: "Cleaning rota" },
-{ href: "/manager", label: "Manager", requiresManager: true },
+  // 👇 NEW: Food hygiene link
+  { href: "/food-hygiene", label: "Food hygiene" },
+  { href: "/manager", label: "Manager", requiresManager: true },
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/team", label: "Team" },
   { href: "/suppliers", label: "Suppliers" },
   { href: "/reports", label: "Reports" },
   { href: "/locations", label: "Locations & sites" },
+    { href: "/settings", label: "Settings" },
   { href: "/help", label: "Help & support" },
-
-  // 🔐 Manager-only page
-  
 ];
 
 const publicLinks: { href: string; label: string }[] = [
