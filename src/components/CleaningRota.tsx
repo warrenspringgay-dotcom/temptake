@@ -98,14 +98,14 @@ function SwipeCard({
       onDragEnd={(_, info) => {
         const offsetX = info.offset.x;
 
-        // Swipe RIGHT -> complete
-        if (offsetX > SWIPE_THRESHOLD && !done && initials) {
+        // NEW: Swipe LEFT -> complete
+        if (offsetX < -SWIPE_THRESHOLD && !done && initials) {
           onComplete(task.id, initials);
           return;
         }
 
-        // Swipe LEFT -> undo
-        if (offsetX < -SWIPE_THRESHOLD && done) {
+        // Swipe RIGHT -> undo
+        if (offsetX > SWIPE_THRESHOLD && done) {
           onUndo(task.id);
           return;
         }
@@ -193,14 +193,14 @@ function WeeklyMonthlyTaskRow({
       onDragEnd={(_, info) => {
         const offsetX = info.offset.x;
 
-        // Swipe RIGHT -> complete
-        if (offsetX > SWIPE_THRESHOLD && !done && initials) {
+        // NEW: Swipe LEFT -> complete
+        if (offsetX < -SWIPE_THRESHOLD && !done && initials) {
           onComplete(task.id, initials);
           return;
         }
 
-        // Swipe LEFT -> undo
-        if (offsetX < -SWIPE_THRESHOLD && done) {
+        // Swipe RIGHT -> undo
+        if (offsetX > SWIPE_THRESHOLD && done) {
           onUndo(task.id);
           return;
         }
@@ -484,10 +484,19 @@ export default function CleaningRota() {
 
   /** ===== Complete helpers (always include org_id + location_id) ===== */
 
+  async function fireConfetti() {
+    try {
+      const confettiModule = await import("canvas-confetti");
+      confettiModule.default();
+    } catch {
+      // ignore
+    }
+  }
+
   async function completeOne(id: string, initialsVal: string) {
     const orgId = await getActiveOrgIdClient();
     const locationId = await getActiveLocationIdClient();
-       if (!orgId || !locationId) {
+    if (!orgId || !locationId) {
       alert("Select a location first.");
       return;
     }
@@ -513,6 +522,9 @@ export default function CleaningRota() {
       ...prev,
       { task_id: id, run_on: today, done_by: payload.done_by },
     ]);
+
+    // 🎉 Confetti on single completion
+    fireConfetti();
   }
 
   async function uncompleteOne(id: string) {
@@ -576,6 +588,9 @@ export default function CleaningRota() {
         done_by: p.done_by,
       })),
     ]);
+
+    // 🎉 Confetti on bulk completion
+    fireConfetti();
   }
 
   /* ===== RENDER ===== */
@@ -688,7 +703,7 @@ export default function CleaningRota() {
           <div className="mb-3 text-[11px] text-slate-600">
             Tip: on phones you can{" "}
             <span className="font-semibold">
-              swipe a task card right to complete and left to undo
+              swipe a task card left to complete and right to undo
             </span>
             , or just use the Tick / Undo buttons.
           </div>
