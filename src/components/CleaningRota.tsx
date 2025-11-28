@@ -2,7 +2,6 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { useSwipeable } from "react-swipeable";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
@@ -62,7 +61,7 @@ const niceFull = (d: string) =>
     year: "numeric",
   });
 
-/* ================= Swipe Card (Daily – framer-motion) ================= */
+/* ================= Daily Swipe Card (framer-motion) ================= */
 
 type SwipeCardProps = {
   task: Task;
@@ -87,7 +86,7 @@ function SwipeCard({
 
   return (
     <motion.div
-      className="relative mb-2 rounded-xl border border-slate-100 bg-white/90 px-3 py-2 text-sm shadow-sm"
+      className="relative mb-2 rounded-xl border border-slate-100 bg-white/90 px-3 py-2 text-sm shadow-sm touch-pan-y"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 8 }}
@@ -157,7 +156,7 @@ function SwipeCard({
   );
 }
 
-/* ========== Weekly/Monthly Row with react-swipeable (NEW) ========== */
+/* ========== Weekly/Monthly Row with framer-motion swipe (VISIBLE) ========== */
 
 type WeeklyMonthlyTaskRowProps = {
   task: Task;
@@ -178,28 +177,34 @@ function WeeklyMonthlyTaskRow({
   onComplete,
   onUndo,
 }: WeeklyMonthlyTaskRowProps) {
-  const handlers = useSwipeable({
-    // Swipe RIGHT -> complete
-    onSwipedRight: () => {
-      if (!done && initials) {
-        onComplete(task.id, initials);
-      }
-    },
-    // Swipe LEFT -> undo
-    onSwipedLeft: () => {
-      if (done) {
-        onUndo(task.id);
-      }
-    },
-    trackTouch: true,
-    trackMouse: false,
-    delta: 40,
-  });
+  const SWIPE_THRESHOLD = 80;
 
   return (
-    <div
-      {...handlers}
+    <motion.div
       className="flex items-start justify-between gap-2 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-sm shadow-sm touch-pan-y"
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 6 }}
+      layout
+      drag="x"
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.2}
+      dragSnapToOrigin
+      onDragEnd={(_, info) => {
+        const offsetX = info.offset.x;
+
+        // Swipe RIGHT -> complete
+        if (offsetX > SWIPE_THRESHOLD && !done && initials) {
+          onComplete(task.id, initials);
+          return;
+        }
+
+        // Swipe LEFT -> undo
+        if (offsetX < -SWIPE_THRESHOLD && done) {
+          onUndo(task.id);
+          return;
+        }
+      }}
     >
       <div className={done ? "text-gray-500 line-through" : ""}>
         <div className="font-medium text-slate-900">{task.task}</div>
@@ -234,7 +239,7 @@ function WeeklyMonthlyTaskRow({
           Complete
         </button>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -640,7 +645,7 @@ export default function CleaningRota() {
           </div>
         </div>
 
-        {/* ===== Today’s Weekly / Monthly tasks (with swipe) ===== */}
+        {/* ===== Today’s Weekly / Monthly tasks (with visible swipe) ===== */}
         <div className="mt-2 space-y-2">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
             Weekly / Monthly due today
@@ -673,7 +678,7 @@ export default function CleaningRota() {
           )}
         </div>
 
-        {/* ===== Today’s daily tasks – by category with swipe cards ===== */}
+        {/* ===== Today’s daily tasks – by category with scrollable swipe cards ===== */}
         <div className="mt-4">
           <div className="mb-1 flex items-center justify-between">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
@@ -685,7 +690,8 @@ export default function CleaningRota() {
             <span className="font-semibold">
               swipe a task card right to complete and left to undo
             </span>
-            , or just use the Tick / Undo buttons.
+            , or just use the Tick / Undo buttons. Scroll inside the card to
+            see all tasks.
           </div>
 
           {categoriesWithTasks.length === 0 ? (
