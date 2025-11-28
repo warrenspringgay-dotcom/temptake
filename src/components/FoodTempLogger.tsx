@@ -276,6 +276,80 @@ function Pill({ done, onClick }: { done: boolean; onClick: () => void }) {
   );
 }
 
+/* =============== Child component to safely use useSwipeable =============== */
+
+type WeeklyMonthlyTaskRowProps = {
+  task: CleanTask;
+  done: boolean;
+  run: CleanRun | null;
+  initials: string[];
+  ini: string;
+  confirmInitials: string;
+  onComplete: (ids: string[], initials: string) => void;
+  onUncomplete: (id: string) => void;
+};
+
+function WeeklyMonthlyTaskRow({
+  task,
+  done,
+  run,
+  initials,
+  ini,
+  confirmInitials,
+  onComplete,
+  onUncomplete,
+}: WeeklyMonthlyTaskRowProps) {
+  const handlers = useSwipeable({
+    onSwipedLeft: () => {
+      if (!done) {
+        const chosenIni = ini || initials[0] || confirmInitials || "";
+        if (!chosenIni) return;
+        onComplete([task.id], chosenIni);
+      }
+    },
+    onSwipedRight: () => {
+      if (done) {
+        onUncomplete(task.id);
+      }
+    },
+    trackTouch: true,
+    trackMouse: false,
+    delta: 40,
+  });
+
+  const chosenIni = ini || initials[0] || confirmInitials || "";
+
+  return (
+    <div
+      {...handlers}
+      className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 bg-white/80 px-2 py-2 text-sm shadow-sm backdrop-blur-sm touch-pan-y"
+    >
+      <div className={done ? "text-gray-500 line-through" : ""}>
+        <div className="font-medium">{task.task}</div>
+        <div className="text-xs text-gray-500">
+          {task.category ?? task.area ?? "—"} •{" "}
+          {task.frequency === "weekly" ? "Weekly" : "Monthly"}
+        </div>
+        {run?.done_by && (
+          <div className="text-[11px] text-gray-400">Done by {run.done_by}</div>
+        )}
+      </div>
+      <Pill
+        done={done}
+        onClick={() =>
+          done
+            ? onUncomplete(task.id)
+            : chosenIni &&
+              onComplete(
+                [task.id],
+                chosenIni // same selection logic as swipe
+              )
+        }
+      />
+    </div>
+  );
+}
+
 /* =============== Component =============== */
 export default function FoodTempLogger({
   initials: initialsSeed = [],
@@ -551,8 +625,7 @@ export default function FoodTempLogger({
           if (allInsp.length) {
             if (locationId) {
               chosen =
-                allInsp.find((r) => r.location_id === locationId) ??
-                allInsp[0];
+                allInsp.find((r) => r.location_id === locationId) ?? allInsp[0];
             } else {
               chosen = allInsp[0];
             }
@@ -1233,55 +1306,18 @@ export default function FoodTempLogger({
                 const done = runsKey.has(key);
                 const run = runsKey.get(key) || null;
 
-                const handlers = useSwipeable({
-                  onSwipedLeft: () => {
-                    if (!done) {
-                      completeTasks(
-                        [t.id],
-                        ini || initials[0] || confirmInitials || ""
-                      );
-                    }
-                  },
-                  onSwipedRight: () => {
-                    if (done) {
-                      uncompleteTask(t.id);
-                    }
-                  },
-                  trackTouch: true,
-                  trackMouse: false,
-                  delta: 40,
-                });
-
                 return (
-                  <div
+                  <WeeklyMonthlyTaskRow
                     key={t.id}
-                    {...handlers}
-                    className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 bg-white/80 px-2 py-2 text-sm shadow-sm backdrop-blur-sm touch-pan-y"
-                  >
-                    <div className={done ? "text-gray-500 line-through" : ""}>
-                      <div className="font-medium">{t.task}</div>
-                      <div className="text-xs text-gray-500">
-                        {t.category ?? t.area ?? "—"} •{" "}
-                        {t.frequency === "weekly" ? "Weekly" : "Monthly"}
-                      </div>
-                      {run?.done_by && (
-                        <div className="text-[11px] text-gray-400">
-                          Done by {run.done_by}
-                        </div>
-                      )}
-                    </div>
-                    <Pill
-                      done={done}
-                      onClick={() =>
-                        done
-                          ? uncompleteTask(t.id)
-                          : completeTasks(
-                              [t.id],
-                              ini || initials[0] || confirmInitials || ""
-                            )
-                      }
-                    />
-                  </div>
+                    task={t}
+                    done={done}
+                    run={run}
+                    initials={initials}
+                    ini={ini}
+                    confirmInitials={confirmInitials}
+                    onComplete={completeTasks}
+                    onUncomplete={uncompleteTask}
+                  />
                 );
               })}
             </>
@@ -1331,7 +1367,7 @@ export default function FoodTempLogger({
           <h2 className="text-lg font-semibold">Temperature Logs</h2>
           <button
             onClick={refreshRows}
-            className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-1.5 text-sm text-slate-800 shadow-sm hover:bg:white"
+            className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-1.5 text-sm text-slate-800 shadow-sm hover:bg-white"
           >
             Refresh
           </button>
@@ -1512,7 +1548,7 @@ export default function FoodTempLogger({
             {rows.length > rowsToShow.length ? (
               <button
                 type="button"
-                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg:white"
+                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-white"
                 onClick={() => setShowAllLogs(true)}
               >
                 View all
@@ -1520,7 +1556,7 @@ export default function FoodTempLogger({
             ) : rows.length > 10 ? (
               <button
                 type="button"
-                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg:white"
+                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-white"
                 onClick={() => setShowAllLogs(false)}
               >
                 Show latest 10

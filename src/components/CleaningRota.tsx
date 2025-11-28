@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import { useSwipeable } from "react-swipeable";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
@@ -61,7 +62,7 @@ const niceFull = (d: string) =>
     year: "numeric",
   });
 
-/* ================= Swipe Card ================= */
+/* ================= Swipe Card (Daily – framer-motion) ================= */
 
 type SwipeCardProps = {
   task: Task;
@@ -98,11 +99,13 @@ function SwipeCard({
       onDragEnd={(_, info) => {
         const offsetX = info.offset.x;
 
+        // Swipe RIGHT -> complete
         if (offsetX > SWIPE_THRESHOLD && !done && initials) {
           onComplete(task.id, initials);
           return;
         }
 
+        // Swipe LEFT -> undo
         if (offsetX < -SWIPE_THRESHOLD && done) {
           onUndo(task.id);
           return;
@@ -151,6 +154,87 @@ function SwipeCard({
         )}
       </div>
     </motion.div>
+  );
+}
+
+/* ========== Weekly/Monthly Row with react-swipeable (NEW) ========== */
+
+type WeeklyMonthlyTaskRowProps = {
+  task: Task;
+  done: boolean;
+  run: Run | null;
+  today: string;
+  initials: string;
+  onComplete: (taskId: string, initials: string) => void;
+  onUndo: (taskId: string) => void;
+};
+
+function WeeklyMonthlyTaskRow({
+  task,
+  done,
+  run,
+  today,
+  initials,
+  onComplete,
+  onUndo,
+}: WeeklyMonthlyTaskRowProps) {
+  const handlers = useSwipeable({
+    // Swipe RIGHT -> complete
+    onSwipedRight: () => {
+      if (!done && initials) {
+        onComplete(task.id, initials);
+      }
+    },
+    // Swipe LEFT -> undo
+    onSwipedLeft: () => {
+      if (done) {
+        onUndo(task.id);
+      }
+    },
+    trackTouch: true,
+    trackMouse: false,
+    delta: 40,
+  });
+
+  return (
+    <div
+      {...handlers}
+      className="flex items-start justify-between gap-2 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-sm shadow-sm touch-pan-y"
+    >
+      <div className={done ? "text-gray-500 line-through" : ""}>
+        <div className="font-medium text-slate-900">{task.task}</div>
+        <div className="text-xs text-gray-500">
+          {task.category ?? task.area ?? "—"} •{" "}
+          {task.frequency === "weekly" ? "Weekly" : "Monthly"}
+        </div>
+        {run?.done_by && (
+          <div className="text-[11px] text-gray-400">
+            Done by {run.done_by} on {niceShort(today)}
+          </div>
+        )}
+      </div>
+      {done ? (
+        <button
+          className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800"
+          type="button"
+          onClick={() => onUndo(task.id)}
+        >
+          Undo
+        </button>
+      ) : (
+        <button
+          className="shrink-0 rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700 disabled:opacity-50"
+          type="button"
+          disabled={!initials}
+          onClick={() => {
+            if (!initials) return;
+            onComplete(task.id, initials);
+          }}
+        >
+          Complete
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -556,7 +640,7 @@ export default function CleaningRota() {
           </div>
         </div>
 
-        {/* ===== Today’s Weekly / Monthly tasks ===== */}
+        {/* ===== Today’s Weekly / Monthly tasks (with swipe) ===== */}
         <div className="mt-2 space-y-2">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
             Weekly / Monthly due today
@@ -571,41 +655,18 @@ export default function CleaningRota() {
                 const key = `${t.id}|${today}`;
                 const done = runsKey.has(key);
                 const run = runsKey.get(key) || null;
+
                 return (
-                  <div
+                  <WeeklyMonthlyTaskRow
                     key={t.id}
-                    className="flex items-start justify-between gap-2 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-sm shadow-sm"
-                  >
-                    <div className={done ? "text-gray-500 line-through" : ""}>
-                      <div className="font-medium text-slate-900">
-                        {t.task}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {t.category ?? t.area ?? "—"} •{" "}
-                        {t.frequency === "weekly" ? "Weekly" : "Monthly"}
-                      </div>
-                      {run?.done_by && (
-                        <div className="text-[11px] text-gray-400">
-                          Done by {run.done_by}
-                        </div>
-                      )}
-                    </div>
-                    {done ? (
-                      <button
-                        className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800"
-                        onClick={() => uncompleteOne(t.id)}
-                      >
-                        Undo
-                      </button>
-                    ) : (
-                      <button
-                        className="shrink-0 rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700"
-                        onClick={() => completeOne(t.id, ini)}
-                      >
-                        Complete
-                      </button>
-                    )}
-                  </div>
+                    task={t}
+                    done={done}
+                    run={run}
+                    today={today}
+                    initials={ini}
+                    onComplete={completeOne}
+                    onUndo={uncompleteOne}
+                  />
                 );
               })}
             </div>
