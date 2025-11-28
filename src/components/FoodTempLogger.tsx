@@ -3,7 +3,7 @@
 import posthog from "posthog-js";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useSwipeable } from "react-swipeable";
+import { motion } from "framer-motion";
 
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -276,7 +276,7 @@ function Pill({ done, onClick }: { done: boolean; onClick: () => void }) {
   );
 }
 
-/* =============== Child component to safely use useSwipeable =============== */
+/* =============== Weekly/Monthly row with VISIBLE swipe (framer-motion) =============== */
 
 type WeeklyMonthlyTaskRowProps = {
   task: CleanTask;
@@ -299,30 +299,35 @@ function WeeklyMonthlyTaskRow({
   onComplete,
   onUncomplete,
 }: WeeklyMonthlyTaskRowProps) {
-  const handlers = useSwipeable({
-    onSwipedLeft: () => {
-      if (!done) {
-        const chosenIni = ini || initials[0] || confirmInitials || "";
-        if (!chosenIni) return;
-        onComplete([task.id], chosenIni);
-      }
-    },
-    onSwipedRight: () => {
-      if (done) {
-        onUncomplete(task.id);
-      }
-    },
-    trackTouch: true,
-    trackMouse: false,
-    delta: 40,
-  });
-
+  const SWIPE_THRESHOLD = 80;
   const chosenIni = ini || initials[0] || confirmInitials || "";
 
   return (
-    <div
-      {...handlers}
+    <motion.div
       className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 bg-white/80 px-2 py-2 text-sm shadow-sm backdrop-blur-sm touch-pan-y"
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 6 }}
+      layout
+      drag="x"
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.2}
+      dragSnapToOrigin
+      onDragEnd={(_, info) => {
+        const offsetX = info.offset.x;
+
+        // Keep your existing logic:
+        // swipe LEFT => complete, swipe RIGHT => undo
+        if (offsetX < -SWIPE_THRESHOLD && !done && chosenIni) {
+          onComplete([task.id], chosenIni);
+          return;
+        }
+
+        if (offsetX > SWIPE_THRESHOLD && done) {
+          onUncomplete(task.id);
+          return;
+        }
+      }}
     >
       <div className={done ? "text-gray-500 line-through" : ""}>
         <div className="font-medium">{task.task}</div>
@@ -346,7 +351,7 @@ function WeeklyMonthlyTaskRow({
               )
         }
       />
-    </div>
+    </motion.div>
   );
 }
 
@@ -1548,7 +1553,7 @@ export default function FoodTempLogger({
             {rows.length > rowsToShow.length ? (
               <button
                 type="button"
-                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-white"
+                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg:white"
                 onClick={() => setShowAllLogs(true)}
               >
                 View all
@@ -1556,7 +1561,7 @@ export default function FoodTempLogger({
             ) : rows.length > 10 ? (
               <button
                 type="button"
-                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-white"
+                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg:white"
                 onClick={() => setShowAllLogs(false)}
               >
                 Show latest 10

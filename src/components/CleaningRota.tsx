@@ -487,7 +487,7 @@ export default function CleaningRota() {
   async function completeOne(id: string, initialsVal: string) {
     const orgId = await getActiveOrgIdClient();
     const locationId = await getActiveLocationIdClient();
-    if (!orgId || !locationId) {
+       if (!orgId || !locationId) {
       alert("Select a location first.");
       return;
     }
@@ -678,9 +678,9 @@ export default function CleaningRota() {
           )}
         </div>
 
-        {/* ===== Today’s daily tasks – by category with scrollable swipe cards ===== */}
+        {/* ===== Today’s daily tasks – by category with swipe cards (NO scroll on card) ===== */}
         <div className="mt-4">
-          <div className="mb-1 flex items-center justify-between">
+          <div className="mb-1 flex itemscenter justify-between">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
               Daily tasks (checklist by category)
             </div>
@@ -690,8 +690,7 @@ export default function CleaningRota() {
             <span className="font-semibold">
               swipe a task card right to complete and left to undo
             </span>
-            , or just use the Tick / Undo buttons. Scroll inside the card to
-            see all tasks.
+            , or just use the Tick / Undo buttons.
           </div>
 
           {categoriesWithTasks.length === 0 ? (
@@ -746,7 +745,7 @@ export default function CleaningRota() {
                     </div>
 
                     {expanded && (
-                      <div className="mt-1 max-h-72 space-y-2 overflow-y-auto">
+                      <div className="mt-1 space-y-2">
                         {list.map((t) => {
                           const key = `${t.id}|${today}`;
                           const isDone = runsKey.has(key);
@@ -775,7 +774,7 @@ export default function CleaningRota() {
         </div>
       </div>
 
-      {/* ===== Upcoming (7 days) — weekly/monthly only ===== */}
+      {/* ===== Upcoming (next 7 days) — weekly/monthly only ===== */}
       <div className={CARD + " p-4"}>
         <div className="mb-2 text-base font-semibold text-slate-900">
           Upcoming (next 7 days)
