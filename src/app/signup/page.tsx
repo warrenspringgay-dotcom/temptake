@@ -4,6 +4,9 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { signUpAction } from "@/app/actions/auth"; // server action
+import { supabase } from "@/lib/supabaseBrowser";
+import { setActiveOrgIdClient } from "@/lib/orgClient";
+import { setActiveLocationIdClient } from "@/lib/locationClient";
 
 function makeInitials(name: string) {
   return name
@@ -64,23 +67,44 @@ export default function SignupPage() {
     formData.set("email", email.trim().toLowerCase());
     formData.set("password", password);
     formData.set("initials", initials);
-    // optional: where to go after signup
-    formData.set("next", "/dashboard");
+    // where to go after signup
+    formData.set("next", "/leaderboard");
 
     startTransition(async () => {
       try {
-        const result = await signUpAction(
-          { ok: false },
-          formData
-        );
+        const result = await signUpAction({ ok: false }, formData);
 
         if (!result.ok) {
           setError(result.message ?? "Sign up failed. Please try again.");
           return;
         }
 
+        // 🔐 Make sure the BROWSER is now logged in as this new user
+        // (We sign out any old user then sign in with the new creds.)
+        try {
+          await supabase.auth.signOut();
+        } catch {
+          // ignore
+        }
+        const { error: signInErr } = await supabase.auth.signInWithPassword({
+          email: email.trim().toLowerCase(),
+          password,
+        });
+        if (signInErr) {
+          console.error("Post-signup sign-in failed:", signInErr.message);
+          // We still carry on; user can manually log in if needed.
+        }
+
+        // 🏢 Set active org + location for this new account
+        // (signUpAction should be returning these IDs)
+        if (result.orgId) {
+          setActiveOrgIdClient(result.orgId);
+        }
+        if (result.locationId) {
+          setActiveLocationIdClient(result.locationId);
+        }
+
         if (result.message && !result.redirect) {
-          // e.g. “check your email to confirm”
           setInfo(result.message);
         }
 

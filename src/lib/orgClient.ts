@@ -65,3 +65,17 @@ export async function getActiveOrgIdClient(): Promise<string | null> {
 
   return orgId;
 }
+
+/** ✅ NEW: explicitly set the active org ID on the client */
+export function setActiveOrgIdClient(orgId: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (orgId) {
+      window.localStorage.setItem(LS_ACTIVE_ORG, orgId);
+    } else {
+      window.localStorage.removeItem(LS_ACTIVE_ORG);
+    }
+  } catch {
+    // ignore
+  }
+}

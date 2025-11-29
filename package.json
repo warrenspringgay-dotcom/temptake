@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:rls": "vitest run supabase.rls.test.ts"
+    "test:rls": "vitest run supabase.rls.test.ts",
+    "rls:test": "ts-node scripts/rlsSmokeTest.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
@@ -25,6 +26,7 @@
     "class-variance-authority": "^0.7.1",
     "date-fns": "^4.1.0",
     "dayjs": "^1.11.19",
+    "dotenv": "^17.2.3",
     "framer-motion": "^12.23.24",
     "jspdf": "^3.0.1",
     "jspdf-autotable": "^5.0.2",
@@ -54,6 +56,7 @@
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
     "tailwindcss-animate": "^1.0.7",
+    "ts-node": "^10.9.2",
     "typescript": "^5",
     "vitest": "^4.0.13"
   }
