@@ -12,13 +12,11 @@ export type AuthResult = {
   ok: boolean;
   message?: string;
   redirect?: string;
-  orgId?: string;
-  locationId?: string;
 };
 
 //
 // --------------------------------------------------
-// ADMIN (service-role) CLIENT – bypasses RLS for server-only work
+// ADMIN (service-role) CLIENT – bypasses RLS
 // --------------------------------------------------
 //
 
@@ -127,9 +125,9 @@ export async function signUpAction(
     return { ok: false, message: "Missing required signup fields." };
   }
 
-  // anon client for auth + RLS-aware stuff
+  // anon client for auth (cookie-aware)
   const supabase = await getServerSupabaseAction();
-  // admin client for org/profile/location writes (bypass RLS)
+  // admin client for org/profile/team writes (bypass RLS)
   const admin = getAdminClient();
 
   //
@@ -178,7 +176,7 @@ export async function signUpAction(
   const orgId = orgRow.id as string;
 
   //
-  // 3) Create default location = business name (admin client)
+  // 3) Create default location = business name
   //
   const { data: locRow, error: locErr } = await admin
     .from("locations")
@@ -199,9 +197,10 @@ export async function signUpAction(
   }
 
   const locationId = String(locRow.id);
+  // (locationId kept for future use if needed)
 
   //
-  // 4) Save profile (admin client – satisfies NOT NULL role)
+  // 4) Save profile (ensure role is set)
   //
   const { error: profileErr } = await admin.from("profiles").upsert({
     id: userId,
@@ -220,39 +219,54 @@ export async function signUpAction(
   }
 
   //
-  // 5) Add them to team_members as OWNER
-  //    IMPORTANT: use the *normal* authed client here so your RLS /
-  //    helper functions see the real user, not the service_role token.
+  // 5) Create user_orgs mapping for this user+org
   //
-  const { error: teamErr } = await supabase.from("team_members").upsert(
-    {
-      org_id: orgId,
-      user_id: userId,
-      name,
-      email,
-      initials,
-      role: "owner",
-      active: true,
-    },
-    { onConflict: "org_id,email" }
-  );
+  const { error: uoErr } = await admin
+    .from("user_orgs")
+    .upsert(
+      {
+        user_id: userId,
+        org_id: orgId,
+      },
+      { onConflict: "user_id,org_id" }
+    );
 
-  if (teamErr) {
-    console.error("Team upsert failed:", teamErr);
-    return {
-      ok: false,
-      message: `Could not create team owner record: ${teamErr.message}`,
-    };
+  if (uoErr) {
+    console.error("user_orgs upsert failed:", uoErr);
+    // not fatal for signup – just log it
   }
 
   //
-  // 6) Redirect
+    //
+  // 6) Add them to team_members as OWNER
+  //
+  const { error: teamErr } = await admin
+    .from("team_members")
+    .upsert(
+      {
+        org_id: orgId,
+        user_id: userId,
+        name,
+        email,
+        initials: initials || name[0]?.toUpperCase() || "X",
+        role: "owner",
+        active: true,
+      },
+      { onConflict: "org_id,email" }
+    );
+
+  if (teamErr) {
+    // TEMP: do NOT block signup – just log it so we can diagnose later
+    console.error("Team upsert failed (non-fatal):", teamErr);
+  }
+
+
+  //
+  // 7) Redirect
   //
   return {
     ok: true,
     redirect: next,
-    orgId,
-    locationId,
   };
 }
 

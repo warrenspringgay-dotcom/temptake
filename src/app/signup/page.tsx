@@ -1,12 +1,9 @@
 // src/app/signup/page.tsx
 "use client";
 
-import React, { useState, useTransition } from "react";
+import React, { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { signUpAction } from "@/app/actions/auth"; // server action
-import { supabase } from "@/lib/supabaseBrowser";
-import { setActiveOrgIdClient } from "@/lib/orgClient";
-import { setActiveLocationIdClient } from "@/lib/locationClient";
 
 function makeInitials(name: string) {
   return name
@@ -33,7 +30,18 @@ export default function SignupPage() {
 
   const loading = isPending;
 
-  async function handleSubmit(e: React.FormEvent) {
+  // 🔹 IMPORTANT: clear any old org/location from previous user
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.removeItem("tt_active_org");
+      window.localStorage.removeItem("tt_active_location_id");
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
     setInfo(null);
@@ -67,8 +75,7 @@ export default function SignupPage() {
     formData.set("email", email.trim().toLowerCase());
     formData.set("password", password);
     formData.set("initials", initials);
-    // where to go after signup
-    formData.set("next", "/leaderboard");
+    formData.set("next", "/dashboard");
 
     startTransition(async () => {
       try {
@@ -77,31 +84,6 @@ export default function SignupPage() {
         if (!result.ok) {
           setError(result.message ?? "Sign up failed. Please try again.");
           return;
-        }
-
-        // 🔐 Make sure the BROWSER is now logged in as this new user
-        // (We sign out any old user then sign in with the new creds.)
-        try {
-          await supabase.auth.signOut();
-        } catch {
-          // ignore
-        }
-        const { error: signInErr } = await supabase.auth.signInWithPassword({
-          email: email.trim().toLowerCase(),
-          password,
-        });
-        if (signInErr) {
-          console.error("Post-signup sign-in failed:", signInErr.message);
-          // We still carry on; user can manually log in if needed.
-        }
-
-        // 🏢 Set active org + location for this new account
-        // (signUpAction should be returning these IDs)
-        if (result.orgId) {
-          setActiveOrgIdClient(result.orgId);
-        }
-        if (result.locationId) {
-          setActiveLocationIdClient(result.locationId);
         }
 
         if (result.message && !result.redirect) {

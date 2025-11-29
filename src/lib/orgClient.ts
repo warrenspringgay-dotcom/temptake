@@ -46,15 +46,13 @@ export async function getActiveOrgIdClient(): Promise<string | null> {
       orgId = tmRow.org_id as string;
 
       // Create user_orgs mapping so next time is fast & consistent
-      await supabase
-        .from("user_orgs")
-        .upsert(
-          {
-            user_id: user.id,
-            org_id: orgId,
-          },
-          { onConflict: "user_id,org_id" }
-        );
+      await supabase.from("user_orgs").upsert(
+        {
+          user_id: user.id,
+          org_id: orgId,
+        },
+        { onConflict: "user_id,org_id" }
+      );
     }
   }
 
@@ -66,15 +64,26 @@ export async function getActiveOrgIdClient(): Promise<string | null> {
   return orgId;
 }
 
-/** ✅ NEW: explicitly set the active org ID on the client */
-export function setActiveOrgIdClient(orgId: string | null) {
+/**
+ * Explicitly set the active org ID on the client.
+ * Used right after signup so we don't carry over a previous org.
+ */
+export function setActiveOrgIdClient(id: string) {
   if (typeof window === "undefined") return;
   try {
-    if (orgId) {
-      window.localStorage.setItem(LS_ACTIVE_ORG, orgId);
-    } else {
-      window.localStorage.removeItem(LS_ACTIVE_ORG);
-    }
+    window.localStorage.setItem(LS_ACTIVE_ORG, id);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Optional helper if you ever want to clear active org.
+ */
+export function clearActiveOrgIdClient() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(LS_ACTIVE_ORG);
   } catch {
     // ignore
   }
