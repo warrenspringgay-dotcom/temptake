@@ -311,7 +311,7 @@ export default function LaunchPage() {
                 </div>
 
                 <ul className="mt-4 space-y-1.5 text-sm text-slate-200">
-                  <li>• Full access to TempTake features.</li>
+                  <li>• ull access to TempTake features.</li>
                   <li>• Priority support and feature input.</li>
                   <li>• Preferential launch pricing afterwards.</li>
                 </ul>
@@ -345,10 +345,10 @@ export default function LaunchPage() {
                 </p>
 
                 <div className="mt-4 text-2xl font-semibold text-slate-200">
-                  From £&mdash;/month
+                  From £9.99/month
                   <span className="text-sm font-normal text-slate-400">
                     {" "}
-                    per site (TBC)
+                    per site
                   </span>
                 </div>
 
