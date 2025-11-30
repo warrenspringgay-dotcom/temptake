@@ -35,7 +35,7 @@ export default function LaunchPage() {
           <div className="md:w-1/2">
             <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Early access · Coming soon
+              Early access for beta testers · Coming soon
             </div>
 
             <h1 className="mt-5 text-3xl font-semibold leading-tight sm:text-4xl lg:text-5xl">
@@ -77,19 +77,19 @@ export default function LaunchPage() {
                 onClick={() => setDemoOpen(true)}
                 className="inline-flex items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20"
               >
-                See staff leaderboard & shout-outs
+              Leaderboard & the wall
               </button>
             </div>
 
             <dl className="mt-8 grid grid-cols-2 gap-4 text-xs text-slate-200 sm:text-sm md:max-w-md">
               <div>
                 <dt className="text-slate-400">Built for</dt>
-                <dd className="mt-0.5 font-semibold">UK cafes, pubs & QSR</dd>
+                <dd className="mt-0.5 font-semibold">Restaurants, bistros, pubs & takeaways</dd>
               </div>
               <div>
                 <dt className="text-slate-400">What it covers</dt>
                 <dd className="mt-0.5 font-semibold">
-                  Temps • Cleaning • Allergen review
+                  Temps • Cleaning • Allergy info • EHO admin
                 </dd>
               </div>
               <div>
