@@ -16,7 +16,7 @@ export type AuthResult = {
 
 //
 // --------------------------------------------------
-// ADMIN (service-role) CLIENT – bypasses RLS
+// ADMIN (service-role) CLIENT – bypasses RLS for server-only work
 // --------------------------------------------------
 //
 
@@ -125,7 +125,7 @@ export async function signUpAction(
     return { ok: false, message: "Missing required signup fields." };
   }
 
-  // anon client for auth (cookie-aware)
+  // anon client for auth
   const supabase = await getServerSupabaseAction();
   // admin client for org/profile/team writes (bypass RLS)
   const admin = getAdminClient();
@@ -169,7 +169,7 @@ export async function signUpAction(
     console.error("Org insert failed:", orgErr);
     return {
       ok: false,
-      message: `Could not create organisation: ${orgErr?.message ?? ""}`,
+      message: "Could not create organisation.",
     };
   }
 
@@ -192,15 +192,15 @@ export async function signUpAction(
     console.error("Location insert failed:", locErr);
     return {
       ok: false,
-      message: `Could not create default location: ${locErr?.message ?? ""}`,
+      message: "Could not create default location.",
     };
   }
 
   const locationId = String(locRow.id);
-  // (locationId kept for future use if needed)
+  // (locationId is for client use; RLS doesn't care here)
 
   //
-  // 4) Save profile (ensure role is set)
+  // 4) Save profile  ✅ includes role: "owner"
   //
   const { error: profileErr } = await admin.from("profiles").upsert({
     id: userId,
@@ -214,51 +214,62 @@ export async function signUpAction(
     console.error("Profile upsert failed:", profileErr);
     return {
       ok: false,
-      message: `Could not save profile: ${profileErr.message}`,
+      message: "Could not save profile.",
     };
   }
 
   //
-  // 5) Create user_orgs mapping for this user+org
+  // 5) Map user -> org in user_orgs  ✅ important for RLS helpers
   //
-  const { error: uoErr } = await admin
-    .from("user_orgs")
-    .upsert(
-      {
-        user_id: userId,
-        org_id: orgId,
-      },
-      { onConflict: "user_id,org_id" }
-    );
+  const { error: userOrgErr } = await admin.from("user_orgs").upsert(
+    {
+      user_id: userId,
+      org_id: orgId,
+      is_default: true,
+    },
+    { onConflict: "user_id,org_id" }
+  );
 
-  if (uoErr) {
-    console.error("user_orgs upsert failed:", uoErr);
-    // not fatal for signup – just log it
+  if (userOrgErr) {
+    console.error("user_orgs upsert failed:", userOrgErr);
+    // not fatal, but log it; many RLS helpers rely on this
   }
 
   //
-    //
-  // 6) Add them to team_members as OWNER
+  // 6) Add them to team_members as OWNER  ✅ via service role, so RLS won't block
   //
-  const { error: teamErr } = await admin
-    .from("team_members")
-    .upsert(
-      {
-        org_id: orgId,
-        user_id: userId,
-        name,
-        email,
-        initials: initials || name[0]?.toUpperCase() || "X",
-        role: "owner",
-        active: true,
-      },
-      { onConflict: "org_id,email" }
-    );
+  const { data: teamData, error: teamErr, status: teamStatus } = await admin
+  .from("team_members")
+  .insert({
+    org_id: orgId,
+    user_id: userId,
+    name,
+    email,
+    initials: initials || (name[0]?.toUpperCase() ?? ""),
+    role: "owner",
+    active: true,
+  })
+  .select();
 
-  if (teamErr) {
-    // TEMP: do NOT block signup – just log it so we can diagnose later
-    console.error("Team upsert failed (non-fatal):", teamErr);
-  }
+if (teamErr) {
+  console.error("TEAM OWNER INSERT FAILED:");
+  console.error("Status:", teamStatus);
+  console.error("Error:", teamErr);
+  console.error("Payload sent:", {
+    org_id: orgId,
+    user_id: userId,
+    name,
+    email,
+    initials: initials || (name[0]?.toUpperCase() ?? ""),
+    role: "owner",
+    active: true,
+  });
+
+  return {
+    ok: false,
+    message: `Team owner insert failed: ${teamErr.message}`,
+  };
+}
 
 
   //

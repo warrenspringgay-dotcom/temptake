@@ -5,25 +5,66 @@ import { supabase } from "@/lib/supabaseBrowser";
 
 const LS_ACTIVE_ORG = "tt_active_org";
 
+// What we keep in localStorage now
+type OrgCache = {
+  user_id: string;
+  org_id: string;
+};
+
+function readCachedOrg(userId: string): string | null {
+  if (typeof window === "undefined") return null;
+
+  const raw = window.localStorage.getItem(LS_ACTIVE_ORG);
+  if (!raw) return null;
+
+  // Old format was just a plain org_id string – treat that as invalid
+  try {
+    const parsed = JSON.parse(raw) as OrgCache;
+    if (parsed && parsed.user_id === userId && parsed.org_id) {
+      return parsed.org_id;
+    }
+  } catch {
+    // ignore parse errors from old format and fall through
+  }
+
+  return null;
+}
+
+function writeCachedOrg(userId: string, orgId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const payload: OrgCache = { user_id: userId, org_id: orgId };
+    window.localStorage.setItem(LS_ACTIVE_ORG, JSON.stringify(payload));
+  } catch {
+    // ignore quota etc.
+  }
+}
+
+/**
+ * Get the active org for the *current logged in user*.
+ * Uses localStorage as a per-user cache, then falls back to:
+ *   - user_orgs (preferred)
+ *   - team_members by email (bootstrap)
+ */
 export async function getActiveOrgIdClient(): Promise<string | null> {
   // 1) Who is logged in?
   const { data: userRes } = await supabase.auth.getUser();
   const user = userRes.user;
   if (!user) return null;
 
-  // 2) Check localStorage first
-  if (typeof window !== "undefined") {
-    const stored = window.localStorage.getItem(LS_ACTIVE_ORG);
-    if (stored) return stored;
-  }
+  const userId = user.id;
+
+  // 2) Per-user localStorage cache
+  const cached = readCachedOrg(userId);
+  if (cached) return cached;
 
   let orgId: string | null = null;
 
-  // 3) Try existing user_orgs mapping
+  // 3) Try user_orgs mapping
   const { data: uoRow, error: uoErr } = await supabase
     .from("user_orgs")
     .select("org_id")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .order("created_at", { ascending: true })
     .maybeSingle();
 
@@ -31,7 +72,7 @@ export async function getActiveOrgIdClient(): Promise<string | null> {
     orgId = uoRow.org_id as string;
   }
 
-  // 4) If no mapping yet, try to infer from team_members by email
+  // 4) If no mapping yet, infer from team_members by email
   if (!orgId && user.email) {
     const email = user.email.toLowerCase();
 
@@ -45,46 +86,33 @@ export async function getActiveOrgIdClient(): Promise<string | null> {
     if (!tmErr && tmRow?.org_id) {
       orgId = tmRow.org_id as string;
 
-      // Create user_orgs mapping so next time is fast & consistent
-      await supabase.from("user_orgs").upsert(
-        {
-          user_id: user.id,
-          org_id: orgId,
-        },
-        { onConflict: "user_id,org_id" }
-      );
+      // Make the mapping so next time is faster
+      await supabase
+        .from("user_orgs")
+        .upsert(
+          {
+            user_id: userId,
+            org_id: orgId,
+          },
+          { onConflict: "user_id,org_id" }
+        );
     }
   }
 
-  // 5) Cache in localStorage for the session
-  if (orgId && typeof window !== "undefined") {
-    window.localStorage.setItem(LS_ACTIVE_ORG, orgId);
+  // 5) Cache for this specific user
+  if (orgId) {
+    writeCachedOrg(userId, orgId);
   }
 
   return orgId;
 }
 
 /**
- * Explicitly set the active org ID on the client.
- * Used right after signup so we don't carry over a previous org.
+ * Optional helper if you want to explicitly set org after signup / switching org.
  */
-export function setActiveOrgIdClient(id: string) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(LS_ACTIVE_ORG, id);
-  } catch {
-    // ignore
-  }
-}
-
-/**
- * Optional helper if you ever want to clear active org.
- */
-export function clearActiveOrgIdClient() {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(LS_ACTIVE_ORG);
-  } catch {
-    // ignore
-  }
+export async function setActiveOrgIdClient(orgId: string) {
+  const { data: userRes } = await supabase.auth.getUser();
+  const user = userRes.user;
+  if (!user) return;
+  writeCachedOrg(user.id, orgId);
 }
