@@ -13,7 +13,7 @@ const fakeNotes = [
   { initials: "MK", message: "Paper logs can die in a fire" },
   { initials: "TR", message: "Take my money already" },
   { initials: "DW", message: "Saved me 90 mins today. 90!" },
-  { initials: "RH", message: "My CDP just high-fived me for logging a temp", },
+  { initials: "RH", message: "My CDP just high-fived me for logging a temp" },
   { initials: "LF", message: "EHO walked in, pressed one button, walked out happy" },
   { initials: "NP", message: "This is the Slack we actually needed" },
 ];
@@ -24,8 +24,8 @@ export default function LaunchPage() {
   const [demoOpen, setDemoOpen] = useState(false);
 
   return (
-    // Full-screen wrapper so this page covers the whole viewport
-    <div className="fixed inset-0 z-20 overflow-y-auto">
+    // Add overflow-x-hidden so nothing makes the page scroll sideways on mobile
+    <div className="fixed inset-0 z-20 overflow-y-auto overflow-x-hidden">
       {/* Tally embed script */}
       <Script src="https://tally.so/widgets/embed.js" async />
 
@@ -158,6 +158,8 @@ export default function LaunchPage() {
             </div>
           </div>
         </section>
+
+      
 
         {/* ----------------------- FEATURE GRID ----------------------- */}
         <section className="border-t border-white/10 bg-slate-950/70">
