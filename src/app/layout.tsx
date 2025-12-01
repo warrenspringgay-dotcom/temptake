@@ -2,7 +2,7 @@
 import "./globals.css";
 import { Analytics } from "@vercel/analytics/next";
 
-import NavTabs from "@/components/NavTabs"; // (still used in HeaderShell, but TS will tree-shake if not)
+import NavTabs from "@/components/NavTabs";
 import MobileMenu from "@/components/MobileMenu";
 import UserMenu from "@/components/UserMenu";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
@@ -33,7 +33,7 @@ export default async function RootLayout({
         <PHProvider>
           <ToastProvider>
             <GlobalLoadingProvider>
-              {/* Header + NavTabs are now hidden on / and /launch via HeaderShell */}
+              {/* Header + NavTabs are hidden on / and /launch via HeaderShell */}
               <HeaderShell user={user} />
 
               <Pwa />

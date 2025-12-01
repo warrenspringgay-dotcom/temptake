@@ -10,7 +10,6 @@ import UserMenu from "@/components/UserMenu";
 import OrgName from "@/components/OrgName";
 import LocationSwitcher from "@/components/LocationSwitcher";
 
-// Keep the type loose – we only pass it through to MobileMenu
 type HeaderShellProps = {
   user: any;
 };
@@ -18,9 +17,12 @@ type HeaderShellProps = {
 export default function HeaderShell({ user }: HeaderShellProps) {
   const pathname = usePathname();
 
-  // Hide header + nav on marketing / launch pages
+  // Pages that should NOT show the header or nav
   const hideHeader =
-    pathname === "/" || pathname.startsWith("/launch");
+    pathname === "/" ||
+    pathname.startsWith("/launch") ||
+    pathname === "/app" ||
+    pathname.startsWith("/demo-wall");
 
   if (hideHeader) return null;
 
@@ -28,6 +30,7 @@ export default function HeaderShell({ user }: HeaderShellProps) {
     <header className="sticky top-0 z-50 border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/70">
       <div className="mx-auto max-w-6xl px-4">
         <div className="flex h-12 items-center gap-3">
+
           {/* Left: brand */}
           <Link href="/dashboard" className="flex items-center gap-2">
             <Image
@@ -44,7 +47,7 @@ export default function HeaderShell({ user }: HeaderShellProps) {
             <OrgName className="block truncate text-center text-xs font-semibold" />
           </div>
 
-          {/* Desktop: nav tabs */}
+          {/* Desktop nav tabs */}
           <div className="mx-auto hidden md:block">
             <NavTabs />
           </div>
@@ -55,12 +58,12 @@ export default function HeaderShell({ user }: HeaderShellProps) {
               <LocationSwitcher />
             </div>
 
-            {/* Desktop menu */}
+            {/* Desktop user menu */}
             <div className="hidden md:block">
               <UserMenu />
             </div>
 
-            {/* Mobile menu (still gets user) */}
+            {/* Mobile menu */}
             <div className="md:hidden">
               <MobileMenu user={user} />
             </div>
