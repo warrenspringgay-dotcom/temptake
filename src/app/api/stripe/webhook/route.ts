@@ -13,9 +13,15 @@ async function upsertSubscriptionFromStripeObject(sub: Stripe.Subscription) {
   const status = sub.status; // 'trialing', 'active', 'canceled', etc.
   const subscriptionId = sub.id;
 
-  const currentPeriodEnd = sub.current_period_end
-    ? new Date(sub.current_period_end * 1000).toISOString()
-    : null;
+  // Stripe's TypeScript types for Subscription don't currently expose
+// `current_period_end`, but it *is* present at runtime, so we cast here.
+const rawCurrentPeriodEnd =
+  (sub as any).current_period_end as number | null | undefined;
+
+const currentPeriodEnd = rawCurrentPeriodEnd
+  ? new Date(rawCurrentPeriodEnd * 1000).toISOString()
+  : null;
+
 
   const cancelAtPeriodEnd = !!sub.cancel_at_period_end;
 
@@ -156,39 +162,38 @@ export async function POST(req: NextRequest) {
         break;
       }
 
-      case "customer.subscription.created":
-      case "customer.subscription.updated":
-      case "customer.subscription.deleted": {
-        const sub = event.data.object as Stripe.Subscription;
-        await upsertSubscriptionFromStripeObject(sub);
-        break;
-      }
+   case "invoice.payment_succeeded":
+case "invoice.paid": {
+  // Safety net: if for some reason we missed the subscription events,
+  // grab subscription from the invoice and upsert it anyway.
+  const invoice = event.data.object as Stripe.Invoice;
 
-      case "invoice.payment_succeeded":
-      case "invoice.paid": {
-        const invoice = event.data.object as Stripe.Invoice;
-        const subField = invoice.subscription;
+  // Not on the TS type, but present at runtime – cast to any.
+  const subField =
+    (invoice as any).subscription as string | Stripe.Subscription | null | undefined;
 
-        if (subField) {
-          const subId =
-            typeof subField === "string" ? subField : subField.id;
+  if (subField) {
+    const subId =
+      typeof subField === "string" ? subField : subField.id;
 
-          try {
-            const sub = await stripe.subscriptions.retrieve(subId);
-            await upsertSubscriptionFromStripeObject(sub);
-          } catch (e: any) {
-            console.error(
-              "[stripe webhook] failed to retrieve subscription from invoice:",
-              e?.message
-            );
-          }
-        } else {
-          console.log(
-            "[stripe webhook] invoice has no subscription field, skipping"
-          );
-        }
+    try {
+      const sub = await stripe.subscriptions.retrieve(subId);
+      await upsertSubscriptionFromStripeObject(sub);
+    } catch (e: any) {
+      console.error(
+        "[stripe webhook] failed to retrieve subscription from invoice:",
+        e?.message
+      );
+    }
+  } else {
+    console.log(
+      "[stripe webhook] invoice has no subscription field, skipping"
+    );
+  }
 
-        break;
+  break;
+
+
       }
 
       default:

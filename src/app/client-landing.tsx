@@ -166,13 +166,13 @@ export default function LaunchPage() {
           <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-12 md:py-16">
             <div className="max-w-2xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
-                Everything your EHO wants to see,
+                Everything you need to ACE inspections,
                 <span className="text-emerald-300"> in one place.</span>
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                TempTake keeps daily checks simple so your team actually keep up with
-                them. No more chasing clipboards or half-filled log sheets.
-              </p>
+                TempTake keeps daily checks simple speeding up time spent on non-profit tasks.
+         No more chasing clipboards or half-filled log sheets.
+          </p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
@@ -215,7 +215,7 @@ export default function LaunchPage() {
               <StepCard
                 step="Day 1"
                 title="Add your kitchen"
-                body="Set up fridges, freezers, hot hold, cleaning areas and key allergen items. We’ll help you with sensible defaults."
+                body="Set up temp routines, cleaning rotas and allergen info. We’ll help you with sensible defaults."
               />
               <StepCard
                 step="Day 2–3"
@@ -225,7 +225,7 @@ export default function LaunchPage() {
               <StepCard
                 step="Day 4–7"
                 title="Run your first week"
-                body="Run service as normal – TempTake quietly collects logs in the background so you’re inspection-ready anytime."
+                body="Run service as normal – TempTake prompts staff so you’re inspection-ready anytime."
               />
             </ol>
           </div>
