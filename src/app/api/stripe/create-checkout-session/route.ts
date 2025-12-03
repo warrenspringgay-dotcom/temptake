@@ -1,24 +1,51 @@
 // src/app/api/stripe/create-checkout-session/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { stripe, STRIPE_PRICE_MONTHLY, STRIPE_PRICE_YEARLY } from "@/lib/stripe";
-import { createServerClient } from "@/lib/supabaseServer";
+import {
+  stripe,
+  STRIPE_PRICE_MONTHLY,
+  STRIPE_PRICE_YEARLY,
+} from "@/lib/stripe";
+import { getServerSupabaseAction } from "@/lib/supabaseServer";
+
+async function getActiveOrgIdForUser(supabase: any, userId: string) {
+  // 🔧 Adjust to your real schema if needed
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("org_id")
+    .eq("id", userId)
+    .single();
+
+  if (error || !data?.org_id) {
+    console.error("[billing] no org_id for user", userId, error);
+    throw new Error("No org linked to this user");
+  }
+
+  return data.org_id as string;
+}
 
 export async function POST(req: NextRequest) {
   try {
-    const sb = await createServerClient();
+    const supabase = await getServerSupabaseAction();
+
     const {
       data: { user },
       error: authError,
-    } = await sb.auth.getUser();
+    } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Not authenticated" },
+        { status: 401 }
+      );
     }
+
+    const orgId = await getActiveOrgIdForUser(supabase, user.id);
 
     const body = await req.json().catch(() => ({}));
     const plan = body?.plan === "annual" ? "annual" : "monthly";
 
-    const priceId = plan === "annual" ? STRIPE_PRICE_YEARLY : STRIPE_PRICE_MONTHLY;
+    const priceId =
+      plan === "annual" ? STRIPE_PRICE_YEARLY : STRIPE_PRICE_MONTHLY;
 
     if (!priceId) {
       return NextResponse.json(
@@ -34,30 +61,39 @@ export async function POST(req: NextRequest) {
     const successUrl = `${origin}/billing?success=1`;
     const cancelUrl = `${origin}/billing?canceled=1`;
 
-    // Create a Stripe Checkout Session
+    // Try to reuse existing Stripe customer for this org
+    const { data: existingCust } = await supabase
+      .from("billing_customers")
+      .select("stripe_customer_id")
+      .eq("org_id", orgId)
+      .maybeSingle();
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price: priceId,
-          quantity: 1,
+      // If we already have a customer for this org, reuse it
+      customer: existingCust?.stripe_customer_id ?? undefined,
+      // Otherwise let Stripe create a new customer from the email
+      customer_email: existingCust ? undefined : user.email ?? undefined,
+      line_items: [{ price: priceId, quantity: 1 }],
+
+      // 🔥 FREE TRIAL
+      subscription_data: {
+        trial_period_days: 14, // 👈 free trial length
+        metadata: {
+          org_id: orgId,
         },
-      ],
-      customer_email: user.email ?? undefined,
-      metadata: {
-        supabase_user_id: user.id,
       },
+
       success_url: successUrl,
       cancel_url: cancelUrl,
-    });
 
-    if (!session.url) {
-      return NextResponse.json(
-        { error: "Unable to create checkout session" },
-        { status: 500 }
-      );
-    }
+      // Session-level metadata (still useful for debugging / cross-checking)
+      metadata: {
+        supabase_user_id: user.id,
+        org_id: orgId,
+        plan,
+      },
+    });
 
     return NextResponse.json({ url: session.url });
   } catch (err: any) {

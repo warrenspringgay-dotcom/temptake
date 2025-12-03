@@ -1,138 +1,206 @@
 // src/app/api/stripe/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import type Stripe from "stripe";
 
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+const isProd = process.env.NODE_ENV === "production";
+
+async function upsertSubscriptionFromStripeObject(sub: Stripe.Subscription) {
+  const customerId =
+    typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+
+  const status = sub.status; // 'trialing', 'active', 'canceled', etc.
+  const subscriptionId = sub.id;
+
+  const currentPeriodEnd = sub.current_period_end
+    ? new Date(sub.current_period_end * 1000).toISOString()
+    : null;
+
+  const cancelAtPeriodEnd = !!sub.cancel_at_period_end;
+
+  const trialEndsAt = sub.trial_end
+    ? new Date(sub.trial_end * 1000).toISOString()
+    : null;
+
+  // Look up org linked to this Stripe customer
+  const { data: custRows, error: custError } = await supabaseAdmin
+    .from("billing_customers")
+    .select("org_id")
+    .eq("stripe_customer_id", customerId)
+    .limit(1);
+
+  if (custError) {
+    console.error("[stripe webhook] lookup billing_customers error:", custError);
+    return;
+  }
+
+  const orgId = custRows?.[0]?.org_id as string | undefined;
+  if (!orgId) {
+    console.warn(
+      "[stripe webhook] no billing_customers row for customer",
+      customerId
+    );
+    return;
+  }
+
+  const { error: subError } = await supabaseAdmin
+    .from("billing_subscriptions")
+    .upsert(
+      {
+        org_id: orgId,
+        stripe_subscription_id: subscriptionId,
+        status,
+        current_period_end: currentPeriodEnd,
+        cancel_at_period_end: cancelAtPeriodEnd,
+        trial_ends_at: trialEndsAt,
+      },
+      { onConflict: "org_id" } // one sub row per org
+    );
+
+  if (subError) {
+    console.error(
+      "[stripe webhook] upsert billing_subscriptions error:",
+      subError
+    );
+  } else {
+    console.log(
+      "[stripe webhook] upserted subscription for org",
+      orgId,
+      "status:",
+      status,
+      "trial_ends_at:",
+      trialEndsAt
+    );
+  }
+}
+
+// …keep the rest of the webhook handler as you already have…
 
 export async function POST(req: NextRequest) {
-  if (!webhookSecret) {
-    console.error("[stripe] STRIPE_WEBHOOK_SECRET not set");
-    return new NextResponse("Webhook not configured", { status: 500 });
-  }
-
-  const sig = req.headers.get("stripe-signature");
-  if (!sig) {
-    return new NextResponse("Missing Stripe signature", { status: 400 });
-  }
-
   let event: Stripe.Event;
 
   try {
-    const body = await req.text(); // raw body for signature verification
-    event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
+    if (isProd) {
+      const sig = req.headers.get("stripe-signature");
+      const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+      if (!sig || !webhookSecret) {
+        console.error(
+          "[stripe webhook] missing stripe-signature or STRIPE_WEBHOOK_SECRET"
+        );
+        return NextResponse.json({ error: "Bad request" }, { status: 400 });
+      }
+
+      const rawBody = await req.text();
+      event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
+    } else {
+      const json = await req.json();
+      event = json as Stripe.Event;
+    }
   } catch (err: any) {
-    console.error("[stripe] Webhook signature verification failed", err?.message);
-    return new NextResponse(`Webhook Error: ${err?.message ?? "invalid"}`, {
-      status: 400,
-    });
+    console.error("[stripe webhook] signature/parse error:", err?.message);
+    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
 
   try {
+    console.log("[stripe webhook] event type:", event.type);
+
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
 
+        const orgId = session.metadata?.org_id as string | undefined;
         const customerId = session.customer as string | null;
-        const userId = session.metadata?.supabase_user_id as string | undefined;
+        const supabaseUserId =
+          (session.metadata?.supabase_user_id as string | undefined) ?? null;
 
-        if (customerId && userId) {
-          // Upsert mapping user ↔ stripe customer
+        console.log("[stripe webhook] checkout.session.completed payload", {
+          orgId,
+          customerId,
+          metadata: session.metadata,
+        });
+
+        if (orgId && customerId) {
           const { error } = await supabaseAdmin
             .from("billing_customers")
             .upsert(
               {
-                user_id: userId,
+                org_id: orgId,
+                user_id: supabaseUserId ?? null,
                 stripe_customer_id: customerId,
               },
-              {
-                onConflict: "user_id",
-              }
+              { onConflict: "org_id" }
             );
 
           if (error) {
             console.error(
-              "[stripe] Error upserting billing_customers from checkout.session.completed",
+              "[stripe webhook] upsert billing_customers error:",
               error
             );
+          } else {
+            console.log(
+              "[stripe webhook] billing_customers upserted",
+              orgId,
+              "->",
+              customerId
+            );
           }
+        } else {
+          console.warn(
+            "[stripe webhook] checkout.session.completed missing org or customer",
+            { orgId, customerId }
+          );
         }
+
         break;
       }
 
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
-        const subscription = event.data.object as Stripe.Subscription;
-        const customerId = subscription.customer as string;
+        const sub = event.data.object as Stripe.Subscription;
+        await upsertSubscriptionFromStripeObject(sub);
+        break;
+      }
 
-        // Find the user for this Stripe customer
-        const { data: customerRow, error: customerErr } = await supabaseAdmin
-          .from("billing_customers")
-          .select("user_id")
-          .eq("stripe_customer_id", customerId)
-          .maybeSingle();
+      case "invoice.payment_succeeded":
+      case "invoice.paid": {
+        const invoice = event.data.object as Stripe.Invoice;
+        const subField = invoice.subscription;
 
-        if (customerErr) {
-          console.error(
-            "[stripe] Error fetching billing_customers for subscription event",
-            customerErr
-          );
-          break;
-        }
+        if (subField) {
+          const subId =
+            typeof subField === "string" ? subField : subField.id;
 
-        if (!customerRow?.user_id) {
-          console.warn(
-            "[stripe] No billing_customers row for subscription customer",
-            customerId
-          );
-          break;
-        }
-
-        const userId = customerRow.user_id as string;
-        const price = subscription.items.data[0]?.price;
-        const currentPeriodEnd = subscription.current_period_end
-          ? new Date(subscription.current_period_end * 1000).toISOString()
-          : null;
-
-        const status = subscription.status; // 'active', 'trialing', 'past_due', 'canceled', etc.
-
-        const { error: subError } = await supabaseAdmin
-          .from("billing_subscriptions")
-          .upsert(
-            {
-              user_id: userId,
-              stripe_subscription_id: subscription.id,
-              status,
-              price_id: price?.id ?? null,
-              current_period_end: currentPeriodEnd,
-              cancel_at_period_end: subscription.cancel_at_period_end ?? false,
-            },
-            {
-              onConflict: "stripe_subscription_id",
-            }
-          );
-
-        if (subError) {
-          console.error(
-            "[stripe] Error upserting billing_subscriptions",
-            subError
+          try {
+            const sub = await stripe.subscriptions.retrieve(subId);
+            await upsertSubscriptionFromStripeObject(sub);
+          } catch (e: any) {
+            console.error(
+              "[stripe webhook] failed to retrieve subscription from invoice:",
+              e?.message
+            );
+          }
+        } else {
+          console.log(
+            "[stripe webhook] invoice has no subscription field, skipping"
           );
         }
 
         break;
       }
 
-      default: {
-        // We don't handle this event type yet
-        // console.log(`[stripe] Unhandled event type ${event.type}`);
-      }
+      default:
+        console.log("[stripe webhook] ignoring event type:", event.type);
     }
 
-    return new NextResponse("OK", { status: 200 });
+    return NextResponse.json({ received: true });
   } catch (err: any) {
-    console.error("[stripe] Webhook handler error", err);
-    return new NextResponse("Webhook handler error", { status: 500 });
+    console.error("[stripe webhook] handler crashed:", err);
+    return NextResponse.json(
+      { error: "Webhook handler error", details: err?.message ?? null },
+      { status: 500 }
+    );
   }
 }

@@ -1,5 +1,5 @@
 // src/lib/subscription.ts
-import { createServerClient } from "@/lib/supabaseServer";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 export type SubscriptionStatus =
   | "active"
@@ -20,7 +20,7 @@ export type UserSubscriptionInfo = {
 };
 
 export async function getSubscriptionForCurrentUser(): Promise<UserSubscriptionInfo> {
-  const supabase = await createServerClient();
+  const supabase = await getServerSupabase();
 
   const {
     data: { user },
