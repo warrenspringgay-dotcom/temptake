@@ -6,9 +6,10 @@ import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import Pwa from "@/components/Pwa";
 import { ToastProvider } from "@/components/ui/use-toast";
 import { GlobalLoadingProvider } from "@/components/GlobalLoadingProvider";
+import TempFab from "@/components/QuickActionsFab";
 import { PHProvider } from "@/components/PosthogProvider";
 import { getUserOrNull } from "@/app/actions/auth";
-import HeaderShell from "./HeaderShell"; // 👈 fix path
+import HeaderShell from "./app/HeaderShell";
 
 export default async function RootLayout({
   children,
@@ -17,31 +18,32 @@ export default async function RootLayout({
 }) {
   const user = await getUserOrNull();
 
-  const initialUser = user
-    ? {
-        id: user.id,
-        email: user.email,
-        fullName: (user.user_metadata as any)?.full_name ?? null,
-      }
-    : null;
-
   return (
     <html lang="en">
-      <head>{/* meta tags, title, etc. */}</head>
+      <head>{/* your meta/manifest tags here */}</head>
 
       <body className="bg-gray-100 text-gray-900">
         <PHProvider>
           <ToastProvider>
             <GlobalLoadingProvider>
-              {/* Header + NavTabs + UserMenu, hidden on / and /launch */}
-              <HeaderShell user={user} initialUser={initialUser} />
+              {/* Header with brand, nav, location, user menu */}
+              <HeaderShell user={user} />
 
               <Pwa />
 
-              <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+              <main className="mx-auto max-w-6xl px-4 py-6">
+                {children}
+              </main>
 
               {/* Tally script for the whole app */}
-              <script src="https://tally.so/widgets/embed.js" async />
+              <script
+                src="https://tally.so/widgets/embed.js"
+                async
+              ></script>
+
+              {/* FAB – if you want this hidden with no sub, we can hook it
+                  up to the same useSubscriptionStatus later */}
+              <TempFab />
 
               <ServiceWorkerRegister />
             </GlobalLoadingProvider>

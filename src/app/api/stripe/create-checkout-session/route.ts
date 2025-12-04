@@ -8,16 +8,21 @@ import {
 import { getServerSupabaseAction } from "@/lib/supabaseServer";
 
 async function getActiveOrgIdForUser(supabase: any, userId: string) {
-  // 🔧 Adjust to your real schema if needed
   const { data, error } = await supabase
     .from("profiles")
     .select("org_id")
     .eq("id", userId)
-    .single();
+    .maybeSingle();
 
-  if (error || !data?.org_id) {
+  // Any “real” error that isn't just "no rows"
+  if (error && error.code !== "PGRST116") {
+    console.error("[billing] error loading org_id for user", { userId, error });
+    throw new Error("Failed to load organisation");
+  }
+
+  if (!data?.org_id) {
     console.error("[billing] no org_id for user", userId, error);
-    throw new Error("No org linked to this user");
+    return null; // 👈 caller will handle nicely
   }
 
   return data.org_id as string;
@@ -40,6 +45,16 @@ export async function POST(req: NextRequest) {
     }
 
     const orgId = await getActiveOrgIdForUser(supabase, user.id);
+
+    if (!orgId) {
+      return NextResponse.json(
+        {
+          error:
+            "No kitchen/organisation is linked to this account yet. Please finish setup first.",
+        },
+        { status: 400 }
+      );
+    }
 
     const body = await req.json().catch(() => ({}));
     const plan = body?.plan === "annual" ? "annual" : "monthly";
@@ -70,15 +85,18 @@ export async function POST(req: NextRequest) {
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
+
       // If we already have a customer for this org, reuse it
       customer: existingCust?.stripe_customer_id ?? undefined,
+
       // Otherwise let Stripe create a new customer from the email
       customer_email: existingCust ? undefined : user.email ?? undefined,
+
       line_items: [{ price: priceId, quantity: 1 }],
 
       // 🔥 FREE TRIAL
       subscription_data: {
-        trial_period_days: 14, // 👈 free trial length
+        trial_period_days: 14, // free trial length
         metadata: {
           org_id: orgId,
         },

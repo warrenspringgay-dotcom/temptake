@@ -2,105 +2,148 @@
 import { NextRequest, NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 const isProd = process.env.NODE_ENV === "production";
 
-// Lazy admin client so env is only accessed at runtime
-function getSupabaseAdmin() {
-  const url = process.env.SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+/**
+ * From a checkout session:
+ *  - resolve org_id + user_id
+ *  - upsert billing_customers (one row per org)
+ *  - upsert billing_subscriptions (one row per org)
+ */
+async function handleCheckoutSessionCompleted(
+  session: Stripe.Checkout.Session
+) {
+  const customerId = (session.customer ?? null) as string | null;
+  const subscriptionId = (session.subscription ?? null) as string | null;
+  const meta = session.metadata ?? {};
 
-  if (!url || !serviceKey) {
-    throw new Error(
-      "supabaseAdmin: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing"
-    );
+  let orgId = (meta.org_id as string | undefined) ?? null;
+  let supabaseUserId = (meta.supabase_user_id as string | undefined) ?? null;
+
+  // ---- Fallback: resolve via email if metadata missing ----
+  if (!orgId || !supabaseUserId) {
+    const email =
+      session.customer_details?.email ??
+      (session.customer_email as string | null) ??
+      null;
+
+    if (email) {
+      const { data: profile, error } = await supabaseAdmin
+        .from("profiles")
+        .select("id, org_id")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (error) {
+        console.error(
+          "[stripe webhook] profiles lookup error (fallback via email):",
+          error
+        );
+      }
+
+      if (profile) {
+        if (!orgId) orgId = profile.org_id ?? null;
+        if (!supabaseUserId) supabaseUserId = profile.id ?? null;
+      }
+    }
   }
 
-  return createClient(url, serviceKey, {
-    auth: { persistSession: false },
-  });
-}
-
-async function upsertSubscriptionFromStripeObject(sub: Stripe.Subscription) {
-  const supabaseAdmin = getSupabaseAdmin();
-
-  const customerId =
-    typeof sub.customer === "string" ? sub.customer : sub.customer.id;
-
-  const status = sub.status; // 'trialing', 'active', 'canceled', etc.
-  const subscriptionId = sub.id;
-
-  // `current_period_end` isn’t on the TS type but is present at runtime.
-  const rawCurrentPeriodEnd =
-    (sub as any).current_period_end as number | null | undefined;
-
-  const currentPeriodEnd = rawCurrentPeriodEnd
-    ? new Date(rawCurrentPeriodEnd * 1000).toISOString()
-    : null;
-
-  const cancelAtPeriodEnd = !!sub.cancel_at_period_end;
-
-  const trialEndsAt = sub.trial_end
-    ? new Date(sub.trial_end * 1000).toISOString()
-    : null;
-
-  // Look up org linked to this Stripe customer
-  const { data: custRows, error: custError } = await supabaseAdmin
-    .from("billing_customers")
-    .select("org_id")
-    .eq("stripe_customer_id", customerId)
-    .limit(1);
-
-  if (custError) {
-    console.error("[stripe webhook] lookup billing_customers error:", custError);
-    return;
-  }
-
-  const orgId = custRows?.[0]?.org_id as string | undefined;
   if (!orgId) {
     console.warn(
-      "[stripe webhook] no billing_customers row for customer",
-      customerId
+      "[stripe webhook] checkout.session.completed: could not resolve org_id",
+      {
+        sessionId: session.id,
+        customerId,
+        metadata: meta,
+      }
     );
     return;
   }
 
-  const { error: subError } = await supabaseAdmin
-    .from("billing_subscriptions")
-    .upsert(
-      {
-        org_id: orgId,
-        stripe_subscription_id: subscriptionId,
-        status,
-        current_period_end: currentPeriodEnd,
-        cancel_at_period_end: cancelAtPeriodEnd,
-        trial_ends_at: trialEndsAt,
-      },
-      { onConflict: "org_id" } // one subscription row per org
-    );
+  // 1) Upsert billing_customers (keyed by org_id)
+  if (customerId) {
+    const { error: custErr } = await supabaseAdmin
+      .from("billing_customers")
+      .upsert(
+        {
+          org_id: orgId,
+          user_id: supabaseUserId ?? null,
+          stripe_customer_id: customerId,
+        },
+        { onConflict: "org_id" } // one customer row per org
+      );
 
-  if (subError) {
-    console.error(
-      "[stripe webhook] upsert billing_subscriptions error:",
-      subError
-    );
-  } else {
-    console.log(
-      "[stripe webhook] upserted subscription for org",
-      orgId,
-      "status:",
-      status,
-      "trial_ends_at:",
-      trialEndsAt
-    );
+    if (custErr) {
+      console.error(
+        "[stripe webhook] upsert billing_customers error:",
+        custErr
+      );
+    } else {
+      console.log(
+        "[stripe webhook] billing_customers upserted",
+        orgId,
+        "->",
+        customerId
+      );
+    }
+  }
+
+  // 2) Upsert billing_subscriptions (keyed by org_id)
+  if (subscriptionId) {
+    const sub = await stripe.subscriptions.retrieve(subscriptionId);
+
+    const status = sub.status; // 'trialing', 'active', etc.
+    const trialEndsAt = sub.trial_end
+      ? new Date(sub.trial_end * 1000).toISOString()
+      : null;
+
+    // TS types don’t expose this, but it’s present at runtime
+    const rawCurrentPeriodEnd =
+      (sub as any).current_period_end as number | null | undefined;
+    const currentPeriodEnd = rawCurrentPeriodEnd
+      ? new Date(rawCurrentPeriodEnd * 1000).toISOString()
+      : null;
+
+    const cancelAtPeriodEnd = !!sub.cancel_at_period_end;
+
+    const { error: subErr } = await supabaseAdmin
+      .from("billing_subscriptions")
+      .upsert(
+        {
+          org_id: orgId,
+          stripe_subscription_id: sub.id,
+          status,
+          trial_ends_at: trialEndsAt,
+          current_period_end: currentPeriodEnd,
+          cancel_at_period_end: cancelAtPeriodEnd,
+        },
+        { onConflict: "org_id" } // one sub row per org
+      );
+
+    if (subErr) {
+      console.error(
+        "[stripe webhook] upsert billing_subscriptions error:",
+        subErr
+      );
+    } else {
+      console.log(
+        "[stripe webhook] upserted subscription for org",
+        orgId,
+        "status:",
+        status,
+        "trial_ends_at:",
+        trialEndsAt
+      );
+    }
   }
 }
 
 export async function POST(req: NextRequest) {
   let event: Stripe.Event;
 
-  // 1) Verify / parse event
+  // ---- Verify / parse event ----
   try {
     if (isProd) {
       const sig = req.headers.get("stripe-signature");
@@ -124,110 +167,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  // 2) Handle event
+  console.log("[stripe webhook] event type:", event.type);
+
+  // ---- Handle event ----
   try {
-    console.log("[stripe webhook] event type:", event.type);
-
-    const supabaseAdmin = getSupabaseAdmin();
-
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
-
-        const orgId = session.metadata?.org_id as string | undefined;
-        const customerId = session.customer as string | null;
-        const supabaseUserId =
-          (session.metadata?.supabase_user_id as string | undefined) ?? null;
-
-        console.log("[stripe webhook] checkout.session.completed payload", {
-          orgId,
-          customerId,
-          metadata: session.metadata,
-        });
-
-        if (orgId && customerId) {
-          const { error } = await supabaseAdmin
-            .from("billing_customers")
-            .upsert(
-              {
-                org_id: orgId,
-                user_id: supabaseUserId ?? null,
-                stripe_customer_id: customerId,
-              },
-              { onConflict: "org_id" }
-            );
-
-          if (error) {
-            console.error(
-              "[stripe webhook] upsert billing_customers error:",
-              error
-            );
-          } else {
-            console.log(
-              "[stripe webhook] billing_customers upserted",
-              orgId,
-              "->",
-              customerId
-            );
-          }
-        } else {
-          console.warn(
-            "[stripe webhook] checkout.session.completed missing org or customer",
-            { orgId, customerId }
-          );
-        }
-
+        await handleCheckoutSessionCompleted(session);
         break;
       }
 
-      case "customer.subscription.created":
-      case "customer.subscription.updated":
-      case "customer.subscription.deleted": {
-        const sub = event.data.object as Stripe.Subscription;
-        await upsertSubscriptionFromStripeObject(sub);
-        break;
-      }
-
-      case "invoice.payment_succeeded":
-      case "invoice.paid": {
-        // Safety net: if we somehow miss the subscription events,
-        // grab subscription from the invoice and upsert it anyway.
-        const invoice = event.data.object as Stripe.Invoice;
-
-        // Not on the TS type, but present at runtime – cast to any.
-        const subField =
-          (invoice as any).subscription as
-            | string
-            | Stripe.Subscription
-            | null
-            | undefined;
-
-        if (subField) {
-          const subId =
-            typeof subField === "string" ? subField : subField.id;
-
-          try {
-            const sub = await stripe.subscriptions.retrieve(subId);
-            await upsertSubscriptionFromStripeObject(sub);
-          } catch (e: any) {
-            console.error(
-              "[stripe webhook] failed to retrieve subscription from invoice:",
-              e?.message
-            );
-          }
-        } else {
-          console.log(
-            "[stripe webhook] invoice has no subscription field, skipping"
-          );
-        }
-
-        break;
-      }
-
-      default: {
+      // We don't strictly need the others any more – they’re just logged.
+      default:
         console.log("[stripe webhook] ignoring event type:", event.type);
-        break;
-      }
     }
 
     return NextResponse.json({ received: true });
