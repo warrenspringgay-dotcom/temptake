@@ -2,26 +2,42 @@
 import { NextRequest, NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { createClient } from "@supabase/supabase-js";
 
 const isProd = process.env.NODE_ENV === "production";
 
+// Lazy admin client so env is only accessed at runtime
+function getSupabaseAdmin() {
+  const url = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceKey) {
+    throw new Error(
+      "supabaseAdmin: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing"
+    );
+  }
+
+  return createClient(url, serviceKey, {
+    auth: { persistSession: false },
+  });
+}
+
 async function upsertSubscriptionFromStripeObject(sub: Stripe.Subscription) {
+  const supabaseAdmin = getSupabaseAdmin();
+
   const customerId =
     typeof sub.customer === "string" ? sub.customer : sub.customer.id;
 
   const status = sub.status; // 'trialing', 'active', 'canceled', etc.
   const subscriptionId = sub.id;
 
-  // Stripe's TypeScript types for Subscription don't currently expose
-// `current_period_end`, but it *is* present at runtime, so we cast here.
-const rawCurrentPeriodEnd =
-  (sub as any).current_period_end as number | null | undefined;
+  // `current_period_end` isn’t on the TS type but is present at runtime.
+  const rawCurrentPeriodEnd =
+    (sub as any).current_period_end as number | null | undefined;
 
-const currentPeriodEnd = rawCurrentPeriodEnd
-  ? new Date(rawCurrentPeriodEnd * 1000).toISOString()
-  : null;
-
+  const currentPeriodEnd = rawCurrentPeriodEnd
+    ? new Date(rawCurrentPeriodEnd * 1000).toISOString()
+    : null;
 
   const cancelAtPeriodEnd = !!sub.cancel_at_period_end;
 
@@ -61,7 +77,7 @@ const currentPeriodEnd = rawCurrentPeriodEnd
         cancel_at_period_end: cancelAtPeriodEnd,
         trial_ends_at: trialEndsAt,
       },
-      { onConflict: "org_id" } // one sub row per org
+      { onConflict: "org_id" } // one subscription row per org
     );
 
   if (subError) {
@@ -81,11 +97,10 @@ const currentPeriodEnd = rawCurrentPeriodEnd
   }
 }
 
-// …keep the rest of the webhook handler as you already have…
-
 export async function POST(req: NextRequest) {
   let event: Stripe.Event;
 
+  // 1) Verify / parse event
   try {
     if (isProd) {
       const sig = req.headers.get("stripe-signature");
@@ -109,8 +124,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
 
+  // 2) Handle event
   try {
     console.log("[stripe webhook] event type:", event.type);
+
+    const supabaseAdmin = getSupabaseAdmin();
 
     switch (event.type) {
       case "checkout.session.completed": {
@@ -162,42 +180,54 @@ export async function POST(req: NextRequest) {
         break;
       }
 
-   case "invoice.payment_succeeded":
-case "invoice.paid": {
-  // Safety net: if for some reason we missed the subscription events,
-  // grab subscription from the invoice and upsert it anyway.
-  const invoice = event.data.object as Stripe.Invoice;
-
-  // Not on the TS type, but present at runtime – cast to any.
-  const subField =
-    (invoice as any).subscription as string | Stripe.Subscription | null | undefined;
-
-  if (subField) {
-    const subId =
-      typeof subField === "string" ? subField : subField.id;
-
-    try {
-      const sub = await stripe.subscriptions.retrieve(subId);
-      await upsertSubscriptionFromStripeObject(sub);
-    } catch (e: any) {
-      console.error(
-        "[stripe webhook] failed to retrieve subscription from invoice:",
-        e?.message
-      );
-    }
-  } else {
-    console.log(
-      "[stripe webhook] invoice has no subscription field, skipping"
-    );
-  }
-
-  break;
-
-
+      case "customer.subscription.created":
+      case "customer.subscription.updated":
+      case "customer.subscription.deleted": {
+        const sub = event.data.object as Stripe.Subscription;
+        await upsertSubscriptionFromStripeObject(sub);
+        break;
       }
 
-      default:
+      case "invoice.payment_succeeded":
+      case "invoice.paid": {
+        // Safety net: if we somehow miss the subscription events,
+        // grab subscription from the invoice and upsert it anyway.
+        const invoice = event.data.object as Stripe.Invoice;
+
+        // Not on the TS type, but present at runtime – cast to any.
+        const subField =
+          (invoice as any).subscription as
+            | string
+            | Stripe.Subscription
+            | null
+            | undefined;
+
+        if (subField) {
+          const subId =
+            typeof subField === "string" ? subField : subField.id;
+
+          try {
+            const sub = await stripe.subscriptions.retrieve(subId);
+            await upsertSubscriptionFromStripeObject(sub);
+          } catch (e: any) {
+            console.error(
+              "[stripe webhook] failed to retrieve subscription from invoice:",
+              e?.message
+            );
+          }
+        } else {
+          console.log(
+            "[stripe webhook] invoice has no subscription field, skipping"
+          );
+        }
+
+        break;
+      }
+
+      default: {
         console.log("[stripe webhook] ignoring event type:", event.type);
+        break;
+      }
     }
 
     return NextResponse.json({ received: true });
