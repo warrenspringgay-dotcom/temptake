@@ -1,17 +1,12 @@
 // src/components/UserMenu.tsx
 "use client";
 
-import React, {
-  useEffect,
-  useRef,
-  useState,
-  useTransition,
-} from "react";
+import React, { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseBrowser";
 import { signOutAction } from "@/app/actions/auth";
 
-type UserInfo = {
+export type UserInfo = {
   id: string;
   email: string | null;
   fullName: string | null;
@@ -21,7 +16,6 @@ function getInitials(nameOrEmail: string | null | undefined) {
   if (!nameOrEmail) return "?";
 
   const name = nameOrEmail.trim();
-  // if it looks like an email, use first letter
   if (name.includes("@")) {
     return name[0]?.toUpperCase() ?? "?";
   }
@@ -35,13 +29,16 @@ function getInitials(nameOrEmail: string | null | undefined) {
   );
 }
 
-export default function UserMenu() {
-  const [user, setUser] = useState<UserInfo | null>(null);
+type Props = {
+  initialUser?: UserInfo | null;
+};
+
+export default function UserMenu({ initialUser = null }: Props) {
+  const [user, setUser] = useState<UserInfo | null>(initialUser);
   const [isPending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
 
-  // Load current user from Supabase (client) and listen for changes
+  // Load / keep user in sync with Supabase client
   useEffect(() => {
     let mounted = true;
 
@@ -60,7 +57,10 @@ export default function UserMenu() {
       }
     }
 
-    loadUser();
+    // If we didn't get a server user, fetch from client
+    if (!initialUser) {
+      loadUser();
+    }
 
     const { data: authSub } = supabase.auth.onAuthStateChange(
       (_event, session) => {
@@ -82,45 +82,19 @@ export default function UserMenu() {
       mounted = false;
       authSub.subscription.unsubscribe();
     };
-  }, []);
-
-  // Close when clicking outside
-  useEffect(() => {
-    if (!open) return;
-
-    function handleClickOutside(e: MouseEvent) {
-      if (!rootRef.current) return;
-      if (!rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [open]);
+  }, [initialUser]);
 
   const initials = getInitials(user?.fullName || user?.email || null);
 
   function handleSignOut() {
-    // Close menu straight away
-    setOpen(false);
-
-    // Clear client session immediately
     supabase.auth.signOut().catch(() => {});
-    // Then run server sign-out (clears cookies + redirects to /login)
     startTransition(() => {
       signOutAction();
     });
   }
 
-  // Helper so we don't repeat setOpen(false) everywhere
-  const closeAnd = (fn?: () => void) => () => {
-    setOpen(false);
-    fn?.();
-  };
-
   return (
-    <div className="relative" ref={rootRef}>
+    <div className="relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -130,7 +104,10 @@ export default function UserMenu() {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-200 bg-white shadow-lg">
+        <div
+          className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-200 bg-white shadow-lg"
+          onMouseLeave={() => setOpen(false)}
+        >
           <div className="px-4 py-3 border-b border-slate-100 text-xs text-slate-500">
             {user ? (
               <>
@@ -152,42 +129,42 @@ export default function UserMenu() {
                 <Link
                   href="/settings"
                   className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={closeAnd()}
+                  onClick={() => setOpen(false)}
                 >
                   Settings
                 </Link>
                 <Link
                   href="/food-hygiene"
                   className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={closeAnd()}
+                  onClick={() => setOpen(false)}
                 >
                   Food hygiene rating log
                 </Link>
                 <Link
                   href="/locations"
                   className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={closeAnd()}
+                  onClick={() => setOpen(false)}
                 >
                   Locations
                 </Link>
                 <Link
                   href="/billing"
                   className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={closeAnd()}
+                  onClick={() => setOpen(false)}
                 >
                   Billing &amp; subscription
                 </Link>
                 <Link
                   href="/help"
                   className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={closeAnd()}
+                  onClick={() => setOpen(false)}
                 >
                   Help &amp; support
                 </Link>
 
                 <button
                   type="button"
-                  onClick={closeAnd(handleSignOut)}
+                  onClick={handleSignOut}
                   disabled={isPending}
                   className="mt-1 block w-full px-4 py-2 text-left text-red-600 hover:bg-red-50 disabled:opacity-60"
                 >
@@ -199,21 +176,21 @@ export default function UserMenu() {
                 <Link
                   href="/login"
                   className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={closeAnd()}
+                  onClick={() => setOpen(false)}
                 >
                   Login
                 </Link>
                 <Link
                   href="/signup"
                   className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={closeAnd()}
+                  onClick={() => setOpen(false)}
                 >
                   Create account
                 </Link>
                 <Link
                   href="/help"
                   className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={closeAnd()}
+                  onClick={() => setOpen(false)}
                 >
                   Help &amp; support
                 </Link>
