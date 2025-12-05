@@ -1,4 +1,4 @@
-// src/components/QuickActionsFab.tsx
+// src/components/TempFab.tsx
 "use client";
 import posthog from "posthog-js";
 
@@ -103,43 +103,6 @@ export default function TempFab() {
   const [pickerErr, setPickerErr] = useState<string | null>(null);
   const [pickerList, setPickerList] = useState<RoutineRow[]>([]);
   const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
-
-  // 🔒 Billing gate: hide FAB completely if org has no valid subscription / trial
-  const [hasBillingAccess, setHasBillingAccess] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadBilling() {
-      try {
-        const res = await fetch("/api/billing/status");
-        if (!res.ok) {
-          throw new Error("Failed to load billing status");
-        }
-        const json = await res.json();
-        if (!cancelled) {
-          // API should return { hasValid: boolean, ... }
-          if (typeof json?.hasValid === "boolean") {
-            setHasBillingAccess(json.hasValid);
-          } else {
-            // Fail-open: if billing endpoint is weird, don't nuke FAB for everyone
-            setHasBillingAccess(true);
-          }
-        }
-      } catch {
-        if (!cancelled) {
-          // If billing API is down, keep FAB visible for safety
-          setHasBillingAccess(true);
-        }
-      }
-    }
-
-    loadBilling();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   /* --------- helpers --------- */
 
@@ -487,12 +450,12 @@ export default function TempFab() {
       type: "success",
     });
 
-    posthog.capture("temp_quick_log_saved", {
-      source: "fab_quick",
-      target_key: form.target_key,
-      temp_c: tempNum,
-      status,
-    });
+posthog.capture("temp_quick_log_saved", {
+  source: "fab_quick",
+  target_key: form.target_key,
+  temp_c: tempNum,
+  status,
+});
 
     // reset item + temp, keep date/initials/location
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
@@ -601,14 +564,6 @@ export default function TempFab() {
 
   /* --------- render --------- */
 
-  // ⛔ If billing status hasn’t loaded yet, or billing is invalid, hide FAB entirely
-  if (hasBillingAccess === null) {
-    return null;
-  }
-  if (hasBillingAccess === false) {
-    return null;
-  }
-
   const wrapperClass =
     entriesToday !== null && entriesToday === 0 ? "no-temps-today" : "";
 
@@ -624,10 +579,11 @@ export default function TempFab() {
         {/* Main FAB */}
         <button
           type="button"
-          onClick={() => {
-            setShowMenu((v) => !v);
-            posthog.capture("fab_opened");
-          }}
+         onClick={() => {
+  setShowMenu((v) => !v);
+  posthog.capture("fab_opened");
+}}
+
           className="fab relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 text-3xl font-bold leading-none text-white shadow-lg shadow-emerald-500/40 hover:brightness-110"
         >
           <span>+</span>
@@ -637,11 +593,12 @@ export default function TempFab() {
         {showTempWarning && (
           <button
             type="button"
-            onClick={() => {
-              setShowMenu(false);
-              setOpen(true);
-              posthog.capture("temp_warning_orb_clicked");
-            }}
+           onClick={() => {
+  setShowMenu(false);
+  setOpen(true);
+  posthog.capture("temp_warning_orb_clicked");
+}}
+
             className="absolute -top-2 -right-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white shadow-md shadow-red-500/60 active:scale-90 transition cursor-pointer"
           >
             <Thermometer className="h-4 w-4" />
@@ -653,9 +610,10 @@ export default function TempFab() {
           <button
             type="button"
             onClick={() => {
-              router.push("/cleaning-rota");
-              posthog.capture("cleaning_warning_orb_clicked");
-            }}
+  router.push("/cleaning-rota");
+  posthog.capture("cleaning_warning_orb_clicked");
+}}
+
             className="absolute -top-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white shadow-md shadow-sky-500/60 active:scale-90 transition cursor-pointer"
           >
             <Brush className="h-4 w-4" />
@@ -681,10 +639,11 @@ export default function TempFab() {
                 <button
                   type="button"
                   onClick={() => {
-                    setShowMenu(false);
-                    setOpen(true);
-                    posthog.capture("fab_choose_quick_temp");
-                  }}
+  setShowMenu(false);
+  setOpen(true);
+  posthog.capture("fab_choose_quick_temp");
+}}
+
                   className="w-full rounded-xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/40 hover:brightness-105"
                 >
                   Quick temp log
@@ -692,10 +651,11 @@ export default function TempFab() {
                 <button
                   type="button"
                   onClick={() => {
-                    setShowMenu(false);
-                    router.push("/wall");
-                    posthog.capture("fab_choose_wall");
-                  }}
+  setShowMenu(false);
+  router.push("/wall");
+  posthog.capture("fab_choose_wall");
+}}
+
                   className="w-full rounded-xl bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-500/40 hover:brightness-105"
                 >
                   Open wall
@@ -963,7 +923,7 @@ export default function TempFab() {
         onClose={() => setRunRoutine(null)}
         onSaved={async () => {
           addToast({ title: "Routine logged", type: "success" });
-          posthog.capture("routine_logged_from_fab");
+            posthog.capture("routine_logged_from_fab");
           setRunRoutine(null);
           await refreshEntriesToday();
           await refreshCleaningOpen();

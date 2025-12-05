@@ -633,7 +633,8 @@ function AppStoreFeatureBlocks() {
               monthly tasks directly in front of your team.
             </p>
             <ul className="space-y-1.5 text-sm text-slate-300">
-              <li>• Split by area: pass, pot wash, cold room, toilets and more.</li>
+              <li>• Simple indicator of what tasks need completing when.</li>
+              <li>• Staff incentivised upon completing tasks with points.</li>
               <li>• Swipe to complete with initials and time.</li>
               <li>• Managers see overdue tasks instantly.</li>
             </ul>

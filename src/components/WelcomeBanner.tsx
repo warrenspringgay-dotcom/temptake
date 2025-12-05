@@ -1,59 +1,114 @@
-// src/components/WelcomeBanner.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { getBillingStatusClient } from "@/lib/billingClient"; // ← You already have this from earlier work
+
+type BillingInfo = {
+  status: string | null;
+  trialEndsAt: string | null;
+  planName: string | null;
+};
 
 export default function WelcomeBanner() {
-  const [show, setShow] = useState(false);
+  const [billing, setBilling] = useState<BillingInfo | null>(null);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const flag = localStorage.getItem("tt_welcome_pending");
-      if (flag === "1") {
-        setShow(true);
-        localStorage.removeItem("tt_welcome_pending");
+    async function load() {
+      try {
+        const data = await getBillingStatusClient();
+        setBilling({
+          status: data?.status ?? null,
+          trialEndsAt: data?.trial_ends_at ?? null,
+          planName: data?.plan_name ?? null,
+        });
+      } catch {
+        setBilling(null);
       }
-    } catch {
-      // ignore
     }
+    load();
   }, []);
 
-  if (!show) return null;
+  // ========== UI LOGIC ==========
+  let banner = null;
 
-  return (
-    <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-      <div className="flex items-start gap-3">
-        <div className="mt-[2px] text-lg">🎉</div>
-        <div className="flex-1">
-          <div className="font-semibold">Welcome to TempTake!</div>
-          <p className="mt-1">
-            We’ve set up your organisation and default settings. You can update
-            your business name and preferred location any time in{" "}
-            <Link
-              href="/settings"
-              className="underline underline-offset-2 font-medium"
-            >
-              Settings
+  if (billing) {
+    const s = billing.status;
+    const trialEnd = billing.trialEndsAt
+      ? new Date(billing.trialEndsAt)
+      : null;
+
+    if (s === "trialing" && trialEnd) {
+      const daysLeft = Math.ceil(
+        (trialEnd.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      );
+
+      banner = (
+        <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-amber-900">
+          <p className="font-semibold">
+            Your free trial is active — {daysLeft} day{daysLeft !== 1 ? "s" : ""} remaining.
+          </p>
+          <p className="text-sm mt-1">
+            Trial ends on {trialEnd.toLocaleDateString("en-GB")}.{" "}
+            <Link href="/billing" className="underline">
+              Manage subscription
             </Link>
-            . Need guidance? Visit the{" "}
-            <Link
-              href="/help"
-              className="underline underline-offset-2 font-medium"
-            >
-              Help centre
-            </Link>
-            .
           </p>
         </div>
-        <button
-          type="button"
-          className="ml-2 rounded-full px-2 py-1 text-xs text-emerald-900/70 hover:bg-emerald-100"
-          onClick={() => setShow(false)}
-        >
-          Close
-        </button>
+      );
+    }
+
+    if (s === "past_due" || s === "unpaid") {
+      banner = (
+        <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-red-800">
+          <p className="font-semibold">Payment required</p>
+          <p className="text-sm mt-1">
+            Your subscription needs attention.{" "}
+            <Link href="/billing" className="underline font-semibold">
+              Update payment details
+            </Link>
+          </p>
+        </div>
+      );
+    }
+
+    if (s === "active") {
+      banner = (
+        <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-emerald-900">
+          <p className="font-semibold">
+            Subscription active — {billing.planName}
+          </p>
+          <p className="text-sm mt-1">
+            Thank you for being a TempTake customer!
+          </p>
+        </div>
+      );
+    }
+
+    if (s === null) {
+      banner = (
+        <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-slate-700">
+          <p className="font-semibold">No subscription yet</p>
+          <p className="text-sm mt-1">
+            Start your trial to unlock temperatures, cleaning, allergens and full reporting.{" "}
+            <Link href="/billing" className="underline font-semibold">
+              Choose a plan
+            </Link>
+          </p>
+        </div>
+      );
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {banner}
+
+      <div className="rounded-xl bg-white border p-6 shadow-sm">
+        <h1 className="text-xl font-semibold">Welcome to TempTake 👋</h1>
+        <p className="text-slate-600 mt-1">
+          Your daily food safety checks all in one place.
+        </p>
       </div>
     </div>
   );

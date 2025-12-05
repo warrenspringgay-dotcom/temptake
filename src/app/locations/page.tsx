@@ -1,6 +1,7 @@
 // src/app/locations/page.tsx
 import React from "react";
 import LocationsManager from "@/components/LocationsManager";
+import LocationPlanNotice from "@/components/LocationPlanNotice";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,9 @@ export default function LocationsPage() {
           which location’s logs and cleaning tasks you’re working on.
         </p>
       </div>
+
+      {/* 🔒 Show plan / limit info for this org */}
+      <LocationPlanNotice />
 
       <LocationsManager />
     </div>
