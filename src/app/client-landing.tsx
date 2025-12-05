@@ -170,7 +170,7 @@ export default function LaunchPage() {
                 <span className="text-emerald-300"> in one place.</span>
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                TempTake keeps daily checks simple speeding up time spent on non-profit tasks.
+                TempTake keeps daily checks simple - speeding up time spent on non-profit tasks.
          No more chasing clipboards or half-filled log sheets.
           </p>
             </div>
@@ -179,7 +179,7 @@ export default function LaunchPage() {
               <FeatureCard
                 title="Temperature logging"
                 pill="Fridges, freezers & hot hold"
-                description="One-tap logging with built-in pass / fail ranges and simple trends so you can show a clear record at any time."
+                description="One-tap logging with pre-set routines. Cuts time spent by staff and keeps records safe."
               />
               <FeatureCard
                 title="Cleaning rota"
@@ -189,7 +189,7 @@ export default function LaunchPage() {
               <FeatureCard
                 title="Allergen & training"
                 pill="Matrix & certificates"
-                description="Keep track of allergen reviews and staff food safety training so nothing quietly expires in the background."
+                description="Keep track of allergy info and staff food safety training so nothing quietly expires in the background."
               />
             </div>
           </div>
