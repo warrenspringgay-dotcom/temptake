@@ -683,8 +683,9 @@ function AppStoreFeatureBlocks() {
               everyone&apos;s Level 2 is still in date.
             </p>
             <ul className="space-y-1.5 text-sm text-slate-300">
+              <li>• Keep allergy info upto date and clear.</li>
               <li>• Track allergen matrix reviews by date.</li>
-              <li>• Keep staff training records together, not in random folders.</li>
+              <li>• Keep staff training records together and get reminders</li>
               <li>• Show an EHO you have a clear system, not chaos.</li>
             </ul>
           </div>

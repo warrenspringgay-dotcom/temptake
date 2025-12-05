@@ -3,32 +3,23 @@
 
 import useSWR from "swr";
 
-type StatusResponse = {
-  hasValid: boolean;
-  status: string | null;
-  trialEndsAt: string | null;
-  cancelAtPeriodEnd?: boolean | null;
-  currentPeriodEnd?: string | null;
-  reason?: string | null;
-};
-
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export function useSubscriptionStatus() {
-  const { data, error, isLoading } = useSWR<StatusResponse>(
+  const { data, error, isLoading } = useSWR(
     "/api/billing/status",
     fetcher,
     {
-      refreshInterval: 60_000, // refresh every 60s
+      refreshInterval: 60_000, // poll every 60s
     }
   );
 
   return {
-    hasValid: data?.hasValid ?? false,
-    status: data?.status ?? null,
-    trialEndsAt: data?.trialEndsAt ?? null,
-    isLoading,
+    loading: isLoading,
     error,
-    raw: data,
+    status: data?.status ?? null,
+    hasValid: data?.hasValid ?? false,
+    trialEndsAt: data?.trialEndsAt ?? null,
+    currentPeriodEnd: data?.currentPeriodEnd ?? null,
   };
 }
