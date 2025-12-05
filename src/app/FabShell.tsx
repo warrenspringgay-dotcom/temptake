@@ -11,6 +11,7 @@ export default function FabShell() {
   const hideFab =
     pathname === "/" ||
     pathname.startsWith("/launch") ||
+    pathname.startsWith("/billing") ||
     pathname === "/app" ||
     pathname.startsWith("/demo-wall");
 

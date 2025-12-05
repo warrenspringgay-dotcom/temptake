@@ -1,31 +1,46 @@
-// src/app/api/stripe/create-checkout-session/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import {
   stripe,
-  STRIPE_PRICE_MONTHLY,
-  STRIPE_PRICE_YEARLY,
+  STRIPE_PRICE_MONTHLY, // 👈 this is now your tiered monthly price
 } from "@/lib/stripe";
 import { getServerSupabaseAction } from "@/lib/supabaseServer";
 
+/**
+ * Get the org_id for the current user from profiles.
+ */
 async function getActiveOrgIdForUser(supabase: any, userId: string) {
   const { data, error } = await supabase
     .from("profiles")
     .select("org_id")
     .eq("id", userId)
-    .maybeSingle();
+    .single();
 
-  // Any “real” error that isn't just "no rows"
-  if (error && error.code !== "PGRST116") {
-    console.error("[billing] error loading org_id for user", { userId, error });
-    throw new Error("Failed to load organisation");
-  }
-
-  if (!data?.org_id) {
+  if (error || !data?.org_id) {
     console.error("[billing] no org_id for user", userId, error);
-    return null; // 👈 caller will handle nicely
+    throw new Error("No org linked to this user");
   }
 
   return data.org_id as string;
+}
+
+/**
+ * Count how many locations this org has.
+ * We bill per-location, with Stripe handling the tiers.
+ */
+async function getOrgLocationCount(supabase: any, orgId: string) {
+  const { count, error } = await supabase
+    .from("locations")
+    .select("*", { count: "exact", head: true })
+    .eq("org_id", orgId);
+
+  if (error) {
+    console.error("[billing] getOrgLocationCount error", { orgId, error });
+    // Fallback to 1 so they can still subscribe
+    return 1;
+  }
+
+  // Minimum 1 location for billing purposes
+  return Math.max(count ?? 1, 1);
 }
 
 export async function POST(req: NextRequest) {
@@ -45,36 +60,22 @@ export async function POST(req: NextRequest) {
     }
 
     const orgId = await getActiveOrgIdForUser(supabase, user.id);
+    const locationCount = await getOrgLocationCount(supabase, orgId);
 
-    if (!orgId) {
+    // 🔒 6+ locations require custom pricing
+    if (locationCount > 5) {
       return NextResponse.json(
         {
           error:
-            "No kitchen/organisation is linked to this account yet. Please finish setup first.",
+            "For 6+ locations please contact us for custom pricing and onboarding.",
         },
         { status: 400 }
-      );
-    }
-
-    const body = await req.json().catch(() => ({}));
-    const plan = body?.plan === "annual" ? "annual" : "monthly";
-
-    const priceId =
-      plan === "annual" ? STRIPE_PRICE_YEARLY : STRIPE_PRICE_MONTHLY;
-
-    if (!priceId) {
-      return NextResponse.json(
-        { error: "Stripe price id not configured" },
-        { status: 500 }
       );
     }
 
     const origin =
       req.headers.get("origin") ??
       `${req.nextUrl.protocol}//${req.nextUrl.host}`;
-
-    const successUrl = `${origin}/billing?success=1`;
-    const cancelUrl = `${origin}/billing?canceled=1`;
 
     // Try to reuse existing Stripe customer for this org
     const { data: existingCust } = await supabase
@@ -86,30 +87,36 @@ export async function POST(req: NextRequest) {
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
 
-      // If we already have a customer for this org, reuse it
+      // Reuse Stripe customer if we already have one
       customer: existingCust?.stripe_customer_id ?? undefined,
 
       // Otherwise let Stripe create a new customer from the email
       customer_email: existingCust ? undefined : user.email ?? undefined,
 
-      line_items: [{ price: priceId, quantity: 1 }],
+      // 👇 KEY BIT: quantity = number of locations
+      line_items: [
+        {
+          price: STRIPE_PRICE_MONTHLY,
+          quantity: locationCount,
+        },
+      ],
 
-      // 🔥 FREE TRIAL
+      // 14-day free trial, org-level metadata
       subscription_data: {
-        trial_period_days: 14, // free trial length
+        trial_period_days: 14,
         metadata: {
           org_id: orgId,
+          initial_location_count: String(locationCount),
         },
       },
 
-      success_url: successUrl,
-      cancel_url: cancelUrl,
+      success_url: `${origin}/billing?success=1`,
+      cancel_url: `${origin}/billing?canceled=1`,
 
-      // Session-level metadata (still useful for debugging / cross-checking)
       metadata: {
         supabase_user_id: user.id,
         org_id: orgId,
-        plan,
+        billing_model: "tiered_locations_monthly",
       },
     });
 

@@ -18,9 +18,9 @@ type HeaderShellProps = {
 
 export default function HeaderShell({ user }: HeaderShellProps) {
   const pathname = usePathname();
-  const { hasValid, isLoading } = useSubscriptionStatus();
+  const { hasValid } = useSubscriptionStatus();
 
-  // Pages that should NOT show the header at all
+  // Pages that should NOT show the header or nav at all
   const hideHeader =
     pathname === "/" ||
     pathname.startsWith("/launch") ||
@@ -29,12 +29,10 @@ export default function HeaderShell({ user }: HeaderShellProps) {
 
   if (hideHeader) return null;
 
-  const isBillingPage = pathname.startsWith("/billing");
-
-  // When we *definitely* don't have a valid sub (no active, no trial),
-  // we hide nav + location + fab, and just leave brand + user menu.
-  // Billing page is still allowed so they can fix payment.
-  const showFullNav = hasValid || isBillingPage;
+  // When there is no valid subscription/trial:
+  // - Keep the top bar + user menu
+  // - Hide NavTabs + location switcher
+  const showNavAndLocation = hasValid;
 
   return (
     <header className="sticky top-0 z-50 border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/70">
@@ -46,38 +44,34 @@ export default function HeaderShell({ user }: HeaderShellProps) {
             <span className="font-semibold">TempTake</span>
           </Link>
 
-          {/* Mobile: business name centred */}
+          {/* Mobile: business name centered */}
           <div className="flex-1 md:hidden">
             <OrgName className="block truncate text-center text-xs font-semibold" />
           </div>
 
-          {/* Desktop NavTabs – only when we have valid sub (or on billing) */}
-          {showFullNav && (
-            <div className="mx-auto hidden md:block">
-              <NavTabs />
-            </div>
-          )}
+          {/* Desktop nav tabs – ONLY when sub/trial is valid */}
+          <div className="mx-auto hidden md:block">
+            {showNavAndLocation && <NavTabs />}
+          </div>
 
           {/* Right side */}
           <div className="ml-auto flex items-center gap-3">
-            {/* Location switcher only when full nav is enabled */}
-            {showFullNav && (
+            {/* Location switcher also frozen without a valid sub */}
+            {showNavAndLocation && (
               <div className="max-w-[180px] flex-1 md:max-w-[220px]">
                 <LocationSwitcher />
               </div>
             )}
 
-            {/* Desktop user menu – always visible when header is shown */}
+            {/* Desktop user menu (always available) */}
             <div className="hidden md:block">
               <UserMenu />
             </div>
 
-            {/* Mobile menu – only makes sense when we have nav */}
-            {showFullNav && (
-              <div className="md:hidden">
-                <MobileMenu user={user} />
-              </div>
-            )}
+            {/* Mobile menu – still available so they can reach Billing etc. */}
+            <div className="md:hidden">
+              <MobileMenu user={user} />
+            </div>
           </div>
         </div>
       </div>
