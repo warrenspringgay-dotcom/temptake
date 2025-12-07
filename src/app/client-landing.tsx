@@ -77,14 +77,16 @@ export default function LaunchPage() {
                 onClick={() => setDemoOpen(true)}
                 className="inline-flex items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20"
               >
-              Leaderboard & the wall
+                Leaderboard & the wall
               </button>
             </div>
 
             <dl className="mt-8 grid grid-cols-2 gap-4 text-xs text-slate-200 sm:text-sm md:max-w-md">
               <div>
                 <dt className="text-slate-400">Built for</dt>
-                <dd className="mt-0.5 font-semibold">Restaurants, bistros, pubs & takeaways</dd>
+                <dd className="mt-0.5 font-semibold">
+                  Restaurants, bistros, pubs & takeaways
+                </dd>
               </div>
               <div>
                 <dt className="text-slate-400">What it covers</dt>
@@ -159,8 +161,6 @@ export default function LaunchPage() {
           </div>
         </section>
 
-      
-
         {/* ----------------------- FEATURE GRID ----------------------- */}
         <section className="border-t border-white/10 bg-slate-950/70">
           <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-12 md:py-16">
@@ -170,9 +170,9 @@ export default function LaunchPage() {
                 <span className="text-emerald-300"> in one place.</span>
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                TempTake keeps daily checks simple - speeding up time spent on non-profit tasks.
-         No more chasing clipboards or half-filled log sheets.
-          </p>
+                TempTake keeps daily checks simple - speeding up time spent on non-profit
+                tasks. No more chasing clipboards or half-filled log sheets.
+              </p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
@@ -311,7 +311,7 @@ export default function LaunchPage() {
                 </div>
 
                 <ul className="mt-4 space-y-1.5 text-sm text-slate-200">
-                  <li>• ull access to TempTake features.</li>
+                  <li>• Full access to TempTake features.</li>
                   <li>• Priority support and feature input.</li>
                   <li>• Preferential launch pricing afterwards.</li>
                 </ul>
@@ -480,8 +480,9 @@ export default function LaunchPage() {
                   <li>• Managers still see the serious side – what was done and when.</li>
                 </ul>
 
+                {/* 🔁 FIXED: go to /demo-wall instead of ./app/page */}
                 <Link
-                  href="./app/page"
+                  href="/demo-wall"
                   className="inline-flex items-center justify-center rounded-2xl border border-emerald-500/50 bg-emerald-500/10 px-4 py-2 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
                 >
                   Open full demo wall
