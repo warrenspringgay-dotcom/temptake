@@ -1,16 +1,17 @@
 // src/middleware.ts
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseForMiddleware } from "@/lib/supabaseServer";
+import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
 
-/*
-  ADD THIS:
-  Add "/app" and "/app/:path*" to matcher EXCLUSIONS
-  so it becomes PUBLIC and completely bypasses auth checks.
-*/
-
+/**
+ * Only these routes require:
+ *  - logged-in Supabase user
+ *  - active / trial subscription
+ *
+ * Everything else (/, /launch, /app, /demo-wall, etc.)
+ * is PUBLIC and this middleware does not run there.
+ */
 export const config = {
   matcher: [
-    // Protected routes only — DO NOT include /app here.
     "/dashboard/:path*",
     "/routines/:path*",
     "/allergens/:path*",
@@ -24,30 +25,18 @@ export const config = {
 };
 
 export async function middleware(req: NextRequest) {
-  const url = new URL(req.url);
-  const pathname = url.pathname;
+  const res = NextResponse.next();
 
-  // 1) Explicitly PUBLIC routes (no auth, no subscription)
-  if (
-    pathname === "/" ||
-    pathname.startsWith("/login") ||
-    pathname.startsWith("/signup") ||
-    pathname.startsWith("/client-landing") ||
-    pathname.startsWith("/wall") ||
-    pathname.startsWith("/demo") ||
-    pathname.startsWith("/app") ||   // 👈 NEW: make demo dashboard fully public
-    pathname.startsWith("/api/auth") ||
-    pathname.startsWith("/_next") ||
-    pathname.includes(".")           // static assets
-  ) {
-    return NextResponse.next();
-  }
+  // Supabase auth client for middleware
+  const supabase = createMiddlewareClient({ req, res });
 
-  // 2) Require logged-in Supabase user for protected routes
-  const { supabase, res } = supabaseForMiddleware(req);
+  // 1) Require logged-in user
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  const url = new URL(req.url);
+  const pathname = url.pathname;
 
   if (!user) {
     const redirectTo = `/login?next=${encodeURIComponent(
@@ -56,7 +45,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL(redirectTo, req.url));
   }
 
-  // 3) Subscription check (only for protected routes)
+  // 2) Require active / trial subscription
   try {
     const { data: subRow, error: subError } = await supabase
       .from("billing_subscriptions")
@@ -85,11 +74,12 @@ export async function middleware(req: NextRequest) {
       const billingUrl = `/billing?plan=required`;
       return NextResponse.redirect(new URL(billingUrl, req.url));
     }
-  } catch (e) {
+  } catch {
+    // On error, send them to billing as a safe default
     const billingUrl = `/billing?plan=required`;
     return NextResponse.redirect(new URL(billingUrl, req.url));
   }
 
-  // 4) User logged in + active subscription → allow
-  return res || NextResponse.next();
+  // 3) All good – let the request through
+  return res;
 }
