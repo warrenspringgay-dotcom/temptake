@@ -82,8 +82,10 @@ export default function HelpPage() {
             ["allergens", "Allergens"],
             ["cleaning", "Cleaning rota"],
             ["team", "Team"],
+            ["locations", "Locations"],
             ["suppliers", "Suppliers"],
             ["reports", "Reports"],
+            ["billing", "Billing & subscription"],
             ["settings", "Settings"],
           ].map(([id, label]) => (
             <a
@@ -104,10 +106,10 @@ export default function HelpPage() {
         icon="📊"
         intro="Your daily control panel for temperature logging, cleaning progress and quick checks."
         bullets={[
-          "Log new food temperatures straight from the dashboard.",
-          "See entries today, last 7 days and any failures so you can act quickly.",
-          "Review today’s cleaning tasks and see how many are complete vs still open.",
-          "Tap into individual entries if you need to check who logged what and when.",
+          "See entries today, failures in the last 7 days and whether you’re ‘in control’ at a glance.",
+          "Use the quick actions to log new food temperatures or jump straight into the cleaning rota.",
+          "KPI tiles show allergen review and staff training status so you know what’s coming up.",
+          "Tap into sections to drill down into logs, who did what, and when it was completed.",
         ]}
         imageSrc="/help/dashboard.jpg"
       />
@@ -117,12 +119,12 @@ export default function HelpPage() {
         id="routines"
         title="Routines"
         icon="⏱️"
-        intro="Create prefilled temperature routines so staff only need to enter temps and initials during service."
+        intro="Create pre-filled temperature routines so staff only need to enter temps and initials during service."
         bullets={[
-          "Set location, item name and target range for each line in the routine.",
-          "Load a routine with one tap, enter the temperatures and initials, then press “Save all”.",
-          "Use different routines for cooking, fridges/freezers, deliveries, etc.",
-          "Keeps logging consistent between team members and across shifts.",
+          "Set location, item name and target range for each line in a routine (e.g. ‘Walk-in fridge – ready-to-eat’).",
+          "Load a routine with one tap, enter the temperatures and initials, then save everything in one go.",
+          "Use different routines for cooking, fridges/freezers, deliveries and hot hold so nothing is missed.",
+          "Keeps logging consistent between team members and across shifts, and speeds up busy services.",
         ]}
         imageSrc="/help/routines.jpg"
       />
@@ -134,10 +136,10 @@ export default function HelpPage() {
         icon="⚠️"
         intro="Keep a live allergen matrix for your menu and quickly answer guest allergy questions."
         bullets={[
-          "View and edit allergen information for every menu item.",
-          "Search by item name or category (Starter, Main, Side, Dessert, Drink).",
-          "Use Allergen Query to show only safe foods for one or more allergens.",
-          "Print a clean allergen matrix for front-of-house or EHO visits.",
+          "View and edit allergen information for every menu item in one place.",
+          "Search by item name or category (Starter, Main, Side, Dessert, Drink) to find things quickly.",
+          "Use the allergen filter / query view to show only suitable dishes for one or more allergens.",
+          "Print a clean allergen matrix for front-of-house or Environmental Health Officer (EHO) visits.",
         ]}
         imageSrc="/help/allergens.jpg"
       />
@@ -149,10 +151,10 @@ export default function HelpPage() {
         icon="🧽"
         intro="Plan and record daily, weekly and monthly cleaning tasks."
         bullets={[
-          "Create tasks grouped by shift or area, e.g. Opening checks, Mid shift, Closing down.",
-          "Set frequencies to daily, weekly or monthly so the rota stays up to date automatically.",
-          "Staff tap Complete in the app so you know exactly who did what and when.",
-          "Print a paper version if you want something on the wall while still keeping a digital record.",
+          "Create tasks grouped by area or shift, e.g. Opening checks, Mid-shift, Closing down, Front of house.",
+          "Set frequencies to daily, weekly or monthly so tasks automatically appear when they’re due.",
+          "On phones, staff can swipe / tap to complete tasks – TempTake records who did it and when.",
+          "You can still print a paper view for the wall while keeping a full digital history for audits.",
         ]}
         imageSrc="/help/cleaning.jpg"
       />
@@ -165,11 +167,26 @@ export default function HelpPage() {
         intro="Store team details, initials and training information."
         bullets={[
           "Add team members with their name, initials, role and contact details.",
-          "Initials appear in temperature logs and cleaning tasks for quick sign-off.",
-          "Track food hygiene training expiry dates and spot who is due for renewal.",
-          "Useful evidence for inspections and internal audits.",
+          "Initials appear in temperature logs and cleaning tasks so you always know who signed things off.",
+          "Track food hygiene training expiry dates and see who is due for renewal at a glance.",
+          "Useful evidence for inspections and internal audits – everything is in one place.",
         ]}
         imageSrc="/help/team.jpg"
+      />
+
+      {/* Locations */}
+      <HelpSection
+        id="locations"
+        title="Locations"
+        icon="📍"
+        intro="Manage which physical sites are linked to your TempTake account."
+        bullets={[
+          "Each location represents a real kitchen, site or venue using TempTake.",
+          "You can rename locations so staff clearly see which site they’re logging for in the top bar.",
+          "If you’re on a single-site plan, the Add location button will be greyed out until you upgrade your subscription.",
+          "Multi-site groups can add extra locations once the Stripe plan has been moved to the correct band.",
+        ]}
+        imageSrc="/help/locations.jpg"
       />
 
       {/* Suppliers */}
@@ -179,9 +196,9 @@ export default function HelpPage() {
         icon="🚚"
         intro="Keep supplier contact details and product notes in one place."
         bullets={[
-          "Record what each supplier provides and their contact details.",
-          "Store rep names and any special ordering notes (cut-off times, minimum order, etc.).",
-          "Helpful when logging delivery issues or chasing up credit notes.",
+          "Record what each supplier provides and their main contact details.",
+          "Store rep names and any special ordering notes (cut-off times, minimum order, delivery days, etc.).",
+          "Helpful when logging delivery issues, chasing credit notes or managing recalls.",
         ]}
       />
 
@@ -193,10 +210,25 @@ export default function HelpPage() {
         intro="Quickly pull together the data you need for audits and checks."
         bullets={[
           "Run an Instant audit to compile around 90 days of recent logs into one report.",
-          "Use custom filters to focus on certain dates, locations, items or staff initials.",
-          "Export or print reports and keep them alongside your Food Safety Management System.",
+          "Filter by date range, location, equipment or staff initials to answer specific questions.",
+          "Export or print reports and keep them alongside your Food Safety Management System (Safer Food, Better Business, HACCP, etc.).",
         ]}
         imageSrc="/help/reports.jpg"
+      />
+
+      {/* Billing & subscription */}
+      <HelpSection
+        id="billing"
+        title="Billing & subscription"
+        icon="💳"
+        intro="Manage your TempTake subscription and pricing band."
+        bullets={[
+          "See your current subscription status (trial, active, past due) and how many locations your band covers.",
+          "Start a new subscription or change band via the Stripe checkout – all payments are handled securely by Stripe.",
+          "If you need more locations, upgrade your band in Stripe first; once that’s active, the Add location button will unlock.",
+          "Use the Stripe billing portal to update card details, download invoices or cancel your plan.",
+        ]}
+        imageSrc="/help/billing.jpg"
       />
 
       {/* Settings */}
@@ -204,11 +236,11 @@ export default function HelpPage() {
         id="settings"
         title="Settings"
         icon="⚙️"
-        intro="Control business-level options for your site."
+        intro="Control core options for your organisation."
         bullets={[
-          "Set your company name – this shows in the top bar so staff know which site they’re in.",
-          "Choose a preferred default location to speed up temperature entry.",
-          "Future options may include date format, locale and other appearance settings.",
+          "Set your company name – this shows in the top bar so staff always know which site/organisation they’re in.",
+          "Choose a preferred default location to speed up temperature entry for most users.",
+          "Future options may include date format, locale and appearance settings as the product grows.",
         ]}
       />
 

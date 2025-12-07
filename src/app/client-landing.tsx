@@ -44,7 +44,7 @@ export default function LaunchPage() {
             </h1>
 
             <p className="mt-4 max-w-xl text-sm text-slate-200 sm:text-base">
-              TempTake replaces messy paper logs with simple daily routines for{" "}
+              TempTake is your food hygiene compliance assistant. It replaces messy paper logs with simple daily routines for{" "}
               <span className="font-semibold">temperatures, cleaning and allergens</span>.
               Built for real UK kitchens that just need it sorted.
             </p>
