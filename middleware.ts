@@ -12,7 +12,7 @@ import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
  */
 export const config = {
   matcher: [
-    "/dashboard/:path*",
+    
     "/routines/:path*",
     "/allergens/:path*",
     "/cleaning-rota/:path*",
