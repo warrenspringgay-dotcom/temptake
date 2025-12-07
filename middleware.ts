@@ -1,133 +1,64 @@
-// src/middleware.ts
-import { NextRequest, NextResponse } from "next/server";
-import { supabaseForMiddleware } from "@/lib/supabaseServer";
+// middleware.ts
+import { NextResponse, type NextRequest } from 'next/server';
+import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
 
-export const config = {
-  matcher: [
-    "/dashboard/:path*",
-    "/routines/:path*",
-    "/allergens/:path*",
-    "/cleaning-rota/:path*",
-    "/team/:path*",
-    "/leaderboard/:path*",
-    "/suppliers/:path*",
-    "/reports/:path*",
-    "/foodtemps/:path*",
-    "/billing/:path*",
-  ],
-};
-
-// Edge-safe version of the subscription check.
-// Uses the anon Supabase client with RLS disabled on billing_* tables.
-async function orgHasValidSubscriptionEdge(
-  supabase: ReturnType<typeof supabaseForMiddleware>["supabase"],
-  orgId: string
-) {
-  if (!orgId) return false;
-
-  const { data, error } = await supabase
-    .from("billing_subscriptions")
-    .select("status, current_period_end, trial_ends_at, cancel_at_period_end")
-    .eq("org_id", orgId)
-    .maybeSingle();
-
-  if (error || !data) {
-    console.error("[middleware] subscription lookup failed", {
-      orgId,
-      error,
-    });
-    return false;
-  }
-
-  const nowIso = new Date().toISOString();
-  const isFuture = (iso: string | null) => !!iso && iso > nowIso;
-
-  let hasValid = false;
-
-  // Active sub
-  if (data.status === "active") {
-    hasValid = true;
-  }
-
-  // Trial still in date
-  if (data.status === "trialing" && isFuture(data.trial_ends_at)) {
-    hasValid = true;
-  }
-
-  // Cancelled but paid-up to period end
-  if (data.cancel_at_period_end && isFuture(data.current_period_end)) {
-    hasValid = true;
-  }
-
-  if (!hasValid) {
-    console.log("[middleware] org has NO valid sub", {
-      orgId,
-      status: data.status,
-      current_period_end: data.current_period_end,
-      trial_ends_at: data.trial_ends_at,
-      cancel_at_period_end: data.cancel_at_period_end,
-    });
-  }
-
-  return hasValid;
-}
+const PUBLIC_PATHS = new Set<string>([
+  '/',             // landing page – public
+  '/login',
+  '/signup',
+  '/auth/callback',
+]);
 
 export async function middleware(req: NextRequest) {
-  const url = new URL(req.url);
-  const pathname = url.pathname;
+  const { pathname, search } = req.nextUrl;
 
-  // Public stuff
+  // Allow Next internals & static assets
   if (
-    pathname === "/" ||
-    pathname.startsWith("/login") ||
-    pathname.startsWith("/wall") ||
-    pathname.startsWith("/_next") ||
-    pathname.startsWith("/api/auth") ||
-    pathname.includes(".")
+    pathname.startsWith('/_next') ||
+    pathname.startsWith('/favicon') ||
+    pathname.startsWith('/assets') ||
+    pathname.match(/\.(ico|png|jpg|jpeg|gif|webp|svg|css|js|txt|map|woff2?)$/)
   ) {
     return NextResponse.next();
   }
 
-  const { supabase, res } = supabaseForMiddleware(req);
+  // Create a mutable response FIRST and hand it to the Supabase middleware client
+  const res = NextResponse.next();
+  const supabase = createMiddlewareClient({ req, res });
+
+  // getSession() syncs refreshed tokens onto `res` cookies
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  // Not logged in at all → force login
-  if (!user) {
-    const redirectTo = `/login?next=${encodeURIComponent(
-      pathname + url.search
-    )}`;
-    return NextResponse.redirect(new URL(redirectTo, req.url));
+  // Public routes:
+  // - Exact matches in PUBLIC_PATHS
+  // - Any route under /demo (public demo dashboard)
+  const isPublic =
+    PUBLIC_PATHS.has(pathname) ||
+    pathname.startsWith('/demo'); // <-- allow /demo, /demo/... without auth
+
+  // Not signed in and not public -> go to login (preserve deep link)
+  if (!session && !isPublic) {
+    const url = req.nextUrl.clone();
+    url.pathname = '/login';
+    url.searchParams.set('redirect', pathname + (search || ''));
+    return NextResponse.redirect(url);
   }
 
-  // Billing page itself should always be reachable once logged in
-  if (pathname.startsWith("/billing")) {
-    return res || NextResponse.next();
+  // Signed in but visiting /login or /signup -> push to redirect or home
+  if (session && (pathname === '/login' || pathname === '/signup')) {
+    const target = req.nextUrl.searchParams.get('redirect') || '/';
+    const url = req.nextUrl.clone();
+    url.pathname = target;
+    url.search = '';
+    return NextResponse.redirect(url);
   }
 
-  // Fetch org_id from profiles
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("org_id")
-    .eq("id", user.id)
-    .single();
-
-  if (profileError || !profile?.org_id) {
-    console.error("[middleware] no org_id for user", user.id, profileError);
-    // No org yet → send them to billing / onboarding
-    return NextResponse.redirect(new URL("/billing?reason=no-org", req.url));
-  }
-
-  const ok = await orgHasValidSubscriptionEdge(supabase, profile.org_id);
-
-  if (!ok) {
-    // HARD LOCK: any app route (except /billing) bounces here
-    return NextResponse.redirect(
-      new URL("/billing?reason=no-active-sub", req.url)
-    );
-  }
-
-  // All good
-  return res || NextResponse.next();
+  // Proceed, returning the same mutated `res` so cookies persist across pages
+  return res;
 }
+
+export const config = {
+  matcher: ['/((?!api/cron).*)'],
+};
