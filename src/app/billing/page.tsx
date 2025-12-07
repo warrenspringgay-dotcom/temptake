@@ -55,9 +55,9 @@ export default async function BillingPage() {
   const trialEndsAt = subscription?.trial_ends_at as string | null;
 
   return (
-    <main className="max-w-4xl mx-auto px-4 py-10 space-y-8">
+    <main className="mx-auto max-w-4xl space-y-8 px-4 py-10">
       <div>
-        <h1 className="text-2xl font-semibold mb-2">TempTake subscription</h1>
+        <h1 className="mb-2 text-2xl font-semibold">TempTake subscription</h1>
         <p className="text-sm text-slate-600">
           Choose a plan for your kitchen. You can switch or cancel any time in
           the Stripe billing portal.
@@ -97,11 +97,11 @@ export default async function BillingPage() {
         </div>
       </div>
 
-      {/* Pricing + start button */}
-      <section className="grid gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,2fr)] items-start">
+      {/* Pricing + multi-site explanation */}
+      <section className="grid items-start gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,2fr)]">
         {/* Left: main purchase card */}
         <div className="rounded-2xl border bg-white px-5 py-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-700 mb-1">
+          <h2 className="mb-1 text-sm font-semibold text-slate-700">
             MONTHLY
           </h2>
           <div className="flex items-baseline gap-1">
@@ -112,9 +112,9 @@ export default async function BillingPage() {
           </div>
 
           <p className="mt-3 text-sm text-slate-700">
-            Pricing scales automatically with your number of locations:
+            Pricing is banded by the number of locations on your account:
           </p>
-          <ul className="mt-2 text-sm text-slate-600 space-y-1">
+          <ul className="mt-2 space-y-1 text-sm text-slate-600">
             <li>• 1 site → £9.99 / month</li>
             <li>• 2–3 sites → £19.99 / month</li>
             <li>• 4–5 sites → £29.99 / month</li>
@@ -142,24 +142,26 @@ export default async function BillingPage() {
           )}
         </div>
 
-        {/* Right: explanation card */}
-        <div className="rounded-2xl border bg-amber-50 px-5 py-6">
-          <div className="inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-700">
+        {/* Right: multi-site explanation – upgrade FIRST, then add locations */}
+        <div className="flex flex-col rounded-2xl border border-amber-200 bg-amber-50 p-5">
+          <div className="inline-flex w-fit items-center rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
             Multi-site pricing
           </div>
 
-          <h2 className="mt-3 text-base font-semibold text-slate-900">
+          <h3 className="mt-3 text-lg font-semibold text-slate-900">
             Built for groups
-          </h2>
-          <p className="mt-2 text-sm text-slate-700">
-            Add locations inside TempTake and we&apos;ll automatically put you
-            on the right band based on your number of sites.
-          </p>
+          </h3>
 
-          <p className="mt-3 text-sm text-slate-700">
-            You&apos;re currently in the{" "}
-            <strong>{plan.label}</strong> band.
-          </p>
+          <ul className="mt-3 space-y-1.5 text-sm text-slate-800">
+            <li>1. Open the Stripe billing portal from the button below.</li>
+            <li>2. Upgrade to a band that covers the number of sites you need.</li>
+            <li>
+              3. Come back to TempTake – the <strong>Add location</strong>{" "}
+              button will unlock and you can add your extra sites.
+            </li>
+          </ul>
+
+      
         </div>
       </section>
 
