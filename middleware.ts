@@ -1,64 +1,95 @@
-// middleware.ts
-import { NextResponse, type NextRequest } from 'next/server';
-import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
+// src/middleware.ts
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseForMiddleware } from "@/lib/supabaseServer";
 
-const PUBLIC_PATHS = new Set<string>([
-  '/',             // landing page – public
-  '/login',
-  '/signup',
-  '/auth/callback',
-]);
+/*
+  ADD THIS:
+  Add "/app" and "/app/:path*" to matcher EXCLUSIONS
+  so it becomes PUBLIC and completely bypasses auth checks.
+*/
+
+export const config = {
+  matcher: [
+    // Protected routes only — DO NOT include /app here.
+    "/dashboard/:path*",
+    "/routines/:path*",
+    "/allergens/:path*",
+    "/cleaning-rota/:path*",
+    "/team/:path*",
+    "/leaderboard/:path*",
+    "/suppliers/:path*",
+    "/reports/:path*",
+    "/foodtemps/:path*",
+  ],
+};
 
 export async function middleware(req: NextRequest) {
-  const { pathname, search } = req.nextUrl;
+  const url = new URL(req.url);
+  const pathname = url.pathname;
 
-  // Allow Next internals & static assets
+  // 1) Explicitly PUBLIC routes (no auth, no subscription)
   if (
-    pathname.startsWith('/_next') ||
-    pathname.startsWith('/favicon') ||
-    pathname.startsWith('/assets') ||
-    pathname.match(/\.(ico|png|jpg|jpeg|gif|webp|svg|css|js|txt|map|woff2?)$/)
+    pathname === "/" ||
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/signup") ||
+    pathname.startsWith("/client-landing") ||
+    pathname.startsWith("/wall") ||
+    pathname.startsWith("/demo") ||
+    pathname.startsWith("/app") ||   // 👈 NEW: make demo dashboard fully public
+    pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/_next") ||
+    pathname.includes(".")           // static assets
   ) {
     return NextResponse.next();
   }
 
-  // Create a mutable response FIRST and hand it to the Supabase middleware client
-  const res = NextResponse.next();
-  const supabase = createMiddlewareClient({ req, res });
-
-  // getSession() syncs refreshed tokens onto `res` cookies
+  // 2) Require logged-in Supabase user for protected routes
+  const { supabase, res } = supabaseForMiddleware(req);
   const {
-    data: { session },
-  } = await supabase.auth.getSession();
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  // Public routes:
-  // - Exact matches in PUBLIC_PATHS
-  // - Any route under /demo (public demo dashboard)
-  const isPublic =
-    PUBLIC_PATHS.has(pathname) ||
-    pathname.startsWith('/demo'); // <-- allow /demo, /demo/... without auth
-
-  // Not signed in and not public -> go to login (preserve deep link)
-  if (!session && !isPublic) {
-    const url = req.nextUrl.clone();
-    url.pathname = '/login';
-    url.searchParams.set('redirect', pathname + (search || ''));
-    return NextResponse.redirect(url);
+  if (!user) {
+    const redirectTo = `/login?next=${encodeURIComponent(
+      pathname + url.search
+    )}`;
+    return NextResponse.redirect(new URL(redirectTo, req.url));
   }
 
-  // Signed in but visiting /login or /signup -> push to redirect or home
-  if (session && (pathname === '/login' || pathname === '/signup')) {
-    const target = req.nextUrl.searchParams.get('redirect') || '/';
-    const url = req.nextUrl.clone();
-    url.pathname = target;
-    url.search = '';
-    return NextResponse.redirect(url);
+  // 3) Subscription check (only for protected routes)
+  try {
+    const { data: subRow, error: subError } = await supabase
+      .from("billing_subscriptions")
+      .select("status, current_period_end, cancel_at_period_end")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    let hasActiveSub = false;
+
+    if (!subError && subRow) {
+      const status = (subRow.status ?? "").toLowerCase();
+      const now = new Date();
+      const periodEnd = subRow.current_period_end
+        ? new Date(subRow.current_period_end)
+        : null;
+
+      if (
+        (status === "active" || status === "trialing") &&
+        (!periodEnd || periodEnd > now)
+      ) {
+        hasActiveSub = true;
+      }
+    }
+
+    if (!hasActiveSub) {
+      const billingUrl = `/billing?plan=required`;
+      return NextResponse.redirect(new URL(billingUrl, req.url));
+    }
+  } catch (e) {
+    const billingUrl = `/billing?plan=required`;
+    return NextResponse.redirect(new URL(billingUrl, req.url));
   }
 
-  // Proceed, returning the same mutated `res` so cookies persist across pages
-  return res;
+  // 4) User logged in + active subscription → allow
+  return res || NextResponse.next();
 }
-
-export const config = {
-  matcher: ['/((?!api/cron).*)'],
-};
