@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getBillingStatusClient } from "@/lib/billingClient";
-import { getMaxLocationsFromPlanName } from "@/lib/stripe";
+import { getMaxLocationsFromPlanName } from "@/lib/billingTiers";
+
 
 type State = {
   loading: boolean;
