@@ -1,18 +1,9 @@
-// src/middleware.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
 
-/**
- * Only these routes require:
- *  - logged-in Supabase user
- *  - active / trial subscription
- *
- * Everything else (/, /launch, /app, /demo-wall, etc.)
- * is PUBLIC and this middleware does not run there.
- */
 export const config = {
   matcher: [
-    
+    "/dashboard/:path*",
     "/routines/:path*",
     "/allergens/:path*",
     "/cleaning-rota/:path*",
@@ -26,8 +17,6 @@ export const config = {
 
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
-
-  // Supabase auth client for middleware
   const supabase = createMiddlewareClient({ req, res });
 
   // 1) Require logged-in user
@@ -45,41 +34,6 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL(redirectTo, req.url));
   }
 
-  // 2) Require active / trial subscription
-  try {
-    const { data: subRow, error: subError } = await supabase
-      .from("billing_subscriptions")
-      .select("status, current_period_end, cancel_at_period_end")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    let hasActiveSub = false;
-
-    if (!subError && subRow) {
-      const status = (subRow.status ?? "").toLowerCase();
-      const now = new Date();
-      const periodEnd = subRow.current_period_end
-        ? new Date(subRow.current_period_end)
-        : null;
-
-      if (
-        (status === "active" || status === "trialing") &&
-        (!periodEnd || periodEnd > now)
-      ) {
-        hasActiveSub = true;
-      }
-    }
-
-    if (!hasActiveSub) {
-      const billingUrl = `/billing?plan=required`;
-      return NextResponse.redirect(new URL(billingUrl, req.url));
-    }
-  } catch {
-    // On error, send them to billing as a safe default
-    const billingUrl = `/billing?plan=required`;
-    return NextResponse.redirect(new URL(billingUrl, req.url));
-  }
-
-  // 3) All good – let the request through
+  // 2) No subscription check for now – let them through
   return res;
 }
