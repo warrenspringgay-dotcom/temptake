@@ -1,6 +1,7 @@
 // src/app/app/page.tsx
 import React from "react";
 import type { Metadata } from "next";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "TempTake · Demo Dashboard",
@@ -25,14 +26,34 @@ export default function AppDemoDashboardPage() {
             This is a preview of the in-kitchen dashboard. Real data and login
             access are coming with early access accounts.
           </p>
+
+          {/* CTA strip under intro */}
+          <div className="mt-4 flex flex-wrap gap-2 text-xs">
+            <Link
+              href="/launch#waitlist"
+              className="inline-flex items-center rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
+            >
+              Join early access
+            </Link>
+            <Link
+              href="/launch#pricing"
+              className="inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Read more &amp; pricing
+            </Link>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
           <span className="rounded-full bg-slate-100 px-3 py-1">
-            Location: <span className="font-medium text-slate-800">Demo Kitchen</span>
+            Location:{" "}
+            <span className="font-medium text-slate-800">Demo Kitchen</span>
           </span>
           <span className="rounded-full bg-slate-100 px-3 py-1">
-            Today: <span className="font-medium text-slate-800">Service Day (Sample)</span>
+            Today:{" "}
+            <span className="font-medium text-slate-800">
+              Service Day (Sample)
+            </span>
           </span>
         </div>
       </header>
@@ -40,9 +61,24 @@ export default function AppDemoDashboardPage() {
       {/* KPI row */}
       <section className="grid gap-3 md:grid-cols-4">
         <KpiCard label="Temps logged" value="12" sub="So far today" accent="ok" />
-        <KpiCard label="Cleaning tasks" value="8 / 10" sub="Completed" accent="warn" />
-        <KpiCard label="Allergen review" value="Due in 7 days" sub="Last done 23 Sep" accent="info" />
-        <KpiCard label="Training status" value="5 / 6" sub="Staff in date" accent="ok" />
+        <KpiCard
+          label="Cleaning tasks"
+          value="8 / 10"
+          sub="Completed"
+          accent="warn"
+        />
+        <KpiCard
+          label="Allergen review"
+          value="Due in 7 days"
+          sub="Last done 23 Sep"
+          accent="info"
+        />
+        <KpiCard
+          label="Training status"
+          value="5 / 6"
+          sub="Staff in date"
+          accent="ok"
+        />
       </section>
 
       {/* Two-column layout: left temps, right cleaning & allergen */}
@@ -107,7 +143,10 @@ export default function AppDemoDashboardPage() {
           </div>
 
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
-            <span>In the live app, staff log temps in a couple of taps, with initials saved.</span>
+            <span>
+              In the live app, staff log temps in a couple of taps, with initials
+              saved.
+            </span>
             <span className="rounded-full bg-slate-50 px-2 py-1">
               Example only · Not live data
             </span>
@@ -190,8 +229,14 @@ export default function AppDemoDashboardPage() {
       <section className="rounded-2xl border border-dashed border-emerald-400/60 bg-emerald-50/50 px-4 py-3 text-[11px] text-emerald-800">
         <p>
           This is a demo view only. To get access to the real, working version of TempTake
-          for your kitchen, join the early access list on the launch page – we&apos;ll
-          invite you to a live account.
+          for your kitchen,{" "}
+          <Link
+            href="/launch#waitlist"
+            className="font-semibold underline underline-offset-2"
+          >
+            join the early access list on the launch page
+          </Link>
+          . We&apos;ll invite you to a live account with your own kitchens and staff.
         </p>
       </section>
     </main>
