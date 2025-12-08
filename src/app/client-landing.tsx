@@ -4,6 +4,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import Script from "next/script";
+import Image from "next/image";
 
 /* ---------------------- FAKE SOCIAL PROOF WALL DATA ---------------------- */
 
@@ -24,13 +25,30 @@ export default function LaunchPage() {
   const [demoOpen, setDemoOpen] = useState(false);
 
   return (
-    // Add overflow-x-hidden so nothing makes the page scroll sideways on mobile
     <div className="fixed inset-0 z-20 overflow-y-auto overflow-x-hidden">
       {/* Tally embed script */}
       <Script src="https://tally.so/widgets/embed.js" async />
 
       <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white">
-        {/* ----------------------- HERO SECTION ----------------------- */}
+        {/* Top bar with login */}
+        <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 pt-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+            <Link href="/dashboard" className="flex items-center gap-2">
+            <Image src="/logo.png" width={44} height={44} alt="TempTake" />
+            <span className="font-semibold">TempTake</span>
+             </Link>
+          </div>
+ 
+          <Link
+            href="/login"
+            className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-50 shadow-sm hover:bg-white/10"
+          >
+            Log in
+          </Link>
+        </header>
+
+
+     {/* ----------------------- HERO SECTION ----------------------- */}
         <section className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pb-16 pt-10 md:flex-row md:items-center md:pb-24 md:pt-16">
           <div className="md:w-1/2">
             <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-emerald-200">
