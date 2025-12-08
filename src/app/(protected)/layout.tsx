@@ -1,8 +1,6 @@
 // src/app/(protected)/layout.tsx
 import React from "react";
 import { redirect } from "next/navigation";
-
-import HeaderShell from "@/app/app/HeaderShell";
 import { getUserOrNull } from "@/app/actions/auth";
 import { getSubscriptionForCurrentUser } from "@/lib/subscription";
 
@@ -15,8 +13,7 @@ export default async function ProtectedLayout({ children }: Props) {
   const user = await getUserOrNull();
 
   if (!user) {
-    // We can’t easily know the exact path here, so use dashboard as the
-    // default “after login” target.
+    // Default after-login target
     redirect("/login?next=/dashboard");
   }
 
@@ -29,11 +26,7 @@ export default async function ProtectedLayout({ children }: Props) {
     redirect(`/billing?reason=${reason}`);
   }
 
-  // 3) Auth + subscription OK → render normal app shell
-  return (
-    <>
-      <HeaderShell user={user} />
-      <main className="mx-auto max-w-6xl px-4 pb-8 pt-4">{children}</main>
-    </>
-  );
+  // 3) Auth + subscription OK → just render the page.
+  // Root layout already handles <AppHeader /> and outer container.
+  return <>{children}</>;
 }
