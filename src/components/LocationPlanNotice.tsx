@@ -159,13 +159,15 @@ export default function LocationPlanNotice() {
           To add more sites, upgrade your plan on the billing page.
         </div>
       </div>
-      <button
-        type="button"
-        onClick={() => router.push("/billing")}
-        className="mt-1 inline-flex items-center justify-center rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-amber-700 sm:mt-0"
-      >
-        Upgrade plan
-      </button>
+      <form method="POST" action="/api/stripe/create-portal-session">
+  <button
+    type="submit"
+    className="rounded-md bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+  >
+    Upgrade plan
+  </button>
+</form>
+
     </div>
   );
 }
