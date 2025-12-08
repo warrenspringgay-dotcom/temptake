@@ -3,27 +3,26 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { getServerSupabase } from "@/lib/supabaseServer";
 
-// Use your secret key; don't override apiVersion to avoid TS literal issues
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
+  // Must match your Stripe dashboard API version
+  apiVersion: "2025-11-17.clover",
+});
 
 export async function POST(req: NextRequest) {
   try {
     const supabase = await getServerSupabase();
 
-    // 1) Get the current logged-in user
+    // 1) Get logged-in user
     const {
       data: { user },
-      error: authError,
+      error: userError,
     } = await supabase.auth.getUser();
 
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "Not authenticated." },
-        { status: 401 }
-      );
+    if (userError || !user) {
+      return NextResponse.json({ error: "Not signed in." }, { status: 401 });
     }
 
-    // 2) Look up Stripe customer row for this user
+    // 2) Look up Stripe customer id
     const { data: customerRow, error: customerError } = await supabase
       .from("billing_customers")
       .select("stripe_customer_id")
@@ -31,10 +30,10 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (customerError) {
-      console.error("Error loading billing_customers row:", customerError);
+      console.error("billing_customers error:", customerError);
       return NextResponse.json(
-        { error: "Could not load billing information." },
-        { status: 500 }
+        { error: "Could not find billing record for this user." },
+        { status: 400 }
       );
     }
 
@@ -45,7 +44,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3) Create a Stripe Billing Portal session
+    // 3) Create portal session
     const origin = new URL(req.url).origin;
 
     const portalSession = await stripe.billingPortal.sessions.create({
@@ -53,9 +52,9 @@ export async function POST(req: NextRequest) {
       return_url: `${origin}/billing`,
     });
 
-    // 4) Redirect the browser to Stripe's portal URL
+    // 4) Redirect to Stripe's billing portal
     return NextResponse.redirect(portalSession.url, { status: 303 });
-  } catch (err: any) {
+  } catch (err) {
     console.error("Error creating Stripe billing portal session:", err);
     return NextResponse.json(
       { error: "Internal error creating billing portal session." },
