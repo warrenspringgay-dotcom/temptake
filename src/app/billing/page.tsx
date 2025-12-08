@@ -118,7 +118,13 @@ export default async function BillingPage() {
             <li>• 1 site → £9.99 / month</li>
             <li>• 2–3 sites → £19.99 / month</li>
             <li>• 4–5 sites → £29.99 / month</li>
-            <li>• 6+ sites → custom pricing (contact us)</li>
+            <li>• 6+ sites → custom pricing <a
+  href="mailto:info@temptake.com"
+  className="text-emerald-600 underline hover:text-emerald-400"
+>
+  contact us
+</a>
+</li>
           </ul>
 
           <form method="POST" action="/api/stripe/create-checkout-session">

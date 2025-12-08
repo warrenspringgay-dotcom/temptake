@@ -28,6 +28,14 @@ export default function AppDemoDashboardPage() {
           </p>
         </div>
 
+<Link
+  href="/"
+  className="absolute right-4 top-4 rounded-full bg-black/40 backdrop-blur px-3 py-1 text-sm text-slate-200 hover:bg-black/60"
+>
+  ✕ Back
+</Link>
+
+
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <Link
             href="/launch#waitlist"

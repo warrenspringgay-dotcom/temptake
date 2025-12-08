@@ -28,6 +28,14 @@ export default function DemoWallPage() {
           </p>
         </div>
 
+<Link
+  href="/"
+  className="absolute right-4 top-4 rounded-full bg-black/40 backdrop-blur px-3 py-1 text-sm text-slate-200 hover:bg-black/60"
+>
+  ✕ Back
+</Link>
+
+
         {/* CTA strip on the right */}
         <div className="flex flex-col items-center justify-center gap-2 text-xs md:items-end">
           <Link
