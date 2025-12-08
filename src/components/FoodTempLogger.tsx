@@ -939,6 +939,11 @@ export default function FoodTempLogger({
         // ignore confetti load errors
       }
 
+      // 🔔 Small haptic bump on supported devices
+      if (typeof window !== "undefined" && "vibrate" in navigator) {
+        navigator.vibrate(10);
+      }
+
       posthog.capture("cleaning_tasks_completed", {
         count: ids.length,
         initials: iniVal.toUpperCase(),
@@ -985,7 +990,7 @@ export default function FoodTempLogger({
   /* ========================= RENDER ========================= */
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fadeIn">
       {/* Big centred header */}
       <div className="text-center">
         <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">
@@ -1037,8 +1042,8 @@ export default function FoodTempLogger({
             ? "border-emerald-200 bg-emerald-50/90 text-emerald-900"
             : "border-red-200 bg-red-50/90 text-red-800";
 
-          const cleaningTileBase =
-            "rounded-xl p-3 min-h-[76px] text-left flex flex-col justify-between border shadow-sm backdrop-blur-sm transition hover:brightness-105";
+         const cleaningTileBase =
+  "rounded-xl p-3 min-h-[76px] text-left flex flex-col justify-between border shadow-sm backdrop-blur-sm transition hover:brightness-105 hover:-translate-y-0.5 hover:shadow-md";
 
           const failsTileColor =
             fails7 > 0
@@ -1070,12 +1075,13 @@ export default function FoodTempLogger({
               </div>
 
               {/* tile 2: Failures (7d) */}
-              <div
-                className={
-                  "flex min-h-[76px] flex-col justify-between rounded-xl border p-3 text-xs shadow-sm backdrop-blur-sm " +
-                  failsTileColor
-                }
-              >
+             <div
+  className={
+    "flex min-h-[76px] flex-col justify-between rounded-xl border p-3 text-xs shadow-sm backdrop-blur-sm transition hover:-translate-y-0.5 hover:shadow-md " +
+    failsTileColor
+  }
+>
+
                 <div className="flex items-center justify-between text-xs">
                   <span>Failures (7d)</span>
                   <span className="text-base">{failsIcon}</span>
@@ -1089,7 +1095,8 @@ export default function FoodTempLogger({
               </div>
 
               {/* tile 3: Employee of the month (from leaderboard) */}
-              <div className="flex min-h-[76px] flex-col justify-between rounded-xl border border-amber-200 bg-amber-50/90 p-3 text-amber-900 shadow-sm backdrop-blur-sm">
+              <div className="flex min-h-[76px] flex-col justify-between rounded-xl border border-amber-200 bg-amber-50/90 p-3 text-amber-900 shadow-sm backdrop-blur-sm transition hover:-translate-y-0.5 hover:shadow-md">
+
                 <div className="flex items-center justify-between text-xs">
                   <span>Employee of the month</span>
                   <span className="text-lg">🏆</span>
