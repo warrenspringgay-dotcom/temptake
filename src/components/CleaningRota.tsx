@@ -13,7 +13,7 @@ const PAGE = "max-w-[1100px] mx-auto px-3 sm:px-4";
 
 // glassy panel
 const CARD =
-  "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md";
+  "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md transition hover:-translate-y-0.5 hover:shadow-xl";
 
 type Frequency = "daily" | "weekly" | "monthly";
 
@@ -61,6 +61,15 @@ const niceFull = (d: string) =>
     year: "numeric",
   });
 
+// Small helper for subtle haptics on supported devices
+function bumpVibrate(ms = 10) {
+  if (typeof window === "undefined") return;
+  const nav = window.navigator as any;
+  if (typeof nav.vibrate === "function") {
+    nav.vibrate(ms);
+  }
+}
+
 /* ================= Daily Swipe Card (framer-motion) ================= */
 
 type SwipeCardProps = {
@@ -86,7 +95,7 @@ function SwipeCard({
 
   return (
     <motion.div
-      className="relative mb-2 rounded-xl border border-slate-100 bg-white/90 px-3 py-2 text-sm shadow-sm touch-pan-y"
+      className="relative mb-2 rounded-xl border border-slate-100 bg-white/90 px-3 py-2 text-sm shadow-sm touch-pan-y transition hover:-translate-y-0.5 hover:shadow-md"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 8 }}
@@ -98,7 +107,7 @@ function SwipeCard({
       onDragEnd={(_, info) => {
         const offsetX = info.offset.x;
 
-        // NEW: Swipe LEFT -> complete
+        // Swipe LEFT -> complete
         if (offsetX < -SWIPE_THRESHOLD && !done && initials) {
           onComplete(task.id, initials);
           return;
@@ -181,7 +190,7 @@ function WeeklyMonthlyTaskRow({
 
   return (
     <motion.div
-      className="flex items-start justify-between gap-2 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-sm shadow-sm touch-pan-y"
+      className="flex items-start justify-between gap-2 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-sm shadow-sm touch-pan-y transition hover:-translate-y-0.5 hover:shadow-md"
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 6 }}
@@ -193,7 +202,7 @@ function WeeklyMonthlyTaskRow({
       onDragEnd={(_, info) => {
         const offsetX = info.offset.x;
 
-        // NEW: Swipe LEFT -> complete
+        // Swipe LEFT -> complete
         if (offsetX < -SWIPE_THRESHOLD && !done && initials) {
           onComplete(task.id, initials);
           return;
@@ -523,8 +532,9 @@ export default function CleaningRota() {
       { task_id: id, run_on: today, done_by: payload.done_by },
     ]);
 
-    // 🎉 Confetti on single completion
+    // 🎉 Confetti + subtle haptic on single completion
     fireConfetti();
+    bumpVibrate();
   }
 
   async function uncompleteOne(id: string) {
@@ -589,13 +599,14 @@ export default function CleaningRota() {
       })),
     ]);
 
-    // 🎉 Confetti on bulk completion
+    // 🎉 Confetti + subtle haptic on bulk completion
     fireConfetti();
+    bumpVibrate(15);
   }
 
   /* ===== RENDER ===== */
   return (
-    <div className={PAGE + " space-y-6 py-4"}>
+    <div className={PAGE + " space-y-6 py-4 animate-fadeIn"}>
       {/* Centered date at the very top */}
       <div className="mb-2 text-center">
         <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
@@ -693,9 +704,9 @@ export default function CleaningRota() {
           )}
         </div>
 
-        {/* ===== Today’s daily tasks – by category with swipe cards (NO scroll on card) ===== */}
+        {/* ===== Today’s daily tasks – by category with swipe cards ===== */}
         <div className="mt-4">
-          <div className="mb-1 flex itemscenter justify-between">
+          <div className="mb-1 flex items-center justify-between">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
               Daily tasks (checklist by category)
             </div>
@@ -726,7 +737,7 @@ export default function CleaningRota() {
                 return (
                   <div
                     key={cat}
-                    className="flex flex-col rounded-2xl border border-slate-200/80 bg-white/80 p-3 text-sm shadow-sm"
+                    className="flex flex-col rounded-2xl border border-slate-200/80 bg-white/80 p-3 text-sm shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                   >
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <div
@@ -798,7 +809,7 @@ export default function CleaningRota() {
           {upcoming.map(({ day, list }) => (
             <div
               key={day}
-              className="rounded-2xl border border-gray-200/80 bg-white/80 p-3 shadow-sm"
+              className="rounded-2xl border border-gray-200/80 bg-white/80 p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
             >
               <div className="mb-1 flex items-center justify-between">
                 <div className="font-medium text-slate-900">
