@@ -1571,7 +1571,7 @@ export default function FoodTempLogger({
         )}
       </div>
 
-      {/* Cleaning completion modal */}
+           {/* Cleaning completion modal */}
       {confirm && (
         <div
           className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
@@ -1584,11 +1584,18 @@ export default function FoodTempLogger({
               completeTasks(confirm.ids, confirmInitials.trim());
             }}
             onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-6 flex h-[60vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl border border-white/30 bg-white/90 shadow-xl shadow-slate-900/25 backdrop-blur sm:mt-24 sm:h-auto sm:max-w-md sm:rounded-2xl"
+            className="
+              mx-auto mt-6 flex h-[60vh] w-full max-w-sm flex-col overflow-hidden
+              rounded-t-2xl border border-white/30 bg-white/90 shadow-xl shadow-slate-900/25 backdrop-blur
+              sm:mt-24 sm:max-h-[80vh] sm:max-w-md sm:rounded-2xl
+            "
           >
+            {/* header */}
             <div className="sticky top-0 z-10 border-b bg-white/90 px-4 py-3 text-base font-semibold">
               {confirmLabel}
             </div>
+
+            {/* scrollable body */}
             <div className="grow space-y-3 overflow-y-auto px-4 py-3 text-sm">
               <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-2">
                 <div className="font-medium">
@@ -1625,6 +1632,8 @@ export default function FoodTempLogger({
                 </div>
               )}
             </div>
+
+            {/* footer */}
             <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t bg-white/90 px-4 py-3">
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-600">Initials</span>
@@ -1665,6 +1674,6 @@ export default function FoodTempLogger({
           </form>
         </div>
       )}
-    </div>
+   </div>
   );
 }
