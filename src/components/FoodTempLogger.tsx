@@ -1,313 +1,105 @@
-// src/components/FoodTempLogger.tsx
+// src/components/CleaningRota.tsx
 "use client";
-import posthog from "posthog-js";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
-import {
-  TARGET_PRESETS,
-  TARGET_BY_KEY,
-  type TargetPreset,
-} from "@/lib/temp-constants";
-import { CLEANING_CATEGORIES } from "@/components/ManageCleaningTasksModal";
+import ManageCleaningTasksModal, {
+  CLEANING_CATEGORIES,
+} from "@/components/ManageCleaningTasksModal";
 
-/* =============== Types =============== */
-type CanonRow = {
-  id: string;
-  date: string | null; // yyyy-mm-dd
-  time: string | null; // HH:mm
-  staff_initials: string | null;
-  location: string | null;
-  item: string | null;
-  target_key: string | null;
-  temp_c: number | null;
-  status: "pass" | "fail" | null;
-};
+const PAGE = "max-w-[1100px] mx-auto px-3 sm:px-4";
 
-type Props = {
-  initials?: string[];
-  locations?: string[]; // no longer used, kept only so callers don't break
-};
+// glassy panel
+const CARD =
+  "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md";
 
-/* leaderboard / employee of month */
-type EmployeeOfMonth = {
-  display_name: string | null;
-  points: number | null;
-  temp_logs_count: number | null;
-  cleaning_count: number | null;
-};
-
-/* cleaning rota types */
 type Frequency = "daily" | "weekly" | "monthly";
-type CleanTask = {
+
+type Task = {
   id: string;
   org_id: string;
-  area: string | null;
   task: string;
+  area: string | null;
   category: string | null;
   frequency: Frequency;
   weekday: number | null;
   month_day: number | null;
 };
-type CleanRun = {
+
+type Run = {
   task_id: string;
   run_on: string;
   done_by: string | null;
 };
 
-type FoodHygieneStatus = {
-  lastInspectedOn: string | null;
-  rating: number | null;
-  nextDueOn: string | null;
-  daysToDue: number | null;
-  overdue: boolean;
-  dueSoon: boolean;
-};
+const iso = (d: Date) => d.toISOString().slice(0, 10);
+const ISO_TODAY = () => iso(new Date());
+const getDow1to7 = (d: string) => ((new Date(d).getDay() + 6) % 7) + 1;
+const getDom = (d: string) => new Date(d).getDate();
 
-/* =============== Small helpers =============== */
+const isDueOn = (t: Task, y: string) =>
+  t.frequency === "daily"
+    ? true
+    : t.frequency === "weekly"
+    ? t.weekday === getDow1to7(y)
+    : t.month_day === getDom(y);
 
-function sameDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
-function formatPrettyDate(d: Date) {
-  const WEEKDAYS = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-  ];
-  const MONTHS = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-
-  const weekday = WEEKDAYS[d.getDay()];
-  const day = d.getDate();
-  const month = MONTHS[d.getMonth()];
-  const year = d.getFullYear();
-
-  // No comma – always: Friday 14 November 2025
-  return `${weekday} ${day} ${month} ${year}`;
-}
-
-const LS_LAST_INITIALS = "tt_last_initials";
-
-const cls = (...parts: Array<string | false | undefined>) =>
-  parts.filter(Boolean).join(" ");
-
-const firstLetter = (s: string | null | undefined) =>
-  (s?.trim()?.charAt(0) || "").toUpperCase();
-
-function toISODate(val: any): string | null {
-  if (!val) return null;
-  const d = new Date(val);
-  if (isNaN(d.getTime())) return null;
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function toTimeHM(val: any): string | null {
-  if (!val) return null;
-  const d = new Date(val);
-  if (isNaN(d.getTime())) return null;
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
-}
-
-function formatDDMMYYYY(iso: string | null) {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-");
-  if (!y || !m || !d) return iso!;
-  return `${d}/${m}/${y}`;
-}
-
-function inferStatus(
-  temp: number | null,
-  preset?: TargetPreset
-): "pass" | "fail" | null {
-  if (temp == null || !preset) return null;
-  const { minC, maxC } = preset;
-  if (minC != null && temp < minC) return "fail";
-  if (maxC != null && temp > maxC) return "fail";
-  return "pass";
-}
-
-function normalizeRowsFromFood(data: any[]): CanonRow[] {
-  return data.map((r) => {
-    const temp =
-      typeof r.temp_c === "number"
-        ? r.temp_c
-        : r.temp_c != null
-        ? Number(r.temp_c)
-        : null;
-
-    const rawAt = r.at ?? r.created_at ?? null;
-
-    return {
-      id: String(r.id ?? crypto.randomUUID()),
-      date: toISODate(rawAt),
-      time: toTimeHM(rawAt),
-      staff_initials:
-        (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
-      location: (r.area ?? r.location ?? null)?.toString() ?? null,
-      item: (r.note ?? r.item ?? null)?.toString() ?? null,
-      target_key: r.target_key != null ? String(r.target_key) : null,
-      temp_c: temp,
-      status: (r.status as any) ?? null,
-    };
-  });
-}
-
-/* cleaning rota helpers */
-const isoToday = () => new Date().toISOString().slice(0, 10);
-const nice = (yyyy_mm_dd: string) =>
-  new Date(yyyy_mm_dd).toLocaleDateString(undefined, {
+const niceShort = (d: string) =>
+  new Date(d).toLocaleDateString(undefined, {
     weekday: "short",
     day: "2-digit",
     month: "short",
   });
-const getDow1to7 = (ymd: string) => {
-  const date = new Date(ymd);
-  return ((date.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
-};
-const getDom = (ymd: string) => new Date(ymd).getDate();
 
-function isDueOn(t: CleanTask, ymd: string) {
-  switch (t.frequency) {
-    case "daily":
-      return true;
-    case "weekly":
-      return t.weekday === getDow1to7(ymd);
-    case "monthly":
-      return t.month_day === getDom(ymd);
-    default:
-      return false;
+const niceFull = (d: string) =>
+  new Date(d).toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+/* ========== HAPTIC VIBRATION HELPER ========== */
+
+function vibrate(ms = 30) {
+  try {
+    if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+      (navigator as any).vibrate?.(ms);
+    }
+  } catch {
+    // ignore; vibration is just a nice-to-have
   }
 }
 
-function addMonths(date: Date, months: number): Date {
-  const d = new Date(date);
-  const day = d.getDate();
-  d.setMonth(d.getMonth() + months);
-  // Handle end-of-month rollover
-  if (d.getDate() < day) {
-    d.setDate(0);
-  }
-  return d;
-}
+/* ================= Daily Swipe Card (NO entrance animation) ================= */
 
-function CategoryPill({
-  title,
-  total,
-  open,
-  onClick,
-}: {
-  title: string;
-  total: number;
-  open: number;
-  onClick: () => void;
-}) {
-  const hasOpen = open > 0;
-  const color = hasOpen
-    ? "bg-red-50/90 text-red-700 border-red-200"
-    : "bg-emerald-50/90 text-emerald-700 border-emerald-200";
-
-  return (
-    <button
-      onClick={onClick}
-      className={cls(
-        "flex min-h-[64px] flex-col justify-between rounded-xl border px-3 py-2 text-left text-sm shadow-sm transition",
-        "backdrop-blur-sm",
-        "hover:brightness-105",
-        color
-      )}
-    >
-      <div className="text-[13px] leading-tight">{title}</div>
-      <div className="mt-1 text-lg font-semibold leading-none">
-        {total}
-        <span className="ml-1 text-[11px] opacity-75">({open} open)</span>
-      </div>
-    </button>
-  );
-}
-
-function Pill({ done, onClick }: { done: boolean; onClick: () => void }) {
-  return done ? (
-    <button
-      className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-500/20"
-      onClick={onClick}
-      title="Mark incomplete"
-    >
-      Complete
-    </button>
-  ) : (
-    <button
-      className="shrink-0 rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-500/20"
-      onClick={onClick}
-      title="Mark complete"
-    >
-      Incomplete
-    </button>
-  );
-}
-
-/* =============== Weekly/Monthly row with VISIBLE swipe (framer-motion) =============== */
-
-type WeeklyMonthlyTaskRowProps = {
-  task: CleanTask;
+type SwipeCardProps = {
+  task: Task;
   done: boolean;
-  run: CleanRun | null;
-  initials: string[];
-  ini: string;
-  confirmInitials: string;
-  onComplete: (ids: string[], initials: string) => void;
-  onUncomplete: (id: string) => void;
+  run: Run | null;
+  today: string;
+  initials: string;
+  onComplete: (taskId: string, initials: string) => void;
+  onUndo: (taskId: string) => void;
 };
 
-function WeeklyMonthlyTaskRow({
+function SwipeCard({
   task,
   done,
   run,
+  today,
   initials,
-  ini,
-  confirmInitials,
   onComplete,
-  onUncomplete,
-}: WeeklyMonthlyTaskRowProps) {
+  onUndo,
+}: SwipeCardProps) {
   const SWIPE_THRESHOLD = 80;
-  const chosenIni = ini || initials[0] || confirmInitials || "";
 
   return (
     <motion.div
-      className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 bg-white/80 px-2 py-2 text-sm shadow-sm backdrop-blur-sm touch-pan-y"
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 6 }}
+      className="relative mb-2 rounded-xl border border-slate-100 bg-white/90 px-3 py-2 text-sm shadow-sm touch-pan-y"
       layout
       drag="x"
       dragConstraints={{ left: 0, right: 0 }}
@@ -316,1005 +108,580 @@ function WeeklyMonthlyTaskRow({
       onDragEnd={(_, info) => {
         const offsetX = info.offset.x;
 
-        // Keep your existing logic:
-        // swipe LEFT => complete, swipe RIGHT => undo
-        if (offsetX < -SWIPE_THRESHOLD && !done && chosenIni) {
-          onComplete([task.id], chosenIni);
+        // Swipe LEFT -> complete
+        if (offsetX < -SWIPE_THRESHOLD && !done && initials) {
+          onComplete(task.id, initials);
           return;
         }
 
+        // Swipe RIGHT -> undo
         if (offsetX > SWIPE_THRESHOLD && done) {
-          onUncomplete(task.id);
+          onUndo(task.id);
+          return;
+        }
+      }}
+    >
+      <div
+        className={
+          done ? "text-xs text-slate-500 line-through" : "text-xs text-slate-900"
+        }
+      >
+        <div className="text-sm font-medium text-slate-900">{task.task}</div>
+        <div className="text-[11px] text-slate-500">
+          {task.area ?? "—"} •{" "}
+          {task.frequency === "daily"
+            ? "Daily"
+            : task.frequency === "weekly"
+            ? "Weekly"
+            : "Monthly"}
+        </div>
+        {run?.done_by && (
+          <div className="text-[10px] text-slate-400">
+            Done by {run.done_by} on {niceShort(today)}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-1 flex justify-end">
+        {done ? (
+          <button
+            type="button"
+            className="shrink-0 rounded-full bg-emerald-100 px-3 py-0.5 text-[11px] font-semibold text-emerald-800"
+            onClick={() => onUndo(task.id)}
+          >
+            Undo
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="shrink-0 rounded-full bg-red-100 px-3 py-0.5 text-[11px] font-semibold text-red-700 disabled:opacity-50"
+            disabled={!initials}
+            onClick={() => initials && onComplete(task.id, initials)}
+          >
+            Tick
+          </button>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+/* ========== Weekly/Monthly Row with swipe (NO entrance animation) ========== */
+
+type WeeklyMonthlyTaskRowProps = {
+  task: Task;
+  done: boolean;
+  run: Run | null;
+  today: string;
+  initials: string;
+  onComplete: (taskId: string, initials: string) => void;
+  onUndo: (taskId: string) => void;
+};
+
+function WeeklyMonthlyTaskRow({
+  task,
+  done,
+  run,
+  today,
+  initials,
+  onComplete,
+  onUndo,
+}: WeeklyMonthlyTaskRowProps) {
+  const SWIPE_THRESHOLD = 80;
+
+  return (
+    <motion.div
+      className="flex items-start justify-between gap-2 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-sm shadow-sm touch-pan-y"
+      layout
+      drag="x"
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.2}
+      dragSnapToOrigin
+      onDragEnd={(_, info) => {
+        const offsetX = info.offset.x;
+
+        // Swipe LEFT -> complete
+        if (offsetX < -SWIPE_THRESHOLD && !done && initials) {
+          onComplete(task.id, initials);
+          return;
+        }
+
+        // Swipe RIGHT -> undo
+        if (offsetX > SWIPE_THRESHOLD && done) {
+          onUndo(task.id);
           return;
         }
       }}
     >
       <div className={done ? "text-gray-500 line-through" : ""}>
-        <div className="font-medium">{task.task}</div>
+        <div className="font-medium text-slate-900">{task.task}</div>
         <div className="text-xs text-gray-500">
           {task.category ?? task.area ?? "—"} •{" "}
           {task.frequency === "weekly" ? "Weekly" : "Monthly"}
         </div>
         {run?.done_by && (
-          <div className="text-[11px] text-gray-400">Done by {run.done_by}</div>
+          <div className="text-[11px] text-gray-400">
+            Done by {run.done_by} on {niceShort(today)}
+          </div>
         )}
       </div>
-      <Pill
-        done={done}
-        onClick={() =>
-          done
-            ? onUncomplete(task.id)
-            : chosenIni &&
-              onComplete(
-                [task.id],
-                chosenIni // same selection logic as swipe
-              )
-        }
-      />
+      {done ? (
+        <button
+          className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800"
+          type="button"
+          onClick={() => onUndo(task.id)}
+        >
+          Undo
+        </button>
+      ) : (
+        <button
+          className="shrink-0 rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700 disabled:opacity-50"
+          type="button"
+          disabled={!initials}
+          onClick={() => {
+            if (!initials) return;
+            onComplete(task.id, initials);
+          }}
+        >
+          Complete
+        </button>
+      )}
     </motion.div>
   );
 }
 
-/* =============== Component =============== */
-export default function FoodTempLogger({
-  initials: initialsSeed = [],
-}: Props) {
-  // DATA
-  const [rows, setRows] = useState<CanonRow[]>([]);
-  const [initials, setInitials] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+/* ================= Main Component ================= */
 
-  // Employee of the month (from leaderboard view)
-  const [employeeOfMonth, setEmployeeOfMonth] =
-    useState<EmployeeOfMonth | null>(null);
+export default function CleaningRota() {
+  const today = ISO_TODAY();
 
-  // KPIs (training & allergen due/overdue)
-  const [kpi, setKpi] = useState({
-    trainingDueSoon: 0,
-    trainingOver: 0,
-    allergenDueSoon: 0,
-    allergenOver: 0,
-  });
-
-  // Food hygiene reminder (18-month cycle)
-  const [foodHygiene, setFoodHygiene] = useState<FoodHygieneStatus | null>(
-    null
-  );
-
-  // Cleaning rota (today)
-  const [tasks, setTasks] = useState<CleanTask[]>([]);
-  const [runs, setRuns] = useState<CleanRun[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [runs, setRuns] = useState<Run[]>([]);
   const runsKey = useMemo(() => {
-    const m = new Map<string, CleanRun>();
+    const m = new Map<string, Run>();
     for (const r of runs) m.set(`${r.task_id}|${r.run_on}`, r);
     return m;
   }, [runs]);
 
-  // initials selector for runs
+  const [initialsList, setInitialsList] = useState<string[]>([]);
   const [ini, setIni] = useState<string>("");
 
-  // Completion modal (single + “complete all”)
-  const [confirm, setConfirm] = useState<{
-    ids: string[];
-    run_on: string;
-  } | null>(null);
-  const [confirmLabel, setConfirmLabel] =
-    useState<string>("Confirm completion");
-  const [confirmInitials, setConfirmInitials] = useState("");
+  const [manageOpen, setManageOpen] = useState(false);
 
-  // Logs: show-all toggle (10 latest by default)
-  const [showAllLogs, setShowAllLogs] = useState(false);
+  // permissions: who can manage tasks?
+  const [canManage, setCanManage] = useState(true); // default true so first user isn’t locked out
 
-  // Header date – always today now
-  const headerDateObj = new Date();
-  const isTodayHeader = sameDay(headerDateObj, new Date());
+  // which daily category is expanded to show swipe cards
+  const [openCategory, setOpenCategory] = useState<string | null>(null);
 
-  /* prime initials from localStorage */
-  useEffect(() => {
-    try {
-      const lsIni = localStorage.getItem(LS_LAST_INITIALS) || "";
-      if (lsIni) {
-        const upper = lsIni.toUpperCase();
-        setIni(upper);
-        setInitials((prev) =>
-          Array.from(new Set([upper, ...prev.map((v) => v.toUpperCase())]))
-        );
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  /* initials list (org + team, merge with any existing) */
+  /** Load initials and put logged-in user first */
   useEffect(() => {
     (async () => {
-      try {
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) return;
+      const orgId = await getActiveOrgIdClient();
+      if (!orgId) return;
 
-        const { data: tm } = await supabase
-          .from("team_members")
-          .select("initials,name,email")
-          .eq("org_id", orgId)
-          .order("initials", { ascending: true });
+      const { data } = await supabase
+        .from("team_members")
+        .select("initials,email")
+        .eq("org_id", orgId)
+        .order("initials");
 
-        const fromDb =
-          (tm ?? [])
-            .map(
-              (r: any) =>
-                r.initials?.toString().toUpperCase() ||
-                firstLetter(r.name) ||
-                firstLetter(r.email)
+      let list: string[] = Array.from(
+        new Set(
+          (data ?? [])
+            .map((r: any) =>
+              (r.initials ?? "").toString().toUpperCase().trim()
             )
-            .filter(Boolean) || [];
+            .filter(Boolean)
+        )
+      );
 
-        const seedUpper = initialsSeed.map((v) => (v ? v.toUpperCase() : v));
+      try {
+        const { data: authData } = await supabase.auth.getUser();
+        const email = authData.user?.email?.toLowerCase() ?? null;
 
-        setInitials((prev) => {
-          const seen = new Set<string>();
-          const merged: string[] = [];
+        if (email && data && data.length) {
+          const meRow = data.find(
+            (r: any) => (r.email ?? "").toLowerCase() === email
+          );
+          const myIni = meRow?.initials
+            ?.toString()
+            .toUpperCase()
+            .trim();
 
-          const push = (val: string | null | undefined) => {
-            const v = (val ?? "").toString().toUpperCase().trim();
-            if (!v || seen.has(v)) return;
-            seen.add(v);
-            merged.push(v);
-          };
-
-          prev.forEach(push);
-          seedUpper.forEach(push);
-          fromDb.forEach(push);
-
-          return merged;
-        });
+          if (myIni && list.includes(myIni)) {
+            list = [myIni, ...list.filter((x) => x !== myIni)];
+          }
+        }
       } catch {
         // ignore
       }
+
+      setInitialsList(list);
+      if (!ini && list.length) setIni(list[0]);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialsSeed]);
-
-  /* Logged-in user initials first in the list */
-  useEffect(() => {
-    (async () => {
-      try {
-        const orgId = await getActiveOrgIdClient();
-        const { data: authData, error: authError } =
-          await supabase.auth.getUser();
-
-        if (authError || !authData?.user || !orgId) return;
-
-        const email = authData.user.email?.toLowerCase() ?? "";
-        if (!email) return;
-
-        const { data: tm } = await supabase
-          .from("team_members")
-          .select("initials,name,email")
-          .eq("org_id", orgId)
-          .eq("email", email)
-          .limit(1);
-
-        const row = tm?.[0];
-        if (!row) return;
-
-        const base =
-          row.initials?.toString().trim() ||
-          (row.name ?? "")
-            .toString()
-            .trim()
-            .split(/\s+/)
-            .map((p: string) => p[0] ?? "")
-            .join("") ||
-          email[0] ||
-          "";
-
-        const loggedIni = base.toUpperCase().slice(0, 4);
-        if (!loggedIni) return;
-
-        setInitials((prev) => {
-          const upperPrev = prev.map((v) => v.toUpperCase());
-          const rest = upperPrev.filter((v) => v !== loggedIni);
-          return [loggedIni, ...rest];
-        });
-
-        setIni((prev) => prev || loggedIni);
-        setConfirmInitials((prev) => prev || loggedIni);
-      } catch {
-        // ignore
-      }
-    })();
   }, []);
 
-  /* default ini if still empty but we have initials */
-  useEffect(() => {
-    if (!ini && initials.length) {
-      const first = initials[0];
-      setIni(first);
-      setConfirmInitials((prev) => prev || first);
-    }
-  }, [initials, ini]);
-
-  /* KPI fetch (org-level) + food hygiene reminder */
+  /** Load role (owner/manager/admin?) */
   useEffect(() => {
     (async () => {
       try {
         const orgId = await getActiveOrgIdClient();
-        if (!orgId) return;
+        const { data: userRes } = await supabase.auth.getUser();
+        const email = userRes.user?.email?.toLowerCase() ?? null;
 
-        const locationId = await getActiveLocationIdClient();
+        let manage = true; // default
 
-        const soon = new Date();
-        soon.setDate(soon.getDate() + 14);
-        const todayD = new Date();
-
-        let trainingDueSoon = 0;
-        let trainingOver = 0;
-        let allergenDueSoon = 0;
-        let allergenOver = 0;
-
-        // Training KPIs
-        try {
-          const { data } = await supabase
+        if (orgId && email) {
+          const { data, error } = await supabase
             .from("team_members")
-            .select("training_expires_at,training_expiry,expires_at")
-            .eq("org_id", orgId);
-
-          (data ?? []).forEach((r: any) => {
-            const raw =
-              r.training_expires_at ??
-              r.training_expiry ??
-              r.expires_at ??
-              null;
-            if (!raw) return;
-            const d = new Date(raw);
-            if (isNaN(d.getTime())) return;
-            if (d < todayD) trainingOver++;
-            else if (d <= soon) trainingDueSoon++;
-          });
-        } catch {
-          // ignore training errors
-        }
-
-        // Allergen KPIs
-        try {
-          const { data } = await supabase
-            .from("allergen_review")
-            .select("last_reviewed,interval_days")
-            .eq("org_id", orgId);
-
-          (data ?? []).forEach((r: any) => {
-            const last = r.last_reviewed ? new Date(r.last_reviewed) : null;
-            const interval = Number(r.interval_days ?? 0);
-            if (!last || !Number.isFinite(interval)) return;
-            const due = new Date(last);
-            due.setDate(due.getDate() + interval);
-            if (due < todayD) allergenOver++;
-            else if (due <= soon) allergenDueSoon++;
-          });
-        } catch {
-          // ignore allergen errors
-        }
-
-        setKpi({ trainingDueSoon, trainingOver, allergenDueSoon, allergenOver });
-
-        // Food hygiene: 18-month cycle
-        try {
-          const todayZero = new Date();
-          todayZero.setHours(0, 0, 0, 0);
-
-          type HygieneRow = {
-            inspected_on?: string | null;
-            inspection_date?: string | null;
-            rating?: any;
-            location_id?: string | null;
-            created_at?: string | null;
-          };
-
-          let chosen: HygieneRow | null = null;
-
-          // 1) Try inspections table
-          const { data: inspRows } = await supabase
-            .from("food_hygiene_inspections")
-            .select(
-              "inspected_on, inspection_date, rating, location_id, created_at"
-            )
+            .select("role,email")
             .eq("org_id", orgId)
-            .order("inspected_on", { ascending: false })
-            .order("inspection_date", { ascending: false })
-            .order("created_at", { ascending: false })
-            .limit(20);
+            .eq("email", email)
+            .limit(1);
 
-          const allInsp = (inspRows ?? []) as HygieneRow[];
-
-          if (allInsp.length) {
-            if (locationId) {
-              chosen =
-                allInsp.find((r) => r.location_id === locationId) ?? allInsp[0];
-            } else {
-              chosen = allInsp[0];
-            }
+          if (!error && data && data.length > 0) {
+            const role = (data[0].role ?? "").toLowerCase();
+            manage =
+              role === "owner" || role === "manager" || role === "admin";
           }
-
-          // 2) Fallback to ratings table if nothing found
-          if (!chosen) {
-            const { data: ratingRows } = await supabase
-              .from("food_hygiene_ratings")
-              .select(
-                "inspected_on, inspection_date, rating, location_id, created_at"
-              )
-              .eq("org_id", orgId)
-              .order("inspected_on", { ascending: false })
-              .order("inspection_date", { ascending: false })
-              .order("created_at", { ascending: false })
-              .limit(20);
-
-            const allRatings = (ratingRows ?? []) as HygieneRow[];
-            if (allRatings.length) {
-              if (locationId) {
-                chosen =
-                  allRatings.find((r) => r.location_id === locationId) ??
-                  allRatings[0];
-              } else {
-                chosen = allRatings[0];
-              }
-            }
-          }
-
-          if (!chosen) {
-            setFoodHygiene(null);
-          } else {
-            const rawDate =
-              chosen.inspected_on ??
-              chosen.inspection_date ??
-              chosen.created_at ??
-              null;
-
-            if (!rawDate) {
-              setFoodHygiene(null);
-            } else {
-              const lastDate = new Date(rawDate);
-              if (Number.isNaN(lastDate.getTime())) {
-                setFoodHygiene(null);
-              } else {
-                const nextDue = addMonths(lastDate, 18);
-                const diffDays = Math.round(
-                  (nextDue.getTime() - todayZero.getTime()) / 86400000
-                );
-
-                setFoodHygiene({
-                  lastInspectedOn: lastDate.toISOString().slice(0, 10),
-                  rating:
-                    typeof chosen.rating === "number"
-                      ? chosen.rating
-                      : chosen.rating != null
-                      ? Number(chosen.rating)
-                      : null,
-                  nextDueOn: nextDue.toISOString().slice(0, 10),
-                  daysToDue: diffDays,
-                  overdue: diffDays < 0,
-                  dueSoon: diffDays >= 0 && diffDays <= 90,
-                });
-              }
-            }
-          }
-        } catch {
-          // don't break the page if hygiene fetch fails
-          setFoodHygiene(null);
         }
+
+        setCanManage(manage);
       } catch {
-        // ignore outer errors
+        setCanManage(true);
       }
     })();
   }, []);
 
-  /* Employee of the month fetch (leaderboard) */
-  useEffect(() => {
-    (async () => {
-      try {
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) return;
+  /** Load tasks + today's runs (org + location scoped) */
+  async function loadAll() {
+    const orgId = await getActiveOrgIdClient();
+    const locationId = await getActiveLocationIdClient();
 
-        const { data, error } = await supabase
-          .from("leaderboard")
-          .select("display_name, points, temp_logs_count, cleaning_count")
-          .eq("org_id", orgId)
-          .order("points", { ascending: false })
-          .limit(1);
+    if (!orgId) return;
 
-        if (error) throw error;
-        setEmployeeOfMonth(data?.[0] ?? null);
-      } catch {
-        setEmployeeOfMonth(null);
-      }
-    })();
-  }, []);
+    let tQuery = supabase
+      .from("cleaning_tasks")
+      .select(
+        "id, org_id, task, name, area, category, frequency, weekday, month_day, location_id"
+      )
+      .eq("org_id", orgId);
 
-  /* rows (org + location scoped) */
-  async function loadRows() {
-    setLoading(true);
-    setErr(null);
-    try {
-      const orgId = await getActiveOrgIdClient();
-      if (!orgId) {
-        setRows([]);
-        setLoading(false);
-        return;
-      }
-
-      const locationId = await getActiveLocationIdClient();
-
-      let query = supabase
-        .from("food_temp_logs")
-        .select("*")
-        .eq("org_id", orgId);
-
-      if (locationId) {
-        query = query.eq("location_id", locationId);
-      }
-
-      const { data, error } = await query
-        .order("at", { ascending: false })
-        .limit(300);
-
-      if (error) throw error;
-      setRows(normalizeRowsFromFood(data ?? []));
-    } catch (e: any) {
-      setErr(e?.message || "Failed to fetch logs.");
-      setRows([]);
-    } finally {
-      setLoading(false);
+    if (locationId) {
+      tQuery = tQuery.eq("location_id", locationId);
     }
-  }
-  useEffect(() => {
-    loadRows();
-  }, []);
 
-  async function refreshRows() {
-    await loadRows();
-  }
+    const { data: tData } = await tQuery;
 
-  /* Cleaning rota: load today's due + runs (org + location scoped) */
-  async function loadRotaToday() {
-    try {
-      const org_id = await getActiveOrgIdClient();
-      const locationId = await getActiveLocationIdClient();
-      if (!org_id || !locationId) return;
-
-      const todayISO = isoToday();
-
-      const { data: tData } = await supabase
-        .from("cleaning_tasks")
-        .select(
-          "id, org_id, location_id, area, task, category, frequency, weekday, month_day"
-        )
-        .eq("org_id", org_id)
-        .eq("location_id", locationId);
-
-      const all: CleanTask[] =
-        (tData ?? []).map((r: any) => ({
+    setTasks(
+      (tData ?? []).map((r: any) => {
+        const freq = String(r.frequency ?? "daily").toLowerCase() as Frequency;
+        return {
           id: String(r.id),
           org_id: String(r.org_id),
-          area: r.area ?? null,
           task: r.task ?? r.name ?? "",
+          area: r.area ?? null,
           category: r.category ?? null,
-          frequency: (r.frequency ?? "daily") as Frequency,
+          frequency: freq,
           weekday: r.weekday ? Number(r.weekday) : null,
           month_day: r.month_day ? Number(r.month_day) : null,
-        })) || [];
+        };
+      })
+    );
 
-      setTasks(all);
+    let query = supabase
+      .from("cleaning_task_runs")
+      .select("task_id, run_on, done_by")
+      .eq("org_id", orgId)
+      .eq("run_on", today);
 
-      const { data: rData } = await supabase
-        .from("cleaning_task_runs")
-        .select("task_id,run_on,done_by,location_id")
-        .eq("org_id", org_id)
-        .eq("location_id", locationId)
-        .eq("run_on", todayISO);
-
-      setRuns(
-        (rData ?? []).map((r: any) => ({
-          task_id: String(r.task_id),
-          run_on: r.run_on as string,
-          done_by: r.done_by ?? null,
-        }))
-      );
-    } catch {
-      // ignore
+    if (locationId) {
+      query = query.eq("location_id", locationId);
     }
+
+    const { data: rData } = await query;
+
+    setRuns(
+      (rData ?? []).map((r: any) => ({
+        task_id: String(r.task_id),
+        run_on: r.run_on as string,
+        done_by: r.done_by ?? null,
+      }))
+    );
   }
+
   useEffect(() => {
-    loadRotaToday();
-  }, []);
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [today]);
 
-  const todayISOKey = isoToday();
-  const dueTodayAll = useMemo(
-    () => tasks.filter((t) => isDueOn(t, todayISOKey)),
-    [tasks, todayISOKey]
+  /** Derived: what’s due today */
+  const dueToday = useMemo(
+    () => tasks.filter((t) => isDueOn(t, today)),
+    [tasks, today]
   );
-  const dueDaily = useMemo(
-    () => dueTodayAll.filter((t) => t.frequency === "daily"),
-    [dueTodayAll]
+  const dailyToday = useMemo(
+    () => dueToday.filter((t) => t.frequency === "daily"),
+    [dueToday]
   );
-  const dueNonDaily = useMemo(
-    () => dueTodayAll.filter((t) => t.frequency !== "daily"),
-    [dueTodayAll]
-  );
-  const doneCount = useMemo(
-    () =>
-      dueTodayAll.filter((t) => runsKey.has(`${t.id}|${todayISOKey}`)).length,
-    [dueTodayAll, runsKey, todayISOKey]
+  const nonDailyToday = useMemo(
+    () => dueToday.filter((t) => t.frequency !== "daily"),
+    [dueToday]
   );
 
+  /** Daily summary by category */
   const dailyByCat = useMemo(() => {
-    const map = new Map<string, CleanTask[]>();
+    const map = new Map<string, Task[]>();
     for (const c of CLEANING_CATEGORIES) map.set(c, []);
-    for (const t of dueDaily) {
+    for (const t of dailyToday) {
       const key = t.category ?? "Opening checks";
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(t);
     }
+    for (const [k, list] of map)
+      map.set(
+        k,
+        list.slice().sort((a, b) => a.task.localeCompare(b.task))
+      );
     return map;
-  }, [dueDaily]);
+  }, [dailyToday]);
 
-  // Only categories that actually have daily tasks due today
-  const categoriesWithDaily = useMemo(() => {
-    const cats: string[] = [];
-    dailyByCat.forEach((list, cat) => {
-      if (list.length > 0) cats.push(cat);
-    });
-    return cats;
-  }, [dailyByCat]);
-
-  // List of tasks included in the current confirm modal (for display)
-  const confirmTasks = useMemo(
-    () => (confirm ? tasks.filter((t) => confirm.ids.includes(t.id)) : []),
-    [confirm, tasks]
+  // Only categories that actually have tasks today
+  const categoriesWithTasks = useMemo(
+    () =>
+      CLEANING_CATEGORIES.filter(
+        (cat) => (dailyByCat.get(cat) ?? []).length > 0
+      ),
+    [dailyByCat]
   );
 
-  /* Logs: slice for 10-row view vs full */
-  const rowsToShow = useMemo(
-    () => (showAllLogs ? rows : rows.slice(0, 10)),
-    [rows, showAllLogs]
-  );
-
-  /* grouped rows by date (based on rowsToShow) */
-  const grouped = useMemo(() => {
-    const map = new Map<string, CanonRow[]>();
-    for (const r of rowsToShow) {
-      const key = r.date ?? "—";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(r);
+  // Default openCategory to the first non-empty category
+  useEffect(() => {
+    if (!openCategory && categoriesWithTasks.length > 0) {
+      setOpenCategory(categoriesWithTasks[0]);
     }
-    return Array.from(map.entries())
-      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
-      .map(([date, list]) => ({ date, list }));
-  }, [rowsToShow]);
+  }, [categoriesWithTasks, openCategory]);
 
-  /* complete api (org + location scoped) */
-  async function completeTasks(ids: string[], iniVal: string) {
-    if (!ids.length) {
-      setConfirm(null);
-      setConfirmInitials("");
+  const doneCount = useMemo(
+    () => dueToday.filter((t) => runsKey.has(`${t.id}|${today}`)).length,
+    [dueToday, runsKey, today]
+  );
+
+  /** Upcoming 7 days (weekly/monthly only) */
+  const days7 = useMemo(() => {
+    const arr: string[] = [];
+    const d = new Date(today);
+    for (let i = 0; i < 7; i++) {
+      arr.push(iso(d));
+      d.setDate(d.getDate() + 1);
+    }
+    return arr;
+  }, [today]);
+
+  const upcoming = useMemo(
+    () =>
+      days7.map((d) => ({
+        day: d,
+        list: tasks.filter((t) => t.frequency !== "daily" && isDueOn(t, d)),
+      })),
+    [days7, tasks]
+  );
+
+  /** ===== Complete helpers (always include org_id + location_id) ===== */
+
+  async function fireConfetti() {
+    try {
+      const confettiModule = await import("canvas-confetti");
+      confettiModule.default();
+    } catch {
+      // ignore
+    }
+  }
+
+  async function completeOne(id: string, initialsVal: string) {
+    const orgId = await getActiveOrgIdClient();
+    const locationId = await getActiveLocationIdClient();
+    if (!orgId || !locationId) {
+      alert("Select a location first.");
       return;
     }
 
-    try {
-      const org_id = await getActiveOrgIdClient();
-      const locationId = await getActiveLocationIdClient();
+    const payload = {
+      org_id: orgId,
+      location_id: locationId,
+      task_id: id,
+      run_on: today,
+      done_by: initialsVal.toUpperCase(),
+    };
 
-      if (!org_id) {
-        alert("No organisation found.");
-        return;
-      }
-      if (!locationId) {
-        alert("No location selected.");
-        return;
-      }
+    const { error } = await supabase
+      .from("cleaning_task_runs")
+      .insert(payload);
 
-      const run_on = todayISOKey;
-
-      const payload = ids.map((id) => ({
-        org_id,
-        location_id: locationId,
-        task_id: id,
-        run_on,
-        done_by: iniVal.toUpperCase(),
-      }));
-
-      const { error } = await supabase
-        .from("cleaning_task_runs")
-        .upsert(payload, {
-          onConflict: "task_id,run_on",
-          ignoreDuplicates: true,
-        });
-
-      if (error) throw error;
-
-      // 🎉 Confetti after successful completion
-      try {
-        const confettiModule = await import("canvas-confetti");
-        confettiModule.default();
-      } catch {
-        // ignore confetti load errors
-      }
-
-      // 🔔 Small haptic bump on supported devices
-      if (typeof window !== "undefined" && "vibrate" in navigator) {
-        navigator.vibrate(10);
-      }
-
-      posthog.capture("cleaning_tasks_completed", {
-        count: ids.length,
-        initials: iniVal.toUpperCase(),
-        run_on,
-      });
-
-      await loadRotaToday();
-    } catch (e: any) {
-      alert(e?.message || "Failed to save completion.");
-    } finally {
-      setConfirm(null);
-      setConfirmInitials("");
+    if (error) {
+      alert(error.message);
+      return;
     }
+
+    setRuns((prev) => [
+      ...prev,
+      { task_id: id, run_on: today, done_by: payload.done_by },
+    ]);
+
+    // 🎉 Confetti + haptic on single completion
+    fireConfetti();
+    vibrate(40);
   }
 
-  async function uncompleteTask(id: string) {
-    try {
-      const org_id = await getActiveOrgIdClient();
-      const locationId = await getActiveLocationIdClient();
-      if (!org_id || !locationId) return;
-
-      const { error } = await supabase
-        .from("cleaning_task_runs")
-        .delete()
-        .eq("org_id", org_id)
-        .eq("location_id", locationId)
-        .eq("task_id", id)
-        .eq("run_on", todayISOKey);
-      if (error) throw error;
-
-      setRuns((prev) =>
-        prev.filter((r) => !(r.task_id === id && r.run_on === todayISOKey))
-      );
-
-      posthog.capture("cleaning_task_uncompleted", {
-        task_id: id,
-        run_on: todayISOKey,
-      });
-    } catch (e: any) {
-      alert(e?.message || "Failed to undo completion.");
+  async function uncompleteOne(id: string) {
+    const orgId = await getActiveOrgIdClient();
+    const locationId = await getActiveLocationIdClient();
+    if (!orgId || !locationId) {
+      alert("Select a location first.");
+      return;
     }
+
+    const { error } = await supabase
+      .from("cleaning_task_runs")
+      .delete()
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .eq("task_id", id)
+      .eq("run_on", today);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setRuns((prev) =>
+      prev.filter((r) => !(r.task_id === id && r.run_on === today))
+    );
   }
 
-  /* ========================= RENDER ========================= */
+  async function completeMany(ids: string[], initialsVal: string) {
+    const orgId = await getActiveOrgIdClient();
+    const locationId = await getActiveLocationIdClient();
+    if (!orgId || !locationId || !ids.length) {
+      if (!orgId || !locationId) {
+        alert("Select a location first.");
+      }
+      return;
+    }
 
+    const payload = ids.map((id) => ({
+      org_id: orgId,
+      location_id: locationId,
+      task_id: id,
+      run_on: today,
+      done_by: initialsVal.toUpperCase(),
+    }));
+
+    const { error } = await supabase
+      .from("cleaning_task_runs")
+      .insert(payload);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setRuns((prev) => [
+      ...prev,
+      ...payload.map((p) => ({
+        task_id: p.task_id,
+        run_on: p.run_on,
+        done_by: p.done_by,
+      })),
+    ]);
+
+    // 🎉 Confetti + haptic on bulk completion
+    fireConfetti();
+    vibrate(60);
+  }
+
+  /* ===== RENDER ===== */
   return (
-    <div className="space-y-6 animate-fadeIn">
-      {/* Big centred header */}
-      <div className="text-center">
-        <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">
-          {/* Title intentionally blank per your current design */}
-        </h1>
-
-        <div className="mt-3">
-          <div className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">
-            {isTodayHeader ? "Today" : "Selected date"}
-          </div>
-          <div className="mt-1 text-xl font-semibold text-slate-900 sm:text-2xl">
-            {formatPrettyDate(headerDateObj)}
-          </div>
+    <div className={PAGE + " space-y-6 py-4"}>
+      {/* Centered date at the very top */}
+      <div className="mb-2 text-center">
+        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+          Today
+        </div>
+        <div className="text-lg font-semibold text-slate-800">
+          {niceFull(today)}
         </div>
       </div>
 
-      {/* KPI grid + pills */}
-      <div className="space-y-4 rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
-        {(() => {
-          const todayISO = new Date().toISOString().slice(0, 10);
-          const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-          const in7d = (d: string | null) =>
-            d ? new Date(d) >= since : false;
+      {/* ===== Header / Actions ===== */}
+      <div className={CARD + " p-4"}>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-semibold leading-tight text-slate-900">
+            Cleaning rota
+          </h1>
 
-          const entriesToday = rows.filter((r) => r.date === todayISO).length;
-          const fails7 = rows.filter(
-            (r) => in7d(r.date) && r.status === "fail"
-          ).length;
-
-          const entriesTodayIsEmpty = entriesToday === 0;
-          const entriesTodayIcon = entriesTodayIsEmpty ? "❌" : "✅";
-          const entriesTodayTile =
-            "rounded-xl p-3 min-h-[76px] flex flex-col justify-between border shadow-sm backdrop-blur-sm " +
-            (entriesTodayIsEmpty
-              ? "border-red-200 bg-red-50/90 text-red-800"
-              : "border-emerald-200 bg-emerald-50/90 text-emerald-900");
-
-          const hasCleaning = dueTodayAll.length > 0;
-          const allCleaningDone =
-            hasCleaning && doneCount === dueTodayAll.length;
-          const cleaningIcon = !hasCleaning
-            ? "ℹ️"
-            : allCleaningDone
-            ? "✅"
-            : "❌";
-          const cleaningColor = !hasCleaning
-            ? "border-gray-200 bg-white/80 text-gray-800"
-            : allCleaningDone
-            ? "border-emerald-200 bg-emerald-50/90 text-emerald-900"
-            : "border-red-200 bg-red-50/90 text-red-800";
-
-         const cleaningTileBase =
-  "rounded-xl p-3 min-h-[76px] text-left flex flex-col justify-between border shadow-sm backdrop-blur-sm transition hover:brightness-105 hover:-translate-y-0.5 hover:shadow-md";
-
-          const failsTileColor =
-            fails7 > 0
-              ? "border-red-200 bg-red-50/90 text-red-800"
-              : "border-gray-200 bg-white/80 text-gray-800";
-          const failsIcon = fails7 > 0 ? "⚠️" : "✅";
-
-          const eomName = employeeOfMonth?.display_name || "—";
-          const eomPoints = employeeOfMonth?.points ?? 0;
-          const eomTemp = employeeOfMonth?.temp_logs_count ?? 0;
-          const eomClean = employeeOfMonth?.cleaning_count ?? 0;
-
-          return (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {/* tile 1: Entries today */}
-              <div className={entriesTodayTile}>
-                <div className="flex items-center justify-between text-xs">
-                  <span>Entries today</span>
-                  <span className="text-base">{entriesTodayIcon}</span>
-                </div>
-                <div className="mt-1 text-2xl font-semibold">
-                  {entriesToday}
-                </div>
-                <div className="mt-1 hidden text-[11px] opacity-80 md:block">
-                  {entriesTodayIsEmpty
-                    ? "No temperatures logged yet today."
-                    : "Great — at least one log recorded."}
-                </div>
-              </div>
-
-              {/* tile 2: Failures (7d) */}
-             <div
-  className={
-    "flex min-h-[76px] flex-col justify-between rounded-xl border p-3 text-xs shadow-sm backdrop-blur-sm transition hover:-translate-y-0.5 hover:shadow-md " +
-    failsTileColor
-  }
->
-
-                <div className="flex items-center justify-between text-xs">
-                  <span>Failures (7d)</span>
-                  <span className="text-base">{failsIcon}</span>
-                </div>
-                <div className="mt-1 text-2xl font-semibold">{fails7}</div>
-                <div className="mt-1 hidden text-[11px] opacity-80 md:block">
-                  {fails7 > 0
-                    ? "Check and record any corrective actions."
-                    : "No failed temperature checks in the last week."}
-                </div>
-              </div>
-
-              {/* tile 3: Employee of the month (from leaderboard) */}
-              <div className="flex min-h-[76px] flex-col justify-between rounded-xl border border-amber-200 bg-amber-50/90 p-3 text-amber-900 shadow-sm backdrop-blur-sm transition hover:-translate-y-0.5 hover:shadow-md">
-
-                <div className="flex items-center justify-between text-xs">
-                  <span>Employee of the month</span>
-                  <span className="text-lg">🏆</span>
-                </div>
-                <div className="mt-1 truncate text-lg font-semibold">
-                  {eomName}
-                </div>
-                <div className="mt-1 text-[11px] opacity-80 md:block">
-                  {eomPoints
-                    ? `${eomPoints} pts · Temps ${eomTemp} · Cleaning ${eomClean}`
-                    : "Based on points from cleaning & temp logs."}
-                </div>
-              </div>
-
-              {/* tile 4: Cleaning (today) */}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {canManage && (
               <button
                 type="button"
-                onClick={() => {
-                  const ids = dueTodayAll
-                    .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
-                    .map((t) => t.id);
-                  setConfirm({ ids, run_on: todayISOKey });
-                  setConfirmLabel("Complete all today");
-                  setConfirmInitials(ini || initials[0] || "");
-                }}
-                className={`${cleaningTileBase} ${cleaningColor}`}
-                title="View and complete today’s cleaning tasks"
+                className="shrink-0 rounded-xl bg-indigo-600/90 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-500"
+                onClick={() => setManageOpen(true)}
               >
-                <div className="flex items-center justify-between text-xs">
-                  <span>Cleaning (today)</span>
-                  <span className="text-base">{cleaningIcon}</span>
-                </div>
-                <div className="mt-1 text-2xl font-semibold">
-                  {doneCount}/{dueTodayAll.length}
-                </div>
-                <div className="mt-1 hidden text-[11px] underline opacity-80 md:block">
-                  {hasCleaning
-                    ? allCleaningDone
-                      ? "All cleaning tasks completed."
-                      : "Click to complete remaining tasks."
-                    : "No cleaning tasks scheduled for today."}
-                </div>
+                Manage tasks
               </button>
-            </div>
-          );
-        })()}
-
-        {/* KPI pills row – only show pills when something is due/overdue */}
-        {(kpi.trainingDueSoon > 0 ||
-          kpi.trainingOver > 0 ||
-          kpi.allergenDueSoon > 0 ||
-          kpi.allergenOver > 0) && (
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-            {kpi.trainingDueSoon > 0 && (
-              <span className="rounded-full bg-amber-50 px-2 py-0.5">
-                Training due soon:{" "}
-                <span className="font-semibold">{kpi.trainingDueSoon}</span>
-              </span>
             )}
 
-            {kpi.trainingOver > 0 && (
-              <span className="rounded-full bg-red-50 px-2 py-0.5">
-                Training overdue:{" "}
-                <span className="font-semibold">{kpi.trainingOver}</span>
-              </span>
-            )}
-
-            {kpi.allergenDueSoon > 0 && (
-              <span className="rounded-full bg-amber-50 px-2 py-0.5">
-                Allergen review due soon:{" "}
-                <span className="font-semibold">{kpi.allergenDueSoon}</span>
-              </span>
-            )}
-
-            {kpi.allergenOver > 0 && (
-              <span className="rounded-full bg-red-50 px-2 py-0.5">
-                Allergen review overdue:{" "}
-                <span className="font-semibold">{kpi.allergenOver}</span>
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Food hygiene banner – only show when due soon or overdue */}
-        {foodHygiene && (foodHygiene.overdue || foodHygiene.dueSoon) && (
-          <div
-            className={cls(
-              "mt-3 flex flex-wrap items-center gap-3 rounded-2xl border px-3 py-2 text-xs shadow-sm",
-              foodHygiene.overdue
-                ? "border-red-300 bg-red-50/90 text-red-800"
-                : "border-amber-300 bg-amber-50/90 text-amber-900"
-            )}
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-base" aria-hidden="true">
-                {foodHygiene.overdue ? "⚠️" : "⏰"}
-              </span>
-              <div className="font-semibold">
-                Food hygiene inspection{" "}
-                {foodHygiene.overdue ? "OVERDUE" : "due soon"}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-3 text-[11px]">
-              <span>
-                Rating:{" "}
-                <span className="font-semibold">
-                  {foodHygiene.rating ?? "—"}
-                </span>
-              </span>
-              <span>
-                Last inspected:{" "}
-                <span className="font-semibold">
-                  {foodHygiene.lastInspectedOn
-                    ? formatDDMMYYYY(foodHygiene.lastInspectedOn)
-                    : "—"}
-                </span>
-              </span>
-              <span>
-                Next due (18m):{" "}
-                <span className="font-semibold">
-                  {foodHygiene.nextDueOn
-                    ? formatDDMMYYYY(foodHygiene.nextDueOn)
-                    : "—"}
-                </span>
-              </span>
-              {foodHygiene.daysToDue != null && (
-                <span>
-                  {foodHygiene.daysToDue < 0
-                    ? `${Math.abs(foodHygiene.daysToDue)} days overdue`
-                    : `Due in ${foodHygiene.daysToDue} days`}
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        {err && (
-          <div className="mt-2 rounded-md border border-red-200 bg-red-50/90 px-3 py-2 text-sm text-red-800">
-            {err}
-          </div>
-        )}
-      </div>
-
-      {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
-      <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
-        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <h2 className="text-lg font-semibold">Today’s Cleaning Tasks</h2>
-
-          <div className="sm:ml-auto flex flex-wrap items-center gap-2">
-            <div className="rounded-xl border border-gray-200 bg-white/70 px-3 py-1.5 text-sm shadow-sm">
-              {doneCount}/{dueTodayAll.length}
-            </div>
-
-            {/* Initials dropdown next to Complete All – especially useful on mobile */}
-            <div className="flex items-center gap-2">
-              <select
-                className="rounded-xl border border-slate-200 bg-white/80 px-2 py-1.5 text-sm uppercase shadow-sm"
-                value={ini}
-                onChange={(e) => {
-                  const v = e.target.value.toUpperCase();
-                  setIni(v);
-                  setConfirmInitials(v);
-                  try {
-                    localStorage.setItem(LS_LAST_INITIALS, v);
-                  } catch {
-                    // ignore
-                  }
-                }}
-              >
-                <option value="" disabled>
-                  Initials…
+            <label className="shrink-0 text-xs text-gray-600">Initials</label>
+            <select
+              value={ini}
+              onChange={(e) => setIni(e.target.value.toUpperCase())}
+              className="h-8 rounded-xl border border-gray-300 bg-white/70 px-5 py-1.5 uppercase shadow-sm"
+            >
+              {initialsList.map((v) => (
+                <option key={v} value={v}>
+                  {v}
                 </option>
-                {initials.map((i) => (
-                  <option key={i} value={i}>
-                    {i}
-                  </option>
-                ))}
-              </select>
+              ))}
+            </select>
 
-              <button
-                className="inline-flex items-center justify-center whitespace-nowrap rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30 hover:brightness-105 disabled:opacity-60"
-                onClick={() => {
-                  const ids = dueTodayAll
-                    .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
-                    .map((t) => t.id);
-                  setConfirm({ ids, run_on: todayISOKey });
-                  setConfirmLabel("Complete all today");
-                  setConfirmInitials(ini || initials[0] || "");
-                }}
-                disabled={
-                  !dueTodayAll.length ||
-                  dueTodayAll.every((t) =>
-                    runsKey.has(`${t.id}|${todayISOKey}`)
-                  )
-                }
-              >
-                Complete All
-              </button>
+            <div className="shrink-0 rounded-xl bg-slate-900/90 px-3 py-1.5 text-sm font-medium text-white shadow-sm">
+              {doneCount}/{dueToday.length}
             </div>
+
+            <button
+              type="button"
+              className="shrink-0 rounded-xl bg-emerald-600/90 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-50"
+              title="Complete everything due today"
+              onClick={() => {
+                const ids = dueToday
+                  .filter((t) => !runsKey.has(`${t.id}|${today}`))
+                  .map((t) => t.id);
+                completeMany(ids, ini);
+              }}
+              disabled={
+                !ini || dueToday.every((t) => runsKey.has(`${t.id}|${today}`))
+              }
+            >
+              Complete all today
+            </button>
           </div>
         </div>
 
-        {/* Weekly/Monthly only */}
-        <div className="space-y-1">
-          <div className="text-[11px] font-semibold uppercase text-gray-500">
-            Weekly / Monthly
+        {/* ===== Today’s Weekly / Monthly tasks (swipe, no entrance animation) ===== */}
+        <div className="mt-2 space-y-2">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+            Weekly / Monthly due today
           </div>
-          <div className="text-[10px] text-gray-400 sm:hidden">
-            Swipe left to complete, right to undo.
-          </div>
-          {dueNonDaily.length === 0 ? (
-            <div className="mt-1 rounded-xl border border-gray-200 bg-white/70 p-3 text-sm text-gray-500 shadow-sm">
-              No tasks.
+          {nonDailyToday.length === 0 ? (
+            <div className="rounded-2xl border border-gray-200/80 bg-white/70 p-3 text-sm text-gray-500">
+              No weekly or monthly tasks due today.
             </div>
           ) : (
-            <>
-              {dueNonDaily.map((t) => {
-                const key = `${t.id}|${todayISOKey}`;
+            <div className="space-y-2">
+              {nonDailyToday.map((t) => {
+                const key = `${t.id}|${today}`;
                 const done = runsKey.has(key);
                 const run = runsKey.get(key) || null;
 
@@ -1324,363 +691,163 @@ export default function FoodTempLogger({
                     task={t}
                     done={done}
                     run={run}
-                    initials={initials}
-                    ini={ini}
-                    confirmInitials={confirmInitials}
-                    onComplete={completeTasks}
-                    onUncomplete={uncompleteTask}
+                    today={today}
+                    initials={ini}
+                    onComplete={completeOne}
+                    onUndo={uncompleteOne}
                   />
                 );
               })}
-            </>
+            </div>
           )}
         </div>
 
-        {/* Daily – category summary only (only categories that have tasks today) */}
-        <div className="mt-4 space-y-2">
-          <div className="text-[11px] font-semibold uppercase text-gray-500">
-            Daily tasks (by category)
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            {categoriesWithDaily.map((cat) => {
-              const list = dailyByCat.get(cat) ?? [];
-              const open = list.filter(
-                (t) => !runsKey.has(`${t.id}|${todayISOKey}`)
-              ).length;
-              return (
-                <CategoryPill
-                  key={cat}
-                  title={cat}
-                  total={list.length}
-                  open={open}
-                  onClick={() => {
-                    const ids = list
-                      .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
-                      .map((t) => t.id);
-                    setConfirm({ ids, run_on: todayISOKey });
-                    setConfirmLabel(`Complete: ${cat}`);
-                    setConfirmInitials(ini || initials[0] || "");
-                  }}
-                />
-              );
-            })}
-            {categoriesWithDaily.length === 0 && (
-              <div className="col-span-full rounded-xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-500">
-                No daily tasks due today.
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ======= LOGS (read-only) ======= */}
-      <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Temperature Logs</h2>
-          <button
-            onClick={refreshRows}
-            className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-1.5 text-sm text-slate-800 shadow-sm hover:bg-white"
-          >
-            Refresh
-          </button>
-        </div>
-
-        {/* Desktop/tablet – grouped by date */}
-        <div className="hidden overflow-x-auto md:block">
-          <table className="w-full table-fixed text-sm">
-            <thead className="bg-slate-50/80 text-slate-600">
-              <tr className="text-left text-[11px] font-semibold uppercase tracking-wide">
-                <th className="w-[6rem] px-3 py-2">Time</th>
-                <th className="w-16 px-3 py-2">Initials</th>
-                <th className="w-[9rem] px-3 py-2">Location</th>
-                <th className="w-[10rem] px-3 py-2">Item</th>
-                <th className="w-[10rem] px-3 py-2">Target</th>
-                <th className="w-[7rem] px-3 py-2">Temp (°C)</th>
-                <th className="w-[6.5rem] px-3 py-2 text-right">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
-                    Loading…
-                  </td>
-                </tr>
-              ) : grouped.length ? (
-                grouped.map((g) => (
-                  <React.Fragment key={g.date}>
-                    {/* Date header row */}
-                    <tr className="border-t bg-slate-50/80">
-                      <td
-                        colSpan={7}
-                        className="px-3 py-2 text-sm font-semibold text-slate-700"
-                      >
-                        {formatDDMMYYYY(g.date)}
-                      </td>
-                    </tr>
-                    {/* Rows for that date */}
-                    {g.list.map((r) => {
-                      const preset: TargetPreset | undefined = r.target_key
-                        ? (TARGET_BY_KEY as any)[r.target_key]
-                        : undefined;
-                      const st = r.status ?? inferStatus(r.temp_c, preset);
-                      return (
-                        <tr key={r.id} className="border-t bg-white/80">
-                          <td className="px-3 py-2 text-xs text-gray-500">
-                            {r.time ?? "—"}
-                          </td>
-                          <td className="px-3 py-2 font-medium uppercase">
-                            {r.staff_initials ?? "—"}
-                          </td>
-                          <td className="px-3 py-2">
-                            {r.location ?? "—"}
-                          </td>
-                          <td className="px-3 py-2">{r.item ?? "—"}</td>
-                          <td className="px-3 py-2">
-                            {preset
-                              ? `${preset.label}${
-                                  preset.minC != null || preset.maxC != null
-                                    ? ` (${preset.minC ?? "−∞"}–${
-                                        preset.maxC ?? "+∞"
-                                      } °C)`
-                                    : ""
-                                }`
-                              : "—"}
-                          </td>
-                          <td className="px-3 py-2">
-                            {r.temp_c ?? "—"}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {st ? (
-                              <span
-                                className={cls(
-                                  "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                                  st === "pass"
-                                    ? "bg-emerald-100 text-emerald-800"
-                                    : "bg-red-100 text-red-800"
-                                )}
-                              >
-                                {st}
-                              </span>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </React.Fragment>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
-                    No entries
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Mobile cards */}
-        <div className="space-y-2 md:hidden">
-          {loading ? (
-            <div className="py-4 text-center text-sm text-gray-500">
-              Loading…
+        {/* ===== Today’s daily tasks – by category with swipe cards ===== */}
+        <div className="mt-4">
+          <div className="mb-1 flex items-center justify-between">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+              Daily tasks (checklist by category)
             </div>
-          ) : grouped.length ? (
-            grouped.map((g) => (
-              <div key={g.date}>
-                <div className="mb-1 text-xs font-medium text-gray-600">
-                  {formatDDMMYYYY(g.date)}
-                </div>
-                <div className="space-y-2">
-                  {g.list.map((r) => {
-                    const preset: TargetPreset | undefined = r.target_key
-                      ? (TARGET_BY_KEY as any)[r.target_key]
-                      : undefined;
-                    const st = r.status ?? inferStatus(r.temp_c, preset);
-                    return (
+          </div>
+          <div className="mb-3 text-[11px] text-slate-600">
+            Tip: on phones you can{" "}
+            <span className="font-semibold">
+              swipe a task card left to complete and right to undo
+            </span>
+            , or just use the Tick / Undo buttons.
+          </div>
+
+          {categoriesWithTasks.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200/80 bg-white/70 p-3 text-sm text-slate-500">
+              No daily tasks due today.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {categoriesWithTasks.map((cat) => {
+                const list = dailyByCat.get(cat) ?? [];
+                const total = list.length;
+                const done = list.filter((t) =>
+                  runsKey.has(`${t.id}|${today}`)
+                ).length;
+                const open = total - done;
+                const expanded = openCategory === cat;
+
+                return (
+                  <div
+                    key={cat}
+                    className="flex flex-col rounded-2xl border border-slate-200/80 bg-white/80 p-3 text-sm shadow-sm"
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-2">
                       <div
-                        key={r.id}
-                        className="rounded-xl border border-slate-200 bg-white/80 p-3 shadow-sm"
+                        className="flex-1 cursor-pointer"
+                        onClick={() =>
+                          setOpenCategory(expanded ? null : cat)
+                        }
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm font-medium">
-                            {r.item ?? "—"}
-                          </div>
-                          {st && (
-                            <span
-                              className={cls(
-                                "ml-2 rounded-full px-2 py-0.5 text-[11px] font-medium",
-                                st === "pass"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-red-100 text-red-800"
-                              )}
-                            >
-                              {st}
-                            </span>
-                          )}
+                        <div className="text-sm font-semibold text-slate-900">
+                          {cat}
                         </div>
-                        <div className="mt-1 text-xs text-gray-600">
-                          {r.time ?? "—"} • {r.location ?? "—"} •{" "}
-                          {r.staff_initials ?? "—"} • {r.temp_c ?? "—"}°C
-                        </div>
-                        <div className="mt-1 text-[11px] text-gray-500">
-                          Target:{" "}
-                          {preset
-                            ? `${preset.label}${
-                                preset.minC != null || preset.maxC != null
-                                  ? ` (${preset.minC ?? "−∞"}–${
-                                      preset.maxC ?? "+∞"
-                                    } °C)`
-                                  : ""
-                              }`
-                            : "—"}
+                        <div className="text-[11px] text-slate-500">
+                          {done}/{total} complete · {open} open
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="py-4 text-center text-sm text-gray-500">
-              No entries
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-full bg-emerald-600/90 px-3 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-40"
+                        disabled={open === 0 || !ini}
+                        onClick={() => {
+                          const ids = list
+                            .filter(
+                              (t) => !runsKey.has(`${t.id}|${today}`)
+                            )
+                            .map((t) => t.id);
+                          completeMany(ids, ini);
+                        }}
+                      >
+                        Complete all
+                      </button>
+                    </div>
+
+                    {expanded && (
+                      <div className="mt-1 space-y-2">
+                        {list.map((t) => {
+                          const key = `${t.id}|${today}`;
+                          const isDone = runsKey.has(key);
+                          const run = runsKey.get(key) || null;
+
+                          return (
+                            <SwipeCard
+                              key={t.id}
+                              task={t}
+                              done={isDone}
+                              run={run}
+                              today={today}
+                              initials={ini}
+                              onComplete={completeOne}
+                              onUndo={uncompleteOne}
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
-
-        {/* Logs footer: tally + View all */}
-        {!loading && rows.length > 0 && (
-          <div className="mt-3 flex items-center justify-between text-xs text-slate-600">
-            <span>
-              {rowsToShow.length} of {rows.length} logs shown
-            </span>
-            {rows.length > rowsToShow.length ? (
-              <button
-                type="button"
-                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg:white"
-                onClick={() => setShowAllLogs(true)}
-              >
-                View all
-              </button>
-            ) : rows.length > 10 ? (
-              <button
-                type="button"
-                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg:white"
-                onClick={() => setShowAllLogs(false)}
-              >
-                Show latest 10
-              </button>
-            ) : null}
-          </div>
-        )}
       </div>
 
-           {/* Cleaning completion modal */}
-      {confirm && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
-          onClick={() => setConfirm(null)}
-        >
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!confirmInitials.trim()) return;
-              completeTasks(confirm.ids, confirmInitials.trim());
-            }}
-            onClick={(e) => e.stopPropagation()}
-            className="
-              mx-auto mt-6 flex h-[60vh] w-full max-w-sm flex-col overflow-hidden
-              rounded-t-2xl border border-white/30 bg-white/90 shadow-xl shadow-slate-900/25 backdrop-blur
-              sm:mt-24 sm:max-h-[80vh] sm:max-w-md sm:rounded-2xl
-            "
-          >
-            {/* header */}
-            <div className="sticky top-0 z-10 border-b bg-white/90 px-4 py-3 text-base font-semibold">
-              {confirmLabel}
-            </div>
-
-            {/* scrollable body */}
-            <div className="grow space-y-3 overflow-y-auto px-4 py-3 text-sm">
-              <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-2">
-                <div className="font-medium">
-                  {confirm.ids.length} task(s)
+      {/* ===== Upcoming (next 7 days) — weekly/monthly only ===== */}
+      <div className={CARD + " p-4"}>
+        <div className="mb-2 text-base font-semibold text-slate-900">
+          Upcoming (next 7 days)
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-4">
+          {upcoming.map(({ day, list }) => (
+            <div
+              key={day}
+              className="rounded-2xl border border-gray-200/80 bg-white/80 p-3 shadow-sm"
+            >
+              <div className="mb-1 flex items-center justify-between">
+                <div className="font-medium text-slate-900">
+                  {niceShort(day)}
                 </div>
-                <div className="mt-1 text-xs text-gray-500">
-                  For <strong>{nice(confirm.run_on)}</strong>
-                </div>
+                <div className="text-xs text-gray-500">{list.length} due</div>
               </div>
-
-              {confirmTasks.length > 0 && (
-                <div className="rounded-xl border border-slate-200 bg-white/90 p-2">
-                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                    Tasks to mark complete
-                  </div>
-                  <ul className="space-y-2 text-sm">
-                    {confirmTasks.map((t) => (
-                      <li
-                        key={t.id}
-                        className="rounded-lg border border-slate-100 bg-slate-50/80 px-2 py-1.5"
-                      >
-                        <div className="font-medium">{t.task}</div>
-                        <div className="text-[11px] text-gray-500">
-                          {t.category ?? t.area ?? "—"} •{" "}
-                          {t.frequency === "daily"
-                            ? "Daily"
-                            : t.frequency === "weekly"
-                            ? "Weekly"
-                            : "Monthly"}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+              {list.length === 0 ? (
+                <div className="text-sm text-gray-500">No tasks</div>
+              ) : (
+                <ul className="space-y-2">
+                  {list.map((t) => (
+                    <li
+                      key={t.id}
+                      className="rounded-xl border border-gray-200/80 bg-white px-2 py-1.5 text-sm"
+                    >
+                      <div className="font-medium text-slate-900">
+                        {t.task}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {t.category ?? t.area ?? "—"} •{" "}
+                        {t.frequency === "weekly" ? "Weekly" : "Monthly"}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
-
-            {/* footer */}
-            <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t bg-white/90 px-4 py-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">Initials</span>
-                <select
-                  className="rounded-xl border border-slate-200 bg-white/80 px-2 py-1.5 text-sm uppercase shadow-sm"
-                  value={confirmInitials}
-                  onChange={(e) =>
-                    setConfirmInitials(e.target.value.toUpperCase())
-                  }
-                  required
-                >
-                  <option value="" disabled>
-                    Select…
-                  </option>
-                  {initials.map((i) => (
-                    <option key={i} value={i}>
-                      {i}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"
-                  onClick={() => setConfirm(null)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30 hover:brightness-105"
-                >
-                  Mark tasks complete
-                </button>
-              </div>
-            </div>
-          </form>
+          ))}
         </div>
-      )}
-   </div>
+      </div>
+
+      {/* ===== Manage Tasks Modal ===== */}
+      <ManageCleaningTasksModal
+        open={canManage && manageOpen}
+        onClose={() => setManageOpen(false)}
+        onSaved={async () => {
+          await loadAll();
+        }}
+      />
+    </div>
   );
 }

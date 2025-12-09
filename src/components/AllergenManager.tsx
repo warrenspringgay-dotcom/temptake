@@ -87,6 +87,24 @@ const formatDateUK = (iso?: string) => {
   return d.toLocaleDateString("en-GB");
 };
 
+// Subtle haptic bump for phones that support it
+function bumpVibrate(ms = 10) {
+  if (typeof window === "undefined") return;
+  const nav = window.navigator as any;
+  if (typeof nav.vibrate === "function") {
+    nav.vibrate(ms);
+  }
+}
+
+async function fireConfetti() {
+  try {
+    const confettiModule = await import("canvas-confetti");
+    confettiModule.default();
+  } catch {
+    // ignore
+  }
+}
+
 /* ---------- Component ---------- */
 export default function AllergenManager() {
   const [hydrated, setHydrated] = useState(false);
@@ -264,11 +282,33 @@ export default function AllergenManager() {
     } catch {}
   }
 
-  // Load last review info from allergen_review_log (history; just take latest)
+  // Load last review info – primary source: allergen_review (for KPIs),
+  // fallback: allergen_review_log (for reviewer name / history).
   async function loadReviewFromSupabase(id = orgId) {
     if (!id) return;
 
-    const { data, error } = await supabase
+    const nextState: ReviewInfo = {
+      intervalDays: 30,
+    };
+
+    // 1) Settings row used by FoodTempLogger KPIs
+    const { data: settings, error: settingsErr } = await supabase
+      .from("allergen_review")
+      .select("last_reviewed, interval_days")
+      .eq("org_id", id)
+      .maybeSingle();
+
+    if (!settingsErr && settings) {
+      if (settings.last_reviewed) {
+        nextState.lastReviewedOn = settings.last_reviewed;
+      }
+      if (typeof settings.interval_days === "number") {
+        nextState.intervalDays = settings.interval_days;
+      }
+    }
+
+    // 2) Latest log row – mainly to get reviewer name
+    const { data: logRow, error: logErr } = await supabase
       .from("allergen_review_log")
       .select("reviewed_on, reviewer, interval_days")
       .eq("org_id", id)
@@ -276,14 +316,20 @@ export default function AllergenManager() {
       .limit(1)
       .maybeSingle();
 
-    if (error || !data) return;
-
-    const nextState: ReviewInfo = {
-      intervalDays:
-        typeof data.interval_days === "number" ? data.interval_days : 30,
-      lastReviewedOn: data.reviewed_on ?? undefined,
-      lastReviewedBy: data.reviewer ?? undefined,
-    };
+    if (!logErr && logRow) {
+      if (!nextState.lastReviewedOn && logRow.reviewed_on) {
+        nextState.lastReviewedOn = logRow.reviewed_on;
+      }
+      if (
+        typeof logRow.interval_days === "number" &&
+        !settings?.interval_days
+      ) {
+        nextState.intervalDays = logRow.interval_days;
+      }
+      if (logRow.reviewer) {
+        nextState.lastReviewedBy = logRow.reviewer;
+      }
+    }
 
     setReview(nextState);
     try {
@@ -458,12 +504,10 @@ export default function AllergenManager() {
 
     // Who is reviewing (prefer team member name)
     let reviewer = "Manager";
-    let createdBy: string | null = null;
 
     try {
       const userRes = await supabase.auth.getUser();
       const email = userRes.data.user?.email?.toLowerCase() ?? null;
-      createdBy = userRes.data.user?.id ?? null;
 
       if (email && id) {
         const { data: tm } = await supabase
@@ -479,28 +523,51 @@ export default function AllergenManager() {
       // ignore
     }
 
-    // update local pill state immediately
+    // Update local pill state immediately
     setReview((r) => ({
       ...r,
       lastReviewedOn: today,
       lastReviewedBy: reviewer,
     }));
 
-    if (!id) return;
+    // No org: local only (still give a little celebration)
+    if (!id) {
+      await fireConfetti();
+      bumpVibrate();
+      return;
+    }
 
-    // Insert a history row in allergen_review_log
-    const { error } = await supabase.from("allergen_review_log").insert({
+    // Persist both settings row (used by KPIs) and history log
+    const newInterval = review.intervalDays || 30;
+
+    const { error: settingsErr } = await supabase
+      .from("allergen_review")
+      .upsert(
+        {
+          org_id: id,
+          last_reviewed: today,
+          interval_days: newInterval,
+        },
+        { onConflict: "org_id" }
+      );
+
+    const { error: logErr } = await supabase.from("allergen_review_log").insert({
       org_id: id,
       reviewed_on: today,
       reviewer,
-      interval_days: review.intervalDays,
+      interval_days: newInterval,
       notes: null,
       created_at: new Date().toISOString(),
     });
 
-    if (error) {
-      alert(`Failed to save review: ${error.message}`);
+    if (settingsErr || logErr) {
+      const msg = settingsErr?.message ?? logErr?.message ?? "Unknown error";
+      alert(`Failed to save review: ${msg}`);
+      return;
     }
+
+    await fireConfetti();
+    bumpVibrate(15);
   }
 
   /* ===== Query (SAFE FOODS) ===== */
@@ -988,7 +1055,10 @@ export default function AllergenManager() {
                       key={a.key}
                       className="flex items-center justify-between rounded border border-slate-200 bg-white/80 p-2"
                     >
-                      <span title={a.label} className="text-sm text-slate-800">
+                      <span
+                        title={a.label}
+                        className="text-sm text-slate-800"
+                      >
                         {a.icon}{" "}
                         <span className="font-mono text-[11px] text-slate-500">
                           {a.short}

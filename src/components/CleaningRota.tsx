@@ -13,7 +13,7 @@ const PAGE = "max-w-[1100px] mx-auto px-3 sm:px-4";
 
 // glassy panel
 const CARD =
-  "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md transition hover:-translate-y-0.5 hover:shadow-xl";
+  "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md ";
 
 type Frequency = "daily" | "weekly" | "monthly";
 
@@ -95,7 +95,7 @@ function SwipeCard({
 
   return (
     <motion.div
-      className="relative mb-2 rounded-xl border border-slate-100 bg-white/90 px-3 py-2 text-sm shadow-sm touch-pan-y transition hover:-translate-y-0.5 hover:shadow-md"
+      className="relative mb-2 rounded-xl border border-slate-100 bg-white/90 px-3 py-2 text-sm shadow-sm"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 8 }}
