@@ -22,7 +22,6 @@ const authedLinks: Tab[] = [
   { href: "/routines", label: "Routines" },
   { href: "/allergens", label: "Allergens" },
   { href: "/cleaning-rota", label: "Cleaning rota" },
-  // 👇 NEW: Food hygiene link
   { href: "/food-hygiene", label: "Food hygiene" },
   { href: "/manager", label: "Manager", requiresManager: true },
   { href: "/leaderboard", label: "Leaderboard" },
@@ -30,7 +29,8 @@ const authedLinks: Tab[] = [
   { href: "/suppliers", label: "Suppliers" },
   { href: "/reports", label: "Reports" },
   { href: "/locations", label: "Locations & sites" },
-    { href: "/settings", label: "Settings" },
+  { href: "/billing", label: "Billing & subscription" }, // 👈 added
+  { href: "/settings", label: "Settings" },
   { href: "/help", label: "Help & support" },
 ];
 
