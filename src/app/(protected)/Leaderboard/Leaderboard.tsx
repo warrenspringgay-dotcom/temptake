@@ -4,7 +4,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import QuickActionsFab from "@/components/QuickActionsFab"; // ⬅️ add this
+import QuickActionsFab from "@/components/QuickActionsFab";
 
 type LeaderboardEntry = {
   name: string;
@@ -62,6 +62,26 @@ export default function Leaderboard() {
     );
   }, [entries]);
 
+  const rankBadge = (index: number) => {
+    if (index === 0) {
+      return "bg-amber-500 text-white";
+    }
+    if (index === 1) {
+      return "bg-slate-700 text-white";
+    }
+    if (index === 2) {
+      return "bg-orange-400 text-white";
+    }
+    return "bg-slate-900 text-white";
+  };
+
+  const rowHighlight = (index: number) => {
+    if (index === 0) return "border-amber-300 bg-amber-50/90";
+    if (index === 1) return "border-slate-200 bg-slate-50/90";
+    if (index === 2) return "border-orange-200 bg-orange-50/90";
+    return "border-slate-100 bg-white/90";
+  };
+
   return (
     <>
       <div className="max-w-5xl mx-auto px-3 sm:px-4 py-4 space-y-4">
@@ -116,6 +136,15 @@ export default function Leaderboard() {
 
         {/* Main leaderboard card */}
         <div className="rounded-3xl border border-white/60 bg-white/80 shadow-lg backdrop-blur-md p-4 sm:p-5">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-slate-900">
+              Team standings
+            </div>
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-[11px] font-medium text-slate-600">
+              This month
+            </span>
+          </div>
+
           {loading ? (
             <div className="py-10 text-center text-sm text-slate-500">
               Loading…
@@ -130,9 +159,15 @@ export default function Leaderboard() {
               {entries.map((e, idx) => (
                 <div
                   key={e.name + idx}
-                  className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white/90 px-3 py-2 shadow-sm"
+                  className={`flex items-center gap-3 rounded-2xl px-3 py-2 shadow-sm ${rowHighlight(
+                    idx
+                  )}`}
                 >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                  <div
+                    className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${rankBadge(
+                      idx
+                    )}`}
+                  >
                     {idx + 1}
                   </div>
 
@@ -163,7 +198,7 @@ export default function Leaderboard() {
             </div>
           )}
 
-          <div className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-xl bg-white/80 px-4 py-2 text-xs text-slate-700 border border-amber-200">
+          <div className="mt-3 inline-flex flex-wrap items-center gap-2 rounded-xl bg-white/80 px-4 py-2 text-xs text-slate-700 border border-amber-200">
             <span className="font-semibold mr-2">Points key:</span>
             <span>✅ 1 point per completed cleaning task</span>
             <span className="mx-1 text-slate-400">•</span>
