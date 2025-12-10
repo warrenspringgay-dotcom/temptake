@@ -200,6 +200,7 @@ export default function HelpPage() {
           "Store rep names and any special ordering notes (cut-off times, minimum order, delivery days, etc.).",
           "Helpful when logging delivery issues, chasing credit notes or managing recalls.",
         ]}
+        imageSrc="/help/suppliers.jpg"
       />
 
       {/* Reports */}
