@@ -295,96 +295,96 @@ export default function LaunchPage() {
         </section>
 
         {/* ----------------------- PRICING SECTION ----------------------- */}
-        <section className="border-t border-white/10 bg-slate-950">
-          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
-            <div className="mb-8 max-w-3xl">
-              <h2 className="text-2xl font-semibold sm:text-3xl">
-                Simple pricing when we launch.
-              </h2>
-              <p className="mt-2 text-sm text-slate-300 sm:text-base">
-                During early access, we&apos;re working closely with a small group of
-                kitchens. Public pricing will be simple and transparent – no per-log
-                nonsense.
-              </p>
-            </div>
+<section id="pricing" className="border-t border-white/10 bg-slate-950">
+  <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
+    <div className="mb-8 max-w-3xl">
+      <h2 className="text-2xl font-semibold sm:text-3xl">
+        Simple pricing when we launch.
+      </h2>
+      <p className="mt-2 text-sm text-slate-300 sm:text-base">
+        During early access, we&apos;re working closely with a small group of kitchens.
+        When we launch publicly, pricing is banded by how many locations you run in
+        TempTake – no per-log or per-device nonsense.
+      </p>
+    </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              {/* Early access card */}
-              <div className="relative flex flex-col rounded-2xl border border-emerald-500/40 bg-slate-950/80 p-5 shadow-[0_0_30px_rgba(16,185,129,0.4)]">
-                <div className="inline-flex w-fit items-center rounded-full bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
-                  Founding kitchens
-                </div>
-                <h3 className="mt-3 text-lg font-semibold text-white">
-                  Early access programme
-                </h3>
-                <p className="mt-2 text-sm text-slate-300">
-                  Limited number of sites working directly with us to shape the product.
-                </p>
+    <div className="grid gap-4 md:grid-cols-2">
+      {/* Early access card */}
+      <div className="relative flex flex-col rounded-2xl border border-emerald-500/40 bg-slate-950/80 p-5 shadow-[0_0_30px_rgba(16,185,129,0.4)]">
+        <div className="inline-flex w-fit items-center rounded-full bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
+          Founding kitchens
+        </div>
+        <h3 className="mt-3 text-lg font-semibold text-white">
+          Early access programme
+        </h3>
+        <p className="mt-2 text-sm text-slate-300">
+          Limited number of sites working directly with us to shape the product.
+        </p>
 
-                <div className="mt-4 text-3xl font-semibold text-emerald-300">
-                  £0
-                  <span className="text-sm font-normal text-slate-300">
-                    {" "}
-                    during beta
-                  </span>
-                </div>
+        <div className="mt-4 text-3xl font-semibold text-emerald-300">
+          £0
+          <span className="text-sm font-normal text-slate-300"> during beta</span>
+        </div>
 
-                <ul className="mt-4 space-y-1.5 text-sm text-slate-200">
-                  <li>• Full access to TempTake features.</li>
-                  <li>• Priority support and feature input.</li>
-                  <li>• Preferential launch pricing afterwards.</li>
-                </ul>
+        <ul className="mt-4 space-y-1.5 text-sm text-slate-200">
+          <li>• Full access to TempTake features.</li>
+          <li>• Priority support and feature input.</li>
+          <li>• Preferential launch pricing afterwards.</li>
+        </ul>
 
-                <div className="mt-5">
-                  <button
-                    type="button"
-                    data-tally-open="obb4vX"
-                    data-tally-layout="modal"
-                    data-tally-emoji-text="👋"
-                    data-tally-emoji-animation="wave"
-                    data-tally-auto-close="0"
-                    className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
-                  >
-                    Apply for early access
-                  </button>
-                </div>
-              </div>
+        <div className="mt-5">
+          <button
+            type="button"
+            data-tally-open="obb4vX"
+            data-tally-layout="modal"
+            data-tally-emoji-text="👋"
+            data-tally-emoji-animation="wave"
+            data-tally-auto-close="0"
+            className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
+          >
+            Apply for early access
+          </button>
+        </div>
+      </div>
 
-              {/* Future pricing card */}
-              <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-950/70 p-5">
-                <div className="inline-flex w-fit items-center rounded-full bg-slate-800 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">
-                  Launch pricing
-                </div>
-                <h3 className="mt-3 text-lg font-semibold text-white">
-                  Simple per-site pricing
-                </h3>
-                <p className="mt-2 text-sm text-slate-300">
-                  Final pricing will depend on site size and number of locations, but it
-                  will stay straightforward.
-                </p>
+      {/* Future pricing card */}
+      <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-950/70 p-5">
+        <div className="inline-flex w-fit items-center rounded-full bg-slate-800 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">
+          Monthly pricing
+        </div>
+        <h3 className="mt-3 text-lg font-semibold text-white">
+          From £9.99 / month
+        </h3>
+        <p className="mt-2 text-sm text-slate-300">
+          Pricing is banded by the number of locations on your account:
+        </p>
 
-                <div className="mt-4 text-2xl font-semibold text-slate-200">
-                  From £9.99/month
-                  <span className="text-sm font-normal text-slate-400">
-                    {" "}
-                    per site
-                  </span>
-                </div>
+        <ul className="mt-4 space-y-1.5 text-sm text-slate-200">
+          <li>• 1 site → £9.99 / month</li>
+          <li>• 2–3 sites → £19.99 / month</li>
+          <li>• 4–5 sites → £29.99 / month</li>
+          <li>• 6+ sites → custom pricing, contact us</li>
+        </ul>
 
-                <ul className="mt-4 space-y-1.5 text-sm text-slate-200">
-                  <li>• Unlimited logs, staff and devices.</li>
-                  <li>• All core modules included.</li>
-                  <li>• Volume options for multi-site groups.</li>
-                </ul>
+        <p className="mt-4 text-[11px] text-slate-500">
+          Every band includes unlimited logs, staff and devices, plus all core modules:
+          temperatures, cleaning, allergens and basic training records.
+        </p>
 
-                <p className="mt-4 text-[11px] text-slate-500">
-                  We&apos;ll confirm final pricing with all early access kitchens before
-                  launch – nothing will be a surprise.
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
+        <p className="mt-4 text-[11px] text-slate-400">
+          Want the full breakdown?{" "}
+          <Link
+            href="/pricing"
+            className="font-semibold text-emerald-300 underline underline-offset-2 hover:text-emerald-200"
+          >
+            View detailed pricing
+          </Link>
+          .
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
 
         {/* ----------------------- WAITLIST (TALLY) ----------------------- */}
         <section id="waitlist" className="border-t border-white/10 bg-slate-950/95">
