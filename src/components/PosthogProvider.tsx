@@ -51,3 +51,5 @@ export function PHProvider({ children }: { children: ReactNode }) {
 
   return <PostHogProvider client={posthog}>{children}</PostHogProvider>;
 }
+// Optional hook re-export so you can just import from this file later
+export { usePostHog } from "posthog-js/react";
