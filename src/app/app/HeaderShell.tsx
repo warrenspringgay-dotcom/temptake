@@ -44,8 +44,8 @@ export default function HeaderShell({ user }: HeaderShellProps) {
     pathname === "/" ||
     pathname.startsWith("/launch") ||
     pathname === "/app" ||
-    pathname.startsWith("/demo-wall");
-
+    pathname.startsWith("/demo-wall")||
+    pathname.startsWith("/pricing");
   if (hideHeader) return null;
 
   // When there is no valid subscription/trial:

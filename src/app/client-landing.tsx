@@ -216,34 +216,35 @@ export default function LaunchPage() {
         {/* ----------------------- APP STORE STYLE BLOCKS ----------------------- */}
         <AppStoreFeatureBlocks />
 
-        {/* ----------------------- ONBOARDING STEPS ----------------------- */}
+              {/* ----------------------- ONBOARDING STEPS ----------------------- */}
         <section className="border-t border-white/10 bg-slate-900/90">
           <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
             <div className="mb-6 max-w-3xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
-                Your first week with TempTake.
+                From zero to running checks in one shift.
               </h2>
               <p className="mt-2 text-sm text-slate-300 sm:text-base">
-                We built TempTake so you can get from “never used this” to “this runs our
-                checks” in under a week.
+                TempTake is built so a busy kitchen can go from “never seen this
+                before” to “we’re doing today&apos;s checks in here” inside a single
+                service.
               </p>
             </div>
 
             <ol className="grid gap-4 md:grid-cols-3">
               <StepCard
-                step="Day 1"
+                step="First 10 minutes"
                 title="Add your kitchen"
-                body="Set up temp routines, cleaning rotas and allergen info. We’ll help you with sensible defaults."
+                body="Add your kitchen, set up temp routines, cleaning rota and allergen info. We give you sensible defaults so you’re not starting from a blank page."
               />
               <StepCard
-                step="Day 2–3"
+                step="Next 20 minutes"
                 title="Get the team on"
-                body="Share the app with your chefs and front-of-house. They’ll see exactly what needs doing, and when."
+                body="Share TempTake with chefs and front-of-house. They see clear checklists with initials and times, not a wall of settings."
               />
               <StepCard
-                step="Day 4–7"
-                title="Run your first week"
-                body="Run service as normal – TempTake prompts staff so you’re inspection-ready anytime."
+                step="During service"
+                title="Run live checks"
+                body="Log temps, swipe cleaning tasks and keep allergens up to date as you go. By close, you’ve got a full set of digital records without anyone touching a clipboard."
               />
             </ol>
           </div>
