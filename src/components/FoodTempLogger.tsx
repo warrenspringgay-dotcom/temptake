@@ -1,82 +1,65 @@
-// src/components/FoodTempLogger.tsx
+// src/app/dashboard/page.tsx
 "use client";
-import posthog from "posthog-js";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
-
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
-import {
-  TARGET_PRESETS,
-  TARGET_BY_KEY,
-  type TargetPreset,
-} from "@/lib/temp-constants";
-import { CLEANING_CATEGORIES } from "@/components/ManageCleaningTasksModal";
 
-/* =============== Types =============== */
-type CanonRow = {
-  id: string;
-  date: string | null; // yyyy-mm-dd
-  time: string | null; // HH:mm
-  staff_initials: string | null;
-  location: string | null;
-  item: string | null;
-  target_key: string | null;
-  temp_c: number | null;
-  status: "pass" | "fail" | null;
+/* ---------- CONFIG ---------- */
+
+const WALL_TABLE = "kitchen_wall";
+
+/* ---------- Types ---------- */
+
+type KpiState = {
+  tempLogsToday: number;
+  tempFails7d: number;
+  cleaningDueToday: number;
+  cleaningDoneToday: number;
+  trainingDueSoon: number;
+  trainingOver: number;
+  allergenDueSoon: number;
+  allergenOver: number;
 };
 
-type Props = {
-  initials?: string[];
-  locations?: string[]; // no longer used, kept only so callers don't break
-};
-
-/* leaderboard / employee of month */
-type EmployeeOfMonth = {
+type LeaderboardEntry = {
   display_name: string | null;
   points: number | null;
   temp_logs_count: number | null;
   cleaning_count: number | null;
 };
 
-/* cleaning rota types */
-type Frequency = "daily" | "weekly" | "monthly";
+type WallPost = {
+  id: string;
+  initials: string;
+  message: string;
+  created_at: string;
+  colorClass: string;
+};
+
 type CleanTask = {
   id: string;
   org_id: string;
   area: string | null;
   task: string;
   category: string | null;
-  frequency: Frequency;
+  frequency: "daily" | "weekly" | "monthly";
   weekday: number | null;
   month_day: number | null;
 };
+
 type CleanRun = {
   task_id: string;
   run_on: string;
   done_by: string | null;
 };
 
-type FoodHygieneStatus = {
-  lastInspectedOn: string | null;
-  rating: number | null;
-  nextDueOn: string | null;
-  daysToDue: number | null;
-  overdue: boolean;
-  dueSoon: boolean;
-};
+/* ---------- helpers ---------- */
 
-/* =============== Small helpers =============== */
-
-function sameDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
+const isoToday = () => new Date().toISOString().slice(0, 10);
 
 function formatPrettyDate(d: Date) {
   const WEEKDAYS = [
@@ -108,94 +91,26 @@ function formatPrettyDate(d: Date) {
   const month = MONTHS[d.getMonth()];
   const year = d.getFullYear();
 
-  // No comma – always: Friday 14 November 2025
   return `${weekday} ${day} ${month} ${year}`;
 }
 
-const LS_LAST_INITIALS = "tt_last_initials";
-
-const cls = (...parts: Array<string | false | undefined>) =>
+const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
-
-const firstLetter = (s: string | null | undefined) =>
-  (s?.trim()?.charAt(0) || "").toUpperCase();
 
 function toISODate(val: any): string | null {
   if (!val) return null;
   const d = new Date(val);
-  if (isNaN(d.getTime())) return null;
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
 }
 
-function toTimeHM(val: any): string | null {
-  if (!val) return null;
-  const d = new Date(val);
-  if (isNaN(d.getTime())) return null;
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
-}
-
-function formatDDMMYYYY(iso: string | null) {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-");
-  if (!y || !m || !d) return iso!;
-  return `${d}/${m}/${y}`;
-}
-
-function inferStatus(
-  temp: number | null,
-  preset?: TargetPreset
-): "pass" | "fail" | null {
-  if (temp == null || !preset) return null;
-  const { minC, maxC } = preset;
-  if (minC != null && temp < minC) return "fail";
-  if (maxC != null && temp > maxC) return "fail";
-  return "pass";
-}
-
-function normalizeRowsFromFood(data: any[]): CanonRow[] {
-  return data.map((r) => {
-    const temp =
-      typeof r.temp_c === "number"
-        ? r.temp_c
-        : r.temp_c != null
-        ? Number(r.temp_c)
-        : null;
-
-    const rawAt = r.at ?? r.created_at ?? null;
-
-    return {
-      id: String(r.id ?? crypto.randomUUID()),
-      date: toISODate(rawAt),
-      time: toTimeHM(rawAt),
-      staff_initials:
-        (r.staff_initials ?? r.initials ?? null)?.toString() ?? null,
-      location: (r.area ?? r.location ?? null)?.toString() ?? null,
-      item: (r.note ?? r.item ?? null)?.toString() ?? null,
-      target_key: r.target_key != null ? String(r.target_key) : null,
-      temp_c: temp,
-      status: (r.status as any) ?? null,
-    };
-  });
-}
-
-/* cleaning rota helpers */
-const isoToday = () => new Date().toISOString().slice(0, 10);
-const nice = (yyyy_mm_dd: string) =>
-  new Date(yyyy_mm_dd).toLocaleDateString(undefined, {
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-  });
-const getDow1to7 = (ymd: string) => {
+function getDow1to7(ymd: string) {
   const date = new Date(ymd);
   return ((date.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
-};
-const getDom = (ymd: string) => new Date(ymd).getDate();
+}
+function getDom(ymd: string) {
+  return new Date(ymd).getDate();
+}
 
 function isDueOn(t: CleanTask, ymd: string) {
   switch (t.frequency) {
@@ -210,1477 +125,599 @@ function isDueOn(t: CleanTask, ymd: string) {
   }
 }
 
-function addMonths(date: Date, months: number): Date {
-  const d = new Date(date);
-  const day = d.getDate();
-  d.setMonth(d.getMonth() + months);
-  // Handle end-of-month rollover
-  if (d.getDate() < day) {
-    d.setDate(0);
-  }
-  return d;
-}
+/* ---------- Component ---------- */
 
-function CategoryPill({
-  title,
-  total,
-  open,
-  onClick,
-}: {
-  title: string;
-  total: number;
-  open: number;
-  onClick: () => void;
-}) {
-  const hasOpen = open > 0;
-  const color = hasOpen
-    ? "bg-red-50/90 text-red-700 border-red-200"
-    : "bg-emerald-50/90 text-emerald-700 border-emerald-200";
-
-  return (
-    <button
-      onClick={onClick}
-      className={cls(
-        "flex min-h-[64px] flex-col justify-between rounded-xl border px-3 py-2 text-left text-sm shadow-sm transition",
-        "backdrop-blur-sm",
-        "hover:brightness-105",
-        color
-      )}
-    >
-      <div className="text-[13px] leading-tight">{title}</div>
-      <div className="mt-1 text-lg font-semibold leading-none">
-        {total}
-        <span className="ml-1 text-[11px] opacity-75">({open} open)</span>
-      </div>
-    </button>
-  );
-}
-
-function Pill({ done, onClick }: { done: boolean; onClick: () => void }) {
-  return done ? (
-    <button
-      className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-500/20"
-      onClick={onClick}
-      title="Mark incomplete"
-    >
-      Complete
-    </button>
-  ) : (
-    <button
-      className="shrink-0 rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-500/20"
-      onClick={onClick}
-      title="Mark complete"
-    >
-      Incomplete
-    </button>
-  );
-}
-
-/* =============== Weekly/Monthly row with VISIBLE swipe (framer-motion) =============== */
-
-type WeeklyMonthlyTaskRowProps = {
-  task: CleanTask;
-  done: boolean;
-  run: CleanRun | null;
-  initials: string[];
-  ini: string;
-  confirmInitials: string;
-  onComplete: (ids: string[], initials: string) => void;
-  onUncomplete: (id: string) => void;
-};
-
-function WeeklyMonthlyTaskRow({
-  task,
-  done,
-  run,
-  initials,
-  ini,
-  confirmInitials,
-  onComplete,
-  onUncomplete,
-}: WeeklyMonthlyTaskRowProps) {
-  const SWIPE_THRESHOLD = 80;
-  const chosenIni = ini || initials[0] || confirmInitials || "";
-
-  return (
-    <motion.div
-      className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 bg-white/80 px-2 py-2 text-sm shadow-sm backdrop-blur-sm touch-pan-y"
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 6 }}
-      layout
-      drag="x"
-      dragConstraints={{ left: 0, right: 0 }}
-      dragElastic={0.2}
-      dragSnapToOrigin
-      onDragEnd={(_, info) => {
-        const offsetX = info.offset.x;
-
-        // Keep your existing logic:
-        // swipe LEFT => complete, swipe RIGHT => undo
-        if (offsetX < -SWIPE_THRESHOLD && !done && chosenIni) {
-          onComplete([task.id], chosenIni);
-          return;
-        }
-
-        if (offsetX > SWIPE_THRESHOLD && done) {
-          onUncomplete(task.id);
-          return;
-        }
-      }}
-    >
-      <div className={done ? "text-gray-500 line-through" : ""}>
-        <div className="font-medium">{task.task}</div>
-        <div className="text-xs text-gray-500">
-          {task.category ?? task.area ?? "—"} •{" "}
-          {task.frequency === "weekly" ? "Weekly" : "Monthly"}
-        </div>
-        {run?.done_by && (
-          <div className="text-[11px] text-gray-400">Done by {run.done_by}</div>
-        )}
-      </div>
-      <Pill
-        done={done}
-        onClick={() =>
-          done
-            ? onUncomplete(task.id)
-            : chosenIni &&
-              onComplete(
-                [task.id],
-                chosenIni // same selection logic as swipe
-              )
-        }
-      />
-    </motion.div>
-  );
-}
-
-/* =============== Component =============== */
-export default function FoodTempLogger({
-  initials: initialsSeed = [],
-}: Props) {
-  // DATA
-  const [rows, setRows] = useState<CanonRow[]>([]);
-  const [initials, setInitials] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-
-  // Employee of the month (from leaderboard view)
-  const [employeeOfMonth, setEmployeeOfMonth] =
-    useState<EmployeeOfMonth | null>(null);
-
-  // KPIs (training & allergen due/overdue)
-  const [kpi, setKpi] = useState({
+export default function DashboardPage() {
+  const [kpi, setKpi] = useState<KpiState>({
+    tempLogsToday: 0,
+    tempFails7d: 0,
+    cleaningDueToday: 0,
+    cleaningDoneToday: 0,
     trainingDueSoon: 0,
     trainingOver: 0,
     allergenDueSoon: 0,
     allergenOver: 0,
   });
 
-  // Food hygiene reminder (18-month cycle)
-  const [foodHygiene, setFoodHygiene] = useState<FoodHygieneStatus | null>(
-    null
-  );
+  const [eom, setEom] = useState<LeaderboardEntry | null>(null);
+  const [wallPosts, setWallPosts] = useState<WallPost[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
-  // Cleaning rota (today)
-  const [tasks, setTasks] = useState<CleanTask[]>([]);
-  const [runs, setRuns] = useState<CleanRun[]>([]);
-  const runsKey = useMemo(() => {
-    const m = new Map<string, CleanRun>();
-    for (const r of runs) m.set(`${r.task_id}|${r.run_on}`, r);
-    return m;
-  }, [runs]);
+  const headerDate = formatPrettyDate(new Date());
 
-  // initials selector for runs
-  const [ini, setIni] = useState<string>("");
-
-  // Completion modal (single + “complete all”)
-  const [confirm, setConfirm] = useState<{
-    ids: string[];
-    run_on: string;
-  } | null>(null);
-  const [confirmLabel, setConfirmLabel] =
-    useState<string>("Confirm completion");
-  const [confirmInitials, setConfirmInitials] = useState("");
-
-  // Logs: show-all toggle (10 latest by default)
-  const [showAllLogs, setShowAllLogs] = useState(false);
-
-  // Header date – always today now
-  const headerDateObj = new Date();
-  const isTodayHeader = sameDay(headerDateObj, new Date());
-
-  /* prime initials from localStorage */
   useEffect(() => {
-    try {
-      const lsIni = localStorage.getItem(LS_LAST_INITIALS) || "";
-      if (lsIni) {
-        const upper = lsIni.toUpperCase();
-        setIni(upper);
-        setInitials((prev) =>
-          Array.from(new Set([upper, ...prev.map((v) => v.toUpperCase())]))
-        );
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
+    let cancelled = false;
 
-  /* initials list (org + team, merge with any existing) */
-  useEffect(() => {
     (async () => {
+      setLoading(true);
+      setErr(null);
       try {
         const orgId = await getActiveOrgIdClient();
-        if (!orgId) return;
-
-        const { data: tm } = await supabase
-          .from("team_members")
-          .select("initials,name,email")
-          .eq("org_id", orgId)
-          .order("initials", { ascending: true });
-
-        const fromDb =
-          (tm ?? [])
-            .map(
-              (r: any) =>
-                r.initials?.toString().toUpperCase() ||
-                firstLetter(r.name) ||
-                firstLetter(r.email)
-            )
-            .filter(Boolean) || [];
-
-        const seedUpper = initialsSeed.map((v) => (v ? v.toUpperCase() : v));
-
-        setInitials((prev) => {
-          const seen = new Set<string>();
-          const merged: string[] = [];
-
-          const push = (val: string | null | undefined) => {
-            const v = (val ?? "").toString().toUpperCase().trim();
-            if (!v || seen.has(v)) return;
-            seen.add(v);
-            merged.push(v);
-          };
-
-          prev.forEach(push);
-          seedUpper.forEach(push);
-          fromDb.forEach(push);
-
-          return merged;
-        });
-      } catch {
-        // ignore
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialsSeed]);
-
-  /* Logged-in user initials first in the list */
-  useEffect(() => {
-    (async () => {
-      try {
-        const orgId = await getActiveOrgIdClient();
-        const { data: authData, error: authError } =
-          await supabase.auth.getUser();
-
-        if (authError || !authData?.user || !orgId) return;
-
-        const email = authData.user.email?.toLowerCase() ?? "";
-        if (!email) return;
-
-        const { data: tm } = await supabase
-          .from("team_members")
-          .select("initials,name,email")
-          .eq("org_id", orgId)
-          .eq("email", email)
-          .limit(1);
-
-        const row = tm?.[0];
-        if (!row) return;
-
-        const base =
-          row.initials?.toString().trim() ||
-          (row.name ?? "")
-            .toString()
-            .trim()
-            .split(/\s+/)
-            .map((p: string) => p[0] ?? "")
-            .join("") ||
-          email[0] ||
-          "";
-
-        const loggedIni = base.toUpperCase().slice(0, 4);
-        if (!loggedIni) return;
-
-        setInitials((prev) => {
-          const upperPrev = prev.map((v) => v.toUpperCase());
-          const rest = upperPrev.filter((v) => v !== loggedIni);
-          return [loggedIni, ...rest];
-        });
-
-        setIni((prev) => prev || loggedIni);
-        setConfirmInitials((prev) => prev || loggedIni);
-      } catch {
-        // ignore
-      }
-    })();
-  }, []);
-
-  /* default ini if still empty but we have initials */
-  useEffect(() => {
-    if (!ini && initials.length) {
-      const first = initials[0];
-      setIni(first);
-      setConfirmInitials((prev) => prev || first);
-    }
-  }, [initials, ini]);
-
-  /* KPI fetch (org-level) + food hygiene reminder */
-  useEffect(() => {
-    (async () => {
-      try {
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) return;
-
         const locationId = await getActiveLocationIdClient();
+        const today = isoToday();
 
-        const soon = new Date();
-        soon.setDate(soon.getDate() + 14);
-        const todayD = new Date();
-
-        let trainingDueSoon = 0;
-        let trainingOver = 0;
-        let allergenDueSoon = 0;
-        let allergenOver = 0;
-
-        // Training KPIs
-        try {
-          const { data } = await supabase
-            .from("team_members")
-            .select("training_expires_at,training_expiry,expires_at")
-            .eq("org_id", orgId);
-
-          (data ?? []).forEach((r: any) => {
-            const raw =
-              r.training_expires_at ??
-              r.training_expiry ??
-              r.expires_at ??
-              null;
-            if (!raw) return;
-            const d = new Date(raw);
-            if (isNaN(d.getTime())) return;
-            if (d < todayD) trainingOver++;
-            else if (d <= soon) trainingDueSoon++;
-          });
-        } catch {
-          // ignore training errors
+        if (!orgId) {
+          setLoading(false);
+          return;
         }
 
-        // Allergen KPIs
-        try {
-          const { data } = await supabase
-            .from("allergen_review")
-            .select("last_reviewed,interval_days")
-            .eq("org_id", orgId);
-
-          (data ?? []).forEach((r: any) => {
-            const last = r.last_reviewed ? new Date(r.last_reviewed) : null;
-            const interval = Number(r.interval_days ?? 0);
-            if (!last || !Number.isFinite(interval)) return;
-            const due = new Date(last);
-            due.setDate(due.getDate() + interval);
-            if (due < todayD) allergenOver++;
-            else if (due <= soon) allergenDueSoon++;
-          });
-        } catch {
-          // ignore allergen errors
-        }
-
-        setKpi({ trainingDueSoon, trainingOver, allergenDueSoon, allergenOver });
-
-        // Food hygiene: 18-month cycle
-        try {
-          const todayZero = new Date();
-          todayZero.setHours(0, 0, 0, 0);
-
-          type HygieneRow = {
-            inspected_on?: string | null;
-            inspection_date?: string | null;
-            rating?: any;
-            location_id?: string | null;
-            created_at?: string | null;
-          };
-
-          let chosen: HygieneRow | null = null;
-
-          // 1) Try inspections table
-          const { data: inspRows } = await supabase
-            .from("food_hygiene_inspections")
-            .select(
-              "inspected_on, inspection_date, rating, location_id, created_at"
-            )
-            .eq("org_id", orgId)
-            .order("inspected_on", { ascending: false })
-            .order("inspection_date", { ascending: false })
-            .order("created_at", { ascending: false })
-            .limit(20);
-
-          const allInsp = (inspRows ?? []) as HygieneRow[];
-
-          if (allInsp.length) {
-            if (locationId) {
-              chosen =
-                allInsp.find((r) => r.location_id === locationId) ?? allInsp[0];
-            } else {
-              chosen = allInsp[0];
-            }
-          }
-
-          // 2) Fallback to ratings table if nothing found
-          if (!chosen) {
-            const { data: ratingRows } = await supabase
-              .from("food_hygiene_ratings")
-              .select(
-                "inspected_on, inspection_date, rating, location_id, created_at"
-              )
-              .eq("org_id", orgId)
-              .order("inspected_on", { ascending: false })
-              .order("inspection_date", { ascending: false })
-              .order("created_at", { ascending: false })
-              .limit(20);
-
-            const allRatings = (ratingRows ?? []) as HygieneRow[];
-            if (allRatings.length) {
-              if (locationId) {
-                chosen =
-                  allRatings.find((r) => r.location_id === locationId) ??
-                  allRatings[0];
-              } else {
-                chosen = allRatings[0];
-              }
-            }
-          }
-
-          if (!chosen) {
-            setFoodHygiene(null);
-          } else {
-            const rawDate =
-              chosen.inspected_on ??
-              chosen.inspection_date ??
-              chosen.created_at ??
-              null;
-
-            if (!rawDate) {
-              setFoodHygiene(null);
-            } else {
-              const lastDate = new Date(rawDate);
-              if (Number.isNaN(lastDate.getTime())) {
-                setFoodHygiene(null);
-              } else {
-                const nextDue = addMonths(lastDate, 18);
-                const diffDays = Math.round(
-                  (nextDue.getTime() - todayZero.getTime()) / 86400000
-                );
-
-                setFoodHygiene({
-                  lastInspectedOn: lastDate.toISOString().slice(0, 10),
-                  rating:
-                    typeof chosen.rating === "number"
-                      ? chosen.rating
-                      : chosen.rating != null
-                      ? Number(chosen.rating)
-                      : null,
-                  nextDueOn: nextDue.toISOString().slice(0, 10),
-                  daysToDue: diffDays,
-                  overdue: diffDays < 0,
-                  dueSoon: diffDays >= 0 && diffDays <= 90,
-                });
-              }
-            }
-          }
-        } catch {
-          // don't break the page if hygiene fetch fails
-          setFoodHygiene(null);
-        }
-      } catch {
-        // ignore outer errors
+        await Promise.all([
+          loadTempsKpi(orgId, locationId, today, cancelled),
+          loadCleaningKpi(orgId, locationId, today, cancelled),
+          loadTrainingAndAllergenKpi(orgId, cancelled),
+          loadLeaderBoard(orgId, cancelled),
+          loadWallPosts(orgId, cancelled),
+        ]);
+      } catch (e: any) {
+        if (!cancelled) setErr(e?.message ?? "Failed to load dashboard.");
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  /* Employee of the month fetch (leaderboard) */
-  useEffect(() => {
-    (async () => {
-      try {
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) return;
+  /* ---------- loaders ---------- */
 
-        const { data, error } = await supabase
-          .from("leaderboard")
-          .select("display_name, points, temp_logs_count, cleaning_count")
-          .eq("org_id", orgId)
-          .order("points", { ascending: false })
-          .limit(1);
+  async function loadTempsKpi(
+    orgId: string,
+    _locationId: string | null,
+    todayISO: string,
+    cancelled: boolean
+  ) {
+    const since = new Date();
+    since.setDate(since.getDate() - 7);
 
-        if (error) throw error;
-        setEmployeeOfMonth(data?.[0] ?? null);
-      } catch {
-        setEmployeeOfMonth(null);
-      }
-    })();
-  }, []);
+    const { data, error } = await supabase
+      .from("food_temp_logs")
+      .select("at,status,org_id,location_id,temp_c")
+      .eq("org_id", orgId)
+      .order("at", { ascending: false })
+      .limit(400);
 
-  /* rows (org + location scoped) */
-  async function loadRows() {
-    setLoading(true);
-    setErr(null);
-    try {
-      const orgId = await getActiveOrgIdClient();
-      if (!orgId) {
-        setRows([]);
-        setLoading(false);
-        return;
-      }
+    if (error) throw error;
+    if (cancelled) return;
 
-      const locationId = await getActiveLocationIdClient();
+    let tempLogsToday = 0;
+    let tempFails7d = 0;
 
-      let query = supabase
-        .from("food_temp_logs")
-        .select("*")
-        .eq("org_id", orgId);
+    (data ?? []).forEach((r: any) => {
+      const at = r.at ?? r.created_at ?? null;
+      const d = at ? new Date(at) : null;
+      if (!d || Number.isNaN(d.getTime())) return;
 
-      if (locationId) {
-        query = query.eq("location_id", locationId);
-      }
+      const iso = d.toISOString().slice(0, 10);
+      const status: string | null = r.status ?? null;
 
-      const { data, error } = await query
-        .order("at", { ascending: false })
-        .limit(300);
-
-      if (error) throw error;
-      setRows(normalizeRowsFromFood(data ?? []));
-    } catch (e: any) {
-      setErr(e?.message || "Failed to fetch logs.");
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-  useEffect(() => {
-    loadRows();
-  }, []);
-
-  async function refreshRows() {
-    await loadRows();
-  }
-
-  /* Cleaning rota: load today's due + runs (org + location scoped) */
-  async function loadRotaToday() {
-    try {
-      const org_id = await getActiveOrgIdClient();
-      const locationId = await getActiveLocationIdClient();
-      if (!org_id || !locationId) return;
-
-      const todayISO = isoToday();
-
-      const { data: tData } = await supabase
-        .from("cleaning_tasks")
-        .select(
-          "id, org_id, location_id, area, task, category, frequency, weekday, month_day"
-        )
-        .eq("org_id", org_id)
-        .eq("location_id", locationId);
-
-      const all: CleanTask[] =
-        (tData ?? []).map((r: any) => ({
-          id: String(r.id),
-          org_id: String(r.org_id),
-          area: r.area ?? null,
-          task: r.task ?? r.name ?? "",
-          category: r.category ?? null,
-          frequency: (r.frequency ?? "daily") as Frequency,
-          weekday: r.weekday ? Number(r.weekday) : null,
-          month_day: r.month_day ? Number(r.month_day) : null,
-        })) || [];
-
-      setTasks(all);
-
-      const { data: rData } = await supabase
-        .from("cleaning_task_runs")
-        .select("task_id,run_on,done_by,location_id")
-        .eq("org_id", org_id)
-        .eq("location_id", locationId)
-        .eq("run_on", todayISO);
-
-      setRuns(
-        (rData ?? []).map((r: any) => ({
-          task_id: String(r.task_id),
-          run_on: r.run_on as string,
-          done_by: r.done_by ?? null,
-        }))
-      );
-    } catch {
-      // ignore
-    }
-  }
-  useEffect(() => {
-    loadRotaToday();
-  }, []);
-
-  const todayISOKey = isoToday();
-  const dueTodayAll = useMemo(
-    () => tasks.filter((t) => isDueOn(t, todayISOKey)),
-    [tasks, todayISOKey]
-  );
-  const dueDaily = useMemo(
-    () => dueTodayAll.filter((t) => t.frequency === "daily"),
-    [dueTodayAll]
-  );
-  const dueNonDaily = useMemo(
-    () => dueTodayAll.filter((t) => t.frequency !== "daily"),
-    [dueTodayAll]
-  );
-  const doneCount = useMemo(
-    () =>
-      dueTodayAll.filter((t) => runsKey.has(`${t.id}|${todayISOKey}`)).length,
-    [dueTodayAll, runsKey, todayISOKey]
-  );
-
-  const dailyByCat = useMemo(() => {
-    const map = new Map<string, CleanTask[]>();
-    for (const c of CLEANING_CATEGORIES) map.set(c, []);
-    for (const t of dueDaily) {
-      const key = t.category ?? "Opening checks";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(t);
-    }
-    return map;
-  }, [dueDaily]);
-
-  // Only categories that actually have daily tasks due today
-  const categoriesWithDaily = useMemo(() => {
-    const cats: string[] = [];
-    dailyByCat.forEach((list, cat) => {
-      if (list.length > 0) cats.push(cat);
+      if (iso === todayISO) tempLogsToday += 1;
+      if (d >= since && status === "fail") tempFails7d += 1;
     });
-    return cats;
-  }, [dailyByCat]);
 
-  // List of tasks included in the current confirm modal (for display)
-  const confirmTasks = useMemo(
-    () => (confirm ? tasks.filter((t) => confirm.ids.includes(t.id)) : []),
-    [confirm, tasks]
-  );
+    setKpi((prev) => ({
+      ...prev,
+      tempLogsToday,
+      tempFails7d,
+    }));
+  }
 
-  /* Logs: slice for 10-row view vs full */
-  const rowsToShow = useMemo(
-    () => (showAllLogs ? rows : rows.slice(0, 10)),
-    [rows, showAllLogs]
-  );
-
-  /* grouped rows by date (based on rowsToShow) */
-  const grouped = useMemo(() => {
-    const map = new Map<string, CanonRow[]>();
-    for (const r of rowsToShow) {
-      const key = r.date ?? "—";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(r);
-    }
-    return Array.from(map.entries())
-      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
-      .map(([date, list]) => ({ date, list }));
-  }, [rowsToShow]);
-
-  /* complete api (org + location scoped) */
-  async function completeTasks(ids: string[], iniVal: string) {
-    if (!ids.length) {
-      setConfirm(null);
-      setConfirmInitials("");
+  async function loadCleaningKpi(
+    orgId: string,
+    locationId: string | null,
+    todayISO: string,
+    cancelled: boolean
+  ) {
+    if (!locationId) {
+      setKpi((prev) => ({
+        ...prev,
+        cleaningDueToday: 0,
+        cleaningDoneToday: 0,
+      }));
       return;
     }
 
+    const { data: tData } = await supabase
+      .from("cleaning_tasks")
+      .select(
+        "id, org_id, location_id, area, task, category, frequency, weekday, month_day"
+      )
+      .eq("org_id", orgId)
+      .eq("location_id", locationId);
+
+    const allTasks: CleanTask[] =
+      (tData ?? []).map((r: any) => ({
+        id: String(r.id),
+        org_id: String(r.org_id),
+        area: r.area ?? null,
+        task: r.task ?? r.name ?? "",
+        category: r.category ?? null,
+        frequency: (r.frequency ?? "daily") as CleanTask["frequency"],
+        weekday: r.weekday ? Number(r.weekday) : null,
+        month_day: r.month_day ? Number(r.month_day) : null,
+      })) || [];
+
+    const dueTodayAll = allTasks.filter((t) => isDueOn(t, todayISO));
+
+    const { data: rData } = await supabase
+      .from("cleaning_task_runs")
+      .select("task_id,run_on,done_by,location_id")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .eq("run_on", todayISO);
+
+    const runs: CleanRun[] =
+      (rData ?? []).map((r: any) => ({
+        task_id: String(r.task_id),
+        run_on: r.run_on as string,
+        done_by: r.done_by ?? null,
+      })) || [];
+
+    if (cancelled) return;
+
+    const runsKey = new Set(runs.map((r) => `${r.task_id}|${r.run_on}`));
+    const cleaningDoneToday = dueTodayAll.filter((t) =>
+      runsKey.has(`${t.id}|${todayISO}`)
+    ).length;
+
+    setKpi((prev) => ({
+      ...prev,
+      cleaningDueToday: dueTodayAll.length,
+      cleaningDoneToday,
+    }));
+  }
+
+  async function loadTrainingAndAllergenKpi(
+    orgId: string,
+    cancelled: boolean
+  ) {
+    const soon = new Date();
+    soon.setDate(soon.getDate() + 14);
+    const todayD = new Date();
+
+    let trainingDueSoon = 0;
+    let trainingOver = 0;
+    let allergenDueSoon = 0;
+    let allergenOver = 0;
+
+    // Training
     try {
-      const org_id = await getActiveOrgIdClient();
-      const locationId = await getActiveLocationIdClient();
+      const { data } = await supabase
+        .from("team_members")
+        .select("*")
+        .eq("org_id", orgId);
 
-      if (!org_id) {
-        alert("No organisation found.");
-        return;
-      }
-      if (!locationId) {
-        alert("No location selected.");
-        return;
-      }
+      (data ?? []).forEach((r: any) => {
+        const raw =
+          r.training_expires_at ??
+          r.training_expiry ??
+          r.expires_at ??
+          null;
+        if (!raw) return;
+        const d = new Date(raw);
+        if (Number.isNaN(d.getTime())) return;
+        if (d < todayD) trainingOver++;
+        else if (d <= soon) trainingDueSoon++;
+      });
+    } catch {
+      // leave at 0
+    }
 
-      const run_on = todayISOKey;
+    // Allergen review
+    try {
+      const { data } = await supabase
+        .from("allergen_review")
+        .select("last_reviewed,interval_days")
+        .eq("org_id", orgId);
 
-      const payload = ids.map((id) => ({
-        org_id,
-        location_id: locationId,
-        task_id: id,
-        run_on,
-        done_by: iniVal.toUpperCase(),
-      }));
+      (data ?? []).forEach((r: any) => {
+        const last = r.last_reviewed ? new Date(r.last_reviewed) : null;
+        const interval = Number(r.interval_days ?? 0);
+        if (!last || !Number.isFinite(interval)) return;
+        const due = new Date(last);
+        due.setDate(due.getDate() + interval);
+        if (due < todayD) allergenOver++;
+        else if (due <= soon) allergenDueSoon++;
+      });
+    } catch {
+      // ignore
+    }
 
-      const { error } = await supabase
-        .from("cleaning_task_runs")
-        .upsert(payload, {
-          onConflict: "task_id,run_on",
-          ignoreDuplicates: true,
-        });
+    if (cancelled) return;
+
+    setKpi((prev) => ({
+      ...prev,
+      trainingDueSoon,
+      trainingOver,
+      allergenDueSoon,
+      allergenOver,
+    }));
+  }
+
+  async function loadLeaderBoard(orgId: string, cancelled: boolean) {
+    try {
+      const { data, error } = await supabase
+        .from("leaderboard")
+        .select("display_name, points, temp_logs_count, cleaning_count")
+        .eq("org_id", orgId)
+        .order("points", { ascending: false })
+        .limit(1);
 
       if (error) throw error;
-
-      // 🎉 Confetti after successful completion
-      try {
-        const confettiModule = await import("canvas-confetti");
-        confettiModule.default();
-      } catch {
-        // ignore confetti load errors
-      }
-
-      // 🔔 Small haptic bump on supported devices
-      if (typeof window !== "undefined" && "vibrate" in navigator) {
-        navigator.vibrate(10);
-      }
-
-      posthog.capture("cleaning_tasks_completed", {
-        count: ids.length,
-        initials: iniVal.toUpperCase(),
-        run_on,
-      });
-
-      await loadRotaToday();
-    } catch (e: any) {
-      alert(e?.message || "Failed to save completion.");
-    } finally {
-      setConfirm(null);
-      setConfirmInitials("");
+      if (cancelled) return;
+      setEom(data?.[0] ?? null);
+    } catch {
+      if (!cancelled) setEom(null);
     }
   }
 
-  async function uncompleteTask(id: string) {
+  async function loadWallPosts(orgId: string, cancelled: boolean) {
     try {
-      const org_id = await getActiveOrgIdClient();
-      const locationId = await getActiveLocationIdClient();
-      if (!org_id || !locationId) return;
+      const { data, error } = await supabase
+        .from(WALL_TABLE)
+        .select(
+          "id, org_id, location_id, author_initials, message, color, created_at"
+        )
+        .eq("org_id", orgId)
+        .order("created_at", { ascending: false })
+        .limit(3);
 
-      const { error } = await supabase
-        .from("cleaning_task_runs")
-        .delete()
-        .eq("org_id", org_id)
-        .eq("location_id", locationId)
-        .eq("task_id", id)
-        .eq("run_on", todayISOKey);
       if (error) throw error;
+      if (cancelled) return;
 
-      setRuns((prev) =>
-        prev.filter((r) => !(r.task_id === id && r.run_on === todayISOKey))
-      );
+      const mapped: WallPost[] =
+        (data ?? []).map((r: any) => ({
+          id: String(r.id),
+          initials:
+            r.author_initials ??
+            r.staff_initials ??
+            r.initials ??
+            "??",
+          message: r.message ?? "",
+          created_at: r.created_at ?? new Date().toISOString(),
+          colorClass: (r.color as string) || "bg-yellow-200",
+        })) || [];
 
-      posthog.capture("cleaning_task_uncompleted", {
-        task_id: id,
-        run_on: todayISOKey,
-      });
-    } catch (e: any) {
-      alert(e?.message || "Failed to undo completion.");
+      setWallPosts(mapped);
+    } catch (e) {
+      console.error("Failed to load wall posts", e);
+      if (!cancelled) setWallPosts([]);
     }
   }
 
-  /* ========================= RENDER ========================= */
+  /* ---------- derived ---------- */
+
+  const alertsCount =
+    kpi.trainingOver + kpi.allergenOver + (kpi.tempFails7d > 0 ? 1 : 0);
+
+  const hasAnyKpiAlert =
+    kpi.tempFails7d > 0 ||
+    kpi.trainingOver > 0 ||
+    kpi.trainingDueSoon > 0 ||
+    kpi.allergenOver > 0 ||
+    kpi.allergenDueSoon > 0;
+
+  const alertsSummary = (() => {
+    const bits: string[] = [];
+    if (kpi.tempFails7d > 0) bits.push(`${kpi.tempFails7d} failed temps (7d)`);
+    if (kpi.trainingOver > 0) bits.push(`${kpi.trainingOver} training overdue`);
+    if (kpi.allergenOver > 0)
+      bits.push(`${kpi.allergenOver} allergen review overdue`);
+    if (!bits.length)
+      return "No training, allergen or temperature issues flagged.";
+    return bits.join(" · ");
+  })();
+
+  /* ---------- render ---------- */
 
   return (
-    <div className="space-y-6 animate-fadeIn">
-      {/* Big centred header */}
-      <div className="text-center">
-        <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">
-          {/* Title intentionally blank per your current design */}
+    <div className="max-w-5xl mx-auto px-3 sm:px-4 py-4 space-y-5">
+      {/* Header – compact, date only */}
+      <header className="text-center space-y-1">
+        <h1 className="text-xl sm:text-2xl font-semibold text-slate-900">
+          {headerDate}
         </h1>
+        <p className="text-xs sm:text-sm text-slate-500">
+          At-a-glance view of safety, cleaning and compliance.
+        </p>
+      </header>
 
-        <div className="mt-3">
-          <div className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">
-            {isTodayHeader ? "Today" : "Selected date"}
-          </div>
-          <div className="mt-1 text-xl font-semibold text-slate-900 sm:text-2xl">
-            {formatPrettyDate(headerDateObj)}
-          </div>
-        </div>
-      </div>
-
-      {/* KPI grid + pills */}
-      <div className="space-y-4 rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
-        {(() => {
-          const todayISO = new Date().toISOString().slice(0, 10);
-          const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-          const in7d = (d: string | null) =>
-            d ? new Date(d) >= since : false;
-
-          const entriesToday = rows.filter((r) => r.date === todayISO).length;
-          const fails7 = rows.filter(
-            (r) => in7d(r.date) && r.status === "fail"
-          ).length;
-
-          const entriesTodayIsEmpty = entriesToday === 0;
-          const entriesTodayIcon = entriesTodayIsEmpty ? "❌" : "✅";
-          const entriesTodayTile =
-            "rounded-xl p-3 min-h-[76px] flex flex-col justify-between border shadow-sm backdrop-blur-sm " +
-            (entriesTodayIsEmpty
-              ? "border-red-200 bg-red-50/90 text-red-800"
-              : "border-emerald-200 bg-emerald-50/90 text-emerald-900");
-
-          const hasCleaning = dueTodayAll.length > 0;
-          const allCleaningDone =
-            hasCleaning && doneCount === dueTodayAll.length;
-          const cleaningIcon = !hasCleaning
-            ? "ℹ️"
-            : allCleaningDone
-            ? "✅"
-            : "❌";
-          const cleaningColor = !hasCleaning
-            ? "border-gray-200 bg-white/80 text-gray-800"
-            : allCleaningDone
-            ? "border-emerald-200 bg-emerald-50/90 text-emerald-900"
-            : "border-red-200 bg-red-50/90 text-red-800";
-
-         const cleaningTileBase =
-  "rounded-xl p-3 min-h-[76px] text-left flex flex-col justify-between border shadow-sm backdrop-blur-sm transition hover:brightness-105 hover:-translate-y-0.5 hover:shadow-md";
-
-          const failsTileColor =
-            fails7 > 0
-              ? "border-red-200 bg-red-50/90 text-red-800"
-              : "border-gray-200 bg-white/80 text-gray-800";
-          const failsIcon = fails7 > 0 ? "⚠️" : "✅";
-
-          const eomName = employeeOfMonth?.display_name || "—";
-          const eomPoints = employeeOfMonth?.points ?? 0;
-          const eomTemp = employeeOfMonth?.temp_logs_count ?? 0;
-          const eomClean = employeeOfMonth?.cleaning_count ?? 0;
-
-          return (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {/* tile 1: Entries today */}
-              <div className={entriesTodayTile}>
-                <div className="flex items-center justify-between text-xs">
-                  <span>Entries today</span>
-                  <span className="text-base">{entriesTodayIcon}</span>
-                </div>
-                <div className="mt-1 text-2xl font-semibold">
-                  {entriesToday}
-                </div>
-                <div className="mt-1 hidden text-[11px] opacity-80 md:block">
-                  {entriesTodayIsEmpty
-                    ? "No temperatures logged yet today."
-                    : "Great — at least one log recorded."}
-                </div>
-              </div>
-
-              {/* tile 2: Failures (7d) */}
-             <div
-  className={
-    "flex min-h-[76px] flex-col justify-between rounded-xl border p-3 text-xs shadow-sm backdrop-blur-sm transition hover:-translate-y-0.5 hover:shadow-md " +
-    failsTileColor
-  }
->
-
-                <div className="flex items-center justify-between text-xs">
-                  <span>Failures (7d)</span>
-                  <span className="text-base">{failsIcon}</span>
-                </div>
-                <div className="mt-1 text-2xl font-semibold">{fails7}</div>
-                <div className="mt-1 hidden text-[11px] opacity-80 md:block">
-                  {fails7 > 0
-                    ? "Check and record any corrective actions."
-                    : "No failed temperature checks in the last week."}
-                </div>
-              </div>
-
-              {/* tile 3: Employee of the month (from leaderboard) */}
-              <div className="flex min-h-[76px] flex-col justify-between rounded-xl border border-amber-200 bg-amber-50/90 p-3 text-amber-900 shadow-sm backdrop-blur-sm transition hover:-translate-y-0.5 hover:shadow-md">
-
-                <div className="flex items-center justify-between text-xs">
-                  <span>Employee of the month</span>
-                  <span className="text-lg">🏆</span>
-                </div>
-                <div className="mt-1 truncate text-lg font-semibold">
-                  {eomName}
-                </div>
-                <div className="mt-1 text-[11px] opacity-80 md:block">
-                  {eomPoints
-                    ? `${eomPoints} pts · Temps ${eomTemp} · Cleaning ${eomClean}`
-                    : "Based on points from cleaning & temp logs."}
-                </div>
-              </div>
-
-              {/* tile 4: Cleaning (today) */}
-              <button
-                type="button"
-                onClick={() => {
-                  const ids = dueTodayAll
-                    .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
-                    .map((t) => t.id);
-                  setConfirm({ ids, run_on: todayISOKey });
-                  setConfirmLabel("Complete all today");
-                  setConfirmInitials(ini || initials[0] || "");
-                }}
-                className={`${cleaningTileBase} ${cleaningColor}`}
-                title="View and complete today’s cleaning tasks"
-              >
-                <div className="flex items-center justify-between text-xs">
-                  <span>Cleaning (today)</span>
-                  <span className="text-base">{cleaningIcon}</span>
-                </div>
-                <div className="mt-1 text-2xl font-semibold">
-                  {doneCount}/{dueTodayAll.length}
-                </div>
-                <div className="mt-1 hidden text-[11px] underline opacity-80 md:block">
-                  {hasCleaning
-                    ? allCleaningDone
-                      ? "All cleaning tasks completed."
-                      : "Click to complete remaining tasks."
-                    : "No cleaning tasks scheduled for today."}
-                </div>
-              </button>
-            </div>
-          );
-        })()}
-
-        {/* KPI pills row – only show pills when something is due/overdue */}
-        {(kpi.trainingDueSoon > 0 ||
-          kpi.trainingOver > 0 ||
-          kpi.allergenDueSoon > 0 ||
-          kpi.allergenOver > 0) && (
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-            {kpi.trainingDueSoon > 0 && (
-              <span className="rounded-full bg-amber-50 px-2 py-0.5">
-                Training due soon:{" "}
-                <span className="font-semibold">{kpi.trainingDueSoon}</span>
-              </span>
-            )}
-
-            {kpi.trainingOver > 0 && (
-              <span className="rounded-full bg-red-50 px-2 py-0.5">
-                Training overdue:{" "}
-                <span className="font-semibold">{kpi.trainingOver}</span>
-              </span>
-            )}
-
-            {kpi.allergenDueSoon > 0 && (
-              <span className="rounded-full bg-amber-50 px-2 py-0.5">
-                Allergen review due soon:{" "}
-                <span className="font-semibold">{kpi.allergenDueSoon}</span>
-              </span>
-            )}
-
-            {kpi.allergenOver > 0 && (
-              <span className="rounded-full bg-red-50 px-2 py-0.5">
-                Allergen review overdue:{" "}
-                <span className="font-semibold">{kpi.allergenOver}</span>
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Food hygiene banner – only show when due soon or overdue */}
-        {foodHygiene && (foodHygiene.overdue || foodHygiene.dueSoon) && (
-          <div
+      {/* KPI row */}
+      <section className="rounded-3xl border border.white/40 border-white/40 bg.white/80 bg-white/80 p-4 shadow-lg shadow-slate-900/5 backdrop-blur space-y-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {/* Temps today */}
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ type: "spring", stiffness: 260, damping: 20 }}
+            whileHover={{ y: -3 }}
             className={cls(
-              "mt-3 flex flex-wrap items-center gap-3 rounded-2xl border px-3 py-2 text-xs shadow-sm",
-              foodHygiene.overdue
-                ? "border-red-300 bg-red-50/90 text-red-800"
-                : "border-amber-300 bg-amber-50/90 text-amber-900"
+              "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px]",
+              kpi.tempLogsToday === 0
+                ? "border-red-200 bg-red-50/90 text-red-800"
+                : "border-emerald-200 bg-emerald-50/90 text-emerald-900"
             )}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.15em]">
+              <span>Temperature logs</span>
               <span className="text-base" aria-hidden="true">
-                {foodHygiene.overdue ? "⚠️" : "⏰"}
+                {kpi.tempLogsToday === 0 ? "❌" : "✅"}
               </span>
-              <div className="font-semibold">
-                Food hygiene inspection{" "}
-                {foodHygiene.overdue ? "OVERDUE" : "due soon"}
-              </div>
             </div>
-            <div className="flex flex-wrap gap-3 text-[11px]">
-              <span>
-                Rating:{" "}
-                <span className="font-semibold">
-                  {foodHygiene.rating ?? "—"}
-                </span>
-              </span>
-              <span>
-                Last inspected:{" "}
-                <span className="font-semibold">
-                  {foodHygiene.lastInspectedOn
-                    ? formatDDMMYYYY(foodHygiene.lastInspectedOn)
-                    : "—"}
-                </span>
-              </span>
-              <span>
-                Next due (18m):{" "}
-                <span className="font-semibold">
-                  {foodHygiene.nextDueOn
-                    ? formatDDMMYYYY(foodHygiene.nextDueOn)
-                    : "—"}
-                </span>
-              </span>
-              {foodHygiene.daysToDue != null && (
-                <span>
-                  {foodHygiene.daysToDue < 0
-                    ? `${Math.abs(foodHygiene.daysToDue)} days overdue`
-                    : `Due in ${foodHygiene.daysToDue} days`}
-                </span>
-              )}
+            <div className="mt-1 text-2xl font-semibold">
+              {kpi.tempLogsToday}
             </div>
-          </div>
-        )}
+            <div className="mt-1 text-[11px] opacity-80">
+              {kpi.tempLogsToday === 0
+                ? "No temperatures logged yet today."
+                : "At least one temperature check recorded."}
+            </div>
+          </motion.div>
+
+          {/* Cleaning today */}
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{
+              type: "spring",
+              stiffness: 260,
+              damping: 20,
+              delay: 0.05,
+            }}
+            whileHover={{ y: -3 }}
+            className={cls(
+              "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px]",
+              kpi.cleaningDueToday === 0
+                ? "border-slate-200 bg-white/90 text-slate-900"
+                : kpi.cleaningDoneToday === kpi.cleaningDueToday
+                ? "border-emerald-200 bg-emerald-50/90 text-emerald-900"
+                : "border-amber-200 bg-amber-50/90 text-amber-900"
+            )}
+          >
+            <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.15em]">
+              <span>Cleaning (today)</span>
+              <span className="text-base" aria-hidden="true">
+                🧽
+              </span>
+            </div>
+            <div className="mt-1 text-2xl font-semibold">
+              {kpi.cleaningDoneToday}/{kpi.cleaningDueToday}
+            </div>
+            <div className="mt-1 text-[11px] opacity-80">
+              {kpi.cleaningDueToday === 0
+                ? "No cleaning tasks scheduled for today."
+                : kpi.cleaningDoneToday === kpi.cleaningDueToday
+                ? "All scheduled cleaning tasks completed."
+                : "Some scheduled cleaning tasks still open."}
+            </div>
+          </motion.div>
+
+          {/* Alerts */}
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{
+              type: "spring",
+              stiffness: 260,
+              damping: 20,
+              delay: 0.1,
+            }}
+            whileHover={{ y: -3 }}
+            className={cls(
+              "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px]",
+              hasAnyKpiAlert
+                ? "border-red-200 bg-red-50/90 text-red-800"
+                : "border-emerald-200 bg-emerald-50/90 text-emerald-900"
+            )}
+          >
+            <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.15em]">
+              <span>Alerts</span>
+              <span className="text-base" aria-hidden="true">
+                {hasAnyKpiAlert ? "⚠️" : "✅"}
+              </span>
+            </div>
+            <div className="mt-1 text-2xl font-semibold">{alertsCount}</div>
+            <div className="mt-1 text-[11px] opacity-80">{alertsSummary}</div>
+          </motion.div>
+        </div>
 
         {err && (
-          <div className="mt-2 rounded-md border border-red-200 bg-red-50/90 px-3 py-2 text-sm text-red-800">
+          <div className="mt-2 rounded-xl border border-red-200 bg-red-50/90 px-3 py-2 text-xs text-red-800">
             {err}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* ======= Today’s Cleaning Tasks (dashboard card) ======= */}
-      <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
-        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <h2 className="text-lg font-semibold">Today’s Cleaning Tasks</h2>
-
-          <div className="sm:ml-auto flex flex-wrap items-center gap-2">
-            <div className="rounded-xl border border-gray-200 bg-white/70 px-3 py-1.5 text-sm shadow-sm">
-              {doneCount}/{dueTodayAll.length}
+      {/* Middle row: wall + EOM */}
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {/* Kitchen wall latest posts */}
+        <div className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur flex flex-col">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                Kitchen wall – latest posts
+              </h2>
+              <p className="text-[11px] text-slate-500">
+                The last three notes pinned to the kitchen wall.
+              </p>
             </div>
-
-            {/* Initials dropdown next to Complete All – especially useful on mobile */}
-            <div className="flex items-center gap-2">
-              <select
-                className="rounded-xl border border-slate-200 bg-white/80 px-2 py-1.5 text-sm uppercase shadow-sm"
-                value={ini}
-                onChange={(e) => {
-                  const v = e.target.value.toUpperCase();
-                  setIni(v);
-                  setConfirmInitials(v);
-                  try {
-                    localStorage.setItem(LS_LAST_INITIALS, v);
-                  } catch {
-                    // ignore
-                  }
-                }}
-              >
-                <option value="" disabled>
-                  Initials…
-                </option>
-                {initials.map((i) => (
-                  <option key={i} value={i}>
-                    {i}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                className="inline-flex items-center justify-center whitespace-nowrap rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30 hover:brightness-105 disabled:opacity-60"
-                onClick={() => {
-                  const ids = dueTodayAll
-                    .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
-                    .map((t) => t.id);
-                  setConfirm({ ids, run_on: todayISOKey });
-                  setConfirmLabel("Complete all today");
-                  setConfirmInitials(ini || initials[0] || "");
-                }}
-                disabled={
-                  !dueTodayAll.length ||
-                  dueTodayAll.every((t) =>
-                    runsKey.has(`${t.id}|${todayISOKey}`)
-                  )
-                }
-              >
-                Complete All
-              </button>
-            </div>
+            <Link
+              href="/wall"
+              className="text-[11px] font-medium text-amber-700 hover:text-amber-800 underline-offset-2 hover:underline"
+            >
+              View wall
+            </Link>
           </div>
-        </div>
 
-        {/* Weekly/Monthly only */}
-        <div className="space-y-1">
-          <div className="text-[11px] font-semibold uppercase text-gray-500">
-            Weekly / Monthly
-          </div>
-          <div className="text-[10px] text-gray-400 sm:hidden">
-            Swipe left to complete, right to undo.
-          </div>
-          {dueNonDaily.length === 0 ? (
-            <div className="mt-1 rounded-xl border border-gray-200 bg-white/70 p-3 text-sm text-gray-500 shadow-sm">
-              No tasks.
+          {wallPosts.length === 0 ? (
+            <div className="mt-1 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-xs text-slate-500 flex-1 flex items-center">
+              No posts yet. When the team adds messages on the wall, the latest
+              three will show here.
             </div>
           ) : (
-            <>
-              {dueNonDaily.map((t) => {
-                const key = `${t.id}|${todayISOKey}`;
-                const done = runsKey.has(key);
-                const run = runsKey.get(key) || null;
-
-                return (
-                  <WeeklyMonthlyTaskRow
-                    key={t.id}
-                    task={t}
-                    done={done}
-                    run={run}
-                    initials={initials}
-                    ini={ini}
-                    confirmInitials={confirmInitials}
-                    onComplete={completeTasks}
-                    onUncomplete={uncompleteTask}
-                  />
-                );
-              })}
-            </>
-          )}
-        </div>
-
-        {/* Daily – category summary only (only categories that have tasks today) */}
-        <div className="mt-4 space-y-2">
-          <div className="text-[11px] font-semibold uppercase text-gray-500">
-            Daily tasks (by category)
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            {categoriesWithDaily.map((cat) => {
-              const list = dailyByCat.get(cat) ?? [];
-              const open = list.filter(
-                (t) => !runsKey.has(`${t.id}|${todayISOKey}`)
-              ).length;
-              return (
-                <CategoryPill
-                  key={cat}
-                  title={cat}
-                  total={list.length}
-                  open={open}
-                  onClick={() => {
-                    const ids = list
-                      .filter((t) => !runsKey.has(`${t.id}|${todayISOKey}`))
-                      .map((t) => t.id);
-                    setConfirm({ ids, run_on: todayISOKey });
-                    setConfirmLabel(`Complete: ${cat}`);
-                    setConfirmInitials(ini || initials[0] || "");
+            <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {wallPosts.map((p, idx) => (
+                <motion.div
+                  key={p.id}
+                  className={cls(
+                    "flex flex-col justify-between rounded-2xl px-3 py-2 text-xs shadow-sm border border-slate-100",
+                    p.colorClass || "bg-yellow-200"
+                  )}
+                  initial={{ opacity: 0, y: 10, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{
+                    type: "spring",
+                    stiffness: 260,
+                    damping: 20,
+                    delay: idx * 0.05,
                   }}
-                />
-              );
-            })}
-            {categoriesWithDaily.length === 0 && (
-              <div className="col-span-full rounded-xl border border-slate-200 bg-white/70 p-3 text-sm text-slate-500">
-                No daily tasks due today.
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ======= LOGS (read-only) ======= */}
-      <div className="rounded-3xl border border-white/30 bg-white/70 p-4 shadow-lg shadow-slate-900/10 backdrop-blur">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Temperature Logs</h2>
-          <button
-            onClick={refreshRows}
-            className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-1.5 text-sm text-slate-800 shadow-sm hover:bg-white"
-          >
-            Refresh
-          </button>
-        </div>
-
-        {/* Desktop/tablet – grouped by date */}
-        <div className="hidden overflow-x-auto md:block">
-          <table className="w-full table-fixed text-sm">
-            <thead className="bg-slate-50/80 text-slate-600">
-              <tr className="text-left text-[11px] font-semibold uppercase tracking-wide">
-                <th className="w-[6rem] px-3 py-2">Time</th>
-                <th className="w-16 px-3 py-2">Initials</th>
-                <th className="w-[9rem] px-3 py-2">Location</th>
-                <th className="w-[10rem] px-3 py-2">Item</th>
-                <th className="w-[10rem] px-3 py-2">Target</th>
-                <th className="w-[7rem] px-3 py-2">Temp (°C)</th>
-                <th className="w-[6.5rem] px-3 py-2 text-right">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
-                    Loading…
-                  </td>
-                </tr>
-              ) : grouped.length ? (
-                grouped.map((g) => (
-                  <React.Fragment key={g.date}>
-                    {/* Date header row */}
-                    <tr className="border-t bg-slate-50/80">
-                      <td
-                        colSpan={7}
-                        className="px-3 py-2 text-sm font-semibold text-slate-700"
-                      >
-                        {formatDDMMYYYY(g.date)}
-                      </td>
-                    </tr>
-                    {/* Rows for that date */}
-                    {g.list.map((r) => {
-                      const preset: TargetPreset | undefined = r.target_key
-                        ? (TARGET_BY_KEY as any)[r.target_key]
-                        : undefined;
-                      const st = r.status ?? inferStatus(r.temp_c, preset);
-                      return (
-                        <tr key={r.id} className="border-t bg-white/80">
-                          <td className="px-3 py-2 text-xs text-gray-500">
-                            {r.time ?? "—"}
-                          </td>
-                          <td className="px-3 py-2 font-medium uppercase">
-                            {r.staff_initials ?? "—"}
-                          </td>
-                          <td className="px-3 py-2">
-                            {r.location ?? "—"}
-                          </td>
-                          <td className="px-3 py-2">{r.item ?? "—"}</td>
-                          <td className="px-3 py-2">
-                            {preset
-                              ? `${preset.label}${
-                                  preset.minC != null || preset.maxC != null
-                                    ? ` (${preset.minC ?? "−∞"}–${
-                                        preset.maxC ?? "+∞"
-                                      } °C)`
-                                    : ""
-                                }`
-                              : "—"}
-                          </td>
-                          <td className="px-3 py-2">
-                            {r.temp_c ?? "—"}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {st ? (
-                              <span
-                                className={cls(
-                                  "inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                                  st === "pass"
-                                    ? "bg-emerald-100 text-emerald-800"
-                                    : "bg-red-100 text-red-800"
-                                )}
-                              >
-                                {st}
-                              </span>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </React.Fragment>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">
-                    No entries
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Mobile cards */}
-        <div className="space-y-2 md:hidden">
-          {loading ? (
-            <div className="py-4 text-center text-sm text-gray-500">
-              Loading…
-            </div>
-          ) : grouped.length ? (
-            grouped.map((g) => (
-              <div key={g.date}>
-                <div className="mb-1 text-xs font-medium text-gray-600">
-                  {formatDDMMYYYY(g.date)}
-                </div>
-                <div className="space-y-2">
-                  {g.list.map((r) => {
-                    const preset: TargetPreset | undefined = r.target_key
-                      ? (TARGET_BY_KEY as any)[r.target_key]
-                      : undefined;
-                    const st = r.status ?? inferStatus(r.temp_c, preset);
-                    return (
-                      <div
-                        key={r.id}
-                        className="rounded-xl border border-slate-200 bg-white/80 p-3 shadow-sm"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm font-medium">
-                            {r.item ?? "—"}
-                          </div>
-                          {st && (
-                            <span
-                              className={cls(
-                                "ml-2 rounded-full px-2 py-0.5 text-[11px] font-medium",
-                                st === "pass"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-red-100 text-red-800"
-                              )}
-                            >
-                              {st}
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-1 text-xs text-gray-600">
-                          {r.time ?? "—"} • {r.location ?? "—"} •{" "}
-                          {r.staff_initials ?? "—"} • {r.temp_c ?? "—"}°C
-                        </div>
-                        <div className="mt-1 text-[11px] text-gray-500">
-                          Target:{" "}
-                          {preset
-                            ? `${preset.label}${
-                                preset.minC != null || preset.maxC != null
-                                  ? ` (${preset.minC ?? "−∞"}–${
-                                      preset.maxC ?? "+∞"
-                                    } °C)`
-                                  : ""
-                              }`
-                            : "—"}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="py-4 text-center text-sm text-gray-500">
-              No entries
+                  whileHover={{ y: -3 }}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-base font-bold tracking-wide text-slate-900">
+                      {p.initials || "??"}
+                    </div>
+                    <span className="text-[10px] text-slate-500">
+                      {toISODate(p.created_at) ?? ""}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-800 line-clamp-3">
+                    {p.message}
+                  </div>
+                </motion.div>
+              ))}
             </div>
           )}
         </div>
 
-        {/* Logs footer: tally + View all */}
-        {!loading && rows.length > 0 && (
-          <div className="mt-3 flex items-center justify-between text-xs text-slate-600">
-            <span>
-              {rowsToShow.length} of {rows.length} logs shown
+        {/* Employee of the month */}
+        <div className="rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-md shadow-amber-200/60 flex flex-col">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-amber-900">
+              Employee of the month
+            </h2>
+            <span className="text-xl" aria-hidden="true">
+              🏆
             </span>
-            {rows.length > rowsToShow.length ? (
-              <button
-                type="button"
-                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg:white"
-                onClick={() => setShowAllLogs(true)}
-              >
-                View all
-              </button>
-            ) : rows.length > 10 ? (
-              <button
-                type="button"
-                className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg:white"
-                onClick={() => setShowAllLogs(false)}
-              >
-                Show latest 10
-              </button>
-            ) : null}
           </div>
-        )}
-      </div>
 
-           {/* Cleaning completion modal */}
-      {confirm && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
-          onClick={() => setConfirm(null)}
-        >
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!confirmInitials.trim()) return;
-              completeTasks(confirm.ids, confirmInitials.trim());
-            }}
-            onClick={(e) => e.stopPropagation()}
-            className="
-              mx-auto mt-6 flex h-[60vh] w-full max-w-sm flex-col overflow-hidden
-              rounded-t-2xl border border-white/30 bg-white/90 shadow-xl shadow-slate-900/25 backdrop-blur
-              sm:mt-24 sm:max-h-[80vh] sm:max-w-md sm:rounded-2xl
-            "
-          >
-            {/* header */}
-            <div className="sticky top-0 z-10 border-b bg-white/90 px-4 py-3 text-base font-semibold">
-              {confirmLabel}
-            </div>
-
-            {/* scrollable body */}
-            <div className="grow space-y-3 overflow-y-auto px-4 py-3 text-sm">
-              <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-2">
-                <div className="font-medium">
-                  {confirm.ids.length} task(s)
+          {eom ? (
+            <>
+              <div className="text-lg font-bold text-amber-900 truncate">
+                {eom.display_name}
+              </div>
+              <div className="mt-1 text-xs text-amber-900/90 space-y-0.5">
+                <div>
+                  Total points:{" "}
+                  <span className="font-semibold">
+                    {eom.points ?? 0}
+                  </span>
                 </div>
-                <div className="mt-1 text-xs text-gray-500">
-                  For <strong>{nice(confirm.run_on)}</strong>
+                <div>
+                  Cleaning tasks:{" "}
+                  <span className="font-semibold">
+                    {eom.cleaning_count ?? 0}
+                  </span>
+                  {" · "}Temp logs:{" "}
+                  <span className="font-semibold">
+                    {eom.temp_logs_count ?? 0}
+                  </span>
                 </div>
               </div>
+              <p className="mt-3 text-[11px] text-amber-900/80">
+                Based on completed cleaning tasks and temperature logs this
+                month.
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-amber-900/80">
+              No leaderboard data yet. Once your team completes cleaning tasks
+              and logs temperatures, the top performer will be highlighted here.
+            </p>
+          )}
 
-              {confirmTasks.length > 0 && (
-                <div className="rounded-xl border border-slate-200 bg-white/90 p-2">
-                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                    Tasks to mark complete
-                  </div>
-                  <ul className="space-y-2 text-sm">
-                    {confirmTasks.map((t) => (
-                      <li
-                        key={t.id}
-                        className="rounded-lg border border-slate-100 bg-slate-50/80 px-2 py-1.5"
-                      >
-                        <div className="font-medium">{t.task}</div>
-                        <div className="text-[11px] text-gray-500">
-                          {t.category ?? t.area ?? "—"} •{" "}
-                          {t.frequency === "daily"
-                            ? "Daily"
-                            : t.frequency === "weekly"
-                            ? "Weekly"
-                            : "Monthly"}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            {/* footer */}
-            <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t bg-white/90 px-4 py-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">Initials</span>
-                <select
-                  className="rounded-xl border border-slate-200 bg-white/80 px-2 py-1.5 text-sm uppercase shadow-sm"
-                  value={confirmInitials}
-                  onChange={(e) =>
-                    setConfirmInitials(e.target.value.toUpperCase())
-                  }
-                  required
-                >
-                  <option value="" disabled>
-                    Select…
-                  </option>
-                  {initials.map((i) => (
-                    <option key={i} value={i}>
-                      {i}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"
-                  onClick={() => setConfirm(null)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30 hover:brightness-105"
-                >
-                  Mark tasks complete
-                </button>
-              </div>
-            </div>
-          </form>
+          <div className="mt-3">
+            <Link
+              href="/leaderboard"
+              className="inline-flex items-center rounded-2xl bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-amber-700"
+            >
+              View full leaderboard
+            </Link>
+          </div>
         </div>
+      </section>
+
+      {/* Quick actions with emojis + animation */}
+      <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur space-y-3">
+        <h2 className="text-sm font-semibold text-slate-900">Quick actions</h2>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <QuickLink href="/routines" label="Routines" icon="📋" />
+          <QuickLink href="/allergens" label="Allergens" icon="⚠️" />
+          <QuickLink href="/cleaning-rota" label="Cleaning rota" icon="🧽" />
+          <QuickLink href="/team" label="Team & training" icon="👥" />
+          <QuickLink href="/reports" label="Reports" icon="📊" />
+          <QuickLink href="/locations" label="Locations & sites" icon="📍" />
+          <QuickLink href="/manager" label="Manager view" icon="💼" />
+          <QuickLink href="/help" label="Help & support" icon="❓" />
+        </div>
+      </section>
+
+      {loading && (
+        <p className="text-center text-[11px] text-slate-400">
+          Loading dashboard…
+        </p>
       )}
-   </div>
+    </div>
+  );
+}
+
+/* ---------- Quick link button with emoji + hover bounce ---------- */
+
+function QuickLink({
+  href,
+  label,
+  icon,
+}: {
+  href: string;
+  label: string;
+  icon: string;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 260, damping: 22 }}
+      whileHover={{ y: -3 }}
+    >
+      <Link
+        href={href}
+        className="flex items-center justify-center gap-1 rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+      >
+        <span aria-hidden="true">{icon}</span>
+        <span>{label}</span>
+      </Link>
+    </motion.div>
   );
 }

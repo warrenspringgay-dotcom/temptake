@@ -320,8 +320,10 @@ export default function SuppliersManager() {
     }
   }
 
+  /* -------------------- Render -------------------- */
   return (
     <div className="space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 text-slate-900 shadow-xl backdrop-blur-sm sm:p-6">
+      {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-lg font-semibold text-slate-900">Suppliers</h1>
         <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
@@ -346,31 +348,66 @@ export default function SuppliersManager() {
         </div>
       </div>
 
-      {/* Mobile: cards */}
-      <div className="grid gap-3 sm:hidden">
-        {loading ? (
-          <div className="rounded-xl border border-slate-200 bg-white/80 p-4 text-center text-slate-500 shadow-sm backdrop-blur-sm">
-            Loading…
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="rounded-xl border border-slate-200 bg-white/80 p-4 text-center text-slate-500 shadow-sm backdrop-blur-sm">
-            No suppliers yet.
-          </div>
-        ) : (
-          filtered.map((r) => {
+      {/* Card grid (all breakpoints) */}
+      {loading ? (
+        <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
+          Loading…
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
+          No suppliers yet.
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((r) => {
             const cats = parseCats(r.categories);
+            const initials =
+              (r.name || "?")
+                .split(/\s+/)
+                .filter(Boolean)
+                .slice(0, 2)
+                .map((p) => p[0]?.toUpperCase())
+                .join("") || "?";
+
             return (
               <div
                 key={r.id}
-                className="rounded-xl border border-slate-200 bg-white/80 p-3 text-sm text-slate-900 shadow-sm backdrop-blur-sm"
+                className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white/90 p-3 text-sm text-slate-900 shadow-sm backdrop-blur-sm transition hover:shadow-md"
               >
-                <div className="mb-2 flex items-start justify-between">
-                  <div>
-                    <div className="text-base font-semibold">{r.name}</div>
-                    <div className="text-xs text-slate-500">
-                      {r.active ? "Active" : "Inactive"}
+                {/* Header */}
+                <div className="mb-2 flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                      {initials}
+                    </div>
+                    <div>
+                      <button
+                        className="text-sm font-semibold text-slate-900 hover:text-emerald-700"
+                        onClick={() => openView(r)}
+                      >
+                        {r.name || "Unnamed supplier"}
+                      </button>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
+                        <span
+                          className={cls(
+                            "rounded-full px-2 py-0.5 text-[10px] font-medium border",
+                            r.active
+                              ? "border-emerald-100 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-slate-50 text-slate-500"
+                          )}
+                        >
+                          {r.active ? "Active" : "Inactive"}
+                        </span>
+                        {cats.length > 0 && (
+                          <span className="text-[10px] text-slate-500">
+                            {cats.length} category
+                            {cats.length > 1 ? "ies" : "y"}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
+
                   <ActionMenu
                     items={[
                       { label: "View", onClick: () => openView(r) },
@@ -390,138 +427,78 @@ export default function SuppliersManager() {
                     ]}
                   />
                 </div>
-                <div className="space-y-1 text-sm">
-                  <div>
-                    <span className="text-slate-500">Contact:</span>{" "}
-                    {r.contact || "—"}
+
+                {/* Body */}
+                <div className="space-y-1 text-xs text-slate-800">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-500">Contact</span>
+                    <span className="max-w-[70%] truncate text-right">
+                      {r.contact || "—"}
+                    </span>
                   </div>
-                  <div>
-                    <span className="text-slate-500">Phone:</span>{" "}
-                    {r.phone || "—"}
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-500">Phone</span>
+                    <span className="max-w-[70%] truncate text-right">
+                      {r.phone || "—"}
+                    </span>
                   </div>
-                  <div>
-                    <span className="text-slate-500">Email:</span>{" "}
-                    {r.email || "—"}
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-500">Email</span>
+                    <span className="max-w-[70%] truncate text-right">
+                      {r.email || "—"}
+                    </span>
                   </div>
-                  <div className="flex flex-wrap gap-1">
-                    {cats.length ? (
-                      cats.map((c) => (
+                </div>
+
+                {/* Categories */}
+                <div className="mt-2 min-h-[28px]">
+                  {cats.length ? (
+                    <div className="flex flex-wrap gap-1">
+                      {cats.map((c) => (
                         <span
                           key={c}
                           className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800"
                         >
                           {c}
                         </span>
-                      ))
-                    ) : (
-                      <span className="text-slate-500">No categories</span>
-                    )}
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-[11px] text-slate-500">
+                      No categories
+                    </span>
+                  )}
+                </div>
+
+                {/* Notes */}
+                {r.notes && (
+                  <div className="mt-2 rounded-xl bg-slate-50 px-2 py-1.5 text-xs text-slate-600">
+                    {r.notes}
                   </div>
+                )}
+
+                {/* Footer shortcuts */}
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  {canManage && (
+                    <button
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                      onClick={() => openEdit(r)}
+                    >
+                      Edit details
+                    </button>
+                  )}
+                  <button
+                    className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                    onClick={() => openView(r)}
+                  >
+                    View full record →
+                  </button>
                 </div>
               </div>
             );
-          })
-        )}
-      </div>
-
-      {/* Tablet / Desktop: table */}
-      <div className="hidden overflow-x-auto rounded-2xl border border-slate-200 bg-white/80 shadow-sm backdrop-blur-sm sm:block">
-        <table className="min-w-full text-sm">
-          <thead className="bg-slate-50/80">
-            <tr className="text-left text-slate-500">
-              <th className="py-2 pr-3">Supplier</th>
-              <th className="py-2 pr-3">Contact</th>
-              <th className="py-2 pr-3">Phone</th>
-              <th className="py-2 pr-3">Email</th>
-              <th className="py-2 pr-3">Categories</th>
-              <th className="py-2 pr-3">Active</th>
-              <th className="py-2 pr-0 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={7} className="py-6 text-center text-slate-500">
-                  Loading…
-                </td>
-              </tr>
-            ) : filtered.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="py-6 text-center text-slate-500">
-                  No suppliers yet.
-                </td>
-              </tr>
-            ) : (
-              filtered.map((r) => {
-                const cats = parseCats(r.categories);
-                return (
-                  <tr
-                    key={r.id}
-                    className="border-t border-slate-100 align-top"
-                  >
-                    <td className="py-2 pr-3">
-                      <button
-                        className="text-emerald-700 underline decoration-emerald-400 underline-offset-2 hover:text-emerald-800"
-                        onClick={() => openView(r)}
-                      >
-                        {r.name}
-                      </button>
-                    </td>
-                    <td className="py-2 pr-3 text-slate-900">
-                      {r.contact ?? "—"}
-                    </td>
-                    <td className="py-2 pr-3 text-slate-900">
-                      {r.phone ?? "—"}
-                    </td>
-                    <td className="py-2 pr-3 text-slate-900">
-                      {r.email ?? "—"}
-                    </td>
-                    <td className="py-2 pr-3">
-                      {cats.length ? (
-                        <div className="flex flex-wrap gap-1">
-                          {cats.map((c) => (
-                            <span
-                              key={c}
-                              className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800"
-                            >
-                              {c}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-slate-500">—</span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-3 text-slate-900">
-                      {r.active ? "Yes" : "No"}
-                    </td>
-                    <td className="py-2 pr-0 text-right">
-                      <ActionMenu
-                        items={[
-                          { label: "View", onClick: () => openView(r) },
-                          ...(canManage
-                            ? [
-                                {
-                                  label: "Edit",
-                                  onClick: () => openEdit(r),
-                                },
-                                {
-                                  label: "Delete",
-                                  onClick: () => removeSupplier(r.id),
-                                  variant: "danger" as const,
-                                },
-                              ]
-                            : []),
-                        ]}
-                      />
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+          })}
+        </div>
+      )}
 
       {/* ---------- VIEW ---------- */}
       {viewOpen && viewing && (
