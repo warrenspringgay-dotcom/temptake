@@ -16,7 +16,7 @@ export default function PricingPage() {
         {/* Top bar – mirror launch page (logo + login) */}
         <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 pt-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-            <Link href="/dashboard" className="flex items-center gap-2">
+            <Link href="/app" className="flex items-center gap-2">
               <Image src="/logo.png" width={44} height={44} alt="TempTake" />
               <span className="font-semibold">TempTake</span>
             </Link>
