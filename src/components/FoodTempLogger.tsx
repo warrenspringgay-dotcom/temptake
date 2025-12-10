@@ -430,6 +430,11 @@ export default function DashboardPage() {
     return bits.join(" · ");
   })();
 
+  const openTempModal = () => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new Event("tt-open-temp-modal"));
+  };
+
   /* ---------- render ---------- */
 
   return (
@@ -447,14 +452,16 @@ export default function DashboardPage() {
       {/* KPI row */}
       <section className="rounded-3xl border border.white/40 border-white/40 bg.white/80 bg-white/80 p-4 shadow-lg shadow-slate-900/5 backdrop-blur space-y-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {/* Temps today */}
-          <motion.div
+          {/* Temps today – CLICKABLE: opens temp quick-entry modal */}
+          <motion.button
+            type="button"
+            onClick={openTempModal}
             initial={{ opacity: 0, y: 10, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ type: "spring", stiffness: 260, damping: 20 }}
             whileHover={{ y: -3 }}
             className={cls(
-              "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px]",
+              "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px] w-full text-left",
               kpi.tempLogsToday === 0
                 ? "border-red-200 bg-red-50/90 text-red-800"
                 : "border-emerald-200 bg-emerald-50/90 text-emerald-900"
@@ -474,73 +481,81 @@ export default function DashboardPage() {
                 ? "No temperatures logged yet today."
                 : "At least one temperature check recorded."}
             </div>
-          </motion.div>
+          </motion.button>
 
-          {/* Cleaning today */}
-          <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{
-              type: "spring",
-              stiffness: 260,
-              damping: 20,
-              delay: 0.05,
-            }}
-            whileHover={{ y: -3 }}
-            className={cls(
-              "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px]",
-              kpi.cleaningDueToday === 0
-                ? "border-slate-200 bg-white/90 text-slate-900"
-                : kpi.cleaningDoneToday === kpi.cleaningDueToday
-                ? "border-emerald-200 bg-emerald-50/90 text-emerald-900"
-                : "border-amber-200 bg-amber-50/90 text-amber-900"
-            )}
-          >
-            <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.15em]">
-              <span>Cleaning (today)</span>
-              <span className="text-base" aria-hidden="true">
-                🧽
-              </span>
-            </div>
-            <div className="mt-1 text-2xl font-semibold">
-              {kpi.cleaningDoneToday}/{kpi.cleaningDueToday}
-            </div>
-            <div className="mt-1 text-[11px] opacity-80">
-              {kpi.cleaningDueToday === 0
-                ? "No cleaning tasks scheduled for today."
-                : kpi.cleaningDoneToday === kpi.cleaningDueToday
-                ? "All scheduled cleaning tasks completed."
-                : "Some scheduled cleaning tasks still open."}
-            </div>
-          </motion.div>
+          {/* Cleaning today – CLICKABLE: go to cleaning rota */}
+          <Link href="/cleaning-rota" className="w-full">
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{
+                type: "spring",
+                stiffness: 260,
+                damping: 20,
+                delay: 0.05,
+              }}
+              whileHover={{ y: -3 }}
+              className={cls(
+                "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px]",
+                kpi.cleaningDueToday === 0
+                  ? "border-slate-200 bg-white/90 text-slate-900"
+                  : kpi.cleaningDoneToday === kpi.cleaningDueToday
+                  ? "border-emerald-200 bg-emerald-50/90 text-emerald-900"
+                  : "border-amber-200 bg-amber-50/90 text-amber-900"
+              )}
+            >
+              <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.15em]">
+                <span>Cleaning (today)</span>
+                <span className="text-base" aria-hidden="true">
+                  🧽
+                </span>
+              </div>
+              <div className="mt-1 text-2xl font-semibold">
+                {kpi.cleaningDoneToday}/{kpi.cleaningDueToday}
+              </div>
+              <div className="mt-1 text-[11px] opacity-80">
+                {kpi.cleaningDueToday === 0
+                  ? "No cleaning tasks scheduled for today."
+                  : kpi.cleaningDoneToday === kpi.cleaningDueToday
+                  ? "All scheduled cleaning tasks completed."
+                  : "Some scheduled cleaning tasks still open."}
+              </div>
+            </motion.div>
+          </Link>
 
-          {/* Alerts */}
-          <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{
-              type: "spring",
-              stiffness: 260,
-              damping: 20,
-              delay: 0.1,
-            }}
-            whileHover={{ y: -3 }}
-            className={cls(
-              "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px]",
-              hasAnyKpiAlert
-                ? "border-red-200 bg-red-50/90 text-red-800"
-                : "border-emerald-200 bg-emerald-50/90 text-emerald-900"
-            )}
-          >
-            <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.15em]">
-              <span>Alerts</span>
-              <span className="text-base" aria-hidden="true">
-                {hasAnyKpiAlert ? "⚠️" : "✅"}
-              </span>
-            </div>
-            <div className="mt-1 text-2xl font-semibold">{alertsCount}</div>
-            <div className="mt-1 text-[11px] opacity-80">{alertsSummary}</div>
-          </motion.div>
+          {/* Alerts – CLICKABLE: go to manager view (alerts) */}
+          <Link href="/manager" className="w-full">
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{
+                type: "spring",
+                stiffness: 260,
+                damping: 20,
+                delay: 0.1,
+              }}
+              whileHover={{ y: -3 }}
+              className={cls(
+                "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px]",
+                hasAnyKpiAlert
+                  ? "border-red-200 bg-red-50/90 text-red-800"
+                  : "border-emerald-200 bg-emerald-50/90 text-emerald-900"
+              )}
+            >
+              <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.15em]">
+                <span>Alerts</span>
+                <span className="text-base" aria-hidden="true">
+                  {hasAnyKpiAlert ? "⚠️" : "✅"}
+                </span>
+              </div>
+              <div className="mt-1 text-2xl font-semibold">
+                {alertsCount}
+              </div>
+              <div className="mt-1 text-[11px] opacity-80">
+                {alertsSummary}
+              </div>
+            </motion.div>
+          </Link>
         </div>
 
         {err && (
@@ -549,6 +564,7 @@ export default function DashboardPage() {
           </div>
         )}
       </section>
+
 
       {/* Middle row: wall + EOM */}
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">

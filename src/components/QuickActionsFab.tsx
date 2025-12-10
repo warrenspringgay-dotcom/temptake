@@ -16,7 +16,6 @@ import { useToast } from "@/components/ui/use-toast";
 import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 import { Thermometer, Brush } from "lucide-react";
-import { usePostHog } from "@/components/PosthogProvider";
 
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
@@ -360,6 +359,25 @@ export default function TempFab() {
     return () => clearInterval(id);
   }, []);
 
+  // Global event listener so dashboard KPI can open the quick temp modal
+  useEffect(() => {
+    const handler = () => {
+      setShowMenu(false);
+      setOpen(true);
+      posthog.capture("temp_kpi_card_clicked");
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("tt-open-temp-modal", handler);
+    }
+
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("tt-open-temp-modal", handler);
+      }
+    };
+  }, []);
+
   /* --------- save entry --------- */
 
   async function handleSave() {
@@ -450,18 +468,20 @@ export default function TempFab() {
       type: "success",
     });
 
-posthog.capture("temp_quick_log_saved", {
-  source: "fab_quick",
-  target_key: form.target_key,
-  temp_c: tempNum,
-  status,
-});
+    posthog.capture("temp_quick_log_saved", {
+      source: "fab_quick",
+      target_key: form.target_key,
+      temp_c: tempNum,
+      status,
+    });
 
     // reset item + temp, keep date/initials/location
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
     await refreshEntriesToday();
     setOpen(false);
   }
+
+
 
   /* --------- routines --------- */
 
