@@ -4,9 +4,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { uid } from "@/lib/uid";
 import ActionMenu from "@/components/ActionMenu";
-// import { emptyFlags as libEmptyFlags } from "@/lib/allergens"; // no longer used
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
+import AllergenChangeTimeline from "@/components/AllergenChangeTimeline";
 
 /* ---------- Types & Constants ---------- */
 type AllergenKey =
@@ -87,7 +88,6 @@ const formatDateUK = (iso?: string) => {
   return d.toLocaleDateString("en-GB");
 };
 
-// Subtle haptic bump for phones that support it
 function bumpVibrate(ms = 10) {
   if (typeof window === "undefined") return;
   const nav = window.navigator as any;
@@ -102,6 +102,36 @@ async function fireConfetti() {
     confettiModule.default();
   } catch {
     // ignore
+  }
+}
+
+/** Write an audit row when allergen items change */
+async function logAllergenChange(params: {
+  orgId: string;
+  action: "create" | "update" | "delete";
+  itemId: string;
+  before?: MatrixRow | null;
+  after?: MatrixRow | null;
+}) {
+  try {
+    const locationId = await getActiveLocationIdClient().catch(() => null);
+
+    await supabase.from("allergen_change_logs").insert({
+      org_id: params.orgId,
+      location_id: locationId,
+      item_id: params.itemId,
+      item_name: params.after?.item ?? params.before?.item ?? null,
+      action: params.action,
+      category_before: params.before?.category ?? null,
+      category_after: params.after?.category ?? null,
+      flags_before: params.before?.flags ?? null,
+      flags_after: params.after?.flags ?? null,
+      notes_before: params.before?.notes ?? null,
+      notes_after: params.after?.notes ?? null,
+      staff_initials: null, // can be wired to team_members.initials later
+    });
+  } catch (e) {
+    console.error("Failed to log allergen change", e);
   }
 }
 
@@ -120,6 +150,9 @@ export default function AllergenManager() {
   // State
   const [review, setReview] = useState<ReviewInfo>({ intervalDays: 30 });
   const [rows, setRows] = useState<MatrixRow[]>([]);
+
+  // Change log refresh token
+  const [changeLogRefreshKey, setChangeLogRefreshKey] = useState(0);
 
   // Query (safe foods)
   const [qCat, setQCat] = useState<"All" | Category>("All");
@@ -231,7 +264,7 @@ export default function AllergenManager() {
 
     const { data: items, error: itemsErr } = await supabase
       .from("allergen_items")
-      .select("id,item,category,notes,locked,organisation_id,org_id")
+      .select("id,item,category,notes,locked,org_id")
       .or(`organisation_id.eq.${id},org_id.eq.${id}`)
       .order("item", { ascending: true });
 
@@ -261,7 +294,7 @@ export default function AllergenManager() {
         const k = (f.key as AllergenKey) ?? null;
         if (!k) continue;
         if (!flagsByItem[f.item_id]) flagsByItem[f.item_id] = emptyFlags();
-        flagsByItem[f.item_id][k] = !!f.value;
+        flagsByItem[f.item_id][k] = !!(f as any).value;
       }
     }
 
@@ -368,6 +401,9 @@ export default function AllergenManager() {
 
     const currentOrgId = orgId ?? (await getActiveOrgIdClient());
 
+    // capture "before" snapshot for change log
+    const beforeRow = d.id ? rows.find((r) => r.id === d.id) ?? null : null;
+
     const applyLocal = (forcedId?: string) => {
       setRows((rs) => {
         const idToUse = forcedId ?? d.id ?? uid();
@@ -429,27 +465,51 @@ export default function AllergenManager() {
       }
 
       // 2) Upsert all flags for that item
-      if (rowId) {
-        const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
-          item_id: rowId!,
-          key: k,
-          value: !!d.flags[k],
-        }));
+      // 2) Upsert all flags for that item
+if (rowId) {
+  const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
+    item_id: rowId!,
+    key: k,
+    value: !!d.flags[k],
+  }));
 
-        if (payload.length) {
-          const { error: flagsErr } = await supabase
-            .from("allergen_flags")
-            .upsert(payload, {
-              onConflict: "item_id,key",
-            });
+  if (payload.length) {
+    const { error: flagsErr } = await supabase
+      .from("allergen_flags")
+      .upsert(payload, {
+        onConflict: "item_id,key",
+      });
 
-          if (flagsErr) {
-            console.warn(
-              "Saving allergen flags failed (ignored — item still saved):",
-              flagsErr.message
-            );
-          }
-        }
+    if (flagsErr) {
+      console.warn(
+        "Saving allergen flags failed (ignored — item still saved):",
+        flagsErr.message
+      );
+    }
+  }
+}
+
+      // 3) Log change
+      if (currentOrgId && rowId) {
+        const afterRow: MatrixRow = {
+          id: rowId,
+          item: d.item,
+          category: d.category,
+          flags: d.flags,
+          notes: d.notes,
+          locked: true,
+        };
+
+        await logAllergenChange({
+          orgId: currentOrgId,
+          action: d.id ? "update" : "create",
+          itemId: rowId,
+          before: beforeRow,
+          after: afterRow,
+        });
+
+        // poke the timeline to re-fetch
+        setChangeLogRefreshKey((n) => n + 1);
       }
 
       applyLocal(rowId);
@@ -466,6 +526,8 @@ export default function AllergenManager() {
     }
 
     const currentOrgId = orgId ?? (await getActiveOrgIdClient());
+    const beforeRow = rows.find((r) => r.id === idToDelete) ?? null;
+
     if (!currentOrgId) {
       // local only
       setRows((rs) => rs.filter((r) => r.id !== idToDelete));
@@ -484,6 +546,19 @@ export default function AllergenManager() {
         alert(`Delete failed: ${error.message}`);
         return;
       }
+
+      // log delete
+      if (beforeRow) {
+        await logAllergenChange({
+          orgId: currentOrgId,
+          action: "delete",
+          itemId: idToDelete,
+          before: beforeRow,
+          after: null,
+        });
+        setChangeLogRefreshKey((n) => n + 1);
+      }
+
       setRows((rs) => rs.filter((r) => r.id !== idToDelete));
     } catch (e: any) {
       alert(e?.message || "Delete failed.");
@@ -996,6 +1071,9 @@ export default function AllergenManager() {
           ))}
         </div>
       </div>
+
+      {/* Recent allergen change log */}
+      <AllergenChangeTimeline refreshKey={changeLogRefreshKey} />
 
       {/* Modal */}
       {modalOpen && draft && (

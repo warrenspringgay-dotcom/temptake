@@ -524,7 +524,7 @@ export default function DashboardPage() {
           </Link>
 
           {/* Alerts – CLICKABLE: go to manager view (alerts) */}
-          <Link href="/manager" className="w-full">
+          <Link href="/reports" className="w-full">
             <motion.div
               initial={{ opacity: 0, y: 10, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -564,6 +564,7 @@ export default function DashboardPage() {
           </div>
         )}
       </section>
+
 
 
       {/* Middle row: wall + EOM */}

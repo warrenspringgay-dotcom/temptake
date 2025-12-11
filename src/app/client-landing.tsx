@@ -9,14 +9,14 @@ import Image from "next/image";
 /* ---------------------- FAKE SOCIAL PROOF WALL DATA ---------------------- */
 
 const fakeNotes = [
-  { initials: "JB", message: "The pulsing FAB is actual chef crack 🔥" },
+  { initials: "JB", message: "The pulsing FAB saves so much time 🔥" },
   { initials: "SC", message: "Finally… something my team actually wants to use" },
-  { initials: "MK", message: "Paper logs can die in a fire" },
+  { initials: "MK", message: "Paper logs are on the char-grill" },
   { initials: "TR", message: "Take my money already" },
   { initials: "DW", message: "Saved me 90 mins today. 90!" },
-  { initials: "RH", message: "My CDP just high-fived me for logging a temp" },
+  { initials: "RH", message: "Just beat my CDP to top spot on the leaderboard" },
   { initials: "LF", message: "EHO walked in, pressed one button, walked out happy" },
-  { initials: "NP", message: "This is the Slack we actually needed" },
+  { initials: "NP", message: "i can see how my kitchen is running from home" },
 ];
 
 /* ---------------------------- MAIN PAGE ---------------------------- */
@@ -573,7 +573,7 @@ export default function LaunchPage() {
                         <MiniStickyNote
                           initials="JB"
                           bg="bg-yellow-200"
-                          message="Kept every hot hold above 63°C all night. Zero drama on a fully booked Saturday 🔥"
+                          message="Adjusted temp on double fridge. Zero drama on a fully booked Saturday 🔥"
                         />
                         <MiniStickyNote
                           initials="LF"
