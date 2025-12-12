@@ -137,10 +137,11 @@ async function logAllergenChange(params: {
           if (tm.initials && tm.initials.trim()) {
             staffInitials = tm.initials.trim().toUpperCase();
           } else if (tm.name && tm.name.trim()) {
-            const parts = tm.name.trim().split(/\s+/);
+            const parts: string[] = tm.name.trim().split(/\s+/);
+
             staffInitials = parts
               .slice(0, 2)
-              .map((p) => p[0]?.toUpperCase() ?? "")
+              .map((p: string) => p[0]?.toUpperCase() ?? "")
               .join("");
           }
         }
@@ -151,7 +152,10 @@ async function logAllergenChange(params: {
         }
       }
     } catch (e) {
-      console.warn("Failed to resolve staff initials for allergen change log:", e);
+      console.warn(
+        "Failed to resolve staff initials for allergen change log:",
+        e
+      );
     }
 
     const { error } = await supabase.from("allergen_change_logs").insert({
@@ -166,7 +170,7 @@ async function logAllergenChange(params: {
       flags_after: params.after?.flags ?? null,
       notes_before: params.before?.notes ?? null,
       notes_after: params.after?.notes ?? null,
-      staff_initials: staffInitials, // ← now populated
+      staff_initials: staffInitials, // populated
     });
 
     if (error) {
@@ -176,6 +180,7 @@ async function logAllergenChange(params: {
     console.error("Failed to log allergen change (unexpected):", e);
   }
 }
+
 
 
 /* ---------- Component ---------- */

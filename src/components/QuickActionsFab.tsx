@@ -16,6 +16,7 @@ import { useToast } from "@/components/ui/use-toast";
 import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 import { Thermometer, Brush } from "lucide-react";
+import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
 
 const LS_LAST_INITIALS = "tt_last_initials";
 const LS_LAST_LOCATION = "tt_last_location";
@@ -89,6 +90,8 @@ export default function TempFab() {
     temp_c: "",
   });
 
+  const [lastVoice, setLastVoice] = useState<string>("");
+
   const canSave =
     !!form.date &&
     !!form.location &&
@@ -102,6 +105,32 @@ export default function TempFab() {
   const [pickerErr, setPickerErr] = useState<string | null>(null);
   const [pickerList, setPickerList] = useState<RoutineRow[]>([]);
   const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
+
+  // ✅ Voice hook MUST be at top-level (not inside useEffect)
+  const {
+    supported: voiceSupported,
+    listening,
+    start,
+    stop,
+  } = useVoiceTempEntry({
+    lang: "en-GB",
+    onResult: (r) => {
+      setLastVoice(r.raw);
+
+      setForm((f) => ({
+        ...f,
+        temp_c: r.temp_c ?? f.temp_c,
+        item: r.item ?? f.item,
+        location: r.location ?? f.location,
+        staff_initials: r.staff_initials ?? f.staff_initials,
+      }));
+
+      posthog.capture("temp_voice_parsed", { raw: r.raw, has_temp: !!r.temp_c });
+    },
+    onError: (msg) => {
+      addToast({ title: "Voice entry failed", message: msg, type: "error" });
+    },
+  });
 
   /* --------- helpers --------- */
 
@@ -210,9 +239,7 @@ export default function TempFab() {
         (rData ?? []).map((r: any) => String(r.task_id))
       );
 
-      const openCount = dueToday.filter(
-        (t) => !doneIds.has(String(t.id))
-      ).length;
+      const openCount = dueToday.filter((t) => !doneIds.has(String(t.id))).length;
 
       setOpenCleaning(openCount);
     } catch {
@@ -285,8 +312,7 @@ export default function TempFab() {
           if (!mine) {
             try {
               if (typeof window !== "undefined") {
-                const fromLs =
-                  localStorage.getItem(LS_LAST_INITIALS) || "";
+                const fromLs = localStorage.getItem(LS_LAST_INITIALS) || "";
                 mine = fromLs.toUpperCase().trim();
               }
             } catch {
@@ -355,7 +381,7 @@ export default function TempFab() {
   useEffect(() => {
     const id = setInterval(() => {
       void refreshCleaningOpen();
-    }, 20000); // 20s – tweak if you want faster/slower
+    }, 20000);
     return () => clearInterval(id);
   }, []);
 
@@ -477,11 +503,10 @@ export default function TempFab() {
 
     // reset item + temp, keep date/initials/location
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
+    setLastVoice("");
     await refreshEntriesToday();
     setOpen(false);
   }
-
-
 
   /* --------- routines --------- */
 
@@ -587,10 +612,8 @@ export default function TempFab() {
   const wrapperClass =
     entriesToday !== null && entriesToday === 0 ? "no-temps-today" : "";
 
-  const showTempWarning =
-    entriesToday !== null && entriesToday === 0; // no temps yet today
-  const showCleaningWarning =
-    openCleaning !== null && openCleaning > 0; // there are open cleaning tasks
+  const showTempWarning = entriesToday !== null && entriesToday === 0;
+  const showCleaningWarning = openCleaning !== null && openCleaning > 0;
 
   return (
     <>
@@ -599,26 +622,24 @@ export default function TempFab() {
         {/* Main FAB */}
         <button
           type="button"
-         onClick={() => {
-  setShowMenu((v) => !v);
-  posthog.capture("fab_opened");
-}}
-
+          onClick={() => {
+            setShowMenu((v) => !v);
+            posthog.capture("fab_opened");
+          }}
           className="fab relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 text-3xl font-bold leading-none text-white shadow-lg shadow-emerald-500/40 hover:brightness-110"
         >
           <span>+</span>
         </button>
 
-        {/* 2 o'clock – temperature orb (opens quick entry modal) */}
+        {/* 2 o'clock – temperature orb */}
         {showTempWarning && (
           <button
             type="button"
-           onClick={() => {
-  setShowMenu(false);
-  setOpen(true);
-  posthog.capture("temp_warning_orb_clicked");
-}}
-
+            onClick={() => {
+              setShowMenu(false);
+              setOpen(true);
+              posthog.capture("temp_warning_orb_clicked");
+            }}
             className="absolute -top-2 -right-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white shadow-md shadow-red-500/60 active:scale-90 transition cursor-pointer"
           >
             <Thermometer className="h-4 w-4" />
@@ -630,10 +651,9 @@ export default function TempFab() {
           <button
             type="button"
             onClick={() => {
-  router.push("/cleaning-rota");
-  posthog.capture("cleaning_warning_orb_clicked");
-}}
-
+              router.push("/cleaning-rota");
+              posthog.capture("cleaning_warning_orb_clicked");
+            }}
             className="absolute -top-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white shadow-md shadow-sky-500/60 active:scale-90 transition cursor-pointer"
           >
             <Brush className="h-4 w-4" />
@@ -641,7 +661,7 @@ export default function TempFab() {
         )}
       </div>
 
-      {/* Quick choice menu (closes when clicking outside) */}
+      {/* Quick choice menu */}
       {showMenu && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-end"
@@ -659,11 +679,10 @@ export default function TempFab() {
                 <button
                   type="button"
                   onClick={() => {
-  setShowMenu(false);
-  setOpen(true);
-  posthog.capture("fab_choose_quick_temp");
-}}
-
+                    setShowMenu(false);
+                    setOpen(true);
+                    posthog.capture("fab_choose_quick_temp");
+                  }}
                   className="w-full rounded-xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/40 hover:brightness-105"
                 >
                   Quick temp log
@@ -671,11 +690,10 @@ export default function TempFab() {
                 <button
                   type="button"
                   onClick={() => {
-  setShowMenu(false);
-  router.push("/wall");
-  posthog.capture("fab_choose_wall");
-}}
-
+                    setShowMenu(false);
+                    router.push("/wall");
+                    posthog.capture("fab_choose_wall");
+                  }}
                   className="w-full rounded-xl bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-500/40 hover:brightness-105"
                 >
                   Open wall
@@ -714,9 +732,7 @@ export default function TempFab() {
             <div className="grow space-y-3 overflow-y-auto px-4 py-3 text-sm">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
-                    Date
-                  </label>
+                  <label className="mb-1 block text-xs text-gray-500">Date</label>
                   <input
                     type="date"
                     value={form.date}
@@ -738,9 +754,7 @@ export default function TempFab() {
                       setForm((f) => ({ ...f, staff_initials: v }));
                       try {
                         localStorage.setItem(LS_LAST_INITIALS, v);
-                      } catch {
-                        // ignore
-                      }
+                      } catch {}
                     }}
                     className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 uppercase shadow-sm"
                   >
@@ -768,9 +782,7 @@ export default function TempFab() {
                       setForm((f) => ({ ...f, location: v }));
                       try {
                         localStorage.setItem(LS_LAST_LOCATION, v);
-                      } catch {
-                        // ignore
-                      }
+                      } catch {}
                     }}
                     className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-sm"
                   >
@@ -788,9 +800,26 @@ export default function TempFab() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
-                    Temp (°C)
-                  </label>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="block text-xs text-gray-500">Temp (°C)</label>
+
+                    {voiceSupported && (
+                      <button
+                        type="button"
+                        onClick={() => (listening ? stop() : start())}
+                        className={cls(
+                          "rounded-full border px-2 py-1 text-[11px] font-medium",
+                          listening
+                            ? "border-red-200 bg-red-50 text-red-700"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        )}
+                        title="Voice entry"
+                      >
+                        {listening ? "🎤 Listening…" : "🎤 Voice"}
+                      </button>
+                    )}
+                  </div>
+
                   <input
                     value={form.temp_c}
                     onChange={(e) =>
@@ -800,6 +829,15 @@ export default function TempFab() {
                     inputMode="decimal"
                     placeholder="e.g., 5.0"
                   />
+
+                  {!!lastVoice && (
+                    <div className="mt-2 text-[11px] text-slate-500">
+                      Heard:{" "}
+                      <span className="font-medium text-slate-700">
+                        {lastVoice}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -807,18 +845,14 @@ export default function TempFab() {
                 <label className="mb-1 block text-xs text-gray-500">Item</label>
                 <input
                   value={form.item}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, item: e.target.value }))
-                  }
+                  onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
                   className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-sm"
                   placeholder="e.g., Chicken curry"
                 />
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-gray-500">
-                  Target
-                </label>
+                <label className="mb-1 block text-xs text-gray-500">Target</label>
                 <select
                   value={form.target_key}
                   onChange={(e) =>
@@ -840,7 +874,6 @@ export default function TempFab() {
 
             {/* footer */}
             <div className="flex flex-col gap-2 border-t bg-white/90 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              {/* Use routine button */}
               <button
                 type="button"
                 onClick={openRoutinePicker}
@@ -943,7 +976,7 @@ export default function TempFab() {
         onClose={() => setRunRoutine(null)}
         onSaved={async () => {
           addToast({ title: "Routine logged", type: "success" });
-            posthog.capture("routine_logged_from_fab");
+          posthog.capture("routine_logged_from_fab");
           setRunRoutine(null);
           await refreshEntriesToday();
           await refreshCleaningOpen();
