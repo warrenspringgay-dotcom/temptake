@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
@@ -32,7 +33,7 @@ function inferStatus(
   return "pass";
 }
 
-// ---------- matching helpers (item phrase -> routine item) ----------
+/* ---------- matching helpers ---------- */
 function norm(s: string) {
   return (s ?? "")
     .toLowerCase()
@@ -45,19 +46,16 @@ function tokenScore(phrase: string, candidate: string) {
   const p = norm(phrase);
   const c = norm(candidate);
   if (!p || !c) return 0;
-  if (c === p) return 999;
-  if (c.includes(p)) return 200;
+  if (c === p) return 999; // exact
+  if (c.includes(p)) return 200; // phrase contained
   const pTokens = new Set(p.split(" "));
   const cTokens = new Set(c.split(" "));
   let hit = 0;
   for (const t of pTokens) if (cTokens.has(t)) hit++;
-  return hit;
+  return hit; // overlap score
 }
 
-function bestMatchIndex(
-  phrase: string,
-  items: Array<{ item?: string | null }>
-) {
+function bestMatchIndex(phrase: string, items: { item?: string | null }[]) {
   let bestIdx = -1;
   let best = 0;
 
@@ -74,6 +72,50 @@ function bestMatchIndex(
   return -1;
 }
 
+/* ---------- initials helpers ---------- */
+function initialsFromName(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return parts
+    .slice(0, 2)
+    .map((p: string) => (p[0] ? p[0].toUpperCase() : ""))
+    .join("");
+}
+
+async function resolveLoggedInInitials(orgId: string): Promise<string | null> {
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    const email = userData?.user?.email?.toLowerCase() ?? null;
+    if (!email) return null;
+
+    const { data: tm, error } = await supabase
+      .from("team_members")
+      .select("initials,name,email,active")
+      .eq("org_id", orgId)
+      .eq("email", email)
+      .maybeSingle();
+
+    if (error || !tm) return null;
+
+    const ini =
+      (tm.initials ?? "").toString().trim().toUpperCase() ||
+      ((tm.name ?? "").toString().trim()
+        ? initialsFromName((tm.name ?? "").toString())
+        : "");
+
+    return ini || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Render modal at document.body level so it isn't "fixed inside a transformed parent" */
+function ModalPortal({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+}
+
 export default function RoutineRunModal({
   open,
   routine,
@@ -86,109 +128,51 @@ export default function RoutineRunModal({
   const [initials, setInitials] = useState(defaultInitials || "");
   const [temps, setTemps] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  const [initialOptions, setInitialOptions] = useState<string[]>([]);
+
   const [activeIdx, setActiveIdx] = useState(0);
 
-  // refs for focus + autoscroll
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const rowRefs = useRef<
-    Record<string, HTMLTableRowElement | HTMLDivElement | null>
-  >({});
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | HTMLDivElement | null>>(
+    {}
+  );
 
   const items = useMemo(() => routine?.items ?? [], [routine]);
 
-  // Reset when modal opens
+  // Reset when opens
   useEffect(() => {
     if (!open || !routine) return;
 
     setDate(defaultDate);
+    setTemps(() => {
+      const init: Record<string, string> = {};
+      routine.items.forEach((it) => {
+        init[it.id] = "";
+      });
+      return init;
+    });
     setActiveIdx(0);
 
-    const init: Record<string, string> = {};
-    routine.items.forEach((it) => {
-      init[it.id] = "";
-    });
-    setTemps(init);
-
-    // don't clobber initials here; we resolve in "Load initials" effect
-  }, [open, routine, defaultDate]);
-
-  // Resolve initials: logged-in user first, then defaultInitials, then first active initials
-  useEffect(() => {
-    if (!open) return;
+    // default initials immediately, then resolve logged-in initials
+    setInitials(defaultInitials || "");
 
     (async () => {
-      try {
-        const [orgId, userRes] = await Promise.all([
-          getActiveOrgIdClient(),
-          supabase.auth.getUser(),
-        ]);
+      const orgId = await getActiveOrgIdClient();
+      if (!orgId) return;
 
-        const email = userRes.data.user?.email?.toLowerCase() ?? null;
-
-        // Build active initials list (for datalist)
-        let list: string[] = [];
-        if (orgId) {
-          const { data } = await supabase
-            .from("team_members")
-            .select("initials, active")
-            .eq("org_id", orgId)
-            .eq("active", true)
-            .order("initials");
-
-          list = Array.from(
-            new Set(
-              (data ?? [])
-                .map((r: any) =>
-                  (r.initials ?? "").toString().toUpperCase().trim()
-                )
-                .filter(Boolean)
-            )
-          );
-        }
-
-        setInitialOptions(list);
-
-        // Logged-in user's initials
-        let mine = "";
-        if (orgId && email) {
-          const { data: tm } = await supabase
-            .from("team_members")
-            .select("initials")
-            .eq("org_id", orgId)
-            .eq("email", email)
-            .maybeSingle();
-
-          mine = (tm?.initials ?? "").toString().toUpperCase().trim();
-        }
-
-        const preferred =
-          mine ||
-          (defaultInitials ?? "").toString().toUpperCase().trim() ||
-          list[0] ||
-          "";
-
-        setInitials((prev) => prev || preferred);
-      } catch {
-        // fallback hard
-        const fallback =
-          (defaultInitials ?? "").toString().toUpperCase().trim() || "";
-        setInitials((prev) => prev || fallback);
+      const mine = await resolveLoggedInInitials(orgId);
+      if (mine) setInitials(mine);
+      else if (!defaultInitials) {
+        // last resort: try first letter of email
+        try {
+          const { data: userData } = await supabase.auth.getUser();
+          const email = userData?.user?.email ?? "";
+          if (email) setInitials(email[0].toUpperCase());
+        } catch {}
       }
     })();
-  }, [open, defaultInitials]);
+  }, [open, routine, defaultDate, defaultInitials]);
 
-  function nextEmptyIndex(from: number, snapshotTemps?: Record<string, string>) {
-    const t = snapshotTemps ?? temps;
-    for (let i = from + 1; i < items.length; i++) {
-      const id = items[i]?.id;
-      if (!id) continue;
-      if (!(t[id] ?? "").trim()) return i;
-    }
-    return Math.min(from + 1, Math.max(0, items.length - 1));
-  }
-
-  // Voice hook (item phrase + temp)
+  // Voice hook
   const { supported: voiceSupported, listening, start, stop } =
     useVoiceRoutineEntry({
       lang: "en-GB",
@@ -200,9 +184,9 @@ export default function RoutineRunModal({
           return;
         }
 
-        // choose index: match phrase if present, else current
         let idx = activeIdx;
 
+        // Match by spoken item phrase (preferred)
         if (r.itemPhrase) {
           const matched = bestMatchIndex(r.itemPhrase, items);
           if (matched >= 0) {
@@ -211,16 +195,12 @@ export default function RoutineRunModal({
           }
         }
 
+        // Apply temp into matched/active row
         if (r.temp_c) {
           const it = items[idx];
           if (!it) return;
 
-          setTemps((prev) => {
-            const next = { ...prev, [it.id]: r.temp_c! };
-            const nextIdx = nextEmptyIndex(idx, next);
-            setActiveIdx(nextIdx);
-            return next;
-          });
+          setTemps((t) => ({ ...t, [it.id]: r.temp_c as string }));
         }
       },
       onError: (msg) => {
@@ -228,28 +208,26 @@ export default function RoutineRunModal({
       },
     });
 
-  // Auto-scroll + focus active row/input
+  // Keep active input focused + row visible (hands-free)
   useEffect(() => {
     if (!open) return;
     const it = items[activeIdx];
     if (!it) return;
 
-    const row = rowRefs.current[it.id];
-    row?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    const rowEl = rowRefs.current[it.id];
+    rowEl?.scrollIntoView?.({ block: "center", behavior: "smooth" });
 
-    const input = inputRefs.current[it.id];
-    input?.focus?.();
+    const inputEl = inputRefs.current[it.id];
+    inputEl?.focus?.();
   }, [activeIdx, open, items]);
 
   if (!open || !routine) return null;
 
   async function handleSave(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!routine) return;
     if (!date || !initials) return;
 
     setSaving(true);
-
     try {
       const org_id = await getActiveOrgIdClient();
       const location_id = await getActiveLocationIdClient();
@@ -259,8 +237,8 @@ export default function RoutineRunModal({
         return;
       }
 
-      // selected date + current time
-      let atIso: string;
+      // Build timestamp: selected date + current time
+      let atIso = new Date().toISOString();
       try {
         const selected = new Date(date);
         const now = new Date();
@@ -274,11 +252,9 @@ export default function RoutineRunModal({
           now.getMilliseconds()
         );
         atIso = at.toISOString();
-      } catch {
-        atIso = new Date().toISOString();
-      }
+      } catch {}
 
-      const rowsToInsert = routine.items
+      const rows = items
         .map((it) => {
           const raw = (temps[it.id] ?? "").trim();
           if (!raw) return null;
@@ -302,236 +278,235 @@ export default function RoutineRunModal({
             status,
           };
         })
-        .filter(Boolean) as any[];
+        .filter((x): x is NonNullable<typeof x> => !!x);
 
-      if (!rowsToInsert.length) {
-        if (listening) stop();
+      if (!rows.length) {
         onClose();
         return;
       }
 
-      const { error } = await supabase.from("food_temp_logs").insert(rowsToInsert);
+      const { error } = await supabase.from("food_temp_logs").insert(rows);
       if (error) {
         alert(error.message);
         return;
       }
 
       await onSaved();
-      if (listening) stop();
       onClose();
     } finally {
       setSaving(false);
     }
   }
 
-  const activeId = items[activeIdx]?.id;
-  const nowLabel = items[activeIdx]?.item ?? "—";
-  const nextLabel =
-    items[Math.min(activeIdx + 1, Math.max(0, items.length - 1))]?.item ?? "—";
+  const activeId = items[activeIdx]?.id ?? null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3 py-6"
-      onClick={() => {
-        if (listening) stop();
-        onClose();
-      }}
-    >
-      <form
-        onSubmit={handleSave}
-        onClick={(e) => e.stopPropagation()}
-        className="relative flex w-full max-w-4xl max-h-[85vh] flex-col overflow-hidden rounded-2xl bg-white text-slate-900 shadow-2xl"
+    <ModalPortal>
+      {/* Overlay: top aligned with padding so it never sits under navbar */}
+      <div
+        className="fixed inset-0 z-[999] overflow-y-auto bg-black/40 px-3 pb-6 pt-[88px]"
+        onClick={() => {
+          if (listening) stop();
+          onClose();
+        }}
       >
-        {/* Header */}
-       {/* Header */}
-<div className="sticky top-0 z-20 flex items-center justify-between border-b border-emerald-600/30 bg-emerald-600 px-3 py-2 text-white">
-
-          <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-widest text-emerald-100">
-              Run routine
+        <form
+          onSubmit={handleSave}
+          onClick={(e) => e.stopPropagation()}
+          className="mx-auto w-full max-w-5xl overflow-hidden rounded-2xl bg-white text-slate-900 shadow-2xl"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-emerald-600/30 bg-emerald-600 px-4 py-3 text-white">
+            <div className="min-w-0">
+              <div className="text-[11px] uppercase tracking-widest text-emerald-100">
+                Run routine
+              </div>
+              <div className="truncate text-base font-semibold">
+                {routine.name}
+              </div>
             </div>
-            <div className="text-sm font-semibold truncate">{routine.name}</div>
-          </div>
 
-          <div className="flex items-center gap-2">
-            {/* Voice button (explicit) */}
-            {voiceSupported && (
+            <div className="flex items-center gap-2">
+              {voiceSupported && (
+                <button
+                  type="button"
+                  onClick={() => (listening ? stop() : start())}
+                  className={cls(
+                    "rounded-full border px-3 py-1.5 text-xs font-semibold",
+                    listening
+                      ? "border-red-200 bg-red-50 text-red-700"
+                      : "border-white/30 bg-white/15 text-white hover:bg-white/25"
+                  )}
+                  title="Voice entry"
+                >
+                  {listening ? "🎤 Listening" : "🎤 Voice"}
+                </button>
+              )}
+
               <button
                 type="button"
-                onClick={() => (listening ? stop() : start())}
-                className={cls(
-                  "rounded-full border px-2.5 py-1 text-[12px] font-semibold",
-                  listening
-                    ? "border-red-200 bg-red-50 text-red-700"
-                    : "border-white/30 bg-white/15 text-white hover:bg-white/25"
-                )}
-                title="Voice entry"
+                onClick={() => {
+                  if (listening) stop();
+                  onClose();
+                }}
+                className="rounded-md bg-emerald-700 px-3 py-1.5 text-sm hover:bg-emerald-800"
               >
-                {listening ? "🎤 Listening" : "🎤 Voice"}
+                Close
               </button>
+            </div>
+          </div>
+
+          {/* Compact top controls */}
+          <div className="border-b border-slate-200 bg-white px-4 py-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="text-sm font-medium">
+                Date
+                <input
+                  type="date"
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  required
+                />
+              </label>
+
+              <label className="text-sm font-medium">
+                Initials (auto from logged-in user)
+                <input
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm uppercase shadow-sm"
+                  value={initials}
+                  onChange={(e) => setInitials(e.target.value.toUpperCase())}
+                  required
+                />
+              </label>
+            </div>
+
+            {voiceSupported && (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                Say: <strong>"fish 75.2"</strong> or <strong>"stop"</strong>.
+                It matches your phrase to the closest routine item name and fills that temp.
+              </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => {
-                if (listening) stop();
-                onClose();
-              }}
-              className="rounded-md bg-emerald-700 px-2.5 py-1 text-[12px] hover:bg-emerald-800"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-
-        {/* Sticky “Now / Next” */}
-        <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-3 py-2 text-[12px]">
-          <div className="font-semibold text-slate-900 truncate">Now: {nowLabel}</div>
-          <div className="text-slate-600 truncate">Next: {nextLabel}</div>
-        </div>
-
-        {/* Body (compact) */}
-        <div className="flex-1 min-h-0 overflow-y-auto bg-white px-3 py-3 space-y-3">
-          {/* Date + Initials */}
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <label className="text-[12px] font-medium">
-              Date
-              <input
-                type="date"
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[13px] shadow-sm"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                required
-              />
-            </label>
-
-
-
-            <label className="text-[12px] font-medium">
-              Initials (auto from logged-in user)
-              <input
-                list="initials-list"
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[13px] uppercase shadow-sm"
-                value={initials}
-                onChange={(e) => setInitials(e.target.value.toUpperCase())}
-                required
-              />
-              <datalist id="initials-list">
-                {initialOptions.map((i) => (
-                  <option key={i} value={i} />
-                ))}
-              </datalist>
-            </label>
-          </div>
-
-          {voiceSupported && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
-              Say: <strong>"chicken curry 5.1"</strong> or <strong>"stop"</strong>. It
-              matches your phrase to the closest routine item name and fills that temp.
+            {/* Now / Next (hands-free hint) */}
+            <div className="mt-3 text-xs text-slate-600">
+              <span className="font-semibold text-slate-800">Now:</span>{" "}
+              {items[activeIdx]?.item ?? "—"}{" "}
+              <span className="mx-2 text-slate-300">|</span>
+              <span className="font-semibold text-slate-800">Next:</span>{" "}
+              {items[Math.min(activeIdx + 1, items.length - 1)]?.item ?? "—"}
             </div>
-          )}
-
-          {/* DESKTOP TABLE (compact) */}
-          <div className="hidden md:block rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-            <table className="w-full text-[13px]">
-              <thead className="bg-slate-100 text-slate-600">
-                <tr>
-                  <th className="p-1.5 text-left text-[11px] font-semibold w-10">#</th>
-                  <th className="p-1.5 text-left text-[11px] font-semibold">Location</th>
-                  <th className="p-1.5 text-left text-[11px] font-semibold">Item</th>
-                  <th className="p-1.5 text-left text-[11px] font-semibold">Target</th>
-                  <th className="p-1.5 text-left text-[11px] font-semibold w-24">Temp</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {routine.items.map((it, idx) => {
-                  const preset =
-                    (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[it.target_key];
-                  const isActive = it.id === activeId;
-
-                  return (
-                    <tr
-                      key={it.id}
-                      ref={(el) => {
-                        rowRefs.current[it.id] = el;
-                      }}
-                      className={cls("border-t border-slate-100", isActive && "bg-emerald-50")}
-                      onClick={() => setActiveIdx(idx)}
-                    >
-                      <td className="p-1.5">{idx + 1}</td>
-                      <td className="p-1.5">{it.location ?? "—"}</td>
-                      <td className="p-1.5">{it.item ?? "—"}</td>
-                      <td className="p-1.5 text-[11px] text-slate-500">
-                        {preset?.label ?? it.target_key ?? "—"}
-                      </td>
-                      <td className="p-1.5">
-                        <input
-                          ref={(el) => {
-                            inputRefs.current[it.id] = el;
-                          }}
-                          className={cls(
-                            "w-20 rounded-lg border bg-white px-2 py-1 text-[13px] shadow-sm",
-                            isActive
-                              ? "border-emerald-300 ring-2 ring-emerald-200"
-                              : "border-slate-300"
-                          )}
-                          value={temps[it.id] ?? ""}
-                          inputMode="decimal"
-                          onChange={(e) =>
-                            setTemps((t) => ({
-                              ...t,
-                              [it.id]: e.target.value,
-                            }))
-                          }
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              setActiveIdx((i) => nextEmptyIndex(i));
-                            }
-                          }}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
           </div>
 
-          {/* MOBILE CARDS (compact) */}
-          <div className="space-y-2 md:hidden">
-            {routine.items.map((it, idx) => {
-              const preset =
-                (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[it.target_key];
-              const isActive = it.id === activeId;
+          {/* Body */}
+          <div className="max-h-[62vh] overflow-y-auto bg-white px-4 py-3">
+            {/* Table (desktop) */}
+            <div className="hidden overflow-hidden rounded-xl border border-slate-200 md:block">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100 text-slate-600">
+                  <tr>
+                    <th className="p-2 text-left text-xs font-semibold">#</th>
+                    <th className="p-2 text-left text-xs font-semibold">
+                      Location
+                    </th>
+                    <th className="p-2 text-left text-xs font-semibold">Item</th>
+                    <th className="p-2 text-left text-xs font-semibold">
+                      Target
+                    </th>
+                    <th className="p-2 text-left text-xs font-semibold">
+                      Temp
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((it, idx) => {
+                    const preset =
+                      (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
+                        it.target_key
+                      ];
+                    const isActive = it.id === activeId;
 
-              return (
-                <div
-                  key={it.id}
-                  ref={(el) => {
-                    rowRefs.current[it.id] = el;
-                  }}
-                  className={cls(
-                    "rounded-xl border p-2 shadow-sm",
-                    isActive ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"
-                  )}
-                  onClick={() => setActiveIdx(idx)}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="text-[11px] font-semibold text-slate-500">
+                    return (
+                      <tr
+                        key={it.id}
+                        ref={(el) => {
+                          rowRefs.current[it.id] = el;
+                        }}
+                        className={cls(
+                          "border-t border-slate-100 cursor-pointer",
+                          isActive && "bg-emerald-50"
+                        )}
+                        onClick={() => setActiveIdx(idx)}
+                      >
+                        <td className="p-2">{idx + 1}</td>
+                        <td className="p-2">{it.location ?? "—"}</td>
+                        <td className="p-2">{it.item ?? "—"}</td>
+                        <td className="p-2 text-xs text-slate-500">
+                          {preset?.label ?? it.target_key ?? "—"}
+                        </td>
+                        <td className="p-2">
+                          <input
+                            ref={(el) => {
+                              inputRefs.current[it.id] = el;
+                            }}
+                            className={cls(
+                              "w-24 rounded-lg border bg-white px-2 py-1 shadow-sm",
+                              isActive
+                                ? "border-emerald-300 ring-2 ring-emerald-200"
+                                : "border-slate-300"
+                            )}
+                            value={temps[it.id] ?? ""}
+                            onChange={(e) =>
+                              setTemps((t) => ({ ...t, [it.id]: e.target.value }))
+                            }
+                            placeholder="e.g. 75.1"
+                            inputMode="decimal"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile cards */}
+            <div className="space-y-2 md:hidden">
+              {items.map((it, idx) => {
+                const preset =
+                  (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
+                    it.target_key
+                  ];
+                const isActive = it.id === activeId;
+
+                return (
+                  <div
+                    key={it.id}
+                    ref={(el) => {
+                      rowRefs.current[it.id] = el;
+                    }}
+                    className={cls(
+                      "rounded-xl border bg-white p-3 shadow-sm",
+                      isActive
+                        ? "border-emerald-300 bg-emerald-50"
+                        : "border-slate-200"
+                    )}
+                    onClick={() => setActiveIdx(idx)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-slate-500">
                         #{idx + 1} {isActive ? "· Active" : ""}
                       </div>
-                      <div className="mt-0.5 text-[13px] font-semibold text-slate-900 truncate">
-                        {it.item ?? "—"}
+                      <div className="text-[11px] text-slate-500">
+                        {preset?.label ?? it.target_key}
                       </div>
-                      <div className="text-[11px] text-slate-500 truncate">
-                        {it.location ?? "—"}
-                      </div>
-                      <div className="mt-1 text-[11px] text-slate-500 truncate">
-                        {preset?.label ?? it.target_key ?? "—"}
-                      </div>
+                    </div>
+
+                    <div className="mt-1 font-medium text-slate-900">
+                      {it.item ?? "—"}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {it.location ?? "—"}
                     </div>
 
                     <input
@@ -539,54 +514,47 @@ export default function RoutineRunModal({
                         inputRefs.current[it.id] = el;
                       }}
                       className={cls(
-                        "w-24 rounded-lg border bg-white px-2 py-1 text-[13px] shadow-sm",
-                        isActive ? "border-emerald-300 ring-2 ring-emerald-200" : "border-slate-300"
+                        "mt-2 w-full rounded-lg border bg-white px-3 py-2 shadow-sm",
+                        isActive
+                          ? "border-emerald-300 ring-2 ring-emerald-200"
+                          : "border-slate-300"
                       )}
-                      placeholder="Temp"
+                      placeholder="Temperature"
                       value={temps[it.id] ?? ""}
-                      inputMode="decimal"
                       onChange={(e) =>
-                        setTemps((t) => ({
-                          ...t,
-                          [it.id]: e.target.value,
-                        }))
+                        setTemps((t) => ({ ...t, [it.id]: e.target.value }))
                       }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          setActiveIdx((i) => nextEmptyIndex(i));
-                        }
-                      }}
+                      inputMode="decimal"
                     />
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        {/* Footer */}
-        <div className="flex justify-between gap-2 border-t border-slate-200 bg-white px-3 py-2">
-          <button
-            type="button"
-            onClick={() => {
-              if (listening) stop();
-              onClose();
-            }}
-            className="rounded-lg px-3 py-1.5 text-[13px] text-slate-700 hover:bg-slate-100"
-          >
-            Cancel
-          </button>
+          {/* Footer */}
+          <div className="flex items-center justify-between gap-2 border-t border-slate-200 bg-white px-4 py-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (listening) stop();
+                onClose();
+              }}
+              className="rounded-lg px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
 
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded-xl bg-emerald-600 px-4 py-1.5 text-[13px] font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
-          >
-            {saving ? "Saving…" : "Save all"}
-          </button>
-        </div>
-      </form>
-    </div>
+            <button
+              type="submit"
+              disabled={saving}
+              className="rounded-xl bg-emerald-600 px-5 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save all"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </ModalPortal>
   );
 }
