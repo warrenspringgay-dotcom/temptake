@@ -112,7 +112,7 @@ export default function AppDemoDashboardPage() {
               initials="WS"
               bg="bg-violet-200"
               date="2025-12-10"
-              text="Need bin bag"
+              text="Need bin bags"
             />
             <DemoNote
               initials="WS"
@@ -124,7 +124,7 @@ export default function AppDemoDashboardPage() {
               initials="ED"
               bg="bg-amber-200"
               date="2025-11-21"
-              text="Hi"
+              text="Can anyone swap mondays shift"
             />
           </div>
         </article>
@@ -144,7 +144,7 @@ export default function AppDemoDashboardPage() {
           </header>
 
           <div className="space-y-1 text-sm text-amber-900">
-            <div className="text-base font-semibold">Emma Dundon</div>
+            <div className="text-base font-semibold">Emma Dee</div>
             <div className="text-xs text-amber-800">
               Total points: <span className="font-semibold">105</span>
             </div>
@@ -160,7 +160,7 @@ export default function AppDemoDashboardPage() {
 
           <div className="mt-4">
             <Link
-              href="/leaderboard"
+              href=""
               className="inline-flex items-center justify-center rounded-2xl bg-amber-700 px-4 py-1.5 text-xs font-semibold text-amber-50 shadow-sm hover:bg-amber-800"
             >
               View full leaderboard

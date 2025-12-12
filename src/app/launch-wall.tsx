@@ -2,7 +2,7 @@
 "use client";
 
 const fakeNotes = [
-  { initials: "JB", message: "The pulsing FAB is actual chef crack 🔥", color: "bg-red-200" },
+  { initials: "JB", message: "The p is actual chef crack 🔥", color: "bg-red-200" },
   { initials: "SC", message: "Finally… something my team actually wants to use", color: "bg-orange-200" },
   { initials: "MK", message: "Paper logs can die in a fire", color: "bg-yellow-200" },
   { initials: "TR", message: "Take my money already", color: "bg-pink-200" },

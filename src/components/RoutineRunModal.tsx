@@ -1,17 +1,70 @@
-// src/components/RoutineRunModal.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
-import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
+import { useVoiceRoutineEntry } from "@/lib/useVoiceRoutineEntry";
 
-const cls = (...parts: Array<string | false | null | undefined>) =>
-  parts.filter(Boolean).join(" ");
+/* ================= utils ================= */
 
+const cls = (...p: Array<string | false | undefined | null>) =>
+  p.filter(Boolean).join(" ");
+
+function norm(s: string) {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenScore(phrase: string, candidate: string) {
+  const p = norm(phrase);
+  const c = norm(candidate);
+  if (!p || !c) return 0;
+  if (c === p) return 999;
+  if (c.includes(p)) return 200;
+
+  const pt = new Set(p.split(" "));
+  const ct = new Set(c.split(" "));
+  let hits = 0;
+  pt.forEach((t) => ct.has(t) && hits++);
+  return hits;
+}
+
+function bestMatchIndex(
+  phrase: string,
+  items: { item?: string | null }[]
+) {
+  let bestIdx = -1;
+  let best = 0;
+
+  for (let i = 0; i < items.length; i++) {
+    const label = items[i]?.item ?? "";
+    const score = tokenScore(phrase, label);
+    if (score > best) {
+      best = score;
+      bestIdx = i;
+    }
+  }
+
+  return best >= 1 ? bestIdx : -1;
+}
+
+function inferStatus(
+  temp: number | null,
+  preset?: TargetPreset
+): "pass" | "fail" | null {
+  if (temp == null || !preset) return null;
+  if (preset.minC != null && temp < preset.minC) return "fail";
+  if (preset.maxC != null && temp > preset.maxC) return "fail";
+  return "pass";
+}
+
+/* ================= component ================= */
 
 type Props = {
   open: boolean;
@@ -22,17 +75,6 @@ type Props = {
   onSaved: () => Promise<void> | void;
 };
 
-function inferStatus(
-  temp: number | null,
-  preset?: TargetPreset
-): "pass" | "fail" | null {
-  if (temp == null || !preset) return null;
-  const { minC, maxC } = preset;
-  if (minC != null && temp < minC) return "fail";
-  if (maxC != null && temp > maxC) return "fail";
-  return "pass";
-}
-
 export default function RoutineRunModal({
   open,
   routine,
@@ -41,126 +83,105 @@ export default function RoutineRunModal({
   onClose,
   onSaved,
 }: Props) {
+  if (!open || !routine) return null;
+
+  const items = routine.items;
+
   const [date, setDate] = useState(defaultDate);
   const [initials, setInitials] = useState(defaultInitials || "");
   const [temps, setTemps] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [initialOptions, setInitialOptions] = useState<string[]>([]);
+  const [activeIdx, setActiveIdx] = useState(0);
 
-  // which routine item we are filling by voice
-  const [voiceItemId, setVoiceItemId] = useState<string | null>(null);
+  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const activeItemLabel = useMemo(() => {
-    if (!routine || !voiceItemId) return "";
-    const it = routine.items.find((x) => x.id === voiceItemId);
-    return it?.item ?? it?.location ?? "item";
-  }, [routine, voiceItemId]);
-
-  const {
-    supported: voiceSupported,
-    listening,
-    start,
-    stop,
-  } = useVoiceTempEntry({
-    lang: "en-GB",
-    onResult: (r) => {
-      // only apply if we're targeting a specific item
-      if (!voiceItemId) return;
-
-      if (r.temp_c) {
-        setTemps((t) => ({ ...t, [voiceItemId]: r.temp_c! }));
-      }
-      if (r.staff_initials) {
-        setInitials(r.staff_initials.toUpperCase());
-      }
-
-      // auto-stop after a successful parse
-      stop();
-      setVoiceItemId(null);
-    },
-    onError: () => {
-      stop();
-      setVoiceItemId(null);
-    },
-  });
-
-  // Reset when modal opens
+  /* ---------- reset on open ---------- */
   useEffect(() => {
-    if (!open || !routine) return;
+    const init: Record<string, string> = {};
+    items.forEach((it) => (init[it.id] = ""));
+    setTemps(init);
+    setActiveIdx(0);
     setDate(defaultDate);
     setInitials(defaultInitials || "");
+  }, [open, routine]);
 
-    const init: Record<string, string> = {};
-    routine.items.forEach((it) => (init[it.id] = ""));
-    setTemps(init);
-
-    // kill any in-progress voice
-    setVoiceItemId(null);
-    if (listening) stop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, routine, defaultDate, defaultInitials]);
-
-  // Load initials
+  /* ---------- initials ---------- */
   useEffect(() => {
-    if (!open) return;
-
     (async () => {
-      try {
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) return;
+      const orgId = await getActiveOrgIdClient();
+      if (!orgId) return;
 
-        const { data } = await supabase
-          .from("team_members")
-          .select("initials, active")
-          .eq("org_id", orgId)
-          .eq("active", true)
-          .order("initials");
+      const { data } = await supabase
+        .from("team_members")
+        .select("initials")
+        .eq("org_id", orgId)
+        .eq("active", true)
+        .order("initials");
 
-        const list = Array.from(
-          new Set(
-            (data ?? [])
-              .map((r: any) => (r.initials ?? "").toUpperCase())
-              .filter(Boolean)
-          )
-        );
+      const list = Array.from(
+        new Set(
+          (data ?? [])
+            .map((r: any) => (r.initials ?? "").toUpperCase())
+            .filter(Boolean)
+        )
+      );
 
-        setInitialOptions(list);
-        setInitials((prev) => prev || list[0] || "");
-      } catch {}
+      setInitialOptions(list);
+      setInitials((v) => v || list[0] || "");
     })();
   }, [open]);
 
-  if (!open || !routine) return null;
+  /* ---------- voice ---------- */
+  const { supported, listening, start, stop } = useVoiceRoutineEntry({
+    lang: "en-GB",
+    onResult: (r) => {
+      if (r.command === "stop") {
+        stop();
+        return;
+      }
 
- async function handleSave(e?: React.FormEvent) {
-  e?.preventDefault();
+      let idx = activeIdx;
 
-  // ✅ TS guard: routine can’t be null past this point
-  const rt = routine;
-  if (!rt) {
-    console.error("Routine is null when trying to save routine logs.");
-    return;
-  }
+      if (r.itemPhrase) {
+        const m = bestMatchIndex(r.itemPhrase, items);
+        if (m >= 0) {
+          idx = m;
+          setActiveIdx(m);
+        }
+      }
 
-  if (!date || !initials) return;
+      if (r.temp_c) {
+        const it = items[idx];
+        if (!it) return;
 
-  setSaving(true);
+        setTemps((t) => ({ ...t, [it.id]: r.temp_c! }));
+        inputRefs.current[it.id]?.focus();
+      }
+    },
+  });
 
-  try {
-    const org_id = await getActiveOrgIdClient();
-    const location_id = await getActiveLocationIdClient();
+  useEffect(() => {
+    const it = items[activeIdx];
+    if (it) inputRefs.current[it.id]?.focus();
+  }, [activeIdx]);
 
-    if (!org_id || !location_id) {
-      alert("Please select a location first.");
-      return;
-    }
+  /* ---------- save ---------- */
+  async function handleSave(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!date || !initials) return;
 
-    // Build timestamp: selected date + current time
-    let atIso: string;
+    setSaving(true);
+
     try {
+      const org_id = await getActiveOrgIdClient();
+      const location_id = await getActiveLocationIdClient();
+      if (!org_id || !location_id) return;
+
       const selected = new Date(date);
       const now = new Date();
-      const at = new Date(
+
+      const atIso = new Date(
         selected.getFullYear(),
         selected.getMonth(),
         selected.getDate(),
@@ -168,299 +189,143 @@ export default function RoutineRunModal({
         now.getMinutes(),
         now.getSeconds(),
         now.getMilliseconds()
-      );
-      atIso = at.toISOString();
-    } catch {
-      atIso = new Date().toISOString();
-    }
+      ).toISOString();
 
+      const rows = items
+        .map((it) => {
+          const raw = temps[it.id]?.trim();
+          if (!raw) return null;
 
+          const temp = Number(raw);
+          const preset =
+            (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
+              it.target_key
+            ];
 
-    
-    // ✅ use rt instead of routine
-    const rows = rt.items
-      .map((it) => {
-        const raw = (temps[it.id] ?? "").trim();
-        if (!raw) return null;
+          return {
+            org_id,
+            location_id,
+            at: atIso,
+            area: it.location ?? null,
+            note: it.item ?? null,
+            staff_initials: initials.toUpperCase(),
+            target_key: it.target_key,
+            temp_c: Number.isFinite(temp) ? temp : null,
+            status: inferStatus(
+              Number.isFinite(temp) ? temp : null,
+              preset
+            ),
+          };
+        })
+        .filter(Boolean);
 
-        const temp = Number.isFinite(Number(raw)) ? Number(raw) : null;
-        const preset =
-          (TARGET_BY_KEY as any)[it.target_key] as TargetPreset | undefined;
-        const status = inferStatus(temp, preset);
+      if (!rows.length) {
+        onClose();
+        return;
+      }
 
-        return {
-          org_id,
-          location_id,
-          at: atIso,
-          area: it.location ?? null,
-          note: it.item ?? null,
-          staff_initials: initials.toUpperCase(),
-          target_key: it.target_key,
-          temp_c: temp,
-          status,
-        };
-      })
-      .filter(Boolean) as any[];
+      const { error } = await supabase.from("food_temp_logs").insert(rows);
+      if (error) throw error;
 
-    if (!rows.length) {
+      await onSaved();
       onClose();
-      return;
+    } finally {
+      setSaving(false);
     }
-
-    const { error } = await supabase.from("food_temp_logs").insert(rows);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    await onSaved();
-    onClose();
-  } finally {
-    setSaving(false);
   }
-}
 
+  const activeId = items[activeIdx]?.id;
 
-  const micLabel = listening
-    ? `🎤 Listening…`
-    : `🎤 Voice`;
+  /* ================= render ================= */
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3 py-6"
-      onClick={onClose}
+      onClick={() => {
+        if (listening) stop();
+        onClose();
+      }}
     >
       <form
         onSubmit={handleSave}
         onClick={(e) => e.stopPropagation()}
-        className="flex w-full max-w-4xl max-h-[85vh] flex-col overflow-hidden rounded-2xl bg-white text-slate-900 shadow-2xl"
+        className="flex w-full max-w-4xl max-h-[85vh] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-emerald-600/30 bg-emerald-600 px-4 py-3 text-white">
-          <div>
-            <div className="text-[11px] uppercase tracking-widest text-emerald-100">
-              Run routine
-            </div>
-            <div className="text-base font-semibold">{routine.name}</div>
+        <div className="flex items-center justify-between bg-emerald-600 px-4 py-3 text-white">
+          <div className="font-semibold">{routine.name}</div>
+          <div className="flex items-center gap-2">
+            {supported && (
+              <button
+                type="button"
+                onClick={() => (listening ? stop() : start())}
+                className={cls(
+                  "rounded-full px-3 py-1 text-xs font-semibold",
+                  listening
+                    ? "bg-red-100 text-red-700"
+                    : "bg-white/20 hover:bg-white/30"
+                )}
+              >
+                🎤 {listening ? "Listening" : "Voice"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded bg-emerald-700 px-3 py-1 text-sm"
+            >
+              Close
+            </button>
           </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md bg-emerald-700 px-3 py-1.5 text-sm hover:bg-emerald-800"
-          >
-            Close
-          </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 min-h-0 overflow-y-auto bg-white px-4 py-4 space-y-5">
-          {/* Date + Initials */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="text-sm font-medium">
-              Date
-              <input
-                type="date"
-                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                required
-              />
-            </label>
-
-            <label className="text-sm font-medium">
-              Initials
-              <input
-                list="initials-list"
-                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm uppercase shadow-sm"
-                value={initials}
-                onChange={(e) => setInitials(e.target.value.toUpperCase())}
-                required
-              />
-              <datalist id="initials-list">
-                {initialOptions.map((i) => (
-                  <option key={i} value={i} />
-                ))}
-              </datalist>
-            </label>
-          </div>
-
-          {/* Voice status */}
-          {voiceSupported && listening && voiceItemId && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              Listening for <span className="font-semibold">{activeItemLabel}</span>…
-              <button
-                type="button"
-                onClick={() => {
-                  stop();
-                  setVoiceItemId(null);
-                }}
-                className="ml-2 rounded-md border border-amber-200 bg-white px-2 py-1 text-xs hover:bg-amber-50"
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {items.map((it, idx) => {
+            const active = it.id === activeId;
+            return (
+              <div
+                key={it.id}
+                onClick={() => setActiveIdx(idx)}
+                className={cls(
+                  "rounded-xl border p-3",
+                  active
+                    ? "border-emerald-400 bg-emerald-50"
+                    : "border-slate-200"
+                )}
               >
-                Stop
-              </button>
-            </div>
-          )}
+                <div className="text-sm font-medium">{it.item ?? "—"}</div>
+                <div className="text-xs text-slate-500">{it.location ?? "—"}</div>
+                <input
+                  ref={(el) => {
+  inputRefs.current[it.id] = el;
+}}
 
-          {/* DESKTOP TABLE */}
-          <div className="hidden md:block rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-100 text-slate-600">
-                <tr>
-                  <th className="p-2 text-left text-xs font-semibold">#</th>
-                  <th className="p-2 text-left text-xs font-semibold">Location</th>
-                  <th className="p-2 text-left text-xs font-semibold">Item</th>
-                  <th className="p-2 text-left text-xs font-semibold">Target</th>
-                  <th className="p-2 text-left text-xs font-semibold">Temp (°C)</th>
-                  <th className="p-2 text-right text-xs font-semibold">Voice</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {routine.items.map((it, idx) => {
-                  const preset =
-                    (TARGET_BY_KEY as any)[it.target_key] as TargetPreset;
-
-                  const isThisListening = listening && voiceItemId === it.id;
-
-                  return (
-                    <tr key={it.id} className="border-t border-slate-100">
-                      <td className="p-2">{idx + 1}</td>
-                      <td className="p-2">{it.location ?? "—"}</td>
-                      <td className="p-2">{it.item ?? "—"}</td>
-                      <td className="p-2 text-xs text-slate-500">
-                        {preset?.label ?? it.target_key ?? "—"}
-                      </td>
-                      <td className="p-2">
-                        <input
-                          className="w-24 rounded-xl border border-slate-300 bg-white px-2 py-1 shadow-sm"
-                          value={temps[it.id] ?? ""}
-                          onChange={(e) =>
-                            setTemps((t) => ({
-                              ...t,
-                              [it.id]: e.target.value,
-                            }))
-                          }
-                        />
-                      </td>
-                      <td className="p-2 text-right">
-                        {voiceSupported && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (isThisListening) {
-                                stop();
-                                setVoiceItemId(null);
-                              } else {
-                                setVoiceItemId(it.id);
-                                start();
-                              }
-                            }}
-                            className={cls(
-                              "rounded-full border px-2 py-1 text-[11px] font-medium",
-                              isThisListening
-                                ? "border-red-200 bg-red-50 text-red-700"
-                                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                            )}
-                            title="Voice entry"
-                          >
-                            {isThisListening ? "🎤 Listening…" : "🎤 Voice"}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* MOBILE CARDS */}
-          <div className="space-y-3 md:hidden">
-            {routine.items.map((it, idx) => {
-              const preset =
-                (TARGET_BY_KEY as any)[it.target_key] as TargetPreset;
-
-              const isThisListening = listening && voiceItemId === it.id;
-
-              return (
-                <div
-                  key={it.id}
-                  className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-xs font-semibold text-slate-500">
-                        #{idx + 1}
-                      </div>
-                      <div className="mt-1 font-medium text-slate-900">
-                        {it.item ?? "—"}
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        {it.location ?? "—"}
-                      </div>
-                      <div className="mt-2 text-xs text-slate-500">
-                        {preset?.label ?? it.target_key ?? "—"}
-                      </div>
-                    </div>
-
-                    {voiceSupported && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (isThisListening) {
-                            stop();
-                            setVoiceItemId(null);
-                          } else {
-                            setVoiceItemId(it.id);
-                            start();
-                          }
-                        }}
-                        className={cls(
-                          "shrink-0 rounded-full border px-2 py-1 text-[11px] font-medium",
-                          isThisListening
-                            ? "border-red-200 bg-red-50 text-red-700"
-                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                        )}
-                        title="Voice entry"
-                      >
-                        {isThisListening ? "🎤…" : "🎤"}
-                      </button>
-                    )}
-                  </div>
-
-                  <input
-                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 shadow-sm"
-                    placeholder="e.g. 75"
-                    value={temps[it.id] ?? ""}
-                    onChange={(e) =>
-                      setTemps((t) => ({
-                        ...t,
-                        [it.id]: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-              );
-            })}
-          </div>
+                  className="mt-2 w-full rounded-lg border px-3 py-2"
+                  placeholder="Temperature"
+                  value={temps[it.id] ?? ""}
+                  onChange={(e) =>
+                    setTemps((t) => ({ ...t, [it.id]: e.target.value }))
+                  }
+                />
+              </div>
+            );
+          })}
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-2 border-t border-slate-200 bg-white px-4 py-3">
+        <div className="flex justify-end gap-2 border-t p-3">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+            className="rounded px-3 py-1.5 text-sm"
           >
             Cancel
           </button>
-
           <button
             type="submit"
             disabled={saving}
-            className="rounded-xl bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
+            className="rounded bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save all"}
           </button>

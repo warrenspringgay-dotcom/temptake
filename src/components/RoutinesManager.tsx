@@ -1,4 +1,3 @@
-// src/components/RoutineManager.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -7,6 +6,9 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
 import ActionMenu from "@/components/ActionMenu";
+import RoutineRunModal from "@/components/RoutineRunModal";
+
+const LS_LAST_INITIALS = "tt_last_initials";
 
 type RoutineItem = {
   id?: string;
@@ -37,6 +39,8 @@ function ModalPortal({ children }: { children: React.ReactNode }) {
   return createPortal(children, document.body);
 }
 
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
 export default function RoutineManager() {
   const [rows, setRows] = useState<RoutineRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +54,10 @@ export default function RoutineManager() {
   const [viewing, setViewing] = useState<RoutineRow | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<RoutineRow | null>(null);
+
+  // run modal
+  const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
+  const [runDefaultInitials, setRunDefaultInitials] = useState<string>("");
 
   // permissions
   const [canManage, setCanManage] = useState(false);
@@ -87,7 +95,7 @@ export default function RoutineManager() {
       if (iErr) throw iErr;
 
       const grouped = new Map<string, RoutineItem[]>();
-      (items ?? []).forEach((it) => {
+      (items ?? []).forEach((it: any) => {
         const arr = grouped.get(it.routine_id) ?? [];
         arr.push({
           id: it.id,
@@ -101,14 +109,12 @@ export default function RoutineManager() {
       });
 
       setRows(
-        routines.map((r: any) => ({
+        (routines as any[]).map((r) => ({
           id: r.id,
           name: r.name,
           active: r.active ?? true,
           last_used_at: r.last_used_at ?? null,
-          items: (grouped.get(r.id) ?? []).sort(
-            (a, b) => a.position - b.position
-          ),
+          items: (grouped.get(r.id) ?? []).sort((a, b) => a.position - b.position),
         }))
       );
     } catch (e) {
@@ -150,13 +156,21 @@ export default function RoutineManager() {
         }
 
         const role = (data?.role ?? "").toLowerCase();
-        setCanManage(
-          role === "owner" || role === "manager" || role === "admin"
-        );
+        setCanManage(role === "owner" || role === "manager" || role === "admin");
       } catch {
         setCanManage(false);
       }
     })();
+  }, []);
+
+  // ================= Default initials for run modal =================
+  useEffect(() => {
+    try {
+      const ini = (localStorage.getItem(LS_LAST_INITIALS) ?? "").toUpperCase().trim();
+      setRunDefaultInitials(ini);
+    } catch {
+      setRunDefaultInitials("");
+    }
   }, []);
 
   // ================= Filter =================
@@ -199,6 +213,11 @@ export default function RoutineManager() {
     // Deep clone so edits don’t mutate the table list until saved
     setEditing(JSON.parse(JSON.stringify(r)));
     setEditOpen(true);
+  }
+
+  function openRun(r: RoutineRow) {
+    if (!r.id) return; // only saved routines can be run
+    setRunRoutine(r);
   }
 
   async function saveEdit() {
@@ -247,10 +266,7 @@ export default function RoutineManager() {
         if (uErr) throw uErr;
 
         // Clear old items before re-inserting
-        await supabase
-          .from("temp_routine_items")
-          .delete()
-          .eq("routine_id", routineId);
+        await supabase.from("temp_routine_items").delete().eq("routine_id", routineId);
       }
 
       // Insert items for both new + existing routines
@@ -263,9 +279,7 @@ export default function RoutineManager() {
       }));
 
       if (inserts.length) {
-        const { error: iErr } = await supabase
-          .from("temp_routine_items")
-          .insert(inserts);
+        const { error: iErr } = await supabase.from("temp_routine_items").insert(inserts);
         if (iErr) throw iErr;
       }
 
@@ -283,12 +297,9 @@ export default function RoutineManager() {
       alert("Only managers / owners can delete routines.");
       return;
     }
-    if (!id) return; // should not happen for saved routines
+    if (!id) return;
     if (!confirm("Delete routine?")) return;
-    const { error } = await supabase
-      .from("temp_routines")
-      .delete()
-      .eq("id", id);
+    const { error } = await supabase.from("temp_routines").delete().eq("id", id);
     if (error) return alert(error.message);
     await refresh();
   }
@@ -313,9 +324,7 @@ export default function RoutineManager() {
       <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
         <input
           className="rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400"
-          placeholder={
-            canManage ? "New routine name" : "View-only · ask manager to add"
-          }
+          placeholder={canManage ? "New routine name" : "View-only · ask manager to add"}
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           disabled={!canManage}
@@ -324,9 +333,7 @@ export default function RoutineManager() {
           type="button"
           className={cls(
             "rounded-xl px-3 py-2 text-sm font-medium text-white transition",
-            canManage
-              ? "bg-emerald-600 hover:bg-emerald-700"
-              : "cursor-not-allowed bg-slate-400"
+            canManage ? "bg-emerald-600 hover:bg-emerald-700" : "cursor-not-allowed bg-slate-400"
           )}
           onClick={addQuick}
           disabled={loading || !canManage}
@@ -359,10 +366,7 @@ export default function RoutineManager() {
               </tr>
             ) : filtered.length ? (
               filtered.map((r) => (
-                <tr
-                  key={r.id ?? `temp-${r.name}`}
-                  className="border-t border-slate-100"
-                >
+                <tr key={r.id ?? `temp-${r.name}`} className="border-t border-slate-100">
                   <td className="py-2 pr-3">
                     {r.id ? (
                       <button
@@ -381,43 +385,26 @@ export default function RoutineManager() {
                   <td className="py-2 pr-3 text-slate-900">{r.items.length}</td>
 
                   <td className="py-2 pr-3">
-                    <div className="relative inline-block text-left">
-                      <ActionMenu
-                        items={[
-                          ...(r.id
-                            ? [
-                                {
-                                  label: "View",
-                                  onClick: () => openView(r),
-                                },
-                                {
-                                  label: "Use routine",
-                                  href: `/dashboard?run=${encodeURIComponent(
-                                    r.id
-                                  )}`,
-                                },
-                              ]
-                            : []),
-                          ...(canManage
-                            ? [
-                                {
-                                  label: "Edit",
-                                  onClick: () => openEdit(r),
-                                },
-                              ]
-                            : []),
-                          ...(canManage && r.id
-                            ? [
-                                {
-                                  label: "Delete",
-                                  onClick: () => removeRoutine(r.id),
-                                  variant: "danger" as const,
-                                },
-                              ]
-                            : []),
-                        ]}
-                      />
-                    </div>
+                    <ActionMenu
+                      items={[
+                        ...(r.id
+                          ? [
+                              { label: "View", onClick: () => openView(r) },
+                              { label: "Use routine", onClick: () => openRun(r) },
+                            ]
+                          : []),
+                        ...(canManage ? [{ label: "Edit", onClick: () => openEdit(r) }] : []),
+                        ...(canManage && r.id
+                          ? [
+                              {
+                                label: "Delete",
+                                onClick: () => removeRoutine(r.id),
+                                variant: "danger" as const,
+                              },
+                            ]
+                          : []),
+                      ]}
+                    />
                   </td>
                 </tr>
               ))
@@ -435,10 +422,7 @@ export default function RoutineManager() {
       {/* ===== View Card ===== */}
       {viewOpen && viewing && viewing.id && (
         <ModalPortal>
-          <div
-            className="fixed inset-0 z-50 bg-black/40"
-            onClick={() => setViewOpen(false)}
-          >
+          <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
             <div
               className="mx-auto mt-16 w-full max-w-xl overflow-y-auto rounded-3xl border border-slate-200 bg-white/95 text-slate-900 shadow-2xl backdrop-blur-sm"
               onClick={(e) => e.stopPropagation()}
@@ -446,9 +430,7 @@ export default function RoutineManager() {
               <div className="rounded-t-3xl bg-slate-900 px-4 py-3 text-white">
                 <div className="text-sm opacity-80">Routine</div>
                 <div className="text-xl font-semibold">{viewing.name}</div>
-                <div className="opacity-80">
-                  {viewing.active ? "Active" : "Inactive"}
-                </div>
+                <div className="opacity-80">{viewing.active ? "Active" : "Inactive"}</div>
               </div>
 
               <div className="p-4">
@@ -459,14 +441,9 @@ export default function RoutineManager() {
                         key={`${it.position}-${it.item}-${it.location}`}
                         className="py-2 text-sm"
                       >
-                        <div className="font-medium text-slate-900">
-                          Step {it.position}
-                        </div>
+                        <div className="font-medium text-slate-900">Step {it.position}</div>
                         <div className="text-slate-600">
-                          {[it.location, it.item]
-                            .filter(Boolean)
-                            .join(" · ") || "—"}{" "}
-                          · target:{" "}
+                          {[it.location, it.item].filter(Boolean).join(" · ") || "—"} · target:{" "}
                           <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
                             {it.target_key}
                           </code>
@@ -475,21 +452,22 @@ export default function RoutineManager() {
                     ))}
                   </ul>
                 ) : (
-                  <div className="text-sm text-slate-600">
-                    No items in this routine.
-                  </div>
+                  <div className="text-sm text-slate-600">No items in this routine.</div>
                 )}
               </div>
 
               <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
-                {viewing.id && (
-                  <a
-                    href={`/dashboard?run=${encodeURIComponent(viewing.id)}`}
-                    className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-                  >
-                    Use routine
-                  </a>
-                )}
+                <button
+                  type="button"
+                  className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+                  onClick={() => {
+                    setViewOpen(false);
+                    openRun(viewing);
+                  }}
+                >
+                  Use routine
+                </button>
+
                 <button
                   className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
                   onClick={() => setViewOpen(false)}
@@ -505,22 +483,14 @@ export default function RoutineManager() {
       {/* ===== Edit Modal ===== */}
       {editOpen && editing && (
         <ModalPortal>
-          <div
-            className="fixed inset-0 z-50 overflow-y-auto bg-black/40"
-            onClick={() => setEditOpen(false)}
-          >
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40" onClick={() => setEditOpen(false)}>
             <div
               className="mx-auto mt-16 w-full max-w-3xl rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl backdrop-blur-sm"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-3 flex items-center justify-between">
-                <div className="text-base font-semibold">
-                  {editing.id ? "Edit routine" : "New routine"}
-                </div>
-                <button
-                  onClick={() => setEditOpen(false)}
-                  className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-                >
+                <div className="text-base font-semibold">{editing.id ? "Edit routine" : "New routine"}</div>
+                <button onClick={() => setEditOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
                   ✕
                 </button>
               </div>
@@ -529,18 +499,14 @@ export default function RoutineManager() {
                 <input
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900"
                   value={editing.name}
-                  onChange={(e) =>
-                    setEditing({ ...editing, name: e.target.value })
-                  }
+                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                 />
                 <label className="flex items-center gap-2 text-sm text-slate-800">
                   <input
                     type="checkbox"
                     className="accent-emerald-600"
                     checked={!!editing.active}
-                    onChange={(e) =>
-                      setEditing({ ...editing, active: e.target.checked })
-                    }
+                    onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
                   />
                   Active
                 </label>
@@ -548,24 +514,15 @@ export default function RoutineManager() {
 
               <div className="mt-4 space-y-2">
                 {editing.items.map((it, i) => (
-                  <div
-                    key={i}
-                    className="grid gap-2 sm:grid-cols-[80px_1fr_1fr_1fr_auto]"
-                  >
+                  <div key={i} className="grid gap-2 sm:grid-cols-[80px_1fr_1fr_1fr_auto]">
                     <input
                       className="rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm"
                       placeholder="#"
                       type="number"
                       value={it.position}
                       onChange={(e) => {
-                        const copy: RoutineRow = {
-                          ...editing,
-                          items: [...editing.items],
-                        };
-                        copy.items[i] = {
-                          ...copy.items[i],
-                          position: Number(e.target.value) || 0,
-                        };
+                        const copy: RoutineRow = { ...editing, items: [...editing.items] };
+                        copy.items[i] = { ...copy.items[i], position: Number(e.target.value) || 0 };
                         setEditing(copy);
                       }}
                     />
@@ -574,14 +531,8 @@ export default function RoutineManager() {
                       placeholder="Location"
                       value={it.location ?? ""}
                       onChange={(e) => {
-                        const copy: RoutineRow = {
-                          ...editing,
-                          items: [...editing.items],
-                        };
-                        copy.items[i] = {
-                          ...copy.items[i],
-                          location: e.target.value || null,
-                        };
+                        const copy: RoutineRow = { ...editing, items: [...editing.items] };
+                        copy.items[i] = { ...copy.items[i], location: e.target.value || null };
                         setEditing(copy);
                       }}
                     />
@@ -590,14 +541,8 @@ export default function RoutineManager() {
                       placeholder="Item"
                       value={it.item ?? ""}
                       onChange={(e) => {
-                        const copy: RoutineRow = {
-                          ...editing,
-                          items: [...editing.items],
-                        };
-                        copy.items[i] = {
-                          ...copy.items[i],
-                          item: e.target.value || null,
-                        };
+                        const copy: RoutineRow = { ...editing, items: [...editing.items] };
+                        copy.items[i] = { ...copy.items[i], item: e.target.value || null };
                         setEditing(copy);
                       }}
                     />
@@ -605,14 +550,8 @@ export default function RoutineManager() {
                       className="rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm"
                       value={it.target_key}
                       onChange={(e) => {
-                        const copy: RoutineRow = {
-                          ...editing,
-                          items: [...editing.items],
-                        };
-                        copy.items[i] = {
-                          ...copy.items[i],
-                          target_key: e.target.value,
-                        };
+                        const copy: RoutineRow = { ...editing, items: [...editing.items] };
+                        copy.items[i] = { ...copy.items[i], target_key: e.target.value };
                         setEditing(copy);
                       }}
                     >
@@ -624,13 +563,8 @@ export default function RoutineManager() {
                     </select>
                     <button
                       className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                      onClick={() => {
-                        const copy: RoutineRow = {
-                          ...editing,
-                          items: editing.items.filter((_, idx) => idx !== i),
-                        };
-                        setEditing(copy);
-                      }}
+                      onClick={() => setEditing({ ...editing, items: editing.items.filter((_, idx) => idx !== i) })}
+                      type="button"
                     >
                       Remove
                     </button>
@@ -653,6 +587,7 @@ export default function RoutineManager() {
                       ],
                     })
                   }
+                  type="button"
                 >
                   + Add step
                 </button>
@@ -662,6 +597,7 @@ export default function RoutineManager() {
                 <button
                   className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   onClick={() => setEditOpen(false)}
+                  type="button"
                 >
                   Cancel
                 </button>
@@ -669,6 +605,7 @@ export default function RoutineManager() {
                   className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
                   onClick={saveEdit}
                   disabled={!canManage}
+                  type="button"
                 >
                   Save
                 </button>
@@ -677,6 +614,35 @@ export default function RoutineManager() {
           </div>
         </ModalPortal>
       )}
+
+      {/* ===== Run modal ===== */}
+      <RoutineRunModal
+        open={!!runRoutine}
+        routine={
+          runRoutine && runRoutine.id
+            ? ({
+                id: runRoutine.id,
+                name: runRoutine.name,
+                active: !!(runRoutine.active ?? true),
+                items: (runRoutine.items ?? []).map((it) => ({
+                  id: String(it.id ?? `${runRoutine.id}:${it.position}`),
+                  routine_id: String(runRoutine.id),
+                  position: Number(it.position ?? 0),
+                  location: it.location ?? null,
+                  item: it.item ?? null,
+                  target_key: String(it.target_key ?? "chill"),
+                })),
+              } as any)
+            : null
+        }
+        defaultDate={todayISO()}
+        defaultInitials={runDefaultInitials}
+        onClose={() => setRunRoutine(null)}
+        onSaved={async () => {
+          await refresh();
+          setRunRoutine(null);
+        }}
+      />
     </div>
   );
 }
