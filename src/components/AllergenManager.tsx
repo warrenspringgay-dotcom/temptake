@@ -104,7 +104,6 @@ async function fireConfetti() {
     // ignore
   }
 }
-
 /** Write an audit row when allergen items change */
 async function logAllergenChange(params: {
   orgId: string;
@@ -114,9 +113,48 @@ async function logAllergenChange(params: {
   after?: MatrixRow | null;
 }) {
   try {
+    // location context for the log row
     const locationId = await getActiveLocationIdClient().catch(() => null);
 
-    await supabase.from("allergen_change_logs").insert({
+    // derive staff initials from team_members / auth user
+    let staffInitials: string | null = null;
+
+    try {
+      const { data: userData, error: userErr } = await supabase.auth.getUser();
+
+      if (!userErr && userData?.user?.email) {
+        const email = userData.user.email.toLowerCase();
+
+        // try to find matching team member for this org + email
+        const { data: tm, error: tmErr } = await supabase
+          .from("team_members")
+          .select("name, initials")
+          .eq("org_id", params.orgId)
+          .eq("email", email)
+          .maybeSingle();
+
+        if (!tmErr && tm) {
+          if (tm.initials && tm.initials.trim()) {
+            staffInitials = tm.initials.trim().toUpperCase();
+          } else if (tm.name && tm.name.trim()) {
+            const parts = tm.name.trim().split(/\s+/);
+            staffInitials = parts
+              .slice(0, 2)
+              .map((p) => p[0]?.toUpperCase() ?? "")
+              .join("");
+          }
+        }
+
+        // hard fallback if somehow still empty
+        if (!staffInitials && email) {
+          staffInitials = email[0].toUpperCase();
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to resolve staff initials for allergen change log:", e);
+    }
+
+    const { error } = await supabase.from("allergen_change_logs").insert({
       org_id: params.orgId,
       location_id: locationId,
       item_id: params.itemId,
@@ -128,12 +166,17 @@ async function logAllergenChange(params: {
       flags_after: params.after?.flags ?? null,
       notes_before: params.before?.notes ?? null,
       notes_after: params.after?.notes ?? null,
-      staff_initials: null, // can be wired to team_members.initials later
+      staff_initials: staffInitials, // ← now populated
     });
+
+    if (error) {
+      console.error("Failed to log allergen change:", error.message);
+    }
   } catch (e) {
-    console.error("Failed to log allergen change", e);
+    console.error("Failed to log allergen change (unexpected):", e);
   }
 }
+
 
 /* ---------- Component ---------- */
 export default function AllergenManager() {
@@ -463,14 +506,13 @@ export default function AllergenManager() {
         if (error) throw error;
         rowId = String(data!.id);
       }
-
-      // 2) Upsert all flags for that item
-      // 2) Upsert all flags for that item
+// 2) Upsert all flags for that item
 if (rowId) {
   const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
-    item_id: rowId!,
-    key: k,
-    value: !!d.flags[k],
+    item_id: rowId!,                 // PK part 1
+    key: k,                          // PK part 2
+    value: !!d.flags[k],             // actual yes/no value
+    org_id: currentOrgId,            // ✅ REQUIRED (NOT NULL on table)
   }));
 
   if (payload.length) {
@@ -488,6 +530,7 @@ if (rowId) {
     }
   }
 }
+
 
       // 3) Log change
       if (currentOrgId && rowId) {
