@@ -10,36 +10,14 @@ import { getActiveLocationIdClient } from "@/lib/locationClient";
 
 /* ---------- Types ---------- */
 
-type LocationOption = {
-  id: string;
-  name: string;
-};
+type LocationOption = { id: string; name: string };
 
-type StaffOption = {
-  id: string;
-  name: string;
-  initials: string | null;
-};
+type StaffOption = { id: string; name: string; initials: string | null };
 
-type ReviewSummary = {
-  last7: number;
-  last30: number;
-  staffWithReviews: number;
-};
-
-type TempSummary = {
-  today: number;
-  fails7d: number;
-};
-
-type TrainingSummary = {
-  loggedToday: number;
-  overdue: number;
-};
-
-type CleaningSummary = {
-  loggedToday: number;
-};
+type ReviewSummary = { last7: number; last30: number; staffWithReviews: number };
+type TempSummary = { today: number; fails7d: number };
+type TrainingSummary = { loggedToday: number; overdue: number };
+type CleaningSummary = { loggedToday: number };
 
 type ReviewFormState = {
   staff_id: string;
@@ -86,33 +64,30 @@ type FoodHygieneStatus = {
   dueSoon: boolean;
 };
 
+type ManagerSignoffRow = {
+  id: string;
+  org_id: string;
+  location_id: string;
+  signed_on: string; // yyyy-mm-dd
+  signed_at: string; // timestamptz
+  manager_initials: string;
+  notes: string | null;
+  temp_logs_today: number;
+  temp_fails_7d: number;
+  cleaning_logged_today: number;
+  training_overdue: number;
+  qc_reviews_7d: number;
+  qc_reviews_30d: number;
+  staff_reviewed_30d: number;
+};
+
 const CATEGORY_OPTIONS = ["Temps", "Cleaning", "Allergens", "General"];
 
 /* ---------- Helpers ---------- */
 
-const WEEKDAYS = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
-
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
+  "January","February","March","April","May","June","July","August","September","October","November","December",
 ];
 
 function formatPrettyDate(d: Date) {
@@ -148,8 +123,7 @@ function addMonths(date: Date, months: number): Date {
   return d;
 }
 
-const cls = (...p: Array<string | false | null | undefined>) =>
-  p.filter(Boolean).join(" ");
+const cls = (...p: Array<string | false | null | undefined>) => p.filter(Boolean).join(" ");
 
 /* ---------- KPI Tile ---------- */
 
@@ -198,12 +172,7 @@ function KpiTile({
         toneCls
       )}
     >
-      <div
-        className={cls(
-          "absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80",
-          accentCls
-        )}
-      />
+      <div className={cls("absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80", accentCls)} />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-700/90">
@@ -220,9 +189,7 @@ function KpiTile({
         ) : null}
       </div>
 
-      <div className="mt-auto pt-3 text-[11px] font-medium text-slate-600">
-        {sub}
-      </div>
+      <div className="mt-auto pt-3 text-[11px] font-medium text-slate-600">{sub}</div>
     </motion.div>
   );
 
@@ -237,6 +204,8 @@ function KpiTile({
 
 /* ===================================================================== */
 
+const LS_LAST_INITIALS = "tt_last_initials"; // reuse existing convention
+
 export default function ManagerDashboardPage() {
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
@@ -248,17 +217,12 @@ export default function ManagerDashboardPage() {
   const [staffLoading, setStaffLoading] = useState(false);
 
   const [tempsSummary, setTempsSummary] = useState<TempSummary | null>(null);
-  const [trainingSummary, setTrainingSummary] =
-    useState<TrainingSummary | null>(null);
-  const [cleaningSummary, setCleaningSummary] =
-    useState<CleaningSummary | null>(null);
-  const [reviewSummary, setReviewSummary] =
-    useState<ReviewSummary | null>(null);
+  const [trainingSummary, setTrainingSummary] = useState<TrainingSummary | null>(null);
+  const [cleaningSummary, setCleaningSummary] = useState<CleaningSummary | null>(null);
+  const [reviewSummary, setReviewSummary] = useState<ReviewSummary | null>(null);
 
   const [todayTemps, setTodayTemps] = useState<TodayTempRow[]>([]);
-  const [todayCleaningRuns, setTodayCleaningRuns] = useState<TodayCleaningRow[]>(
-    []
-  );
+  const [todayCleaningRuns, setTodayCleaningRuns] = useState<TodayCleaningRow[]>([]);
 
   const [educationDue, setEducationDue] = useState<EducationRow[]>([]);
   const [foodHygiene, setFoodHygiene] = useState<FoodHygieneStatus | null>(null);
@@ -278,6 +242,13 @@ export default function ManagerDashboardPage() {
 
   // Education modal
   const [educationModalOpen, setEducationModalOpen] = useState(false);
+
+  // Sign-off
+  const [signoffOpen, setSignoffOpen] = useState(false);
+  const [signoffInitials, setSignoffInitials] = useState<string>("");
+  const [signoffNotes, setSignoffNotes] = useState<string>("");
+  const [savingSignoff, setSavingSignoff] = useState(false);
+  const [lastSignoffToday, setLastSignoffToday] = useState<ManagerSignoffRow | null>(null);
 
   const today = useMemo(() => new Date(), []);
   const todayISO = useMemo(() => {
@@ -324,6 +295,17 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
+  /* ---------- Load initials default ---------- */
+
+  useEffect(() => {
+    try {
+      const ini = (localStorage.getItem(LS_LAST_INITIALS) ?? "").toUpperCase().trim();
+      setSignoffInitials(ini);
+    } catch {
+      setSignoffInitials("");
+    }
+  }, []);
+
   /* ---------- Load staff list for QC reviews ---------- */
 
   useEffect(() => {
@@ -364,6 +346,28 @@ export default function ManagerDashboardPage() {
     })();
   }, [orgId]);
 
+  /* ---------- Sign-off loader ---------- */
+
+  async function loadTodaySignoff(oId: string, locId: string) {
+    try {
+      const { data, error } = await supabase
+        .from("manager_signoffs")
+        .select("*")
+        .eq("org_id", oId)
+        .eq("location_id", locId)
+        .eq("signed_on", todayISO)
+        .order("signed_at", { ascending: false })
+        .limit(1);
+
+      if (error) throw error;
+      setLastSignoffToday((data?.[0] as any) ?? null);
+    } catch (e) {
+      // If table not created / RLS blocks, don’t hard-fail the whole page
+      console.warn("Signoff load failed", e);
+      setLastSignoffToday(null);
+    }
+  }
+
   /* ---------- Refresh dashboard cards + activity lists ---------- */
 
   async function refreshCards() {
@@ -376,12 +380,8 @@ export default function ManagerDashboardPage() {
     setErr(null);
 
     try {
-      const sevenDaysAgoISO = new Date(
-        today.getTime() - 7 * 24 * 3600 * 1000
-      ).toISOString();
-      const thirtyDaysAgoISO = new Date(
-        today.getTime() - 30 * 24 * 3600 * 1000
-      ).toISOString();
+      const sevenDaysAgoISO = new Date(today.getTime() - 7 * 24 * 3600 * 1000).toISOString();
+      const thirtyDaysAgoISO = new Date(today.getTime() - 30 * 24 * 3600 * 1000).toISOString();
 
       const dateStartToday = new Date(todayISO);
       const dateEndToday = new Date(dateStartToday);
@@ -453,10 +453,7 @@ export default function ManagerDashboardPage() {
           .limit(200),
       ]);
 
-      setTempsSummary({
-        today: tempsRes.count ?? 0,
-        fails7d: failsRes.count ?? 0,
-      });
+      setTempsSummary({ today: tempsRes.count ?? 0, fails7d: failsRes.count ?? 0 });
 
       /* ---- Training summary + educationDue ---- */
       const trainingRows: any[] = (trainingRes.data as any[]) ?? [];
@@ -475,16 +472,9 @@ export default function ManagerDashboardPage() {
       const staffMap = new Map<string, { name: string; initials: string | null }>();
 
       if (staffIds.length) {
-        const { data: staffData } = await supabase
-          .from("staff")
-          .select("id, name, initials")
-          .in("id", staffIds);
-
+        const { data: staffData } = await supabase.from("staff").select("id, name, initials").in("id", staffIds);
         for (const s of staffData ?? []) {
-          staffMap.set(String(s.id), {
-            name: s.name ?? "Unknown",
-            initials: s.initials ?? null,
-          });
+          staffMap.set(String(s.id), { name: s.name ?? "Unknown", initials: s.initials ?? null });
         }
       }
 
@@ -501,8 +491,7 @@ export default function ManagerDashboardPage() {
           const exp = new Date(t.expires_on);
           exp.setHours(0, 0, 0, 0);
 
-          const daysOver =
-            Math.round((today0.getTime() - exp.getTime()) / 86400000) || 0;
+          const daysOver = Math.round((today0.getTime() - exp.getTime()) / 86400000) || 0;
 
           return {
             id: String(t.id),
@@ -510,9 +499,7 @@ export default function ManagerDashboardPage() {
             staffName: staff?.name ?? "Unknown",
             staffInitials: staff?.initials ?? null,
             type: t.type ?? null,
-            awardedOn: t.awarded_on
-              ? new Date(t.awarded_on).toISOString().slice(0, 10)
-              : null,
+            awardedOn: t.awarded_on ? new Date(t.awarded_on).toISOString().slice(0, 10) : null,
             expiresOn: exp.toISOString().slice(0, 10),
             daysOverdue: daysOver > 0 ? daysOver : null,
           } as EducationRow;
@@ -520,30 +507,19 @@ export default function ManagerDashboardPage() {
         .filter((r) => r.daysOverdue != null && r.daysOverdue > 0)
         .sort((a, b) => (b.daysOverdue ?? 0) - (a.daysOverdue ?? 0));
 
-      setTrainingSummary({
-        loggedToday,
-        overdue: overdueRows.length,
-      });
+      setTrainingSummary({ loggedToday, overdue: overdueRows.length });
       setEducationDue(overdueRows);
 
       setCleaningSummary({ loggedToday: cleaningRes.count ?? 0 });
 
       /* ---- Reviews summary ---- */
       const reviewRows: any[] = (reviewsRes.data as any[]) ?? [];
-      const last7 = reviewRows.filter((r) => {
-        if (!r.review_date) return false;
-        return r.review_date >= sevenDaysAgoISO.slice(0, 10);
-      }).length;
+      const last7 = reviewRows.filter((r) => r.review_date && r.review_date >= sevenDaysAgoISO.slice(0, 10)).length;
       const last30 = reviewRows.length;
-
       const staffSet = new Set(reviewRows.map((r) => (r.staff_id ? String(r.staff_id) : "")));
       staffSet.delete("");
 
-      setReviewSummary({
-        last7,
-        last30,
-        staffWithReviews: staffSet.size,
-      });
+      setReviewSummary({ last7, last30, staffWithReviews: staffSet.size });
 
       /* ---- Today’s temp logs list ---- */
       const tempsData: any[] = (tempsListRes.data as any[]) ?? [];
@@ -566,22 +542,10 @@ export default function ManagerDashboardPage() {
       const cleaningData: any[] = (cleaningListRes.data as any[]) ?? [];
       setTodayCleaningRuns(
         cleaningData.map((r) => {
-          const doneAt: Date | null = r.done_at
-            ? new Date(r.done_at)
-            : r.created_at
-            ? new Date(r.created_at)
-            : null;
-
+          const doneAt: Date | null = r.done_at ? new Date(r.done_at) : r.created_at ? new Date(r.created_at) : null;
           const routineName = r.routine_name || r.routine || r.name || "Cleaning routine";
-
           const staffNameOrInitials =
-            r.completed_by_initials ||
-            r.staff_initials ||
-            r.initials ||
-            r.completed_by ||
-            r.done_by ||
-            null;
-
+            r.completed_by_initials || r.staff_initials || r.initials || r.completed_by || r.done_by || null;
           const notesVal = r.notes || r.comment || null;
 
           return {
@@ -647,22 +611,17 @@ export default function ManagerDashboardPage() {
           setFoodHygiene(null);
         } else {
           const rawDate =
-            chosen.inspected_on ??
-            chosen.inspection_date ??
-            chosen.visit_date ??
-            chosen.created_at ??
-            null;
+            chosen.inspected_on ?? chosen.inspection_date ?? chosen.visit_date ?? chosen.created_at ?? null;
 
           if (!rawDate) {
             setFoodHygiene(null);
           } else {
             const lastDate = new Date(rawDate);
-            if (Number.isNaN(lastDate.getTime())) setFoodHygiene(null);
-            else {
+            if (Number.isNaN(lastDate.getTime())) {
+              setFoodHygiene(null);
+            } else {
               const nextDue = addMonths(lastDate, 18);
-              const diffDays = Math.round(
-                (nextDue.getTime() - todayZero.getTime()) / 86400000
-              );
+              const diffDays = Math.round((nextDue.getTime() - todayZero.getTime()) / 86400000);
 
               setFoodHygiene({
                 lastInspectedOn: lastDate.toISOString().slice(0, 10),
@@ -684,6 +643,9 @@ export default function ManagerDashboardPage() {
         console.error("Food hygiene fetch error", e);
         setFoodHygiene(null);
       }
+
+      // Load signoff last (non-fatal if missing)
+      await loadTodaySignoff(orgId, locationId);
     } catch (e: any) {
       console.error(e);
       setErr(e?.message ?? "Failed to refresh manager dashboard.");
@@ -744,6 +706,64 @@ export default function ManagerDashboardPage() {
     }
   }
 
+  /* ---------- Sign-off handlers ---------- */
+
+  function openSignoff() {
+    setSignoffNotes("");
+    setSignoffOpen(true);
+  }
+
+  async function saveSignoff() {
+    if (!orgId || !locationId) return;
+    const ini = signoffInitials.toUpperCase().trim();
+    if (!ini) {
+      alert("Enter initials.");
+      return;
+    }
+
+    try {
+      setSavingSignoff(true);
+
+      // Snapshot current KPI counts
+      const payload = {
+        org_id: orgId,
+        location_id: locationId,
+        signed_on: todayISO,
+
+        manager_initials: ini,
+        notes: signoffNotes.trim() || null,
+
+        temp_logs_today: tempsSummary?.today ?? 0,
+        temp_fails_7d: tempsSummary?.fails7d ?? 0,
+        cleaning_logged_today: cleaningSummary?.loggedToday ?? 0,
+        training_overdue: trainingSummary?.overdue ?? 0,
+
+        qc_reviews_7d: reviewSummary?.last7 ?? 0,
+        qc_reviews_30d: reviewSummary?.last30 ?? 0,
+        staff_reviewed_30d: reviewSummary?.staffWithReviews ?? 0,
+      };
+
+      const { error } = await supabase.from("manager_signoffs").insert(payload);
+      if (lastSignoffToday) {
+        // allow multiple sign-offs, but if you want to block, enforce unique constraint instead
+        // (keeping it permissive for now)
+      }
+      if (error) throw error;
+
+      try {
+        localStorage.setItem(LS_LAST_INITIALS, ini);
+      } catch {}
+
+      setSignoffOpen(false);
+      await loadTodaySignoff(orgId, locationId);
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "Failed to save sign-off. Check table/RLS.");
+    } finally {
+      setSavingSignoff(false);
+    }
+  }
+
   const currentLocationName =
     locations.find((l) => l.id === locationId)?.name ?? "This location";
 
@@ -763,6 +783,8 @@ export default function ManagerDashboardPage() {
       : foodHygiene.dueSoon
       ? "warn"
       : "ok";
+
+  const signedOff = !!lastSignoffToday;
 
   /* ====================== RENDER ====================== */
 
@@ -804,6 +826,21 @@ export default function ManagerDashboardPage() {
           >
             {loadingCards ? "Refreshing…" : "Refresh"}
           </button>
+
+          <button
+            type="button"
+            onClick={openSignoff}
+            disabled={!orgId || !locationId}
+            className={cls(
+              "rounded-xl px-4 py-2 text-sm font-extrabold shadow-sm transition",
+              signedOff
+                ? "bg-slate-900 text-white hover:bg-black"
+                : "bg-indigo-600 text-white hover:bg-indigo-500"
+            )}
+            title="Create a daily manager sign-off (audit trail)"
+          >
+            {signedOff ? "View sign-off" : "Sign off today"}
+          </button>
         </div>
       </header>
 
@@ -812,6 +849,42 @@ export default function ManagerDashboardPage() {
           {err}
         </div>
       )}
+
+      {/* Sign-off status strip */}
+      <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <span
+              className={cls(
+                "inline-flex rounded-full px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.22em]",
+                signedOff ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+              )}
+            >
+              {signedOff ? "Signed off" : "Not signed off"}
+            </span>
+
+            {signedOff && lastSignoffToday ? (
+              <div className="text-xs text-slate-600">
+                {lastSignoffToday.manager_initials.toUpperCase()} ·{" "}
+                {new Date(lastSignoffToday.signed_at).toLocaleTimeString("en-GB", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </div>
+            ) : (
+              <div className="text-xs text-slate-600">
+                Complete QC review then sign off for audit trail.
+              </div>
+            )}
+          </div>
+
+          {signedOff && lastSignoffToday?.notes ? (
+            <div className="text-xs text-slate-600 max-w-2xl truncate">
+              Notes: <span className="font-medium">{lastSignoffToday.notes}</span>
+            </div>
+          ) : null}
+        </div>
+      </section>
 
       {/* KPI cards */}
       <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur">
@@ -947,9 +1020,7 @@ export default function ManagerDashboardPage() {
                         <td className="px-3 py-2">{r.staff}</td>
                         <td className="px-3 py-2">{r.area}</td>
                         <td className="px-3 py-2">{r.item}</td>
-                        <td className="px-3 py-2">
-                          {r.temp_c != null ? `${r.temp_c}°C` : "—"}
-                        </td>
+                        <td className="px-3 py-2">{r.temp_c != null ? `${r.temp_c}°C` : "—"}</td>
                         <td className="px-3 py-2">
                           {r.status ? (
                             <span
@@ -1003,9 +1074,7 @@ export default function ManagerDashboardPage() {
                         <td className="px-3 py-2">{r.time ?? "—"}</td>
                         <td className="px-3 py-2">{r.routine}</td>
                         <td className="px-3 py-2">{r.staff ?? "—"}</td>
-                        <td className="px-3 py-2 max-w-[14rem] truncate">
-                          {r.notes ?? "—"}
-                        </td>
+                        <td className="px-3 py-2 max-w-[14rem] truncate">{r.notes ?? "—"}</td>
                       </tr>
                     ))
                   )}
@@ -1027,13 +1096,9 @@ export default function ManagerDashboardPage() {
             className="w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
           >
             <div className="bg-slate-900 px-4 py-3 text-white">
-              <div className="text-[11px] uppercase tracking-[0.22em] opacity-80">
-                Action needed
-              </div>
+              <div className="text-[11px] uppercase tracking-[0.22em] opacity-80">Action needed</div>
               <div className="text-lg font-extrabold">Overdue training</div>
-              <div className="text-xs opacity-80">
-                Chase certificates and refresher training.
-              </div>
+              <div className="text-xs opacity-80">Chase certificates and refresher training.</div>
             </div>
 
             <div className="p-4">
@@ -1075,15 +1140,11 @@ export default function ManagerDashboardPage() {
                             )}
                           </td>
                           <td className="px-3 py-2">{row.type ?? "—"}</td>
-                          <td className="px-3 py-2">
-                            {row.awardedOn ? formatISOToUK(row.awardedOn) : "—"}
-                          </td>
+                          <td className="px-3 py-2">{row.awardedOn ? formatISOToUK(row.awardedOn) : "—"}</td>
                           <td className="px-3 py-2 text-red-700 font-semibold">
                             {row.expiresOn ? formatISOToUK(row.expiresOn) : "—"}
                           </td>
-                          <td className="px-3 py-2 font-extrabold text-red-700">
-                            {row.daysOverdue ?? "—"}
-                          </td>
+                          <td className="px-3 py-2 font-extrabold text-red-700">{row.daysOverdue ?? "—"}</td>
                         </tr>
                       ))
                     )}
@@ -1117,33 +1178,22 @@ export default function ManagerDashboardPage() {
             className="w-full max-w-md overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
           >
             <div className="bg-slate-900 px-4 py-3 text-white">
-              <div className="text-[11px] uppercase tracking-[0.22em] opacity-80">
-                QC Review
-              </div>
+              <div className="text-[11px] uppercase tracking-[0.22em] opacity-80">QC Review</div>
               <div className="text-lg font-extrabold">Log staff review</div>
-              <div className="text-xs opacity-80">
-                Record a supervision check for audit trail.
-              </div>
+              <div className="text-xs opacity-80">Record a supervision check for audit trail.</div>
             </div>
 
             <div className="p-4">
-              {/* Staff select */}
               <label className="mb-3 block text-sm">
                 <span className="mb-1 block text-slate-700 font-semibold">Staff member</span>
                 <select
                   required
                   value={reviewForm.staff_id}
-                  onChange={(e) =>
-                    setReviewForm((prev) => ({ ...prev, staff_id: e.target.value }))
-                  }
+                  onChange={(e) => setReviewForm((prev) => ({ ...prev, staff_id: e.target.value }))}
                   className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
                 >
                   <option value="">
-                    {staffLoading
-                      ? "Loading staff…"
-                      : staffOptions.length === 0
-                      ? "No active staff"
-                      : "Select…"}
+                    {staffLoading ? "Loading staff…" : staffOptions.length === 0 ? "No active staff" : "Select…"}
                   </option>
                   {staffOptions.map((s) => (
                     <option key={s.id} value={s.id}>
@@ -1154,14 +1204,11 @@ export default function ManagerDashboardPage() {
                 </select>
               </label>
 
-              {/* Category */}
               <label className="mb-3 block text-sm">
                 <span className="mb-1 block text-slate-700 font-semibold">Area / category</span>
                 <select
                   value={reviewForm.category}
-                  onChange={(e) =>
-                    setReviewForm((prev) => ({ ...prev, category: e.target.value }))
-                  }
+                  onChange={(e) => setReviewForm((prev) => ({ ...prev, category: e.target.value }))}
                   className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
                 >
                   {CATEGORY_OPTIONS.map((c) => (
@@ -1172,7 +1219,6 @@ export default function ManagerDashboardPage() {
                 </select>
               </label>
 
-              {/* Rating */}
               <label className="mb-3 block text-sm">
                 <span className="mb-1 block text-slate-700 font-semibold">Rating (1–5)</span>
                 <input
@@ -1180,25 +1226,17 @@ export default function ManagerDashboardPage() {
                   min={1}
                   max={5}
                   value={reviewForm.rating}
-                  onChange={(e) =>
-                    setReviewForm((prev) => ({
-                      ...prev,
-                      rating: Number(e.target.value) || 1,
-                    }))
-                  }
+                  onChange={(e) => setReviewForm((prev) => ({ ...prev, rating: Number(e.target.value) || 1 }))}
                   className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
                 />
               </label>
 
-              {/* Notes */}
               <label className="mb-4 block text-sm">
                 <span className="mb-1 block text-slate-700 font-semibold">Notes / feedback</span>
                 <textarea
                   rows={4}
                   value={reviewForm.notes}
-                  onChange={(e) =>
-                    setReviewForm((prev) => ({ ...prev, notes: e.target.value }))
-                  }
+                  onChange={(e) => setReviewForm((prev) => ({ ...prev, notes: e.target.value }))}
                   placeholder="What did they do well? Any corrective advice?"
                   className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
                 />
@@ -1223,6 +1261,122 @@ export default function ManagerDashboardPage() {
               </div>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Sign-off modal */}
+      {signoffOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
+          onClick={() => !savingSignoff && setSignoffOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
+          >
+            <div className="bg-indigo-700 px-4 py-3 text-white">
+              <div className="text-[11px] uppercase tracking-[0.22em] opacity-90">
+                Daily manager sign-off
+              </div>
+              <div className="text-lg font-extrabold">
+                {formatPrettyDate(new Date(todayISO))}
+              </div>
+              <div className="text-xs opacity-90">{currentLocationName}</div>
+            </div>
+
+            <div className="p-4 space-y-3">
+              {/* Snapshot */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+                  Snapshot
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
+                  <div>
+                    Temps today:{" "}
+                    <span className="font-extrabold text-slate-900">{tempsSummary?.today ?? 0}</span>
+                  </div>
+                  <div>
+                    Fails (7d):{" "}
+                    <span className={cls("font-extrabold", (tempsSummary?.fails7d ?? 0) > 0 ? "text-red-700" : "text-slate-900")}>
+                      {tempsSummary?.fails7d ?? 0}
+                    </span>
+                  </div>
+                  <div>
+                    Cleaning today:{" "}
+                    <span className="font-extrabold text-slate-900">{cleaningSummary?.loggedToday ?? 0}</span>
+                  </div>
+                  <div>
+                    Training overdue:{" "}
+                    <span className={cls("font-extrabold", trainingOverdueCount > 0 ? "text-red-700" : "text-slate-900")}>
+                      {trainingOverdueCount}
+                    </span>
+                  </div>
+                  <div>
+                    QC (7d):{" "}
+                    <span className="font-extrabold text-slate-900">{reviewSummary?.last7 ?? 0}</span>
+                  </div>
+                  <div>
+                    QC (30d):{" "}
+                    <span className="font-extrabold text-slate-900">{reviewSummary?.last30 ?? 0}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Initials */}
+              <label className="block">
+                <div className="text-sm font-semibold text-slate-800">Manager initials</div>
+                <input
+                  value={signoffInitials}
+                  onChange={(e) => setSignoffInitials(e.target.value.toUpperCase())}
+                  placeholder="e.g. WS"
+                  className="mt-1 h-10 w-full rounded-2xl border border-slate-300 bg-white px-3 text-sm uppercase shadow-sm"
+                  maxLength={6}
+                />
+              </label>
+
+              {/* Notes */}
+              <label className="block">
+                <div className="text-sm font-semibold text-slate-800">Notes (optional)</div>
+                <textarea
+                  value={signoffNotes}
+                  onChange={(e) => setSignoffNotes(e.target.value)}
+                  rows={4}
+                  placeholder="Anything to note today? Issues, corrective actions, follow-ups…"
+                  className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+                />
+              </label>
+
+              {lastSignoffToday && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                  Already signed off today at{" "}
+                  {new Date(lastSignoffToday.signed_at).toLocaleTimeString("en-GB", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}{" "}
+                  by {lastSignoffToday.manager_initials.toUpperCase()}.
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={savingSignoff}
+                  onClick={() => setSignoffOpen(false)}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  disabled={savingSignoff || !signoffInitials.trim()}
+                  onClick={saveSignoff}
+                  className="rounded-2xl bg-indigo-600 px-4 py-2 text-sm font-extrabold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60"
+                >
+                  {savingSignoff ? "Saving…" : "Save sign-off"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

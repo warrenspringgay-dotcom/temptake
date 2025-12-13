@@ -58,7 +58,7 @@ function Pill({
   return (
     <span
       className={cls(
-        "inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+        "inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold",
         toneCls
       )}
     >
@@ -345,7 +345,7 @@ export default function RoutineManager() {
           </div>
           <h1 className="mt-1 truncate text-xl font-semibold text-slate-900">Routines</h1>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-2 flex max-w-full flex-wrap items-center gap-2 overflow-hidden">
             <Pill>{totalCount} total</Pill>
             <Pill tone="emerald">{activeCount} active</Pill>
             {!canManage ? <Pill tone="amber">View-only</Pill> : null}
@@ -446,7 +446,7 @@ export default function RoutineManager() {
                     <div className="truncate text-sm font-semibold text-slate-900">
                       {r.name}
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <div className="mt-1 flex max-w-full flex-wrap items-center gap-2 overflow-hidden">
                       <Pill tone={isActive ? "emerald" : "amber"}>
                         {isActive ? "Active" : "Inactive"}
                       </Pill>
@@ -573,16 +573,23 @@ export default function RoutineManager() {
       {/* ===== View Card ===== */}
       {viewOpen && viewing && viewing.id && (
         <ModalPortal>
-          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" onClick={() => setViewOpen(false)}>
+          <div
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
+            onClick={() => setViewOpen(false)}
+          >
             <div
               className="mx-auto mt-10 w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 text-slate-900 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3 rounded-t-3xl bg-slate-900 px-4 py-3 text-white">
                 <div className="min-w-0">
-                  <div className="text-[11px] uppercase tracking-[0.2em] opacity-70">Routine</div>
+                  <div className="text-[11px] uppercase tracking-[0.2em] opacity-70">
+                    Routine
+                  </div>
                   <div className="truncate text-xl font-semibold">{viewing.name}</div>
-                  <div className="mt-1 flex flex-wrap gap-2">
+
+                  {/* FIX: clamp/wrap pills inside header */}
+                  <div className="mt-1 flex max-w-full flex-wrap gap-2 overflow-hidden">
                     <Pill tone={viewing.active ? "emerald" : "amber"}>
                       {viewing.active ? "Active" : "Inactive"}
                     </Pill>
@@ -591,7 +598,7 @@ export default function RoutineManager() {
                 </div>
 
                 <button
-                  className="rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20"
+                  className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20"
                   onClick={() => setViewOpen(false)}
                   type="button"
                 >
@@ -656,8 +663,9 @@ export default function RoutineManager() {
             className="fixed inset-0 z-50 overflow-y-auto bg-black/40 backdrop-blur-sm"
             onClick={() => setEditOpen(false)}
           >
+            {/* FIX: overflow-hidden so nothing leaks outside rounded corners */}
             <div
-              className="mx-auto mt-10 w-full max-w-3xl rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl"
+              className="mx-auto mt-10 w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-3 flex items-center justify-between">

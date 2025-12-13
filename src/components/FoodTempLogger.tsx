@@ -132,7 +132,9 @@ function clampPct(n: number) {
 
 /* ---------- Small UI helpers ---------- */
 
-const KPI_HEIGHT = "min-h-[132px]"; // ensures equal vertical size across all 3 tiles
+// Equal-height KPI tiles across all screen sizes.
+const KPI_HEIGHT = "min-h-[140px]"; // a touch taller so no tile looks cramped
+const KPI_FOOTER_H = "h-[30px]"; // reserved footer area keeps all tiles equal
 
 function KpiTile({
   title,
@@ -183,7 +185,7 @@ function KpiTile({
         "relative rounded-2xl border p-4 shadow-sm overflow-hidden",
         "w-full text-left",
         KPI_HEIGHT,
-        "flex flex-col",
+        "flex flex-col justify-between",
         toneCls
       )}
     >
@@ -212,14 +214,14 @@ function KpiTile({
         </div>
       </div>
 
-      {/* middle */}
+      {/* middle (clamped so it can’t stretch tiles unevenly) */}
       <div className="mt-2 text-[12px] font-medium text-slate-700/90 line-clamp-2">
         {sub}
       </div>
 
       {/* reserved footer space to keep heights equal */}
-      <div className="mt-auto pt-3">
-        <div className="h-[28px]">{footer ?? null}</div>
+      <div className="mt-3">
+        <div className={KPI_FOOTER_H}>{footer ?? null}</div>
       </div>
     </motion.div>
   );
@@ -462,7 +464,8 @@ export default function DashboardPage() {
         .eq("org_id", orgId);
 
       (data ?? []).forEach((r: any) => {
-        const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
+        const raw =
+          r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
         if (!raw) return;
         const d = new Date(raw);
         if (Number.isNaN(d.getTime())) return;
@@ -525,7 +528,9 @@ export default function DashboardPage() {
     try {
       const { data, error } = await supabase
         .from(WALL_TABLE)
-        .select("id, org_id, location_id, author_initials, message, color, created_at")
+        .select(
+          "id, org_id, location_id, author_initials, message, color, created_at"
+        )
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
         .limit(3);
@@ -536,7 +541,8 @@ export default function DashboardPage() {
       const mapped: WallPost[] =
         (data ?? []).map((r: any) => ({
           id: String(r.id),
-          initials: r.author_initials ?? r.staff_initials ?? r.initials ?? "??",
+          initials:
+            r.author_initials ?? r.staff_initials ?? r.initials ?? "??",
           message: r.message ?? "",
           created_at: r.created_at ?? new Date().toISOString(),
           colorClass: (r.color as string) || "bg-yellow-200",
@@ -565,7 +571,8 @@ export default function DashboardPage() {
     const bits: string[] = [];
     if (kpi.tempFails7d > 0) bits.push(`${kpi.tempFails7d} failed temps (7d)`);
     if (kpi.trainingOver > 0) bits.push(`${kpi.trainingOver} training overdue`);
-    if (kpi.allergenOver > 0) bits.push(`${kpi.allergenOver} allergen review overdue`);
+    if (kpi.allergenOver > 0)
+      bits.push(`${kpi.allergenOver} allergen review overdue`);
     if (!bits.length) return "No training, allergen or temperature issues flagged.";
     return bits.join(" · ");
   })();
@@ -576,7 +583,9 @@ export default function DashboardPage() {
   };
 
   const cleaningPct =
-    kpi.cleaningDueToday > 0 ? (kpi.cleaningDoneToday / kpi.cleaningDueToday) * 100 : 0;
+    kpi.cleaningDueToday > 0
+      ? (kpi.cleaningDoneToday / kpi.cleaningDueToday) * 100
+      : 0;
 
   const cleaningTone: "danger" | "warn" | "ok" | "neutral" =
     kpi.cleaningDueToday === 0
@@ -590,13 +599,14 @@ export default function DashboardPage() {
   const tempTone: "danger" | "warn" | "ok" | "neutral" =
     kpi.tempLogsToday === 0 ? "danger" : "ok";
 
-  const alertsTone: "danger" | "warn" | "ok" | "neutral" =
-    hasAnyKpiAlert ? "danger" : "ok";
+  const alertsTone: "danger" | "warn" | "ok" | "neutral" = hasAnyKpiAlert
+    ? "danger"
+    : "ok";
 
   /* ---------- render ---------- */
 
   return (
-    <div className="mx-auto max-w-5xl px-3 sm:px-4 pt-2 pb-4 space-y-4">
+    <div className="mx-auto max-w-5xl px-3 sm:px-4 pt-1 pb-4 space-y-4">
       {/* Header – tighter */}
       <header className="text-center">
         <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">
