@@ -125,6 +125,161 @@ function isDueOn(t: CleanTask, ymd: string) {
   }
 }
 
+function clampPct(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
+}
+
+/* ---------- Small UI helpers ---------- */
+
+const KPI_HEIGHT = "min-h-[132px]"; // ensures equal vertical size across all 3 tiles
+
+function KpiTile({
+  title,
+  icon,
+  tone,
+  big,
+  sub,
+  href,
+  onClick,
+  accent = true,
+  footer,
+}: {
+  title: string;
+  icon: string;
+  tone: "danger" | "warn" | "ok" | "neutral";
+  big: React.ReactNode;
+  sub: React.ReactNode;
+  href?: string;
+  onClick?: () => void;
+  accent?: boolean;
+  footer?: React.ReactNode; // always rendered area (reserved height)
+}) {
+  const toneCls =
+    tone === "danger"
+      ? "border-red-200 bg-red-50/90 text-red-900"
+      : tone === "warn"
+      ? "border-amber-200 bg-amber-50/90 text-amber-950"
+      : tone === "ok"
+      ? "border-emerald-200 bg-emerald-50/90 text-emerald-950"
+      : "border-slate-200 bg-white/90 text-slate-900";
+
+  const accentCls =
+    tone === "danger"
+      ? "bg-red-400"
+      : tone === "warn"
+      ? "bg-amber-400"
+      : tone === "ok"
+      ? "bg-emerald-400"
+      : "bg-slate-300";
+
+  const Inner = (
+    <motion.div
+      initial={{ opacity: 0, y: 10, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 260, damping: 20 }}
+      whileHover={{ y: -3 }}
+      className={cls(
+        "relative rounded-2xl border p-4 shadow-sm overflow-hidden",
+        "w-full text-left",
+        KPI_HEIGHT,
+        "flex flex-col",
+        toneCls
+      )}
+    >
+      {accent ? (
+        <div
+          className={cls(
+            "absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80",
+            accentCls
+          )}
+        />
+      ) : null}
+
+      {/* top */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-700/90">
+            {title}
+          </div>
+          <div className="mt-2 text-4xl font-extrabold leading-none drop-shadow-sm">
+            {big}
+          </div>
+        </div>
+
+        <div className="shrink-0 text-lg opacity-90" aria-hidden="true">
+          {icon}
+        </div>
+      </div>
+
+      {/* middle */}
+      <div className="mt-2 text-[12px] font-medium text-slate-700/90 line-clamp-2">
+        {sub}
+      </div>
+
+      {/* reserved footer space to keep heights equal */}
+      <div className="mt-auto pt-3">
+        <div className="h-[28px]">{footer ?? null}</div>
+      </div>
+    </motion.div>
+  );
+
+  if (href) {
+    return (
+      <Link href={href} className="block w-full">
+        {Inner}
+      </Link>
+    );
+  }
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className="w-full">
+        {Inner}
+      </button>
+    );
+  }
+
+  return <div className="w-full">{Inner}</div>;
+}
+
+function ProgressBar({
+  pct,
+  tone,
+}: {
+  pct: number;
+  tone: "danger" | "warn" | "ok" | "neutral";
+}) {
+  const bg =
+    tone === "danger"
+      ? "bg-red-200/70"
+      : tone === "warn"
+      ? "bg-amber-200/70"
+      : tone === "ok"
+      ? "bg-emerald-200/70"
+      : "bg-slate-200/70";
+
+  const fill =
+    tone === "danger"
+      ? "bg-red-500"
+      : tone === "warn"
+      ? "bg-amber-500"
+      : tone === "ok"
+      ? "bg-emerald-500"
+      : "bg-slate-500";
+
+  const p = clampPct(pct);
+
+  return (
+    <div className={cls("h-3 w-full overflow-hidden rounded-full", bg)}>
+      <div
+        className={cls("h-full rounded-full transition-all duration-300", fill)}
+        style={{ width: `${p}%` }}
+      />
+    </div>
+  );
+}
+
 /* ---------- Component ---------- */
 
 export default function DashboardPage() {
@@ -289,10 +444,7 @@ export default function DashboardPage() {
     }));
   }
 
-  async function loadTrainingAndAllergenKpi(
-    orgId: string,
-    cancelled: boolean
-  ) {
+  async function loadTrainingAndAllergenKpi(orgId: string, cancelled: boolean) {
     const soon = new Date();
     soon.setDate(soon.getDate() + 14);
     const todayD = new Date();
@@ -310,11 +462,7 @@ export default function DashboardPage() {
         .eq("org_id", orgId);
 
       (data ?? []).forEach((r: any) => {
-        const raw =
-          r.training_expires_at ??
-          r.training_expiry ??
-          r.expires_at ??
-          null;
+        const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
         if (!raw) return;
         const d = new Date(raw);
         if (Number.isNaN(d.getTime())) return;
@@ -377,9 +525,7 @@ export default function DashboardPage() {
     try {
       const { data, error } = await supabase
         .from(WALL_TABLE)
-        .select(
-          "id, org_id, location_id, author_initials, message, color, created_at"
-        )
+        .select("id, org_id, location_id, author_initials, message, color, created_at")
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
         .limit(3);
@@ -390,11 +536,7 @@ export default function DashboardPage() {
       const mapped: WallPost[] =
         (data ?? []).map((r: any) => ({
           id: String(r.id),
-          initials:
-            r.author_initials ??
-            r.staff_initials ??
-            r.initials ??
-            "??",
+          initials: r.author_initials ?? r.staff_initials ?? r.initials ?? "??",
           message: r.message ?? "",
           created_at: r.created_at ?? new Date().toISOString(),
           colorClass: (r.color as string) || "bg-yellow-200",
@@ -423,10 +565,8 @@ export default function DashboardPage() {
     const bits: string[] = [];
     if (kpi.tempFails7d > 0) bits.push(`${kpi.tempFails7d} failed temps (7d)`);
     if (kpi.trainingOver > 0) bits.push(`${kpi.trainingOver} training overdue`);
-    if (kpi.allergenOver > 0)
-      bits.push(`${kpi.allergenOver} allergen review overdue`);
-    if (!bits.length)
-      return "No training, allergen or temperature issues flagged.";
+    if (kpi.allergenOver > 0) bits.push(`${kpi.allergenOver} allergen review overdue`);
+    if (!bits.length) return "No training, allergen or temperature issues flagged.";
     return bits.join(" · ");
   })();
 
@@ -435,137 +575,120 @@ export default function DashboardPage() {
     window.dispatchEvent(new Event("tt-open-temp-modal"));
   };
 
+  const cleaningPct =
+    kpi.cleaningDueToday > 0 ? (kpi.cleaningDoneToday / kpi.cleaningDueToday) * 100 : 0;
+
+  const cleaningTone: "danger" | "warn" | "ok" | "neutral" =
+    kpi.cleaningDueToday === 0
+      ? "neutral"
+      : kpi.cleaningDoneToday === kpi.cleaningDueToday
+      ? "ok"
+      : kpi.cleaningDoneToday === 0
+      ? "danger"
+      : "warn";
+
+  const tempTone: "danger" | "warn" | "ok" | "neutral" =
+    kpi.tempLogsToday === 0 ? "danger" : "ok";
+
+  const alertsTone: "danger" | "warn" | "ok" | "neutral" =
+    hasAnyKpiAlert ? "danger" : "ok";
+
   /* ---------- render ---------- */
 
   return (
-    <div className="max-w-5xl mx-auto px-3 sm:px-4 py-4 space-y-5">
-      {/* Header – compact, date only */}
-      <header className="text-center space-y-1">
-        <h1 className="text-xl sm:text-2xl font-semibold text-slate-900">
+    <div className="mx-auto max-w-5xl px-3 sm:px-4 pt-2 pb-4 space-y-4">
+      {/* Header – tighter */}
+      <header className="text-center">
+        <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">
           {headerDate}
         </h1>
-        <p className="text-xs sm:text-sm text-slate-500">
-          At-a-glance view of safety, cleaning and compliance.
+        <p className="mt-0.5 text-xs sm:text-sm font-medium text-slate-500">
+          Safety, cleaning and compliance at a glance.
         </p>
       </header>
 
       {/* KPI row */}
-      <section className="rounded-3xl border border.white/40 border-white/40 bg.white/80 bg-white/80 p-4 shadow-lg shadow-slate-900/5 backdrop-blur space-y-3">
+      <section className="rounded-3xl border border-white/50 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur space-y-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {/* Temps today – CLICKABLE: opens temp quick-entry modal */}
-          <motion.button
-            type="button"
-            onClick={openTempModal}
-            initial={{ opacity: 0, y: 10, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ type: "spring", stiffness: 260, damping: 20 }}
-            whileHover={{ y: -3 }}
-            className={cls(
-              "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px] w-full text-left",
+          {/* Temps today */}
+          <KpiTile
+            title="Temperature logs"
+            icon={kpi.tempLogsToday === 0 ? "❌" : "✅"}
+            tone={tempTone}
+            big={kpi.tempLogsToday}
+            sub={
               kpi.tempLogsToday === 0
-                ? "border-red-200 bg-red-50/90 text-red-800"
-                : "border-emerald-200 bg-emerald-50/90 text-emerald-900"
-            )}
-          >
-            <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.15em]">
-              <span>Temperature logs</span>
-              <span className="text-base" aria-hidden="true">
-                {kpi.tempLogsToday === 0 ? "❌" : "✅"}
-              </span>
-            </div>
-            <div className="mt-1 text-2xl font-semibold">
-              {kpi.tempLogsToday}
-            </div>
-            <div className="mt-1 text-[11px] opacity-80">
-              {kpi.tempLogsToday === 0
                 ? "No temperatures logged yet today."
-                : "At least one temperature check recorded."}
-            </div>
-          </motion.button>
-
-          {/* Cleaning today – CLICKABLE: go to cleaning rota */}
-          <Link href="/cleaning-rota" className="w-full">
-            <motion.div
-              initial={{ opacity: 0, y: 10, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{
-                type: "spring",
-                stiffness: 260,
-                damping: 20,
-                delay: 0.05,
-              }}
-              whileHover={{ y: -3 }}
-              className={cls(
-                "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px]",
-                kpi.cleaningDueToday === 0
-                  ? "border-slate-200 bg-white/90 text-slate-900"
-                  : kpi.cleaningDoneToday === kpi.cleaningDueToday
-                  ? "border-emerald-200 bg-emerald-50/90 text-emerald-900"
-                  : "border-amber-200 bg-amber-50/90 text-amber-900"
-              )}
-            >
-              <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.15em]">
-                <span>Cleaning (today)</span>
-                <span className="text-base" aria-hidden="true">
-                  🧽
-                </span>
+                : "At least one temperature check recorded."
+            }
+            onClick={openTempModal}
+            footer={
+              <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
+                <span>Tap to log</span>
+                <span className="opacity-80">Today</span>
               </div>
-              <div className="mt-1 text-2xl font-semibold">
+            }
+          />
+
+          {/* Cleaning today */}
+          <KpiTile
+            title="Cleaning (today)"
+            icon="🧽"
+            tone={cleaningTone}
+            big={
+              <span>
                 {kpi.cleaningDoneToday}/{kpi.cleaningDueToday}
-              </div>
-              <div className="mt-1 text-[11px] opacity-80">
-                {kpi.cleaningDueToday === 0
-                  ? "No cleaning tasks scheduled for today."
-                  : kpi.cleaningDoneToday === kpi.cleaningDueToday
-                  ? "All scheduled cleaning tasks completed."
-                  : "Some scheduled cleaning tasks still open."}
-              </div>
-            </motion.div>
-          </Link>
+              </span>
+            }
+            sub={
+              kpi.cleaningDueToday === 0
+                ? "No cleaning tasks scheduled for today."
+                : kpi.cleaningDoneToday === kpi.cleaningDueToday
+                ? "All scheduled cleaning tasks completed."
+                : "Some scheduled cleaning tasks still open."
+            }
+            href="/cleaning-rota"
+            footer={
+              kpi.cleaningDueToday > 0 ? (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
+                    <span>Progress</span>
+                    <span>{Math.round(clampPct(cleaningPct))}%</span>
+                  </div>
+                  <ProgressBar pct={cleaningPct} tone={cleaningTone} />
+                </div>
+              ) : (
+                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
+                  <span>Progress</span>
+                  <span>0%</span>
+                </div>
+              )
+            }
+          />
 
-          {/* Alerts – CLICKABLE: go to manager view (alerts) */}
-          <Link href="/reports" className="w-full">
-            <motion.div
-              initial={{ opacity: 0, y: 10, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{
-                type: "spring",
-                stiffness: 260,
-                damping: 20,
-                delay: 0.1,
-              }}
-              whileHover={{ y: -3 }}
-              className={cls(
-                "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[88px]",
-                hasAnyKpiAlert
-                  ? "border-red-200 bg-red-50/90 text-red-800"
-                  : "border-emerald-200 bg-emerald-50/90 text-emerald-900"
-              )}
-            >
-              <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.15em]">
-                <span>Alerts</span>
-                <span className="text-base" aria-hidden="true">
-                  {hasAnyKpiAlert ? "⚠️" : "✅"}
-                </span>
+          {/* Alerts */}
+          <KpiTile
+            title="Alerts"
+            icon={hasAnyKpiAlert ? "⚠️" : "✅"}
+            tone={alertsTone}
+            big={alertsCount}
+            sub={alertsSummary}
+            href="/reports"
+            footer={
+              <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
+                <span>View details</span>
+                <span className="opacity-80">{hasAnyKpiAlert ? "Now" : "OK"}</span>
               </div>
-              <div className="mt-1 text-2xl font-semibold">
-                {alertsCount}
-              </div>
-              <div className="mt-1 text-[11px] opacity-80">
-                {alertsSummary}
-              </div>
-            </motion.div>
-          </Link>
+            }
+          />
         </div>
 
         {err && (
-          <div className="mt-2 rounded-xl border border-red-200 bg-red-50/90 px-3 py-2 text-xs text-red-800">
+          <div className="mt-1 rounded-2xl border border-red-200 bg-red-50/90 px-3 py-2 text-xs font-semibold text-red-800">
             {err}
           </div>
         )}
       </section>
-
-
 
       {/* Middle row: wall + EOM */}
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -573,16 +696,14 @@ export default function DashboardPage() {
         <div className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur flex flex-col">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div>
-              <h2 className="text-sm font-semibold text-slate-900">
-                Kitchen wall – latest posts
-              </h2>
-              <p className="text-[11px] text-slate-500">
-                The last three notes pinned to the kitchen wall.
+              <h2 className="text-sm font-extrabold text-slate-900">Kitchen wall</h2>
+              <p className="text-[11px] font-medium text-slate-500">
+                Latest three notes from the team.
               </p>
             </div>
             <Link
               href="/wall"
-              className="text-[11px] font-medium text-amber-700 hover:text-amber-800 underline-offset-2 hover:underline"
+              className="text-[11px] font-semibold text-amber-700 hover:text-amber-800 underline-offset-2 hover:underline"
             >
               View wall
             </Link>
@@ -590,8 +711,7 @@ export default function DashboardPage() {
 
           {wallPosts.length === 0 ? (
             <div className="mt-1 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-xs text-slate-500 flex-1 flex items-center">
-              No posts yet. When the team adds messages on the wall, the latest
-              three will show here.
+              No posts yet. When the team adds messages on the wall, the latest three will show here.
             </div>
           ) : (
             <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -613,14 +733,14 @@ export default function DashboardPage() {
                   whileHover={{ y: -3 }}
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <div className="text-base font-bold tracking-wide text-slate-900">
+                    <div className="text-base font-extrabold tracking-wide text-slate-900">
                       {p.initials || "??"}
                     </div>
-                    <span className="text-[10px] text-slate-500">
+                    <span className="rounded-full bg-white/60 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
                       {toISODate(p.created_at) ?? ""}
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-800 line-clamp-3">
+                  <div className="text-[11px] font-medium text-slate-800 line-clamp-3">
                     {p.message}
                   </div>
                 </motion.div>
@@ -632,7 +752,7 @@ export default function DashboardPage() {
         {/* Employee of the month */}
         <div className="rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-md shadow-amber-200/60 flex flex-col">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-amber-900">
+            <h2 className="text-sm font-extrabold text-amber-900">
               Employee of the month
             </h2>
             <span className="text-xl" aria-hidden="true">
@@ -642,43 +762,36 @@ export default function DashboardPage() {
 
           {eom ? (
             <>
-              <div className="text-lg font-bold text-amber-900 truncate">
+              <div className="text-lg font-extrabold text-amber-900 truncate">
                 {eom.display_name}
               </div>
-              <div className="mt-1 text-xs text-amber-900/90 space-y-0.5">
-                <div>
-                  Total points:{" "}
-                  <span className="font-semibold">
-                    {eom.points ?? 0}
-                  </span>
-                </div>
-                <div>
-                  Cleaning tasks:{" "}
-                  <span className="font-semibold">
-                    {eom.cleaning_count ?? 0}
-                  </span>
-                  {" · "}Temp logs:{" "}
-                  <span className="font-semibold">
-                    {eom.temp_logs_count ?? 0}
-                  </span>
-                </div>
+
+              <div className="mt-2 flex flex-wrap gap-2">
+                <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-extrabold text-amber-900 border border-amber-200/60">
+                  ⭐ {eom.points ?? 0} points
+                </span>
+                <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-amber-900 border border-amber-200/60">
+                  🧽 {eom.cleaning_count ?? 0} cleanings
+                </span>
+                <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-amber-900 border border-amber-200/60">
+                  🌡 {eom.temp_logs_count ?? 0} temps
+                </span>
               </div>
-              <p className="mt-3 text-[11px] text-amber-900/80">
-                Based on completed cleaning tasks and temperature logs this
-                month.
+
+              <p className="mt-3 text-[11px] font-medium text-amber-900/80">
+                Based on completed cleaning tasks and temperature logs this month.
               </p>
             </>
           ) : (
-            <p className="text-xs text-amber-900/80">
-              No leaderboard data yet. Once your team completes cleaning tasks
-              and logs temperatures, the top performer will be highlighted here.
+            <p className="text-xs font-medium text-amber-900/80">
+              No leaderboard data yet. Once your team completes cleaning tasks and logs temperatures, the top performer will be highlighted here.
             </p>
           )}
 
           <div className="mt-3">
             <Link
               href="/leaderboard"
-              className="inline-flex items-center rounded-2xl bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-amber-700"
+              className="inline-flex items-center rounded-2xl bg-amber-600 px-3 py-1.5 text-xs font-extrabold text-white shadow-sm hover:bg-amber-700"
             >
               View full leaderboard
             </Link>
@@ -686,9 +799,9 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* Quick actions with emojis + animation */}
+      {/* Quick actions */}
       <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur space-y-3">
-        <h2 className="text-sm font-semibold text-slate-900">Quick actions</h2>
+        <h2 className="text-sm font-extrabold text-slate-900">Quick actions</h2>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <QuickLink href="/routines" label="Routines" icon="📋" />
           <QuickLink href="/allergens" label="Allergens" icon="⚠️" />
@@ -702,7 +815,7 @@ export default function DashboardPage() {
       </section>
 
       {loading && (
-        <p className="text-center text-[11px] text-slate-400">
+        <p className="text-center text-[11px] font-medium text-slate-400">
           Loading dashboard…
         </p>
       )}
@@ -730,7 +843,7 @@ function QuickLink({
     >
       <Link
         href={href}
-        className="flex items-center justify-center gap-1 rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+        className="flex items-center justify-center gap-1 rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
       >
         <span aria-hidden="true">{icon}</span>
         <span>{label}</span>

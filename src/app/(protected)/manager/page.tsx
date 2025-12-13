@@ -3,6 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
@@ -143,12 +144,95 @@ function addMonths(date: Date, months: number): Date {
   const d = new Date(date);
   const day = d.getDate();
   d.setMonth(d.getMonth() + months);
-
-  // Handle end-of-month rollover (e.g. 31st -> last day of month)
-  if (d.getDate() < day) {
-    d.setDate(0);
-  }
+  if (d.getDate() < day) d.setDate(0);
   return d;
+}
+
+const cls = (...p: Array<string | false | null | undefined>) =>
+  p.filter(Boolean).join(" ");
+
+/* ---------- KPI Tile ---------- */
+
+const KPI_HEIGHT = "min-h-[120px]";
+
+function KpiTile({
+  title,
+  value,
+  sub,
+  tone,
+  icon,
+  onClick,
+}: {
+  title: string;
+  value: React.ReactNode;
+  sub: React.ReactNode;
+  tone: "neutral" | "ok" | "warn" | "danger";
+  icon?: string;
+  onClick?: () => void;
+}) {
+  const toneCls =
+    tone === "danger"
+      ? "border-red-200 bg-red-50/90"
+      : tone === "warn"
+      ? "border-amber-200 bg-amber-50/90"
+      : tone === "ok"
+      ? "border-emerald-200 bg-emerald-50/90"
+      : "border-slate-200 bg-white/90";
+
+  const accentCls =
+    tone === "danger"
+      ? "bg-red-400"
+      : tone === "warn"
+      ? "bg-amber-400"
+      : tone === "ok"
+      ? "bg-emerald-400"
+      : "bg-slate-300";
+
+  const Inner = (
+    <motion.div
+      whileHover={{ y: -3 }}
+      className={cls(
+        "relative rounded-2xl border p-4 shadow-sm overflow-hidden",
+        "flex flex-col",
+        KPI_HEIGHT,
+        toneCls
+      )}
+    >
+      <div
+        className={cls(
+          "absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80",
+          accentCls
+        )}
+      />
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-700/90">
+            {title}
+          </div>
+          <div className="mt-2 text-3xl font-extrabold text-slate-900 leading-none">
+            {value}
+          </div>
+        </div>
+        {icon ? (
+          <div className="shrink-0 text-lg opacity-90" aria-hidden="true">
+            {icon}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mt-auto pt-3 text-[11px] font-medium text-slate-600">
+        {sub}
+      </div>
+    </motion.div>
+  );
+
+  return onClick ? (
+    <button type="button" onClick={onClick} className="w-full text-left">
+      {Inner}
+    </button>
+  ) : (
+    Inner
+  );
 }
 
 /* ===================================================================== */
@@ -172,14 +256,12 @@ export default function ManagerDashboardPage() {
     useState<ReviewSummary | null>(null);
 
   const [todayTemps, setTodayTemps] = useState<TodayTempRow[]>([]);
-  const [todayCleaningRuns, setTodayCleaningRuns] = useState<
-    TodayCleaningRow[]
-  >([]);
+  const [todayCleaningRuns, setTodayCleaningRuns] = useState<TodayCleaningRow[]>(
+    []
+  );
 
   const [educationDue, setEducationDue] = useState<EducationRow[]>([]);
-  const [foodHygiene, setFoodHygiene] = useState<FoodHygieneStatus | null>(
-    null
-  );
+  const [foodHygiene, setFoodHygiene] = useState<FoodHygieneStatus | null>(null);
 
   const [loadingCards, setLoadingCards] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -201,7 +283,7 @@ export default function ManagerDashboardPage() {
   const todayISO = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
-    return d.toISOString().slice(0, 10); // yyyy-mm-dd
+    return d.toISOString().slice(0, 10);
   }, []);
 
   /* ---------- Boot: org + location ---------- */
@@ -210,7 +292,6 @@ export default function ManagerDashboardPage() {
     (async () => {
       const oId = await getActiveOrgIdClient();
       setOrgId(oId ?? null);
-
       if (!oId) return;
 
       setLocationLoading(true);
@@ -232,11 +313,8 @@ export default function ManagerDashboardPage() {
         setLocations(locs);
 
         const activeLoc = await getActiveLocationIdClient();
-        if (activeLoc) {
-          setLocationId(activeLoc);
-        } else if (locs[0]) {
-          setLocationId(locs[0].id);
-        }
+        if (activeLoc) setLocationId(activeLoc);
+        else if (locs[0]) setLocationId(locs[0].id);
       } catch (e: any) {
         console.error(e);
         setErr(e?.message ?? "Failed to load locations.");
@@ -318,7 +396,6 @@ export default function ManagerDashboardPage() {
         tempsListRes,
         cleaningListRes,
       ] = await Promise.all([
-        // Temps logged today (count)
         supabase
           .from("food_temp_logs")
           .select("id", { count: "exact", head: true })
@@ -327,7 +404,6 @@ export default function ManagerDashboardPage() {
           .gte("at", dateStartToday.toISOString())
           .lt("at", dateEndToday.toISOString()),
 
-        // Temp fails in last 7 days
         supabase
           .from("food_temp_logs")
           .select("id", { count: "exact", head: true })
@@ -336,13 +412,11 @@ export default function ManagerDashboardPage() {
           .eq("status", "fail")
           .gte("at", sevenDaysAgoISO),
 
-        // Trainings – used for summary + education modal
         supabase
           .from("trainings")
           .select("id, staff_id, type, awarded_on, expires_on, created_at")
           .eq("org_id", orgId),
 
-        // Cleaning task runs today (count) - use done_at
         supabase
           .from("cleaning_task_runs")
           .select("id", { count: "exact", head: true })
@@ -351,18 +425,13 @@ export default function ManagerDashboardPage() {
           .gte("done_at", dateStartToday.toISOString())
           .lt("done_at", dateEndToday.toISOString()),
 
-        // Staff reviews in last 30 days
         supabase
           .from("staff_reviews")
-          .select("id, staff_id, review_date", {
-            count: "exact",
-            head: false,
-          })
+          .select("id, staff_id, review_date", { count: "exact", head: false })
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .gte("review_date", thirtyDaysAgoISO.slice(0, 10)),
 
-        // Individual temp logs for today
         supabase
           .from("food_temp_logs")
           .select("*")
@@ -373,7 +442,6 @@ export default function ManagerDashboardPage() {
           .order("at", { ascending: false })
           .limit(200),
 
-        // Individual cleaning runs for today
         supabase
           .from("cleaning_task_runs")
           .select("*")
@@ -385,7 +453,6 @@ export default function ManagerDashboardPage() {
           .limit(200),
       ]);
 
-      /* ---- Temps summary ---- */
       setTempsSummary({
         today: tempsRes.count ?? 0,
         fails7d: failsRes.count ?? 0,
@@ -396,7 +463,6 @@ export default function ManagerDashboardPage() {
       const today0 = new Date(todayISO);
       today0.setHours(0, 0, 0, 0);
 
-      // staff IDs we need names for
       const staffIds = Array.from(
         new Set(
           trainingRows
@@ -406,10 +472,7 @@ export default function ManagerDashboardPage() {
         )
       );
 
-      const staffMap = new Map<
-        string,
-        { name: string; initials: string | null }
-      >();
+      const staffMap = new Map<string, { name: string; initials: string | null }>();
 
       if (staffIds.length) {
         const { data: staffData } = await supabase
@@ -463,10 +526,7 @@ export default function ManagerDashboardPage() {
       });
       setEducationDue(overdueRows);
 
-      /* ---- Cleaning summary ---- */
-      setCleaningSummary({
-        loggedToday: cleaningRes.count ?? 0,
-      });
+      setCleaningSummary({ loggedToday: cleaningRes.count ?? 0 });
 
       /* ---- Reviews summary ---- */
       const reviewRows: any[] = (reviewsRes.data as any[]) ?? [];
@@ -475,10 +535,10 @@ export default function ManagerDashboardPage() {
         return r.review_date >= sevenDaysAgoISO.slice(0, 10);
       }).length;
       const last30 = reviewRows.length;
-      const staffSet = new Set(
-        reviewRows.map((r) => (r.staff_id ? String(r.staff_id) : ""))
-      );
+
+      const staffSet = new Set(reviewRows.map((r) => (r.staff_id ? String(r.staff_id) : "")));
       staffSet.delete("");
+
       setReviewSummary({
         last7,
         last30,
@@ -487,53 +547,52 @@ export default function ManagerDashboardPage() {
 
       /* ---- Today’s temp logs list ---- */
       const tempsData: any[] = (tempsListRes.data as any[]) ?? [];
-      const mappedTemps: TodayTempRow[] = tempsData.map((r) => {
-        const ts =
-          r.created_at || r.at ? new Date(r.created_at ?? r.at) : null;
-
-        return {
-          id: String(r.id),
-          time: formatTimeHM(ts) ?? "—",
-          staff: r.staff_initials ?? r.initials ?? "—",
-          item: r.note ?? "—",
-          area: r.area ?? "—",
-          temp_c: r.temp_c != null ? Number(r.temp_c) : null,
-          status: r.status ?? null,
-        };
-      });
-      setTodayTemps(mappedTemps);
+      setTodayTemps(
+        tempsData.map((r) => {
+          const ts = r.created_at || r.at ? new Date(r.created_at ?? r.at) : null;
+          return {
+            id: String(r.id),
+            time: formatTimeHM(ts) ?? "—",
+            staff: r.staff_initials ?? r.initials ?? "—",
+            item: r.note ?? "—",
+            area: r.area ?? "—",
+            temp_c: r.temp_c != null ? Number(r.temp_c) : null,
+            status: r.status ?? null,
+          };
+        })
+      );
 
       /* ---- Today’s cleaning runs list ---- */
       const cleaningData: any[] = (cleaningListRes.data as any[]) ?? [];
-      const mappedCleaning: TodayCleaningRow[] = cleaningData.map((r) => {
-        const doneAt: Date | null = r.done_at
-          ? new Date(r.done_at)
-          : r.created_at
-          ? new Date(r.created_at)
-          : null;
+      setTodayCleaningRuns(
+        cleaningData.map((r) => {
+          const doneAt: Date | null = r.done_at
+            ? new Date(r.done_at)
+            : r.created_at
+            ? new Date(r.created_at)
+            : null;
 
-        const routineName =
-          r.routine_name || r.routine || r.name || "Cleaning routine";
+          const routineName = r.routine_name || r.routine || r.name || "Cleaning routine";
 
-        const staffNameOrInitials =
-          r.completed_by_initials ||
-          r.staff_initials ||
-          r.initials ||
-          r.completed_by ||
-          r.done_by ||
-          null;
+          const staffNameOrInitials =
+            r.completed_by_initials ||
+            r.staff_initials ||
+            r.initials ||
+            r.completed_by ||
+            r.done_by ||
+            null;
 
-        const notesVal = r.notes || r.comment || null;
+          const notesVal = r.notes || r.comment || null;
 
-        return {
-          id: String(r.id),
-          time: formatTimeHM(doneAt),
-          routine: routineName,
-          staff: staffNameOrInitials,
-          notes: notesVal,
-        };
-      });
-      setTodayCleaningRuns(mappedCleaning);
+          return {
+            id: String(r.id),
+            time: formatTimeHM(doneAt),
+            routine: routineName,
+            staff: staffNameOrInitials,
+            notes: notesVal,
+          };
+        })
+      );
 
       /* ---- Food hygiene rating / reminder (18-month cycle) ---- */
       try {
@@ -551,12 +610,9 @@ export default function ManagerDashboardPage() {
 
         let chosen: HygieneRow | null = null;
 
-        // 1) Try inspections table (if you ever use it)
         const { data: inspRows } = await supabase
           .from("food_hygiene_inspections")
-          .select(
-            "inspected_on, inspection_date, rating, location_id, created_at"
-          )
+          .select("inspected_on, inspection_date, rating, location_id, created_at")
           .eq("org_id", orgId)
           .order("inspected_on", { ascending: false })
           .order("inspection_date", { ascending: false })
@@ -564,17 +620,12 @@ export default function ManagerDashboardPage() {
           .limit(20);
 
         const allInsp = (inspRows ?? []) as HygieneRow[];
-
         if (allInsp.length) {
-          if (locationId) {
-            chosen =
-              allInsp.find((r) => r.location_id === locationId) ?? allInsp[0];
-          } else {
-            chosen = allInsp[0];
-          }
+          chosen = locationId
+            ? allInsp.find((r) => r.location_id === locationId) ?? allInsp[0]
+            : allInsp[0];
         }
 
-        // 2) Fallback to ratings table (this is what you're using now)
         if (!chosen) {
           const { data: ratingRows } = await supabase
             .from("food_hygiene_ratings")
@@ -585,15 +636,10 @@ export default function ManagerDashboardPage() {
             .limit(50);
 
           const allRatings = (ratingRows ?? []) as HygieneRow[];
-
           if (allRatings.length) {
-            if (locationId) {
-              chosen =
-                allRatings.find((r) => r.location_id === locationId) ??
-                allRatings[0];
-            } else {
-              chosen = allRatings[0];
-            }
+            chosen = locationId
+              ? allRatings.find((r) => r.location_id === locationId) ?? allRatings[0]
+              : allRatings[0];
           }
         }
 
@@ -611,9 +657,8 @@ export default function ManagerDashboardPage() {
             setFoodHygiene(null);
           } else {
             const lastDate = new Date(rawDate);
-            if (Number.isNaN(lastDate.getTime())) {
-              setFoodHygiene(null);
-            } else {
+            if (Number.isNaN(lastDate.getTime())) setFoodHygiene(null);
+            else {
               const nextDue = addMonths(lastDate, 18);
               const diffDays = Math.round(
                 (nextDue.getTime() - todayZero.getTime()) / 86400000
@@ -630,7 +675,6 @@ export default function ManagerDashboardPage() {
                 nextDueOn: nextDue.toISOString().slice(0, 10),
                 daysToDue: diffDays,
                 overdue: diffDays < 0,
-                // "soon" = within next 90 days
                 dueSoon: diffDays >= 0 && diffDays <= 90,
               });
             }
@@ -649,9 +693,7 @@ export default function ManagerDashboardPage() {
   }
 
   useEffect(() => {
-    if (orgId && locationId) {
-      refreshCards();
-    }
+    if (orgId && locationId) refreshCards();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, locationId]);
 
@@ -707,319 +749,216 @@ export default function ManagerDashboardPage() {
 
   const trainingOverdueCount = trainingSummary?.overdue ?? 0;
 
+  const tempsTone: "neutral" | "ok" | "warn" | "danger" =
+    (tempsSummary?.fails7d ?? 0) > 0 ? "danger" : "ok";
+
+  const trainingTone: "neutral" | "ok" | "warn" | "danger" =
+    trainingOverdueCount > 0 ? "danger" : "ok";
+
+  const foodTone: "neutral" | "ok" | "warn" | "danger" =
+    !foodHygiene
+      ? "neutral"
+      : foodHygiene.overdue
+      ? "danger"
+      : foodHygiene.dueSoon
+      ? "warn"
+      : "ok";
+
   /* ====================== RENDER ====================== */
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
+    <div className="mx-auto max-w-6xl px-3 sm:px-4 pt-2 pb-6 space-y-4">
       {/* Header + location picker */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
             Manager
           </div>
-          <h1 className="text-xl font-semibold text-slate-900">
+          <h1 className="text-xl font-extrabold text-slate-900 leading-tight">
             Manager Dashboard
           </h1>
-          <div className="mt-1 text-xs text-slate-500">
-            Today: {formatPrettyDate(today)}
+          <div className="mt-0.5 text-xs font-medium text-slate-500">
+            Today: {formatPrettyDate(today)} · {currentLocationName}
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 sm:items-end">
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Location
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={locationId ?? ""}
-              onChange={(e) => setLocationId(e.target.value || null)}
-              disabled={locationLoading}
-              className="h-9 rounded-xl border border-slate-300 bg-white/90 px-3 text-sm shadow-sm"
-            >
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={refreshCards}
-              disabled={loadingCards || !orgId || !locationId}
-              className="rounded-xl bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-            >
-              Refresh
-            </button>
-          </div>
-          <div className="text-[11px] text-slate-500">
-            Current: {currentLocationName}
-          </div>
+        <div className="flex items-center gap-2">
+          <select
+            value={locationId ?? ""}
+            onChange={(e) => setLocationId(e.target.value || null)}
+            disabled={locationLoading}
+            className="h-9 rounded-xl border border-slate-300 bg-white/90 px-3 text-sm shadow-sm"
+          >
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            onClick={refreshCards}
+            disabled={loadingCards || !orgId || !locationId}
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+          >
+            {loadingCards ? "Refreshing…" : "Refresh"}
+          </button>
         </div>
-      </div>
+      </header>
 
       {err && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
           {err}
         </div>
       )}
 
       {/* KPI cards */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        {/* Temps */}
-        <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Temps logged today
-          </div>
-          <div className="mt-1 text-2xl font-semibold text-slate-900">
-            {tempsSummary?.today ?? 0}
-          </div>
-          <div className="mt-1 text-[11px] text-slate-500">
-            Temperature fails (7d):{" "}
-            <span className="font-semibold text-red-600">
-              {tempsSummary?.fails7d ?? 0}
-            </span>
-          </div>
-        </div>
-
-        {/* Cleaning */}
-        <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Cleaning tasks logged today
-          </div>
-          <div className="mt-1 text-2xl font-semibold text-slate-900">
-            {cleaningSummary?.loggedToday ?? 0}
-          </div>
-        </div>
-
-        {/* Training / Education */}
-        <button
-          type="button"
-          onClick={() =>
-            trainingOverdueCount > 0 && setEducationModalOpen(true)
-          }
-          className={`relative rounded-2xl border border-slate-200 bg-white/90 p-3 text-left shadow-sm transition ${
-            trainingOverdueCount > 0
-              ? "ring-2 ring-red-400/70 hover:ring-red-500/80"
-              : "hover:border-slate-300"
-          }`}
-        >
-          {trainingOverdueCount > 0 && (
-            <div className="absolute right-3 top-3">
-              <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm animate-pulse">
-                <span className="h-1.5 w-1.5 rounded-full bg-white" />
-                Action needed
-              </span>
-            </div>
-          )}
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Training / Education
-          </div>
-          <div className="mt-1 text-sm text-slate-700">
-            <div>
-              Logged today:{" "}
-              <span className="font-semibold">
-                {trainingSummary?.loggedToday ?? 0}
-              </span>
-            </div>
-            <div>
-              <span
-                className={
-                  trainingOverdueCount > 0
-                    ? "text-red-600 font-semibold"
-                    : "text-slate-700"
-                }
-              >
-                Overdue:
-              </span>{" "}
-              <span
-                className={
-                  trainingOverdueCount > 0
-                    ? "font-semibold text-red-600"
-                    : "font-semibold"
-                }
-              >
-                {trainingOverdueCount}
-              </span>
-              {trainingOverdueCount > 0 && (
-                <span className="ml-1 text-[11px] text-red-700/80">
-                  (tap for details)
+      <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <KpiTile
+            title="Temps today"
+            icon="🌡"
+            tone={tempsTone}
+            value={tempsSummary?.today ?? 0}
+            sub={
+              <>
+                Fails (7d):{" "}
+                <span className={cls("font-semibold", (tempsSummary?.fails7d ?? 0) > 0 && "text-red-700")}>
+                  {tempsSummary?.fails7d ?? 0}
                 </span>
-              )}
-            </div>
-          </div>
-        </button>
+              </>
+            }
+          />
 
-        {/* QC Reviews summary */}
-        <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            QC reviews
-          </div>
-          <div className="mt-1 space-y-1 text-sm text-slate-700">
-            <div>
-              Logged (7d):{" "}
-              <span className="font-semibold">
-                {reviewSummary?.last7 ?? 0}
-              </span>
-            </div>
-            <div>
-              Logged (30d):{" "}
-              <span className="font-semibold">
-                {reviewSummary?.last30 ?? 0}
-              </span>
-            </div>
-            <div>
-              Staff reviewed:{" "}
-              <span className="font-semibold">
-                {reviewSummary?.staffWithReviews ?? 0}
-              </span>
-            </div>
-          </div>
+          <KpiTile
+            title="Cleaning logged"
+            icon="🧽"
+            tone="ok"
+            value={cleaningSummary?.loggedToday ?? 0}
+            sub="Completed today"
+          />
+
+          <KpiTile
+            title="Training overdue"
+            icon="🎓"
+            tone={trainingTone}
+            value={trainingOverdueCount}
+            sub={trainingOverdueCount > 0 ? "Tap to review overdue list" : "Up to date"}
+            onClick={() => trainingOverdueCount > 0 && setEducationModalOpen(true)}
+          />
+
+          <KpiTile
+            title="QC reviews (30d)"
+            icon="📝"
+            tone="neutral"
+            value={reviewSummary?.last30 ?? 0}
+            sub={`${reviewSummary?.staffWithReviews ?? 0} staff reviewed · ${reviewSummary?.last7 ?? 0} in 7d`}
+          />
+
+          <KpiTile
+            title="Food hygiene"
+            icon="⭐"
+            tone={foodTone}
+            value={foodHygiene?.rating ?? "—"}
+            sub={
+              foodHygiene
+                ? foodHygiene.overdue
+                  ? "Overdue"
+                  : foodHygiene.dueSoon
+                  ? "Due soon"
+                  : "Up to date"
+                : "No inspection logged yet"
+            }
+          />
         </div>
+      </section>
 
-        {/* Food hygiene rating / reminder */}
-        <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Food hygiene rating
-          </div>
-          {foodHygiene ? (
-            <div className="mt-1 space-y-1 text-sm text-slate-700">
-              <div className="flex items-baseline gap-2">
-                <span className="text-2xl font-semibold">
-                  {foodHygiene.rating ?? "—"}
-                </span>
-                <span
-                  className={`inline-flex rounded-full px-2 py-[1px] text-[10px] font-semibold ${
-                    foodHygiene.overdue
-                      ? "bg-red-100 text-red-700"
-                      : foodHygiene.dueSoon
-                      ? "bg-amber-100 text-amber-800"
-                      : "bg-emerald-100 text-emerald-800"
-                  }`}
-                >
-                  {foodHygiene.overdue
-                    ? "Overdue"
-                    : foodHygiene.dueSoon
-                    ? "Due soon"
-                    : "Up to date"}
-                </span>
-              </div>
-              <div className="text-[11px] text-slate-600">
-                Last inspected:{" "}
-                {foodHygiene.lastInspectedOn
-                  ? formatISOToUK(foodHygiene.lastInspectedOn)
-                  : "—"}
-              </div>
-              <div className="text-[11px] text-slate-600">
-                Next due (18m):{" "}
-                {foodHygiene.nextDueOn
-                  ? formatISOToUK(foodHygiene.nextDueOn)
-                  : "—"}
-              </div>
-              {foodHygiene.daysToDue != null && (
-                <div className="text-[11px] text-slate-500">
-                  {foodHygiene.daysToDue < 0
-                    ? `${Math.abs(foodHygiene.daysToDue)} days overdue`
-                    : `Due in ${foodHygiene.daysToDue} days`}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="mt-1 text-[11px] text-slate-500">
-              No inspection logged yet. Log your latest rating so we can remind
-              you when the next one is due.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* QC section with button */}
-      <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
-        <div className="mb-2 flex items-center justify-between">
+      {/* QC section */}
+      <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
               QC Reviews
             </div>
-            <div className="text-sm text-slate-700">
-              Logged by managers / supervisors
+            <div className="mt-0.5 text-sm font-semibold text-slate-900">
+              Log supervision checks
             </div>
+            <p className="mt-1 text-xs text-slate-600 max-w-2xl">
+              Record manager checks across temps, cleaning, allergens and general standards.
+              This creates an audit trail of supervision.
+            </p>
           </div>
+
           <button
             type="button"
             onClick={openReviewModal}
-            className="rounded-xl bg-slate-900 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-black"
+            className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-black"
           >
             Log review
           </button>
         </div>
-        <div className="text-xs text-slate-500">
-          Use this to regularly review staff actions (temps, cleaning,
-          allergens, general standards) and keep an audit trail of
-          supervision.
-        </div>
-      </div>
+      </section>
 
       {/* Today’s activity */}
-      <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <div className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
-              Today&apos;s activity
-            </div>
-            <div className="text-sm text-slate-700">
-              Detailed list of temps and cleaning runs for manager review
-            </div>
+      <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Today&apos;s activity
           </div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Quick review before sign-off
+          </div>
+          <p className="mt-1 text-xs text-slate-600">
+            Check temps and cleaning runs for this location before logging QC supervision.
+          </p>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
           {/* Temps list */}
           <div>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Temperature logs (today)
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Temperature logs
             </h3>
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white/90">
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
                 <thead className="bg-slate-50">
                   <tr className="text-left text-slate-500">
-                    <th className="px-2 py-1">Time</th>
-                    <th className="px-2 py-1">Staff</th>
-                    <th className="px-2 py-1">Area</th>
-                    <th className="px-2 py-1">Item</th>
-                    <th className="px-2 py-1">Temp</th>
-                    <th className="px-2 py-1">Status</th>
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Area</th>
+                    <th className="px-3 py-2">Item</th>
+                    <th className="px-3 py-2">Temp</th>
+                    <th className="px-3 py-2">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {todayTemps.length === 0 ? (
                     <tr>
-                      <td
-                        colSpan={6}
-                        className="px-2 py-3 text-center text-slate-500"
-                      >
+                      <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
                         No temperature logs for today.
                       </td>
                     </tr>
                   ) : (
                     todayTemps.map((r) => (
-                      <tr
-                        key={r.id}
-                        className="border-t border-slate-100 text-slate-800"
-                      >
-                        <td className="px-2 py-1">{r.time}</td>
-                        <td className="px-2 py-1">{r.staff}</td>
-                        <td className="px-2 py-1">{r.area}</td>
-                        <td className="px-2 py-1">{r.item}</td>
-                        <td className="px-2 py-1">
+                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                        <td className="px-3 py-2">{r.time}</td>
+                        <td className="px-3 py-2">{r.staff}</td>
+                        <td className="px-3 py-2">{r.area}</td>
+                        <td className="px-3 py-2">{r.item}</td>
+                        <td className="px-3 py-2">
                           {r.temp_c != null ? `${r.temp_c}°C` : "—"}
                         </td>
-                        <td className="px-2 py-1">
+                        <td className="px-3 py-2">
                           {r.status ? (
                             <span
-                              className={`inline-flex rounded-full px-2 py-[1px] text-[10px] font-semibold ${
+                              className={cls(
+                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
                                 r.status === "pass"
                                   ? "bg-emerald-100 text-emerald-800"
                                   : "bg-red-100 text-red-800"
-                              }`}
+                              )}
                             >
                               {r.status}
                             </span>
@@ -1037,39 +976,34 @@ export default function ManagerDashboardPage() {
 
           {/* Cleaning runs list */}
           <div>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Cleaning routines completed (today)
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Cleaning runs
             </h3>
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white/90">
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
                 <thead className="bg-slate-50">
                   <tr className="text-left text-slate-500">
-                    <th className="px-2 py-1">Time</th>
-                    <th className="px-2 py-1">Routine</th>
-                    <th className="px-2 py-1">Staff</th>
-                    <th className="px-2 py-1">Notes</th>
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Routine</th>
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Notes</th>
                   </tr>
                 </thead>
                 <tbody>
                   {todayCleaningRuns.length === 0 ? (
                     <tr>
-                      <td
-                        colSpan={4}
-                        className="px-2 py-3 text-center text-slate-500"
-                      >
+                      <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
                         No cleaning routines logged for today.
                       </td>
                     </tr>
                   ) : (
                     todayCleaningRuns.map((r) => (
-                      <tr
-                        key={r.id}
-                        className="border-t border-slate-100 text-slate-800"
-                      >
-                        <td className="px-2 py-1">{r.time ?? "—"}</td>
-                        <td className="px-2 py-1">{r.routine}</td>
-                        <td className="px-2 py-1">{r.staff ?? "—"}</td>
-                        <td className="px-2 py-1 max-w-[12rem] truncate">
+                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                        <td className="px-3 py-2">{r.time ?? "—"}</td>
+                        <td className="px-3 py-2">{r.routine}</td>
+                        <td className="px-3 py-2">{r.staff ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[14rem] truncate">
                           {r.notes ?? "—"}
                         </td>
                       </tr>
@@ -1080,12 +1014,7 @@ export default function ManagerDashboardPage() {
             </div>
           </div>
         </div>
-
-        <div className="mt-2 text-[11px] text-slate-500">
-          Managers can quickly scroll these lists before logging their QC review
-          to confirm all work has been completed to standard.
-        </div>
-      </div>
+      </section>
 
       {/* Education overdue modal */}
       {educationModalOpen && (
@@ -1095,94 +1024,82 @@ export default function ManagerDashboardPage() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-3xl rounded-2xl bg-white p-4 shadow-xl"
+            className="w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
           >
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-base font-semibold text-slate-900">
-                  Staff training / education overdue
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  Use this list to chase certificates and refresher training.
-                </div>
+            <div className="bg-slate-900 px-4 py-3 text-white">
+              <div className="text-[11px] uppercase tracking-[0.22em] opacity-80">
+                Action needed
               </div>
-              <button
-                type="button"
-                onClick={() => setEducationModalOpen(false)}
-                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600 hover:bg-slate-100"
-              >
-                Close
-              </button>
+              <div className="text-lg font-extrabold">Overdue training</div>
+              <div className="text-xs opacity-80">
+                Chase certificates and refresher training.
+              </div>
             </div>
 
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white/90">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-500">
-                    <th className="px-3 py-2">Staff</th>
-                    <th className="px-3 py-2">Type</th>
-                    <th className="px-3 py-2">Awarded</th>
-                    <th className="px-3 py-2">Expired on</th>
-                    <th className="px-3 py-2">Days overdue</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {educationDue.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-3 py-4 text-center text-slate-500"
-                      >
-                        No overdue training found.
-                      </td>
+            <div className="p-4">
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-slate-50">
+                    <tr className="text-left text-slate-500">
+                      <th className="px-3 py-2">Staff</th>
+                      <th className="px-3 py-2">Type</th>
+                      <th className="px-3 py-2">Awarded</th>
+                      <th className="px-3 py-2">Expired on</th>
+                      <th className="px-3 py-2">Days overdue</th>
                     </tr>
-                  ) : (
-                    educationDue.map((row) => (
-                      <tr
-                        key={row.id}
-                        className="border-t border-slate-100 text-slate-800"
-                      >
-                        <td className="px-3 py-2">
-                          {row.staffId ? (
-                            <Link
-                              href={`/team?staff=${row.staffId}`}
-                              className="font-medium text-emerald-700 hover:underline"
-                            >
-                              {row.staffName}
-                              {row.staffInitials
-                                ? ` (${row.staffInitials.toUpperCase()})`
-                                : ""}
-                            </Link>
-                          ) : (
-                            <>
-                              {row.staffName}
-                              {row.staffInitials
-                                ? ` (${row.staffInitials.toUpperCase()})`
-                                : ""}
-                            </>
-                          )}
-                        </td>
-                        <td className="px-3 py-2">
-                          {row.type ?? "—"}
-                        </td>
-                        <td className="px-3 py-2">
-                          {row.awardedOn
-                            ? formatISOToUK(row.awardedOn)
-                            : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-red-700">
-                          {row.expiresOn
-                            ? formatISOToUK(row.expiresOn)
-                            : "—"}
-                        </td>
-                        <td className="px-3 py-2 font-semibold text-red-700">
-                          {row.daysOverdue ?? "—"}
+                  </thead>
+                  <tbody>
+                    {educationDue.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-4 text-center text-slate-500">
+                          No overdue training found.
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : (
+                      educationDue.map((row) => (
+                        <tr key={row.id} className="border-t border-slate-100 text-slate-800">
+                          <td className="px-3 py-2">
+                            {row.staffId ? (
+                              <Link
+                                href={`/team?staff=${row.staffId}`}
+                                className="font-semibold text-emerald-700 hover:underline"
+                              >
+                                {row.staffName}
+                                {row.staffInitials ? ` (${row.staffInitials.toUpperCase()})` : ""}
+                              </Link>
+                            ) : (
+                              <>
+                                {row.staffName}
+                                {row.staffInitials ? ` (${row.staffInitials.toUpperCase()})` : ""}
+                              </>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">{row.type ?? "—"}</td>
+                          <td className="px-3 py-2">
+                            {row.awardedOn ? formatISOToUK(row.awardedOn) : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-red-700 font-semibold">
+                            {row.expiresOn ? formatISOToUK(row.expiresOn) : "—"}
+                          </td>
+                          <td className="px-3 py-2 font-extrabold text-red-700">
+                            {row.daysOverdue ?? "—"}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setEducationModalOpen(false)}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1197,130 +1114,113 @@ export default function ManagerDashboardPage() {
           <form
             onSubmit={handleSaveReview}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-2xl bg-white p-4 shadow-xl"
+            className="w-full max-w-md overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
           >
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold text-slate-900">
-                Log staff review
+            <div className="bg-slate-900 px-4 py-3 text-white">
+              <div className="text-[11px] uppercase tracking-[0.22em] opacity-80">
+                QC Review
               </div>
-              <button
-                type="button"
-                onClick={() => setReviewOpen(false)}
-                disabled={savingReview}
-                className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
-              >
-                Close
-              </button>
+              <div className="text-lg font-extrabold">Log staff review</div>
+              <div className="text-xs opacity-80">
+                Record a supervision check for audit trail.
+              </div>
             </div>
 
-            {/* Staff select */}
-            <label className="mb-3 block text-sm">
-              <span className="mb-1 block text-slate-700">Staff member</span>
-              <select
-                required
-                value={reviewForm.staff_id}
-                onChange={(e) =>
-                  setReviewForm((prev) => ({
-                    ...prev,
-                    staff_id: e.target.value,
-                  }))
-                }
-                className="w-full rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
-              >
-                <option value="">
-                  {staffLoading
-                    ? "Loading staff…"
-                    : staffOptions.length === 0
-                    ? "No active staff"
-                    : "Select…"}
-                </option>
-                {staffOptions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                    {s.initials ? ` (${s.initials.toUpperCase()})` : ""}
+            <div className="p-4">
+              {/* Staff select */}
+              <label className="mb-3 block text-sm">
+                <span className="mb-1 block text-slate-700 font-semibold">Staff member</span>
+                <select
+                  required
+                  value={reviewForm.staff_id}
+                  onChange={(e) =>
+                    setReviewForm((prev) => ({ ...prev, staff_id: e.target.value }))
+                  }
+                  className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
+                >
+                  <option value="">
+                    {staffLoading
+                      ? "Loading staff…"
+                      : staffOptions.length === 0
+                      ? "No active staff"
+                      : "Select…"}
                   </option>
-                ))}
-              </select>
-            </label>
+                  {staffOptions.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                      {s.initials ? ` (${s.initials.toUpperCase()})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            {/* Category */}
-            <label className="mb-3 block text-sm">
-              <span className="mb-1 block text-slate-700">
-                Area / category
-              </span>
-              <select
-                value={reviewForm.category}
-                onChange={(e) =>
-                  setReviewForm((prev) => ({
-                    ...prev,
-                    category: e.target.value,
-                  }))
-                }
-                className="w-full rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
-              >
-                {CATEGORY_OPTIONS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
+              {/* Category */}
+              <label className="mb-3 block text-sm">
+                <span className="mb-1 block text-slate-700 font-semibold">Area / category</span>
+                <select
+                  value={reviewForm.category}
+                  onChange={(e) =>
+                    setReviewForm((prev) => ({ ...prev, category: e.target.value }))
+                  }
+                  className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
+                >
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            {/* Rating */}
-            <label className="mb-3 block text-sm">
-              <span className="mb-1 block text-slate-700">
-                Rating (1–5)
-              </span>
-              <input
-                type="number"
-                min={1}
-                max={5}
-                value={reviewForm.rating}
-                onChange={(e) =>
-                  setReviewForm((prev) => ({
-                    ...prev,
-                    rating: Number(e.target.value) || 1,
-                  }))
-                }
-                className="w-full rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
-              />
-            </label>
+              {/* Rating */}
+              <label className="mb-3 block text-sm">
+                <span className="mb-1 block text-slate-700 font-semibold">Rating (1–5)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={reviewForm.rating}
+                  onChange={(e) =>
+                    setReviewForm((prev) => ({
+                      ...prev,
+                      rating: Number(e.target.value) || 1,
+                    }))
+                  }
+                  className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
+                />
+              </label>
 
-            {/* Notes */}
-            <label className="mb-4 block text-sm">
-              <span className="mb-1 block text-slate-700">
-                Notes / feedback
-              </span>
-              <textarea
-                rows={4}
-                value={reviewForm.notes}
-                onChange={(e) =>
-                  setReviewForm((prev) => ({
-                    ...prev,
-                    notes: e.target.value,
-                  }))
-                }
-                placeholder="What did they do well? Any corrective advice?"
-                className="w-full rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
-              />
-            </label>
+              {/* Notes */}
+              <label className="mb-4 block text-sm">
+                <span className="mb-1 block text-slate-700 font-semibold">Notes / feedback</span>
+                <textarea
+                  rows={4}
+                  value={reviewForm.notes}
+                  onChange={(e) =>
+                    setReviewForm((prev) => ({ ...prev, notes: e.target.value }))
+                  }
+                  placeholder="What did they do well? Any corrective advice?"
+                  className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
+                />
+              </label>
 
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setReviewOpen(false)}
-                disabled={savingReview}
-                className="rounded-xl px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={savingReview || !reviewForm.staff_id}
-                className="rounded-xl bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-              >
-                {savingReview ? "Saving…" : "Save review"}
-              </button>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setReviewOpen(false)}
+                  disabled={savingReview}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingReview || !reviewForm.staff_id}
+                  className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {savingReview ? "Saving…" : "Save review"}
+                </button>
+              </div>
             </div>
           </form>
         </div>
