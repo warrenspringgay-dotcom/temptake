@@ -1,8 +1,27 @@
 // src/app/help/page.tsx
-"use client";
-
+import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "TempTake Help & Quick Guide | Temperature Logs, Cleaning Rota, Allergens",
+  description:
+    "Learn how to use TempTake for food temperature logs, cleaning rotas, allergen matrices, team training records, reports, and voice logging. Quick setup tips and troubleshooting.",
+  alternates: {
+    canonical: "/help",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
+  openGraph: {
+    title: "TempTake Help & Quick Guide",
+    description:
+      "How to use TempTake for temperature logging, cleaning rotas, allergen management, team training and audit-ready reports.",
+    url: "/help",
+    type: "article",
+  },
+};
 
 const CARD =
   "rounded-3xl border border-slate-200 bg-white/80 shadow-xl p-4 md:p-5 backdrop-blur-sm";
@@ -29,7 +48,9 @@ function HelpSection({
       <div className="flex flex-col gap-4 md:flex-row md:items-start">
         <div className="flex-1 space-y-2">
           <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
-            <span className="text-xl">{icon}</span>
+            <span className="text-xl" aria-hidden="true">
+              {icon}
+            </span>
             <span>{title}</span>
           </h2>
           <p className="text-sm text-slate-700">{intro}</p>
@@ -47,10 +68,11 @@ function HelpSection({
           <div className="relative mt-2 h-32 w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80 md:mt-0 md:h-32 md:w-56">
             <Image
               src={imageSrc}
-              alt={title}
+              alt={`${title} help screenshot`}
               fill
               className="object-cover"
               sizes="224px"
+              priority={false}
             />
           </div>
         )}
@@ -59,24 +81,147 @@ function HelpSection({
   );
 }
 
+function FAQ() {
+  // Keep this aligned with the JSON-LD below.
+  const faqs = [
+    {
+      q: "How do I log temperatures quickly in a busy kitchen?",
+      a: "Use Quick Temp Log from the floating + button, or build a routine so staff only enter initials and temperatures. Routines reduce errors and keep logs consistent across shifts.",
+    },
+    {
+      q: "How does voice temperature logging work?",
+      a: "Tap the microphone button in the quick temp log, speak naturally (item + location + temperature + initials), then review the fields before saving. Voice entry is designed to speed up logging during service.",
+    },
+    {
+      q: "Why is voice logging not working?",
+      a: "Check microphone permissions in your browser/phone settings, make sure you’re using a supported browser, and confirm your device isn’t in a restricted mode. If you’re using the app as a home-screen install, allow mic access for that app instance.",
+    },
+    {
+      q: "How do I prove cleaning tasks were completed for an audit?",
+      a: "Complete tasks in the Cleaning rota. TempTake records who completed each task and the date. Use Reports to filter by date range and export evidence for inspections.",
+    },
+    {
+      q: "Can I print an allergen matrix?",
+      a: "Yes. Use the Allergens section to maintain the matrix and print it for front-of-house or inspection use.",
+    },
+  ];
+
+  return (
+    <section id="faq" className={CARD}>
+      <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+      <p className="mt-1 text-sm text-slate-700">
+        Common questions from kitchens trying to stay audit-ready without adding
+        more paperwork.
+      </p>
+
+      <div className="mt-4 space-y-3">
+        {faqs.map((f) => (
+          <details
+            key={f.q}
+            className="rounded-2xl border border-slate-200 bg-white/80 p-3"
+          >
+            <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+              {f.q}
+            </summary>
+            <p className="mt-2 text-sm text-slate-700">{f.a}</p>
+          </details>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function HelpPage() {
+  // FAQ schema for rich results.
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "How do I log temperatures quickly in a busy kitchen?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Use Quick Temp Log from the floating + button, or build a routine so staff only enter initials and temperatures. Routines reduce errors and keep logs consistent across shifts.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "How does voice temperature logging work?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Tap the microphone button in the quick temp log, speak naturally (item + location + temperature + initials), then review the fields before saving. Voice entry is designed to speed up logging during service.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Why is voice logging not working?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Check microphone permissions in your browser/phone settings, make sure you’re using a supported browser, and confirm your device isn’t in a restricted mode. If you’re using the app as a home-screen install, allow mic access for that app instance.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "How do I prove cleaning tasks were completed for an audit?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Complete tasks in the Cleaning rota. TempTake records who completed each task and the date. Use Reports to filter by date range and export evidence for inspections.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I print an allergen matrix?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Use the Allergens section to maintain the matrix and print it for front-of-house or inspection use.",
+        },
+      },
+    ],
+  };
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 text-slate-900">
+      {/* JSON-LD structured data */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+
       {/* Page header */}
       <header className="space-y-3 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-xl backdrop-blur-sm md:p-5">
         <div className="space-y-2">
           <h1 className="text-2xl font-semibold text-slate-900">
-            Help &amp; Quick Guide
+            TempTake Help &amp; Quick Guide
           </h1>
-          <p className="max-w-2xl text-sm text-slate-700">
-            TempTake keeps your daily food safety paperwork in one simple app.
-            This page explains what each section does and how to use it in a
-            busy kitchen.
+          <p className="max-w-3xl text-sm text-slate-700">
+            TempTake helps kitchens stay compliant with less admin:{" "}
+            <strong>food temperature logs</strong>,{" "}
+            <strong>cleaning rotas</strong>,{" "}
+            <strong>allergen matrices</strong>, and{" "}
+            <strong>team training records</strong> in one place. Use this guide
+            to set up your account and train staff fast.
+          </p>
+          <p className="max-w-3xl text-xs text-slate-600">
+            Looking for the fastest start? Add a{" "}
+            <a className="underline" href="#locations">
+              location
+            </a>
+            , build{" "}
+            <a className="underline" href="#routines">
+              routines
+            </a>
+            , then set your{" "}
+            <a className="underline" href="#cleaning">
+              cleaning rota
+            </a>
+            .
           </p>
         </div>
 
         <nav className="mt-3 flex flex-wrap gap-2 text-xs">
           {[
+            ["voice", "Voice logging"],
             ["dashboard", "Dashboard"],
             ["routines", "Routines"],
             ["allergens", "Allergens"],
@@ -85,8 +230,9 @@ export default function HelpPage() {
             ["locations", "Locations"],
             ["suppliers", "Suppliers"],
             ["reports", "Reports"],
-            ["billing", "Billing & subscription"],
+            ["billing", "Billing"],
             ["settings", "Settings"],
+            ["faq", "FAQ"],
           ].map(([id, label]) => (
             <a
               key={id}
@@ -99,6 +245,22 @@ export default function HelpPage() {
         </nav>
       </header>
 
+      {/* Voice logging */}
+      <HelpSection
+        id="voice"
+        title="Voice temperature logging"
+        icon="🎙️"
+        intro="Log temperatures hands-free during service. Speak the key info, review it, then save."
+        bullets={[
+          "Open Quick Temp Log (floating + button) and tap the microphone.",
+          "Say the item + location + temperature + initials (natural speech is fine). Example: “Walk-in fridge ready-to-eat four degrees, AB.”",
+          "Check the fields it filled in, then press Save. You stay in control, not the microphone.",
+          "If it fails: allow microphone permissions, check the device isn’t muted/restricted, and try again on a supported browser.",
+          "Tip: routines + voice together is the fastest flow. Routine sets item/location, voice captures temp/initials.",
+        ]}
+        imageSrc="/help/voice.jpg"
+      />
+
       {/* Dashboard */}
       <HelpSection
         id="dashboard"
@@ -107,8 +269,8 @@ export default function HelpPage() {
         intro="Your daily control panel for temperature logging, cleaning progress and quick checks."
         bullets={[
           "See entries today, failures in the last 7 days and whether you’re ‘in control’ at a glance.",
-          "Use the quick actions to log new food temperatures or jump straight into the cleaning rota.",
-          "KPI tiles show allergen review and staff training status so you know what’s coming up.",
+          "Use quick actions to log temperatures or jump into the cleaning rota.",
+          "KPI tiles highlight allergen review and staff training status so you know what’s due.",
           "Tap into sections to drill down into logs, who did what, and when it was completed.",
         ]}
         imageSrc="/help/dashboard.jpg"
@@ -119,12 +281,12 @@ export default function HelpPage() {
         id="routines"
         title="Routines"
         icon="⏱️"
-        intro="Create pre-filled temperature routines so staff only need to enter temps and initials during service."
+        intro="Create pre-filled temperature routines so staff only enter temperatures and initials."
         bullets={[
-          "Set location, item name and target range for each line in a routine (e.g. ‘Walk-in fridge – ready-to-eat’).",
-          "Load a routine with one tap, enter the temperatures and initials, then save everything in one go.",
-          "Use different routines for cooking, fridges/freezers, deliveries and hot hold so nothing is missed.",
-          "Keeps logging consistent between team members and across shifts, and speeds up busy services.",
+          "Set the location, item name and target range for each routine line.",
+          "Load a routine with one tap, enter temperatures and initials, then save in one go.",
+          "Use different routines for fridges/freezers, deliveries, cooking and hot hold.",
+          "Routines make logs consistent and faster, especially with new staff.",
         ]}
         imageSrc="/help/routines.jpg"
       />
@@ -134,12 +296,12 @@ export default function HelpPage() {
         id="allergens"
         title="Allergens"
         icon="⚠️"
-        intro="Keep a live allergen matrix for your menu and quickly answer guest allergy questions."
+        intro="Maintain an allergen matrix and answer guest questions quickly."
         bullets={[
-          "View and edit allergen information for every menu item in one place.",
-          "Search by item name or category (Starter, Main, Side, Dessert, Drink) to find things quickly.",
-          "Use the allergen filter / query view to show only suitable dishes for one or more allergens.",
-          "Print a clean allergen matrix for front-of-house or Environmental Health Officer (EHO) visits.",
+          "Store allergen information for every menu item in one place.",
+          "Search by item name or category to find things quickly.",
+          "Filter/query view helps you identify suitable dishes for specific allergens.",
+          "Print a clean allergen matrix for FOH and inspections.",
         ]}
         imageSrc="/help/allergens.jpg"
       />
@@ -151,10 +313,10 @@ export default function HelpPage() {
         icon="🧽"
         intro="Plan and record daily, weekly and monthly cleaning tasks."
         bullets={[
-          "Create tasks grouped by area or shift, e.g. Opening checks, Mid-shift, Closing down, Front of house.",
-          "Set frequencies to daily, weekly or monthly so tasks automatically appear when they’re due.",
-          "On phones, staff can swipe / tap to complete tasks – TempTake records who did it and when.",
-          "You can still print a paper view for the wall while keeping a full digital history for audits.",
+          "Create tasks grouped by area or shift (opening, mid-shift, close-down).",
+          "Set frequency so tasks appear automatically when they’re due.",
+          "Staff can tap/swipe to complete tasks. TempTake records who did it and when.",
+          "Use Reports for audit evidence when you need it, not when you want it.",
         ]}
         imageSrc="/help/cleaning.jpg"
       />
@@ -164,12 +326,12 @@ export default function HelpPage() {
         id="team"
         title="Team"
         icon="👥"
-        intro="Store team details, initials and training information."
+        intro="Store team details, initials and training records."
         bullets={[
-          "Add team members with their name, initials, role and contact details.",
-          "Initials appear in temperature logs and cleaning tasks so you always know who signed things off.",
-          "Track food hygiene training expiry dates and see who is due for renewal at a glance.",
-          "Useful evidence for inspections and internal audits – everything is in one place.",
+          "Add team members with name, initials, role and contact details.",
+          "Initials appear in temperature logs and cleaning tasks for accountability.",
+          "Track training and expiry dates so you don’t get caught out at inspection time.",
+          "Invite by email or add manually, depending on how your business operates.",
         ]}
         imageSrc="/help/team.jpg"
       />
@@ -179,12 +341,11 @@ export default function HelpPage() {
         id="locations"
         title="Locations"
         icon="📍"
-        intro="Manage which physical sites are linked to your TempTake account."
+        intro="Manage the physical sites linked to your TempTake account."
         bullets={[
-          "Each location represents a real kitchen, site or venue using TempTake.",
-          "You can rename locations so staff clearly see which site they’re logging for in the top bar.",
-          "If you’re on a single-site plan, the Add location button will be greyed out until you upgrade your subscription.",
-          "Multi-site groups can add extra locations once the Stripe plan has been moved to the correct band.",
+          "Each location represents a real kitchen, site or venue.",
+          "Rename locations so staff always log to the correct place.",
+          "Multi-site teams can add more locations depending on subscription band.",
         ]}
         imageSrc="/help/locations.jpg"
       />
@@ -194,11 +355,11 @@ export default function HelpPage() {
         id="suppliers"
         title="Suppliers"
         icon="🚚"
-        intro="Keep supplier contact details and product notes in one place."
+        intro="Keep supplier contact details and ordering notes in one place."
         bullets={[
-          "Record what each supplier provides and their main contact details.",
-          "Store rep names and any special ordering notes (cut-off times, minimum order, delivery days, etc.).",
-          "Helpful when logging delivery issues, chasing credit notes or managing recalls.",
+          "Store what each supplier provides and key contact details.",
+          "Save ordering rules (cut-off times, delivery days, minimum order).",
+          "Useful for delivery issues, product recalls, and chasing credits.",
         ]}
         imageSrc="/help/suppliers.jpg"
       />
@@ -208,11 +369,11 @@ export default function HelpPage() {
         id="reports"
         title="Reports"
         icon="📑"
-        intro="Quickly pull together the data you need for audits and checks."
+        intro="Pull together audit-ready evidence for inspections and internal checks."
         bullets={[
-          "Run an Instant audit to compile around 90 days of recent logs into one report.",
-          "Filter by date range, location, equipment or staff initials to answer specific questions.",
-          "Export or print reports and keep them alongside your Food Safety Management System (Safer Food, Better Business, HACCP, etc.).",
+          "Run an Instant audit to compile recent logs into one report.",
+          "Filter by date range, location, equipment or staff initials.",
+          "Export/print reports and store alongside your food safety system (HACCP/SFBB).",
         ]}
         imageSrc="/help/reports.jpg"
       />
@@ -222,12 +383,11 @@ export default function HelpPage() {
         id="billing"
         title="Billing & subscription"
         icon="💳"
-        intro="Manage your TempTake subscription and pricing band."
+        intro="Manage your subscription and location allowances."
         bullets={[
-          "See your current subscription status (trial, active, past due) and how many locations your band covers.",
-          "Start a new subscription or change band via the Stripe checkout – all payments are handled securely by Stripe.",
-          "If you need more locations, upgrade your band in Stripe first; once that’s active, the Add location button will unlock.",
-          "Use the Stripe billing portal to update card details, download invoices or cancel your plan.",
+          "See your subscription status and how many locations your plan covers.",
+          "Upgrade/downgrade via checkout. Download invoices via the billing portal.",
+          "If you need more locations, upgrade your plan before adding sites.",
         ]}
         imageSrc="/help/billing.jpg"
       />
@@ -237,21 +397,22 @@ export default function HelpPage() {
         id="settings"
         title="Settings"
         icon="⚙️"
-        intro="Control core options for your organisation."
+        intro="Update your account details and password."
         bullets={[
-          "Set your company name – this shows in the top bar so staff always know which site/organisation they’re in.",
-          "Choose a preferred default location to speed up temperature entry for most users.",
-          "Future options may include date format, locale and appearance settings as the product grows.",
+          "Update your profile name and keep your password secure.",
+          "Use strong passwords and avoid sharing logins across staff.",
         ]}
       />
 
-      {/* Small footer note */}
+      <FAQ />
+
+      {/* Footer */}
       <footer className="mt-4 border-t border-slate-200 pt-4 text-xs text-slate-500">
-        Need more help or want to suggest a new feature?{" "}
+        Need help or want to report an issue?{" "}
         <Link href="mailto:info@temptake.com" className="underline">
           Contact support
-        </Link>{" "}
-        or speak to your manager.
+        </Link>
+        .
       </footer>
     </div>
   );
