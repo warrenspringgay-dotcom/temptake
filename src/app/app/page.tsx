@@ -3,10 +3,10 @@ import React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
-export const metadata: Metadata = {
-  title: "TempTake · Demo Dashboard",
+export const metadata = {
+  title: "Food Safety Compliance Software for UK Kitchens | TempTake",
   description:
-    "A preview of how TempTake keeps your daily temperatures, cleaning and allergen checks under control.",
+    "TempTake is a UK food hygiene compliance app for temperature logs, cleaning rotas and allergen records. Built for restaurants, pubs and takeaways.",
 };
 
 export default function AppDemoDashboardPage() {

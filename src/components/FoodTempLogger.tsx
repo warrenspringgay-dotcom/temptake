@@ -1,12 +1,13 @@
 // src/app/dashboard/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
+import OnboardingBanner from "@/components/OnboardingBanner";
 
 /* ---------- CONFIG ---------- */
 
@@ -217,7 +218,6 @@ function KpiTile({
       initial={{ opacity: 0, y: 10, scale: 0.97 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ type: "spring", stiffness: 260, damping: 20 }}
-      // IMPORTANT: don't translate cards on touch devices (transform doesn't affect layout flow)
       whileHover={canHover ? { y: -3 } : undefined}
       className={cls(
         "relative rounded-2xl border p-4 shadow-sm overflow-hidden",
@@ -301,7 +301,7 @@ export default function DashboardPage() {
 
   const headerDate = formatPrettyDate(new Date());
 
-  // Detect hover capability (prevents Framer transforms causing overlap in touch/responsive)
+  // Detect hover capability (prevents transforms on touch devices)
   const [canHover, setCanHover] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -345,6 +345,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ---------- loaders ---------- */
@@ -613,6 +614,8 @@ export default function DashboardPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-3 sm:px-4 pt-2 pb-4 space-y-4">
+      <OnboardingBanner />
+
       <header className="text-center">
         <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">
           {headerDate}
@@ -708,9 +711,7 @@ export default function DashboardPage() {
         <div className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur flex flex-col">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div>
-              <h2 className="text-sm font-extrabold text-slate-900">
-                Kitchen wall
-              </h2>
+              <h2 className="text-sm font-extrabold text-slate-900">Kitchen wall</h2>
               <p className="text-[11px] font-medium text-slate-500">
                 Latest three notes from the team.
               </p>
@@ -725,8 +726,7 @@ export default function DashboardPage() {
 
           {wallPosts.length === 0 ? (
             <div className="mt-1 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-xs text-slate-500 flex-1 flex items-center">
-              No posts yet. When the team adds messages on the wall, the latest
-              three will show here.
+              No posts yet. When the team adds messages on the wall, the latest three will show here.
             </div>
           ) : (
             <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -766,9 +766,7 @@ export default function DashboardPage() {
 
         <div className="rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-md shadow-amber-200/60 flex flex-col">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-extrabold text-amber-900">
-              Employee of the month
-            </h2>
+            <h2 className="text-sm font-extrabold text-amber-900">Employee of the month</h2>
             <span className="text-xl" aria-hidden="true">
               🏆
             </span>
@@ -793,14 +791,12 @@ export default function DashboardPage() {
               </div>
 
               <p className="mt-3 text-[11px] font-medium text-amber-900/80">
-                Based on completed cleaning tasks and temperature logs this
-                month.
+                Based on completed cleaning tasks and temperature logs this month.
               </p>
             </>
           ) : (
             <p className="text-xs font-medium text-amber-900/80">
-              No leaderboard data yet. Once your team completes cleaning tasks
-              and logs temperatures, the top performer will be highlighted here.
+              No leaderboard data yet. Once your team completes cleaning tasks and logs temperatures, the top performer will be highlighted here.
             </p>
           )}
 
@@ -837,6 +833,8 @@ export default function DashboardPage() {
     </div>
   );
 }
+
+/* ---------- Quick link ---------- */
 
 function QuickLink({
   href,

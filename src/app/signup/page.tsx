@@ -30,12 +30,13 @@ export default function SignupPage() {
 
   const loading = isPending;
 
-  // 🔹 IMPORTANT: clear any old org/location from previous user
+  // clear any old org/location from previous user
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.removeItem("tt_active_org");
       window.localStorage.removeItem("tt_active_location_id");
+      window.localStorage.removeItem("tt_force_onboarding"); // reset
     } catch {
       // ignore
     }
@@ -75,6 +76,8 @@ export default function SignupPage() {
     formData.set("email", email.trim().toLowerCase());
     formData.set("password", password);
     formData.set("initials", initials);
+
+    // keep as dashboard, banner will guide from there
     formData.set("next", "/dashboard");
 
     startTransition(async () => {
@@ -85,6 +88,11 @@ export default function SignupPage() {
           setError(result.message ?? "Sign up failed. Please try again.");
           return;
         }
+
+        // force onboarding banner for first session
+        try {
+          localStorage.setItem("tt_force_onboarding", "1");
+        } catch {}
 
         if (result.message && !result.redirect) {
           setInfo(result.message);
