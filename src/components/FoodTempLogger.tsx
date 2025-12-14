@@ -1,7 +1,7 @@
 // src/app/dashboard/page.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
@@ -132,118 +132,7 @@ function clampPct(n: number) {
 
 /* ---------- Small UI helpers ---------- */
 
-// Equal-height KPI tiles across all screen sizes.
-const KPI_HEIGHT = "min-h-[140px]"; // a touch taller so no tile looks cramped
-const KPI_FOOTER_H = "h-[30px]"; // reserved footer area keeps all tiles equal
-
-function KpiTile({
-  title,
-  icon,
-  tone,
-  big,
-  sub,
-  href,
-  onClick,
-  accent = true,
-  footer,
-}: {
-  title: string;
-  icon: string;
-  tone: "danger" | "warn" | "ok" | "neutral";
-  big: React.ReactNode;
-  sub: React.ReactNode;
-  href?: string;
-  onClick?: () => void;
-  accent?: boolean;
-  footer?: React.ReactNode; // always rendered area (reserved height)
-}) {
-  const toneCls =
-    tone === "danger"
-      ? "border-red-200 bg-red-50/90 text-red-900"
-      : tone === "warn"
-      ? "border-amber-200 bg-amber-50/90 text-amber-950"
-      : tone === "ok"
-      ? "border-emerald-200 bg-emerald-50/90 text-emerald-950"
-      : "border-slate-200 bg-white/90 text-slate-900";
-
-  const accentCls =
-    tone === "danger"
-      ? "bg-red-400"
-      : tone === "warn"
-      ? "bg-amber-400"
-      : tone === "ok"
-      ? "bg-emerald-400"
-      : "bg-slate-300";
-
-  const Inner = (
-    <motion.div
-      initial={{ opacity: 0, y: 10, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: "spring", stiffness: 260, damping: 20 }}
-      whileHover={{ y: -3 }}
-      className={cls(
-        "relative rounded-2xl border p-4 shadow-sm overflow-hidden",
-        "w-full text-left",
-        KPI_HEIGHT,
-        "flex flex-col justify-between",
-        toneCls
-      )}
-    >
-      {accent ? (
-        <div
-          className={cls(
-            "absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80",
-            accentCls
-          )}
-        />
-      ) : null}
-
-      {/* top */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-700/90">
-            {title}
-          </div>
-          <div className="mt-2 text-4xl font-extrabold leading-none drop-shadow-sm">
-            {big}
-          </div>
-        </div>
-
-        <div className="shrink-0 text-lg opacity-90" aria-hidden="true">
-          {icon}
-        </div>
-      </div>
-
-      {/* middle (clamped so it can’t stretch tiles unevenly) */}
-      <div className="mt-2 text-[12px] font-medium text-slate-700/90 line-clamp-2">
-        {sub}
-      </div>
-
-      {/* reserved footer space to keep heights equal */}
-      <div className="mt-3">
-        <div className={KPI_FOOTER_H}>{footer ?? null}</div>
-      </div>
-    </motion.div>
-  );
-
-  if (href) {
-    return (
-      <Link href={href} className="block w-full">
-        {Inner}
-      </Link>
-    );
-  }
-
-  if (onClick) {
-    return (
-      <button type="button" onClick={onClick} className="w-full">
-        {Inner}
-      </button>
-    );
-  }
-
-  return <div className="w-full">{Inner}</div>;
-}
+const KPI_HEIGHT = "min-h-[132px]";
 
 function ProgressBar({
   pct,
@@ -282,6 +171,115 @@ function ProgressBar({
   );
 }
 
+function KpiTile({
+  title,
+  icon,
+  tone,
+  big,
+  sub,
+  href,
+  onClick,
+  accent = true,
+  footer,
+  canHover,
+}: {
+  title: string;
+  icon: string;
+  tone: "danger" | "warn" | "ok" | "neutral";
+  big: React.ReactNode;
+  sub: React.ReactNode;
+  href?: string;
+  onClick?: () => void;
+  accent?: boolean;
+  footer?: React.ReactNode;
+  canHover: boolean;
+}) {
+  const toneCls =
+    tone === "danger"
+      ? "border-red-200 bg-red-50/90 text-red-900"
+      : tone === "warn"
+      ? "border-amber-200 bg-amber-50/90 text-amber-950"
+      : tone === "ok"
+      ? "border-emerald-200 bg-emerald-50/90 text-emerald-950"
+      : "border-slate-200 bg-white/90 text-slate-900";
+
+  const accentCls =
+    tone === "danger"
+      ? "bg-red-400"
+      : tone === "warn"
+      ? "bg-amber-400"
+      : tone === "ok"
+      ? "bg-emerald-400"
+      : "bg-slate-300";
+
+  const inner = (
+    <motion.div
+      initial={{ opacity: 0, y: 10, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 260, damping: 20 }}
+      // IMPORTANT: don't translate cards on touch devices (transform doesn't affect layout flow)
+      whileHover={canHover ? { y: -3 } : undefined}
+      className={cls(
+        "relative rounded-2xl border p-4 shadow-sm overflow-hidden",
+        "w-full h-full text-left",
+        KPI_HEIGHT,
+        "flex flex-col",
+        toneCls
+      )}
+    >
+      {accent ? (
+        <div
+          className={cls(
+            "absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80",
+            accentCls
+          )}
+        />
+      ) : null}
+
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-700/90">
+            {title}
+          </div>
+          <div className="mt-2 text-4xl font-extrabold leading-none drop-shadow-sm">
+            {big}
+          </div>
+        </div>
+
+        <div className="shrink-0 text-lg opacity-90" aria-hidden="true">
+          {icon}
+        </div>
+      </div>
+
+      <div className="mt-2 text-[12px] font-medium text-slate-700/90 line-clamp-2">
+        {sub}
+      </div>
+
+      <div className="mt-auto pt-3">
+        <div className="h-[28px]">{footer ?? null}</div>
+      </div>
+    </motion.div>
+  );
+
+  if (href) {
+    return (
+      <Link href={href} className="block w-full h-full">
+        {inner}
+      </Link>
+    );
+  }
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className="block w-full h-full">
+        {inner}
+      </button>
+    );
+  }
+
+  return <div className="w-full h-full">{inner}</div>;
+}
+
 /* ---------- Component ---------- */
 
 export default function DashboardPage() {
@@ -302,6 +300,17 @@ export default function DashboardPage() {
   const [err, setErr] = useState<string | null>(null);
 
   const headerDate = formatPrettyDate(new Date());
+
+  // Detect hover capability (prevents Framer transforms causing overlap in touch/responsive)
+  const [canHover, setCanHover] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia?.("(hover: hover) and (pointer: fine)");
+    const update = () => setCanHover(!!mq?.matches);
+    update();
+    mq?.addEventListener?.("change", update);
+    return () => mq?.removeEventListener?.("change", update);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -472,9 +481,7 @@ export default function DashboardPage() {
         if (d < todayD) trainingOver++;
         else if (d <= soon) trainingDueSoon++;
       });
-    } catch {
-      // leave at 0
-    }
+    } catch {}
 
     // Allergen review
     try {
@@ -492,9 +499,7 @@ export default function DashboardPage() {
         if (due < todayD) allergenOver++;
         else if (due <= soon) allergenDueSoon++;
       });
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     if (cancelled) return;
 
@@ -573,7 +578,8 @@ export default function DashboardPage() {
     if (kpi.trainingOver > 0) bits.push(`${kpi.trainingOver} training overdue`);
     if (kpi.allergenOver > 0)
       bits.push(`${kpi.allergenOver} allergen review overdue`);
-    if (!bits.length) return "No training, allergen or temperature issues flagged.";
+    if (!bits.length)
+      return "No training, allergen or temperature issues flagged.";
     return bits.join(" · ");
   })();
 
@@ -606,8 +612,7 @@ export default function DashboardPage() {
   /* ---------- render ---------- */
 
   return (
-    <div className="mx-auto max-w-5xl px-3 sm:px-4 pt-1 pb-4 space-y-4">
-      {/* Header – tighter */}
+    <div className="mx-auto max-w-5xl px-3 sm:px-4 pt-2 pb-4 space-y-4">
       <header className="text-center">
         <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">
           {headerDate}
@@ -617,11 +622,10 @@ export default function DashboardPage() {
         </p>
       </header>
 
-      {/* KPI row */}
       <section className="rounded-3xl border border-white/50 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur space-y-3">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {/* Temps today */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 items-stretch">
           <KpiTile
+            canHover={canHover}
             title="Temperature logs"
             icon={kpi.tempLogsToday === 0 ? "❌" : "✅"}
             tone={tempTone}
@@ -640,8 +644,8 @@ export default function DashboardPage() {
             }
           />
 
-          {/* Cleaning today */}
           <KpiTile
+            canHover={canHover}
             title="Cleaning (today)"
             icon="🧽"
             tone={cleaningTone}
@@ -676,8 +680,8 @@ export default function DashboardPage() {
             }
           />
 
-          {/* Alerts */}
           <KpiTile
+            canHover={canHover}
             title="Alerts"
             icon={hasAnyKpiAlert ? "⚠️" : "✅"}
             tone={alertsTone}
@@ -700,13 +704,13 @@ export default function DashboardPage() {
         )}
       </section>
 
-      {/* Middle row: wall + EOM */}
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {/* Kitchen wall latest posts */}
         <div className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur flex flex-col">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div>
-              <h2 className="text-sm font-extrabold text-slate-900">Kitchen wall</h2>
+              <h2 className="text-sm font-extrabold text-slate-900">
+                Kitchen wall
+              </h2>
               <p className="text-[11px] font-medium text-slate-500">
                 Latest three notes from the team.
               </p>
@@ -721,7 +725,8 @@ export default function DashboardPage() {
 
           {wallPosts.length === 0 ? (
             <div className="mt-1 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-xs text-slate-500 flex-1 flex items-center">
-              No posts yet. When the team adds messages on the wall, the latest three will show here.
+              No posts yet. When the team adds messages on the wall, the latest
+              three will show here.
             </div>
           ) : (
             <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -740,7 +745,7 @@ export default function DashboardPage() {
                     damping: 20,
                     delay: idx * 0.05,
                   }}
-                  whileHover={{ y: -3 }}
+                  whileHover={canHover ? { y: -3 } : undefined}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <div className="text-base font-extrabold tracking-wide text-slate-900">
@@ -759,7 +764,6 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Employee of the month */}
         <div className="rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-md shadow-amber-200/60 flex flex-col">
           <div className="mb-2 flex items-center justify-between gap-2">
             <h2 className="text-sm font-extrabold text-amber-900">
@@ -789,12 +793,14 @@ export default function DashboardPage() {
               </div>
 
               <p className="mt-3 text-[11px] font-medium text-amber-900/80">
-                Based on completed cleaning tasks and temperature logs this month.
+                Based on completed cleaning tasks and temperature logs this
+                month.
               </p>
             </>
           ) : (
             <p className="text-xs font-medium text-amber-900/80">
-              No leaderboard data yet. Once your team completes cleaning tasks and logs temperatures, the top performer will be highlighted here.
+              No leaderboard data yet. Once your team completes cleaning tasks
+              and logs temperatures, the top performer will be highlighted here.
             </p>
           )}
 
@@ -809,18 +815,17 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* Quick actions */}
       <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur space-y-3">
         <h2 className="text-sm font-extrabold text-slate-900">Quick actions</h2>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <QuickLink href="/routines" label="Routines" icon="📋" />
-          <QuickLink href="/allergens" label="Allergens" icon="⚠️" />
-          <QuickLink href="/cleaning-rota" label="Cleaning rota" icon="🧽" />
-          <QuickLink href="/team" label="Team & training" icon="👥" />
-          <QuickLink href="/reports" label="Reports" icon="📊" />
-          <QuickLink href="/locations" label="Locations & sites" icon="📍" />
-          <QuickLink href="/manager" label="Manager view" icon="💼" />
-          <QuickLink href="/help" label="Help & support" icon="❓" />
+          <QuickLink href="/routines" label="Routines" icon="📋" canHover={canHover} />
+          <QuickLink href="/allergens" label="Allergens" icon="⚠️" canHover={canHover} />
+          <QuickLink href="/cleaning-rota" label="Cleaning rota" icon="🧽" canHover={canHover} />
+          <QuickLink href="/team" label="Team & training" icon="👥" canHover={canHover} />
+          <QuickLink href="/reports" label="Reports" icon="📊" canHover={canHover} />
+          <QuickLink href="/locations" label="Locations & sites" icon="📍" canHover={canHover} />
+          <QuickLink href="/manager" label="Manager view" icon="💼" canHover={canHover} />
+          <QuickLink href="/help" label="Help & support" icon="❓" canHover={canHover} />
         </div>
       </section>
 
@@ -833,23 +838,23 @@ export default function DashboardPage() {
   );
 }
 
-/* ---------- Quick link button with emoji + hover bounce ---------- */
-
 function QuickLink({
   href,
   label,
   icon,
+  canHover,
 }: {
   href: string;
   label: string;
   icon: string;
+  canHover: boolean;
 }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8, scale: 0.97 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ type: "spring", stiffness: 260, damping: 22 }}
-      whileHover={{ y: -3 }}
+      whileHover={canHover ? { y: -3 } : undefined}
     >
       <Link
         href={href}
