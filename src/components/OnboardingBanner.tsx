@@ -45,7 +45,6 @@ function toneClasses(tone: Step["tone"]) {
 }
 
 async function hasAnyTempRoutine(orgId: string) {
-  // minimal check: do routines exist?
   const q1 = await supabase
     .from("temp_routines")
     .select("id", { count: "exact", head: true })
@@ -90,6 +89,28 @@ async function hasAnyTeamMember(orgId: string) {
   return (q.count ?? 0) > 0;
 }
 
+/**
+ * ✅ "Training exists" = at least one team member has a training expiry set.
+ * This avoids relying on the separate trainings table (which may not be org-scoped).
+ */
+async function hasAnyTrainingSet(orgId: string) {
+  const { data, error } = await supabase
+    .from("team_members")
+    .select("training_expires_at, training_expiry, expires_at")
+    .eq("org_id", orgId)
+    .limit(200);
+
+  if (error) return false;
+
+  return (data ?? []).some((r: any) => {
+    return !!(
+      r?.training_expires_at ||
+      r?.training_expiry ||
+      r?.expires_at
+    );
+  });
+}
+
 export default function OnboardingBanner() {
   const pathname = usePathname();
 
@@ -103,7 +124,6 @@ export default function OnboardingBanner() {
   const [teamDone, setTeamDone] = useState(false);
   const [locationsDone, setLocationsDone] = useState(false);
 
-  // Steps: keep it tight and “next best action”
   const steps: Step[] = useMemo(
     () => [
       {
@@ -140,8 +160,8 @@ export default function OnboardingBanner() {
       },
       {
         key: "team",
-        title: "Add your team",
-        body: "Add staff initials and training expiry dates so nothing quietly expires.",
+        title: "Add training expiry dates",
+        body: "Add your team, then enter training expiry dates so nothing quietly expires.",
         ctaLabel: "Set up team & training",
         href: "/team",
         tone: "amber",
@@ -150,7 +170,6 @@ export default function OnboardingBanner() {
     []
   );
 
-  // Only show on relevant pages (and dashboard)
   const pageEligible = useMemo(() => {
     if (!pathname) return false;
     const eligible = [
@@ -177,19 +196,20 @@ export default function OnboardingBanner() {
         setOrgId(o ?? null);
         setLocationId(l ?? null);
 
-        // Locals (instant)
+        // Local (instant) state first
         setLocationsDone(!!l || getStepDone(o ?? null, "locations"));
         setRoutinesDone(getStepDone(o ?? null, "routines"));
         setCleaningDone(getStepDone(o ?? null, "cleaning"));
         setAllergensDone(getStepDone(o ?? null, "allergens"));
         setTeamDone(getStepDone(o ?? null, "team"));
 
-        // Server-backed checks (more accurate, still lightweight)
+        // Server-backed checks
         if (o) {
-          const [rOk, aOk, tOk] = await Promise.all([
+          const [rOk, aOk, hasTeam, hasTraining] = await Promise.all([
             hasAnyTempRoutine(o),
             hasAnyAllergenReview(o),
             hasAnyTeamMember(o),
+            hasAnyTrainingSet(o),
           ]);
 
           if (!cancelled) {
@@ -201,9 +221,13 @@ export default function OnboardingBanner() {
               setAllergensDone(true);
               setStepDone(o, "allergens", true);
             }
-            if (tOk) {
+
+            // ✅ Team step is ONLY done when team exists AND training exists
+            if (hasTeam && hasTraining) {
               setTeamDone(true);
               setStepDone(o, "team", true);
+            } else {
+              setTeamDone(false);
             }
           }
 
@@ -236,8 +260,6 @@ export default function OnboardingBanner() {
   const remaining = steps.filter((s) => !doneMap[s.key]);
   const allDone = remaining.length === 0;
 
-  // Pick the “next best step” depending on page:
-  // If you’re already on a setup page, suggest the next incomplete step after it.
   const suggested = useMemo(() => {
     if (allDone) return null;
 
@@ -253,12 +275,13 @@ export default function OnboardingBanner() {
     if (!onKey) return remaining[0];
 
     const idx = steps.findIndex((s) => s.key === onKey);
-    // next incomplete after current page, else first incomplete
     const next = steps.slice(idx + 1).find((s) => !doneMap[s.key]);
     return next ?? remaining[0];
   }, [allDone, pathname, remaining, steps, doneMap]);
 
-  const progress = Math.round(((steps.length - remaining.length) / steps.length) * 100);
+  const progress = Math.round(
+    ((steps.length - remaining.length) / steps.length) * 100
+  );
 
   if (!pageEligible) return null;
   if (loading) return null;
@@ -290,10 +313,9 @@ export default function OnboardingBanner() {
           <button
             type="button"
             onClick={() => {
-              // “Dismiss” means “not now”, not “done”
-              // We snooze per-step for this org.
+              // Snooze this step for this org (not “completed”, just “don’t nag”)
               setStepDone(orgId, suggested.key, true);
-              // reflect immediately
+
               if (suggested.key === "locations") setLocationsDone(true);
               if (suggested.key === "routines") setRoutinesDone(true);
               if (suggested.key === "cleaning") setCleaningDone(true);
