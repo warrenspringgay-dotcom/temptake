@@ -14,7 +14,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 1,
     },
     {
-      url: `${SITE_URL}/launch`,
+      url: `${SITE_URL}/app`,
       lastModified: now,
       changeFrequency: "weekly",
       priority: 0.9,
@@ -26,7 +26,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.8,
     },
     {
-      url: `${SITE_URL}/guides`,
+      url: `${SITE_URL}/demo-wall`,
       lastModified: now,
       changeFrequency: "weekly",
       priority: 0.8,
