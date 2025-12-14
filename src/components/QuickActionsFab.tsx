@@ -2,7 +2,7 @@
 "use client";
 import posthog from "posthog-js";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -15,7 +15,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
-import { Thermometer, Brush } from "lucide-react";
+import { Thermometer, Brush, Mic, MicOff, ClipboardList } from "lucide-react";
 import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
 
 const LS_LAST_INITIALS = "tt_last_initials";
@@ -104,34 +104,39 @@ export default function TempFab() {
   const [pickerList, setPickerList] = useState<RoutineRow[]>([]);
   const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
 
-  // ✅ Voice hook must be top-level (not inside useEffect)
-  const {
-    supported: voiceSupported,
-    listening,
-    start,
-    stop,
-  } = useVoiceTempEntry({
-    lang: "en-GB",
-    onResult: (r) => {
-      setForm((f) => ({
-        ...f,
-        temp_c: r.temp_c ?? f.temp_c,
-        item: r.item ?? f.item,
-        location: r.location ?? f.location,
-        staff_initials: r.staff_initials ?? f.staff_initials,
-      }));
+  // local cache for active ids (so realtime can subscribe once)
+  const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
+  const [activeLocationId, setActiveLocationId] = useState<string | null>(null);
 
-      posthog.capture("temp_voice_parsed", {
-        raw: r.raw,
-        has_temp: !!r.temp_c,
-        has_item: !!r.item,
-        has_location: !!r.location,
-      });
-    },
-    onError: (msg) => {
-      addToast({ title: "Voice entry failed", message: msg, type: "error" });
-    },
-  });
+  // Prevent overlapping cleaning refresh calls
+  const cleaningRefreshInFlight = useRef(false);
+  const cleaningRefreshQueued = useRef(false);
+
+  // ✅ Voice hook must be top-level (not inside useEffect)
+  const { supported: voiceSupported, listening, start, stop } = useVoiceTempEntry(
+    {
+      lang: "en-GB",
+      onResult: (r) => {
+        setForm((f) => ({
+          ...f,
+          temp_c: r.temp_c ?? f.temp_c,
+          item: r.item ?? f.item,
+          location: r.location ?? f.location,
+          staff_initials: r.staff_initials ?? f.staff_initials,
+        }));
+
+        posthog.capture("temp_voice_parsed", {
+          raw: r.raw,
+          has_temp: !!r.temp_c,
+          has_item: !!r.item,
+          has_location: !!r.location,
+        });
+      },
+      onError: (msg) => {
+        addToast({ title: "Voice entry failed", message: msg, type: "error" });
+      },
+    }
+  );
 
   /* --------- helpers --------- */
 
@@ -156,9 +161,7 @@ export default function TempFab() {
         .gte("at", start.toISOString())
         .lte("at", end.toISOString());
 
-      if (locationId) {
-        query = query.eq("location_id", locationId);
-      }
+      if (locationId) query = query.eq("location_id", locationId);
 
       const { count, error } = await query;
       if (error || count == null) {
@@ -173,18 +176,35 @@ export default function TempFab() {
 
   // Count today’s *open* cleaning tasks:
   // tasks due today minus runs recorded today
-  async function refreshCleaningOpen() {
+  async function refreshCleaningOpen(force = false) {
+    // simple coalescing so spam events don't overlap
+    if (cleaningRefreshInFlight.current) {
+      cleaningRefreshQueued.current = true;
+      return;
+    }
+
+    cleaningRefreshInFlight.current = true;
+
     try {
-      const orgId = await getActiveOrgIdClient();
+      const orgId = force ? (activeOrgId ?? (await getActiveOrgIdClient())) : (activeOrgId ?? (await getActiveOrgIdClient()));
       if (!orgId) {
         setOpenCleaning(0);
         return;
       }
-      const locationId = await getActiveLocationIdClient();
+
+      const locationId =
+        force
+          ? (activeLocationId ?? (await getActiveLocationIdClient()))
+          : (activeLocationId ?? (await getActiveLocationIdClient()));
+
       if (!locationId) {
         setOpenCleaning(0);
         return;
       }
+
+      // keep state fresh for realtime subscription usage
+      if (orgId !== activeOrgId) setActiveOrgId(orgId);
+      if (locationId !== activeLocationId) setActiveLocationId(locationId);
 
       const todayISO = isoToday();
 
@@ -241,10 +261,17 @@ export default function TempFab() {
       );
 
       const openCount = dueToday.filter((t) => !doneIds.has(String(t.id))).length;
-
       setOpenCleaning(openCount);
     } catch {
       setOpenCleaning(0);
+    } finally {
+      cleaningRefreshInFlight.current = false;
+
+      if (cleaningRefreshQueued.current) {
+        cleaningRefreshQueued.current = false;
+        // run one more time if we got spammed while busy
+        void refreshCleaningOpen(true);
+      }
     }
   }
 
@@ -272,6 +299,8 @@ export default function TempFab() {
       try {
         const orgId = await getActiveOrgIdClient();
         const locationId = await getActiveLocationIdClient();
+        setActiveOrgId(orgId ?? null);
+        setActiveLocationId(locationId ?? null);
 
         // initials from team_members (and logged-in user)
         if (orgId) {
@@ -361,17 +390,91 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Initial refresh
   useEffect(() => {
     void refreshEntriesToday();
-    void refreshCleaningOpen();
+    void refreshCleaningOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Faster fallback poll (safety net only)
   useEffect(() => {
     const id = setInterval(() => {
-      void refreshCleaningOpen();
-    }, 20000);
+      void refreshCleaningOpen(false);
+    }, 6000);
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrgId, activeLocationId]);
+
+  // Refresh on focus/visibility so it never "lags" when you come back
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") void refreshCleaningOpen(true);
+    };
+    const onFocus = () => void refreshCleaningOpen(true);
+
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", onFocus);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Allow other pages to force immediate refresh (recommended)
+  useEffect(() => {
+    const onCleaningChanged = () => {
+      void refreshCleaningOpen(true);
+    };
+    window.addEventListener("tt-cleaning-changed", onCleaningChanged);
+    return () => window.removeEventListener("tt-cleaning-changed", onCleaningChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Realtime: update orb instantly when runs/tasks change
+  useEffect(() => {
+    if (!activeOrgId || !activeLocationId) return;
+
+    const channel = supabase
+      .channel(`tt-fab-cleaning-${activeOrgId}-${activeLocationId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "cleaning_task_runs",
+          filter: `org_id=eq.${activeOrgId}`,
+        },
+        (payload) => {
+          // only care about the active location (runs have location_id)
+          const loc = (payload.new as any)?.location_id ?? (payload.old as any)?.location_id ?? null;
+          if (loc && String(loc) !== String(activeLocationId)) return;
+          void refreshCleaningOpen(true);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "cleaning_tasks",
+          filter: `org_id=eq.${activeOrgId}`,
+        },
+        (payload) => {
+          // tasks have location_id; ignore other locations
+          const loc = (payload.new as any)?.location_id ?? (payload.old as any)?.location_id ?? null;
+          if (loc && String(loc) !== String(activeLocationId)) return;
+          void refreshCleaningOpen(true);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrgId, activeLocationId]);
 
   useEffect(() => {
     const handler = () => {
@@ -579,13 +682,15 @@ export default function TempFab() {
     }
   }
 
-  /* --------- render --------- */
+  /* --------- derived --------- */
 
   const wrapperClass =
     entriesToday !== null && entriesToday === 0 ? "no-temps-today" : "";
 
   const showTempWarning = entriesToday !== null && entriesToday === 0;
   const showCleaningWarning = openCleaning !== null && openCleaning > 0;
+
+  /* --------- render --------- */
 
   return (
     <>
@@ -597,7 +702,7 @@ export default function TempFab() {
             setShowMenu((v) => !v);
             posthog.capture("fab_opened");
           }}
-          className="fab relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 text-3xl font-bold leading-none text-white shadow-lg shadow-emerald-500/40 hover:brightness-110"
+          className="fab relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 text-3xl font-bold leading-none text-white shadow-lg shadow-emerald-500/40 hover:brightness-110 active:scale-[0.98] transition"
         >
           <span>+</span>
         </button>
@@ -610,7 +715,8 @@ export default function TempFab() {
               setOpen(true);
               posthog.capture("temp_warning_orb_clicked");
             }}
-            className="absolute -top-2 -right-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white shadow-md shadow-red-500/60 active:scale-90 transition cursor-pointer"
+            className="absolute -top-2 -right-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white shadow-md shadow-red-500/60 active:scale-90 transition"
+            title="No temps logged today"
           >
             <Thermometer className="h-4 w-4" />
           </button>
@@ -623,7 +729,8 @@ export default function TempFab() {
               router.push("/cleaning-rota");
               posthog.capture("cleaning_warning_orb_clicked");
             }}
-            className="absolute -top-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white shadow-md shadow-sky-500/60 active:scale-90 transition cursor-pointer"
+            className="absolute -top-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white shadow-md shadow-sky-500/60 active:scale-90 transition"
+            title={`${openCleaning ?? 0} cleaning tasks outstanding`}
           >
             <Brush className="h-4 w-4" />
           </button>
@@ -659,6 +766,21 @@ export default function TempFab() {
 
                 <button
                   type="button"
+                  onClick={async () => {
+                    setShowMenu(false);
+                    await openRoutinePicker();
+                    posthog.capture("fab_choose_routine");
+                  }}
+                  className="w-full rounded-xl bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-black"
+                >
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <ClipboardList className="h-4 w-4" />
+                    Run a routine
+                  </span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => {
                     setShowMenu(false);
                     router.push("/wall");
@@ -674,6 +796,64 @@ export default function TempFab() {
         </div>
       )}
 
+      {/* Routine picker modal */}
+      {showPicker && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
+          onClick={() => setShowPicker(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="mx-auto mt-10 w-full max-w-lg overflow-hidden rounded-2xl border border-white/30 bg-white/95 shadow-xl shadow-slate-900/25"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div className="text-sm font-semibold text-slate-900">
+                Choose a routine
+              </div>
+              <button
+                type="button"
+                className="rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-700 hover:bg-slate-200"
+                onClick={() => setShowPicker(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] overflow-y-auto p-4">
+              {pickerLoading ? (
+                <div className="py-8 text-center text-sm text-slate-500">
+                  Loading…
+                </div>
+              ) : pickerErr ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {pickerErr}
+                </div>
+              ) : pickerList.length === 0 ? (
+                <div className="py-8 text-center text-sm text-slate-500">
+                  No routines found.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {pickerList.map((r) => (
+                    <button
+                      key={r.id ?? r.name}
+                      type="button"
+                      onClick={() => pickRoutine(r)}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm shadow-sm hover:bg-slate-50"
+                    >
+                      <div className="font-semibold text-slate-900">{r.name}</div>
+                      <div className="text-[11px] text-slate-500">
+                        {r.active ? "Active" : "Inactive"}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Quick entry modal */}
       {open && (
         <div
@@ -682,57 +862,94 @@ export default function TempFab() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-6 flex h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-white/30 bg-white/95 shadow-xl shadow-slate-900/25 backdrop-blur sm:mt-24 sm:h-auto sm:rounded-2xl"
+            className="mx-auto mt-6 flex h-[72vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-white/30 bg-white/95 shadow-xl shadow-slate-900/25 sm:mt-24 sm:h-auto sm:rounded-2xl"
           >
-            {/* header */}
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-              <div className="text-base font-semibold text-slate-900">
-                Quick temperature entry
+            <div className="flex items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  Quick temp log
+                </div>
+                <div className="text-base font-semibold text-slate-900">
+                  Add a temperature
+                </div>
               </div>
+
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700 hover:bg-slate-100"
+                className="rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
               >
                 Close
               </button>
             </div>
 
-            {/* body */}
-            <div className="grow space-y-3 overflow-y-auto px-4 py-3 text-sm">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="flex-1 space-y-3 overflow-y-auto p-4 text-sm">
+              {/* voice controls */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-slate-900">
+                      Voice entry
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Say: “Walk-in fridge 3.4 degrees JB”
+                    </div>
+                  </div>
+
+                  {voiceSupported ? (
+                    <button
+                      type="button"
+                      onClick={() => (listening ? stop() : start())}
+                      className={cls(
+                        "inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-white shadow-sm transition",
+                        listening ? "bg-rose-600 hover:bg-rose-700" : "bg-slate-900 hover:bg-black"
+                      )}
+                    >
+                      {listening ? (
+                        <>
+                          <MicOff className="h-4 w-4" />
+                          Stop
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="h-4 w-4" />
+                          Start
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <div className="text-[11px] font-semibold text-slate-500">
+                      Not supported
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">Date</label>
+                  <label className="block text-xs font-medium text-slate-700">
+                    Date
+                  </label>
                   <input
                     type="date"
                     value={form.date}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, date: e.target.value }))
-                    }
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-sm"
+                    onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
+                  <label className="block text-xs font-medium text-slate-700">
                     Initials
                   </label>
                   <select
                     value={form.staff_initials}
-                    onChange={(e) => {
-                      const v = e.target.value.toUpperCase();
-                      setForm((f) => ({ ...f, staff_initials: v }));
-                      try {
-                        localStorage.setItem(LS_LAST_INITIALS, v);
-                      } catch {}
-                    }}
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 uppercase shadow-sm"
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, staff_initials: e.target.value }))
+                    }
+                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                   >
-                    {!form.staff_initials && initials.length === 0 && (
-                      <option value="" disabled>
-                        Loading…
-                      </option>
-                    )}
+                    <option value="">Select…</option>
                     {initials.map((i) => (
                       <option key={i} value={i}>
                         {i}
@@ -740,214 +957,104 @@ export default function TempFab() {
                     ))}
                   </select>
                 </div>
+              </div>
 
+              <div>
+                <label className="block text-xs font-medium text-slate-700">
+                  Location / Area
+                </label>
+                <input
+                  value={form.location}
+                  onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
+                  list="tt-areas"
+                  className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
+                  placeholder="e.g. Walk-in fridge"
+                />
+                <datalist id="tt-areas">
+                  {locations.map((l) => (
+                    <option key={l} value={l} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700">
+                  Item
+                </label>
+                <input
+                  value={form.item}
+                  onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
+                  className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
+                  placeholder="e.g. Chicken curry hot hold"
+                />
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">
-                    Location
+                  <label className="block text-xs font-medium text-slate-700">
+                    Target preset
                   </label>
                   <select
-                    value={form.location}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setForm((f) => ({ ...f, location: v }));
-                      try {
-                        localStorage.setItem(LS_LAST_LOCATION, v);
-                      } catch {}
-                    }}
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-sm"
+                    value={form.target_key}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, target_key: e.target.value }))
+                    }
+                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                   >
-                    {!form.location && locations.length === 0 && (
-                      <option value="" disabled>
-                        Loading…
-                      </option>
-                    )}
-                    {locations.map((loc) => (
-                      <option key={loc} value={loc}>
-                        {loc}
+                    {TARGET_PRESETS.map((p) => (
+                      <option key={p.key} value={p.key}>
+                        {p.label}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                {/* ✅ Temp with voice button */}
                 <div>
-                  <div className="mb-1 flex items-center justify-between">
-                    <label className="block text-xs text-gray-500">
-                      Temp (°C)
-                    </label>
-
-                    {voiceSupported && (
-                      <button
-                        type="button"
-                        onClick={() => (listening ? stop() : start())}
-                        className={cls(
-                          "rounded-full border px-2 py-1 text-[11px] font-medium",
-                          listening
-                            ? "border-red-200 bg-red-50 text-red-700"
-                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                        )}
-                        title="Voice entry"
-                      >
-                        {listening ? "🎤 Listening…" : "🎤 Voice"}
-                      </button>
-                    )}
-                  </div>
-
+                  <label className="block text-xs font-medium text-slate-700">
+                    Temperature (°C)
+                  </label>
                   <input
                     value={form.temp_c}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, temp_c: e.target.value }))
-                    }
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-sm"
+                    onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
+                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                     inputMode="decimal"
-                    placeholder="e.g., 5.0"
+                    placeholder="e.g. 3.4"
                   />
                 </div>
               </div>
-
-              <div>
-                <label className="mb-1 block text-xs text-gray-500">Item</label>
-                <input
-                  value={form.item}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, item: e.target.value }))
-                  }
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-sm"
-                  placeholder="e.g., Chicken curry"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs text-gray-500">Target</label>
-                <select
-                  value={form.target_key}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, target_key: e.target.value }))
-                  }
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-xs shadow-sm"
-                >
-                  {TARGET_PRESETS.map((p) => (
-                    <option key={p.key} value={p.key}>
-                      {p.label}
-                      {p.minC != null || p.maxC != null
-                        ? ` (${p.minC ?? "−∞"}–${p.maxC ?? "+∞"} °C)`
-                        : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
             </div>
 
-            {/* footer */}
-            <div className="flex flex-col gap-2 border-t bg-white/90 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="border-t border-slate-200 bg-white/90 p-4">
               <button
                 type="button"
-                onClick={openRoutinePicker}
-                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white/80 px-3 py-1.5 text-sm text-slate-800 shadow-sm hover:bg-white"
+                disabled={!canSave}
+                onClick={handleSave}
+                className={cls(
+                  "w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white shadow-sm transition",
+                  canSave
+                    ? "bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 hover:brightness-105"
+                    : "cursor-not-allowed bg-slate-300"
+                )}
               >
-                Use routine
-              </button>
-
-              <div className="flex flex-1 justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setOpen(false)}
-                  className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="button"
-                  disabled={!canSave}
-                  onClick={handleSave}
-                  className={cls(
-                    "rounded-2xl px-4 py-1.5 text-sm font-medium text-white shadow-sm shadow-emerald-500/30",
-                    canSave
-                      ? "bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 hover:brightness-105"
-                      : "bg-gray-400 cursor-not-allowed"
-                  )}
-                >
-                  Save quick entry
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Inline Routine Picker Modal */}
-      {showPicker && (
-        <div
-          className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
-          onClick={() => setShowPicker(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-6 flex h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-white/30 bg-white/90 shadow-xl shadow-slate-900/20 backdrop-blur sm:mt-24 sm:h-auto sm:rounded-2xl"
-          >
-            <div className="sticky top-0 z-10 border-b bg-white/90 px-4 py-3 text-base font-semibold">
-              Pick a routine
-            </div>
-            <div className="grow overflow-y-auto px-4 py-3">
-              {pickerLoading ? (
-                <div className="p-4 text-sm text-gray-500">Loading…</div>
-              ) : pickerErr ? (
-                <div className="rounded-md border border-red-200 bg-red-50/90 p-3 text-sm text-red-800">
-                  {pickerErr}
-                </div>
-              ) : pickerList.length === 0 ? (
-                <div className="rounded border border-dashed border-gray-300 bg-white/80 p-6 text-center text-sm text-gray-500">
-                  No routines yet.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {pickerList.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => pickRoutine(r)}
-                      className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-left text-sm shadow-sm hover:bg-white"
-                    >
-                      <div>
-                        <div className="font-medium">{r.name}</div>
-                        {!r.active && (
-                          <div className="text-xs text-gray-500">Inactive</div>
-                        )}
-                      </div>
-                      <span className="text-gray-400">{">"}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t bg-white/90 px-4 py-3">
-              <button
-                type="button"
-                className="rounded-md px-3 py-1.5 text-sm hover:bg-gray-50"
-                onClick={() => setShowPicker(false)}
-              >
-                Close
+                Save temperature
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Full routine run modal */}
+      {/* Routine run modal */}
       <RoutineRunModal
         open={!!runRoutine}
-        routine={runRoutine}
-        defaultDate={form.date}
-        defaultInitials={form.staff_initials}
+        routine={runRoutine as any}
+        defaultDate={isoToday()}
+        defaultInitials={form.staff_initials || ""}
         onClose={() => setRunRoutine(null)}
         onSaved={async () => {
-          addToast({ title: "Routine logged", type: "success" });
-          posthog.capture("routine_logged_from_fab");
           setRunRoutine(null);
+          // routines may have side effects; keep KPIs fresh
           await refreshEntriesToday();
-          await refreshCleaningOpen();
-          setOpen(false);
+          await refreshCleaningOpen(true);
         }}
       />
     </>

@@ -1,34 +1,68 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
 
+function useAutoClear(
+  value: string | null,
+  clear: () => void,
+  ms: number = 4500
+) {
+  useEffect(() => {
+    if (!value) return;
+    const t = setTimeout(clear, ms);
+    return () => clearTimeout(t);
+  }, [value, clear, ms]);
+}
+
+function hasCapsLock(e: React.KeyboardEvent<HTMLInputElement>) {
+  // Some browsers return null for getModifierState
+  try {
+    return e.getModifierState && e.getModifierState("CapsLock");
+  } catch {
+    return false;
+  }
+}
+
 export default function SettingsPage() {
   const [loadingUser, setLoadingUser] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
+  const [initialFullName, setInitialFullName] = useState("");
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+
+  const [showNewPw, setShowNewPw] = useState(false);
+  const [showConfirmPw, setShowConfirmPw] = useState(false);
+  const [capsWarning, setCapsWarning] = useState(false);
 
   // Password error modal state
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [passwordErrors, setPasswordErrors] = useState<string[]>([]);
 
+  useAutoClear(success, () => setSuccess(null));
+  useAutoClear(error, () => setError(null), 6500);
+
   /* Load user info */
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       try {
         setLoadingUser(true);
+        setError(null);
+
         const { data, error } = await supabase.auth.getUser();
         if (error) throw error;
 
@@ -38,19 +72,34 @@ export default function SettingsPage() {
           return;
         }
 
-        setEmail(user.email ?? "");
-        setFullName(
+        const userEmail = user.email ?? "";
+        const name =
           user.user_metadata?.full_name ||
-            user.user_metadata?.name ||
-            ""
-        );
+          user.user_metadata?.name ||
+          "";
+
+        if (cancelled) return;
+
+        setEmail(userEmail);
+        setFullName(name);
+        setInitialFullName(name);
       } catch (e: any) {
-        setError(e?.message || "Error loading account.");
+        if (!cancelled) setError(e?.message || "Error loading account.");
       } finally {
-        setLoadingUser(false);
+        if (!cancelled) setLoadingUser(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const trimmedFullName = useMemo(() => fullName.trim(), [fullName]);
+  const profileDirty = useMemo(
+    () => trimmedFullName !== (initialFullName ?? "").trim(),
+    [trimmedFullName, initialFullName]
+  );
 
   /* Update profile */
   async function handleSaveProfile(e: React.FormEvent) {
@@ -58,15 +107,26 @@ export default function SettingsPage() {
     setError(null);
     setSuccess(null);
 
+    if (!profileDirty) {
+      setSuccess("No changes to save.");
+      return;
+    }
+
+    if (!trimmedFullName) {
+      setError("Full name cannot be empty.");
+      return;
+    }
+
     try {
       setSavingProfile(true);
 
       const { error } = await supabase.auth.updateUser({
-        data: { full_name: fullName },
+        data: { full_name: trimmedFullName },
       });
 
       if (error) throw error;
 
+      setInitialFullName(trimmedFullName);
       setSuccess("Profile updated.");
     } catch (e: any) {
       setError(e?.message || "Failed to update profile.");
@@ -91,7 +151,9 @@ export default function SettingsPage() {
       errs.push("Password must include at least one number.");
     }
     if (!/[^A-Za-z0-9]/.test(pw)) {
-      errs.push("Password must include at least one special character (e.g. !, ?, @, #).");
+      errs.push(
+        "Password must include at least one special character (e.g. !, ?, @, #)."
+      );
     }
     if (/\s/.test(pw)) {
       errs.push("Password cannot contain spaces.");
@@ -102,6 +164,26 @@ export default function SettingsPage() {
 
     return errs;
   }
+
+  const livePwChecks = useMemo(() => {
+    const pw = newPassword;
+    const confirm = confirmPassword;
+
+    return [
+      { ok: pw.length >= 8, label: "At least 8 characters" },
+      { ok: /[A-Z]/.test(pw), label: "One uppercase letter" },
+      { ok: /[a-z]/.test(pw), label: "One lowercase letter" },
+      { ok: /[0-9]/.test(pw), label: "One number" },
+      { ok: /[^A-Za-z0-9]/.test(pw), label: "One special character" },
+      { ok: !/\s/.test(pw), label: "No spaces" },
+      { ok: pw.length > 0 && pw === confirm, label: "Matches confirmation" },
+    ];
+  }, [newPassword, confirmPassword]);
+
+  const canSubmitPassword = useMemo(() => {
+    if (!newPassword || !confirmPassword) return false;
+    return validatePassword(newPassword, confirmPassword).length === 0;
+  }, [newPassword, confirmPassword]);
 
   /* Change password */
   async function handleChangePassword(e: React.FormEvent) {
@@ -127,6 +209,7 @@ export default function SettingsPage() {
 
       setNewPassword("");
       setConfirmPassword("");
+      setCapsWarning(false);
       setSuccess("Password changed successfully.");
     } catch (e: any) {
       setError(e?.message || "Failed to change password.");
@@ -135,20 +218,53 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleSignOut() {
+    setError(null);
+    setSuccess(null);
+
+    try {
+      setSigningOut(true);
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+
+      // Let your auth guard redirect, but be safe:
+      if (typeof window !== "undefined") window.location.href = "/login";
+    } catch (e: any) {
+      setError(e?.message || "Failed to sign out.");
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
   return (
     <>
       <div className="mx-auto max-w-3xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
         {/* HEADER */}
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-            Account
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+              Account
+            </div>
+            <h1 className="text-xl font-semibold text-slate-900 sm:text-2xl">
+              Settings
+            </h1>
+            <p className="mt-1 text-xs text-slate-500">
+              Manage your account details and password.
+            </p>
           </div>
-          <h1 className="text-xl font-semibold text-slate-900 sm:text-2xl">
-            Settings
-          </h1>
-          <p className="mt-1 text-xs text-slate-500">
-            Manage your account details and password.
-          </p>
+
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={loadingUser || signingOut}
+            className={cls(
+              "h-9 rounded-xl px-3 text-xs font-semibold shadow-sm",
+              "border border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50",
+              (loadingUser || signingOut) && "opacity-60 cursor-not-allowed"
+            )}
+          >
+            {signingOut ? "Signing out…" : "Sign out"}
+          </button>
         </div>
 
         {/* Alerts */}
@@ -168,9 +284,26 @@ export default function SettingsPage() {
           onSubmit={handleSaveProfile}
           className="space-y-4 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm"
         >
-          <h2 className="text-sm font-semibold text-slate-900">
-            Profile details
-          </h2>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                Profile details
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                This name can be shown across the app for managers and reports.
+              </p>
+            </div>
+
+            {profileDirty ? (
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800">
+                Unsaved changes
+              </span>
+            ) : (
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
+                Up to date
+              </span>
+            )}
+          </div>
 
           <div className="grid gap-3 text-sm">
             <div>
@@ -193,23 +326,42 @@ export default function SettingsPage() {
                 type="text"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
                 disabled={loadingUser}
+                placeholder={loadingUser ? "Loading…" : "e.g. Alex Smith"}
               />
             </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={savingProfile}
-            className={cls(
-              "rounded-2xl px-4 py-2 text-sm font-medium text-white shadow-sm",
-              "bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500",
-              savingProfile && "opacity-60 cursor-not-allowed"
-            )}
-          >
-            {savingProfile ? "Saving…" : "Save profile"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              disabled={savingProfile || loadingUser || !profileDirty}
+              className={cls(
+                "rounded-2xl px-4 py-2 text-sm font-medium text-white shadow-sm",
+                "bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500",
+                (savingProfile || loadingUser || !profileDirty) &&
+                  "opacity-60 cursor-not-allowed"
+              )}
+            >
+              {savingProfile ? "Saving…" : "Save profile"}
+            </button>
+
+            {profileDirty ? (
+              <button
+                type="button"
+                onClick={() => setFullName(initialFullName)}
+                disabled={savingProfile || loadingUser}
+                className={cls(
+                  "rounded-2xl px-4 py-2 text-sm font-medium shadow-sm",
+                  "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                  (savingProfile || loadingUser) && "opacity-60 cursor-not-allowed"
+                )}
+              >
+                Reset
+              </button>
+            ) : null}
+          </div>
         </form>
 
         {/* PASSWORD SECTION */}
@@ -217,52 +369,118 @@ export default function SettingsPage() {
           onSubmit={handleChangePassword}
           className="space-y-4 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm"
         >
-          <h2 className="text-sm font-semibold text-slate-900">
-            Change password
-          </h2>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                Change password
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Strong password required for compliance and safety. Annoying, but
+                effective.
+              </p>
+            </div>
 
-          <p className="text-xs text-slate-500">
-            Password must be at least 8 characters, include upper and lower
-            case letters, a number and a special character, and have no spaces.
-          </p>
+            {capsWarning ? (
+              <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700">
+                Caps Lock is on
+              </span>
+            ) : null}
+          </div>
 
           <div className="grid gap-3 text-sm">
             <div>
               <label className="block text-xs font-medium text-slate-700">
                 New password
               </label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
-              />
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  type={showNewPw ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  onKeyUp={(e) => setCapsWarning(hasCapsLock(e))}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPw((v) => !v)}
+                  className="h-10 shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  {showNewPw ? "Hide" : "Show"}
+                </button>
+              </div>
             </div>
 
             <div>
               <label className="block text-xs font-medium text-slate-700">
                 Confirm new password
               </label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
-              />
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  type={showConfirmPw ? "text" : "password"}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  onKeyUp={(e) => setCapsWarning(hasCapsLock(e))}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPw((v) => !v)}
+                  className="h-10 shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  {showConfirmPw ? "Hide" : "Show"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Live checklist */}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+              Password checklist
+            </div>
+            <div className="mt-2 grid gap-1 sm:grid-cols-2">
+              {livePwChecks.map((c) => (
+                <div
+                  key={c.label}
+                  className={cls(
+                    "flex items-center gap-2 text-xs font-medium",
+                    c.ok ? "text-emerald-700" : "text-slate-600"
+                  )}
+                >
+                  <span
+                    className={cls(
+                      "inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold",
+                      c.ok
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-slate-200 text-slate-600"
+                    )}
+                  >
+                    {c.ok ? "✓" : "•"}
+                  </span>
+                  <span>{c.label}</span>
+                </div>
+              ))}
             </div>
           </div>
 
           <button
             type="submit"
-            disabled={savingPassword}
+            disabled={savingPassword || !canSubmitPassword}
             className={cls(
               "rounded-2xl px-4 py-2 text-sm font-medium text-white shadow-sm",
               "bg-slate-900 hover:bg-black",
-              savingPassword && "opacity-60 cursor-not-allowed"
+              (savingPassword || !canSubmitPassword) &&
+                "opacity-60 cursor-not-allowed"
             )}
           >
             {savingPassword ? "Changing…" : "Change password"}
           </button>
+
+          <p className="text-[11px] text-slate-500">
+            Tip: Use a password manager. Humans are famously terrible at this.
+          </p>
         </form>
       </div>
 
