@@ -158,7 +158,7 @@ export default function UserMenu({ initialUser = null }: Props) {
 
                 {/* ✅ Direct guide link (the one you deployed) */}
                 <Link
-                  href="/guides/page"
+                  href="/guides"
                   className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
                   onClick={() => setOpen(false)}
                 >
