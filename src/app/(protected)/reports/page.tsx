@@ -10,6 +10,8 @@ import Button from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Download, Printer } from "lucide-react";
 
+/* ===================== Types ===================== */
+
 type TempRow = {
   id: string;
   date: string; // ISO yyyy-mm-dd
@@ -26,21 +28,21 @@ type TeamRow = {
   name: string;
   email?: string | null;
   initials?: string | null;
-  expires_on: string | null; // ISO date
+  expires_on: string | null; // ISO date or ISO datetime
   days_until?: number | null;
 };
 
 type AllergenRow = {
   id: string;
-  reviewed_on: string | null; // ISO date
-  next_due: string | null; // ISO date
+  reviewed_on: string | null; // ISO date/datetime
+  next_due: string | null; // ISO datetime
   reviewer: string | null;
   days_until?: number | null;
 };
 
 type StaffReviewRow = {
   id: string;
-  review_date: string; // ISO date
+  review_date: string; // ISO yyyy-mm-dd
   created_at: string | null; // ISO datetime
   staff_name: string;
   staff_initials: string | null;
@@ -58,8 +60,8 @@ type EducationRow = {
   staff_initials: string | null;
   staff_email: string | null;
   type: string | null;
-  awarded_on: string | null; // ISO date
-  expires_on: string | null; // ISO date
+  awarded_on: string | null; // ISO datetime
+  expires_on: string | null; // ISO datetime
   days_until: number | null;
   status: "valid" | "expired" | "no-expiry";
   notes: string | null;
@@ -71,36 +73,47 @@ type LocationOption = {
   name: string;
 };
 
-/* ---------- Date helpers ---------- */
+/* ===================== Date helpers ===================== */
+
+function safeDate(val: any): Date | null {
+  if (!val) return null;
+  const d = new Date(val);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 function toISODate(val: any): string {
-  const d = new Date(val);
+  const d = safeDate(val) ?? new Date();
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
+// dd-mm-yyyy (per your request to standardise)
 function formatISOToUK(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  const d = safeDate(iso);
+  if (!d) return "—";
   const day = String(d.getDate()).padStart(2, "0");
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
+  return `${day}-${month}-${year}`;
 }
 
 function formatTimeHM(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  const d = safeDate(iso);
+  if (!d) return "—";
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   return `${hh}:${mm}`;
 }
 
-/* ---------- Data fetch helpers (org + optional location) ---------- */
+function addDaysISO(ymd: string, days: number) {
+  const d = safeDate(ymd) ?? new Date();
+  d.setDate(d.getDate() + days);
+  return toISODate(d);
+}
+
+/* ===================== Data fetch helpers ===================== */
 
 async function fetchTemps(
   fromISO: string,
@@ -108,28 +121,26 @@ async function fetchTemps(
   orgId: string,
   locationId: string | null
 ): Promise<TempRow[]> {
+  const fromStart = new Date(`${fromISO}T00:00:00.000Z`).toISOString();
+  const toEnd = new Date(`${toISO}T23:59:59.999Z`).toISOString();
+
   let query = supabase
     .from("food_temp_logs")
     .select("*")
     .eq("org_id", orgId)
-    .gte("at", new Date(fromISO).toISOString())
-    .lte(
-      "at",
-      new Date(new Date(toISO).getTime() + 24 * 3600 * 1000 - 1).toISOString()
-    )
+    .gte("at", fromStart)
+    .lte("at", toEnd)
     .order("at", { ascending: false })
     .limit(3000);
 
-  if (locationId) {
-    query = query.eq("location_id", locationId);
-  }
+  if (locationId) query = query.eq("location_id", locationId);
 
   const { data, error } = await query;
   if (error) throw error;
 
   return (data ?? []).map((r: any) => ({
     id: String(r.id),
-    date: toISODate(r.at),
+    date: toISODate(r.at ?? r.created_at),
     staff: r.staff_initials ?? r.initials ?? "—",
     location: r.area ?? "—",
     item: r.note ?? "—",
@@ -152,9 +163,7 @@ async function fetchCleaningCount(
     .gte("run_on", fromISO)
     .lte("run_on", toISO);
 
-  if (locationId) {
-    query = query.eq("location_id", locationId);
-  }
+  if (locationId) query = query.eq("location_id", locationId);
 
   const { count, error } = await query;
   if (error || count == null) return 0;
@@ -163,12 +172,9 @@ async function fetchCleaningCount(
 
 /**
  * Training due / overdue in next `withinDays` days.
- * Sourced from `trainings` table (expires_on) + `staff` table for names.
+ * Sourced from `trainings` table (expires_on) + `staff` for names.
  */
-async function fetchTeamDue(
-  withinDays: number,
-  orgId: string
-): Promise<TeamRow[]> {
+async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[]> {
   const { data: tData, error: tErr } = await supabase
     .from("trainings")
     .select("id, staff_id, expires_on")
@@ -176,7 +182,7 @@ async function fetchTeamDue(
 
   if (tErr) throw tErr;
 
-  const trainings = (tData ?? []).filter((t: any) => t.expires_on);
+  const trainings = (tData ?? []).filter((t: any) => !!t.expires_on);
   if (!trainings.length) return [];
 
   const staffIds = Array.from(
@@ -184,13 +190,11 @@ async function fetchTeamDue(
       trainings
         .map((t: any) => t.staff_id)
         .filter((id: any) => typeof id === "string" || typeof id === "number")
+        .map((id: any) => String(id))
     )
   );
 
-  const staffMap = new Map<
-    string,
-    { name: string; email: string | null; initials: string | null }
-  >();
+  const staffMap = new Map<string, { name: string; email: string | null; initials: string | null }>();
 
   if (staffIds.length) {
     const { data: sData, error: sErr } = await supabase
@@ -220,34 +224,32 @@ async function fetchTeamDue(
         initials: null,
       };
 
-      const raw = r.expires_on ?? null;
-      const iso = raw ? new Date(raw).toISOString() : null;
-      const d0 = raw ? new Date(raw) : null;
-      if (d0) d0.setHours(0, 0, 0, 0);
+      const exp = safeDate(r.expires_on);
+      if (!exp) return null;
+
+      const exp0 = new Date(exp);
+      exp0.setHours(0, 0, 0, 0);
+
+      const days_until = Math.round((exp0.getTime() - today0.getTime()) / 86400000);
 
       return {
         id: String(r.id),
         name: staff.name,
         email: staff.email,
         initials: staff.initials,
-        expires_on: iso,
-        days_until: d0
-          ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
-          : null,
+        expires_on: exp.toISOString(),
+        days_until,
       } as TeamRow;
     })
-    .filter((r) => r.days_until != null && r.days_until <= withinDays)
-    .sort((a, b) => (a.expires_on || "").localeCompare(b.expires_on || ""));
+    .filter(Boolean)
+    .filter((r: any) => r.days_until != null && r.days_until <= withinDays)
+    .sort((a, b) => (a!.expires_on || "").localeCompare(b!.expires_on || ""));
 }
 
 /**
  * Allergen reviews due/overdue from `allergen_review_log`
- * Schema: reviewed_on (date), interval_days, reviewer_name, ...
  */
-async function fetchAllergenLog(
-  withinDays: number,
-  orgId: string
-): Promise<AllergenRow[]> {
+async function fetchAllergenLog(withinDays: number, orgId: string): Promise<AllergenRow[]> {
   const { data, error } = await supabase
     .from("allergen_review_log")
     .select("id, reviewed_on, interval_days, reviewer_name")
@@ -262,27 +264,26 @@ async function fetchAllergenLog(
 
   return (data ?? [])
     .map((r: any) => {
-      const lr = r.reviewed_on ? new Date(r.reviewed_on) : null;
+      const reviewed = safeDate(r.reviewed_on);
+      const intervalDays = Number(r.interval_days ?? 0);
 
-      let nextISO: string | null = null;
-      if (lr && Number.isFinite(Number(r.interval_days))) {
-        const next = new Date(
-          lr.getTime() + Number(r.interval_days) * 86400000
-        );
-        nextISO = next.toISOString();
+      let nextDue: Date | null = null;
+      if (reviewed && Number.isFinite(intervalDays) && intervalDays > 0) {
+        nextDue = new Date(reviewed.getTime() + intervalDays * 86400000);
       }
 
-      const d0 = nextISO ? new Date(nextISO) : null;
-      if (d0) d0.setHours(0, 0, 0, 0);
+      const next0 = nextDue ? new Date(nextDue) : null;
+      if (next0) next0.setHours(0, 0, 0, 0);
+
+      const days_until =
+        next0 ? Math.round((next0.getTime() - today0.getTime()) / 86400000) : null;
 
       return {
         id: String(r.id),
-        reviewed_on: lr ? lr.toISOString() : null,
-        next_due: nextISO,
+        reviewed_on: reviewed ? reviewed.toISOString() : null,
+        next_due: nextDue ? nextDue.toISOString() : null,
         reviewer: r.reviewer_name ?? null,
-        days_until: d0
-          ? Math.round((d0.getTime() - today0.getTime()) / 86400000)
-          : null,
+        days_until,
       } as AllergenRow;
     })
     .filter((r) => r.days_until != null && r.days_until <= withinDays)
@@ -320,9 +321,7 @@ async function fetchStaffReviews(
     .order("review_date", { ascending: false })
     .order("created_at", { ascending: false });
 
-  if (locationId) {
-    query = query.eq("location_id", locationId);
-  }
+  if (locationId) query = query.eq("location_id", locationId);
 
   const { data, error } = await query;
   if (error) throw error;
@@ -344,7 +343,6 @@ async function fetchStaffReviews(
 
 /**
  * All staff education / qualification records from `trainings`.
- * Joins to `staff` for names, email, initials.
  */
 async function fetchEducation(orgId: string): Promise<EducationRow[]> {
   const { data, error } = await supabase
@@ -371,17 +369,19 @@ async function fetchEducation(orgId: string): Promise<EducationRow[]> {
 
   return (data ?? []).map((r: any) => {
     const staff = r.staff ?? {};
-    const awarded = r.awarded_on ? new Date(r.awarded_on) : null;
-    const expires = r.expires_on ? new Date(r.expires_on) : null;
+    const awarded = safeDate(r.awarded_on);
+    const expires = safeDate(r.expires_on);
 
-    if (awarded) awarded.setHours(0, 0, 0, 0);
-    if (expires) expires.setHours(0, 0, 0, 0);
+    const awarded0 = awarded ? new Date(awarded) : null;
+    const expires0 = expires ? new Date(expires) : null;
+    if (awarded0) awarded0.setHours(0, 0, 0, 0);
+    if (expires0) expires0.setHours(0, 0, 0, 0);
 
     let daysUntil: number | null = null;
     let status: EducationRow["status"] = "no-expiry";
 
-    if (expires) {
-      daysUntil = Math.round((expires.getTime() - today0.getTime()) / 86400000);
+    if (expires0) {
+      daysUntil = Math.round((expires0.getTime() - today0.getTime()) / 86400000);
       status = daysUntil < 0 ? "expired" : "valid";
     }
 
@@ -401,18 +401,10 @@ async function fetchEducation(orgId: string): Promise<EducationRow[]> {
   });
 }
 
-/* ---------- CSV ---------- */
+/* ===================== CSV ===================== */
 
 function tempsToCSV(rows: TempRow[]) {
-  const header = [
-    "Date",
-    "Staff",
-    "Location",
-    "Item",
-    "Temp (°C)",
-    "Target",
-    "Status",
-  ];
+  const header = ["Date", "Staff", "Location", "Item", "Temp (°C)", "Target", "Status"];
   const lines = [header.join(",")];
   for (const r of rows) {
     const cells = [
@@ -429,10 +421,10 @@ function tempsToCSV(rows: TempRow[]) {
   return lines.join("\n");
 }
 
-/* ======================================================================= */
+/* ===================== Page ===================== */
 
 export default function ReportsPage() {
-  // dates default to last 30 days
+  // default dates (UI) but we auto-run 90 day audit once org is known
   const today = new Date();
   const d30 = new Date(Date.now() - 29 * 24 * 3600 * 1000);
   const [from, setFrom] = useState(toISODate(d30));
@@ -446,9 +438,7 @@ export default function ReportsPage() {
   const [temps, setTemps] = useState<TempRow[] | null>(null);
   const [teamDue, setTeamDue] = useState<TeamRow[] | null>(null);
   const [allergenLog, setAllergenLog] = useState<AllergenRow[] | null>(null);
-  const [staffReviews, setStaffReviews] = useState<StaffReviewRow[] | null>(
-    null
-  );
+  const [staffReviews, setStaffReviews] = useState<StaffReviewRow[] | null>(null);
   const [education, setEducation] = useState<EducationRow[] | null>(null);
   const [cleaningCount, setCleaningCount] = useState(0);
 
@@ -463,7 +453,6 @@ export default function ReportsPage() {
   const [showAllTemps, setShowAllTemps] = useState(false);
   const [showAllEducation, setShowAllEducation] = useState(false);
 
-  // KPI from temps (still uses full dataset)
   const kpi = useMemo(() => {
     const t = temps ?? [];
     const fails = t.filter((r) => r.status === "fail").length;
@@ -471,18 +460,14 @@ export default function ReportsPage() {
     return { count: t.length, fails, locations: locationsSet.size };
   }, [temps]);
 
-  // Visible temps for the table: 10 by default, all when toggled
   const visibleTemps = useMemo(() => {
     if (!temps) return null;
-    if (showAllTemps) return temps;
-    return temps.slice(0, 10);
+    return showAllTemps ? temps : temps.slice(0, 10);
   }, [temps, showAllTemps]);
 
-  // Visible education rows: 10 by default, all when toggled
   const visibleEducation = useMemo(() => {
     if (!education) return null;
-    if (showAllEducation) return education;
-    return education.slice(0, 10);
+    return showAllEducation ? education : education.slice(0, 10);
   }, [education, showAllEducation]);
 
   /* ---------- boot: org + locations ---------- */
@@ -491,10 +476,8 @@ export default function ReportsPage() {
     (async () => {
       const id = await getActiveOrgIdClient();
       setOrgId(id ?? null);
-
       if (!id) return;
 
-      // load locations for org
       const { data, error } = await supabase
         .from("locations")
         .select("id, name")
@@ -502,33 +485,15 @@ export default function ReportsPage() {
         .order("name");
 
       if (!error && data) {
-        setLocations(
-          data.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" }))
-        );
+        setLocations(data.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })));
       }
 
-      // default filter to active location if present
       const activeLoc = await getActiveLocationIdClient();
-      if (activeLoc) {
-        setLocationFilter(activeLoc);
-      }
+      if (activeLoc) setLocationFilter(activeLoc);
     })();
   }, []);
 
   /* ---------- runners ---------- */
-
-async function runCustom() {
-  if (!orgId) {
-    setErr("No organisation selected.");
-    return;
-  }
-
-  const locId =
-    locationFilter && locationFilter !== "all" ? locationFilter : null;
-
-  await runRange(from, to, orgId, locId, true);
-}
-
 
   async function runRange(
     rangeFrom: string,
@@ -550,7 +515,7 @@ async function runCustom() {
       setTemps(t);
       setCleaningCount(cleanCount);
       setStaffReviews(reviews);
-      setShowAllTemps(false); // reset view mode when running a new report
+      setShowAllTemps(false);
 
       if (includeAncillary) {
         const withinDays = 90;
@@ -577,28 +542,31 @@ async function runCustom() {
     }
   }
 
-  async function runInstantAudit90() {
-  if (!orgId) {
-    setErr("No organisation selected.");
-    return;
+  async function runCustom() {
+    if (!orgId) {
+      setErr("No organisation selected.");
+      return;
+    }
+    const locId = locationFilter !== "all" ? locationFilter : null;
+    await runRange(from, to, orgId, locId, true);
   }
 
-  const toISO = toISODate(new Date());
-  const fromISO = toISODate(
-    new Date(Date.now() - 89 * 24 * 3600 * 1000)
-  );
+  async function runInstantAudit90() {
+    if (!orgId) {
+      setErr("No organisation selected.");
+      return;
+    }
 
-  setFrom(fromISO);
-  setTo(toISO);
+    const toISO = toISODate(new Date());
+    const fromISO = addDaysISO(toISO, -89);
 
-  const locId =
-    locationFilter && locationFilter !== "all" ? locationFilter : null;
+    setFrom(fromISO);
+    setTo(toISO);
 
-  await runRange(fromISO, toISO, orgId, locId, true);
-}
+    const locId = locationFilter !== "all" ? locationFilter : null;
+    await runRange(fromISO, toISO, orgId, locId, true);
+  }
 
-
-  // initial auto-run (once org known)
   useEffect(() => {
     if (orgId && !initialRunDone) {
       runInstantAudit90();
@@ -609,9 +577,7 @@ async function runCustom() {
 
   function downloadCSV() {
     if (!temps?.length) return;
-    const blob = new Blob([tempsToCSV(temps)], {
-      type: "text/csv;charset=utf-8",
-    });
+    const blob = new Blob([tempsToCSV(temps)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -636,9 +602,7 @@ async function runCustom() {
       {/* Top controls */}
       <Card className="border-none bg-transparent p-0 shadow-none">
         <CardHeader className="flex flex-row items-center justify-between px-0 pb-3 pt-0">
-          <CardTitle className="text-xl font-semibold text-slate-900">
-            Reports
-          </CardTitle>
+          <CardTitle className="text-xl font-semibold text-slate-900">Reports</CardTitle>
         </CardHeader>
 
         <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm sm:grid-cols-2 lg:grid-cols-4">
@@ -646,6 +610,7 @@ async function runCustom() {
             <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
               Custom range
             </div>
+
             <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
               <input
                 type="date"
@@ -678,6 +643,7 @@ async function runCustom() {
             >
               Instant Audit (last 90 days)
             </Button>
+
             <Button
               variant="outline"
               onClick={downloadCSV}
@@ -686,6 +652,7 @@ async function runCustom() {
             >
               <Download className="mr-2 h-4 w-4" /> Export CSV
             </Button>
+
             <Button
               variant="outline"
               onClick={printReport}
@@ -706,9 +673,7 @@ async function runCustom() {
             <select
               className="mt-1 w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5 text-sm"
               value={locationFilter}
-              onChange={(e) =>
-                setLocationFilter(e.target.value as "all" | string)
-              }
+              onChange={(e) => setLocationFilter(e.target.value as "all" | string)}
             >
               <option value="all">All locations</option>
               {locations.map((loc) => (
@@ -717,9 +682,7 @@ async function runCustom() {
                 </option>
               ))}
             </select>
-            <div className="mt-1 text-[11px] text-slate-500">
-              Current: {currentLocationLabel}
-            </div>
+            <div className="mt-1 text-[11px] text-slate-500">Current: {currentLocationLabel}</div>
           </div>
         </div>
 
@@ -734,41 +697,28 @@ async function runCustom() {
       <Card className="border-none bg-transparent p-0 shadow-none">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Entries
-            </div>
-            <div className="text-2xl font-semibold text-slate-900">
-              {kpi.count}
-            </div>
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Entries</div>
+            <div className="text-2xl font-semibold text-slate-900">{kpi.count}</div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Failures
-            </div>
-            <div className="text-2xl font-semibold text-slate-900">
-              {kpi.fails}
-            </div>
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Failures</div>
+            <div className="text-2xl font-semibold text-slate-900">{kpi.fails}</div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Locations
-            </div>
-            <div className="text-2xl font-semibold text-slate-900">
-              {kpi.locations}
-            </div>
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Locations</div>
+            <div className="text-2xl font-semibold text-slate-900">{kpi.locations}</div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
             <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
               Cleaning tasks logged
             </div>
-            <div className="text-2xl font-semibold text-slate-900">
-              {cleaningCount}
-            </div>
+            <div className="text-2xl font-semibold text-slate-900">{cleaningCount}</div>
           </div>
         </div>
+
         {!temps && !loading && (
           <div className="mt-2 text-xs text-slate-500">
-            Run a report to see results.
+            Run a report to see results. (Instant Audit defaults to 90 days, which is your inspection-ready view.)
           </div>
         )}
       </Card>
@@ -778,9 +728,9 @@ async function runCustom() {
         {/* Temps table */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
-            Temperature Logs{" "}
-            {temps ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+            Temperature Logs {temps ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
+
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50/80">
@@ -838,16 +788,10 @@ async function runCustom() {
             </table>
           </div>
 
-          {/* Row limit / view all toggle */}
           {temps && temps.length > 10 && (
-            <div
-              className="mt-2 flex items-center justify-between text-xs text-slate-600"
-              data-hide-on-print
-            >
+            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
               <div>
-                Showing{" "}
-                {showAllTemps ? temps.length : Math.min(10, temps.length)} of{" "}
-                {temps.length} entries
+                Showing {showAllTemps ? temps.length : Math.min(10, temps.length)} of {temps.length} entries
               </div>
               <button
                 type="button"
@@ -860,11 +804,10 @@ async function runCustom() {
           )}
         </Card>
 
-        {/* All staff education / qualifications */}
+        {/* Education */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-3 text-base font-semibold">
-            Staff Education / Qualifications (all records)
-          </h3>
+          <h3 className="mb-3 text-base font-semibold">Staff Education / Qualifications (all records)</h3>
+
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50/80">
@@ -881,6 +824,7 @@ async function runCustom() {
                   <th className="py-2 pr-3">Certificate</th>
                 </tr>
               </thead>
+
               <tbody>
                 {!education?.length ? (
                   <tr>
@@ -892,42 +836,18 @@ async function runCustom() {
                   visibleEducation!.map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
                       <td className="py-2 pr-3">{r.staff_name}</td>
-                      <td className="py-2 pr-3">
-                        {r.staff_initials ?? "—"}
-                      </td>
-                      <td className="py-2 pr-3">
-                        {r.staff_email ?? "—"}
-                      </td>
+                      <td className="py-2 pr-3">{r.staff_initials ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.staff_email ?? "—"}</td>
                       <td className="py-2 pr-3">{r.type ?? "—"}</td>
-                      <td className="py-2 pr-3">
-                        {r.awarded_on ? formatISOToUK(r.awarded_on) : "—"}
-                      </td>
-                      <td className="py-2 pr-3">
-                        {r.expires_on ? formatISOToUK(r.expires_on) : "—"}
-                      </td>
-                      <td
-                        className={`py-2 pr-3 ${
-                          r.days_until != null && r.days_until < 0
-                            ? "text-red-700"
-                            : ""
-                        }`}
-                      >
+                      <td className="py-2 pr-3">{r.awarded_on ? formatISOToUK(r.awarded_on) : "—"}</td>
+                      <td className="py-2 pr-3">{r.expires_on ? formatISOToUK(r.expires_on) : "—"}</td>
+                      <td className={`py-2 pr-3 ${r.days_until != null && r.days_until < 0 ? "text-red-700" : ""}`}>
                         {r.days_until != null ? r.days_until : "—"}
                       </td>
                       <td className="py-2 pr-3">
-                        {r.status === "no-expiry"
-                          ? "No expiry"
-                          : r.status === "expired"
-                          ? "Expired"
-                          : "Valid"}
+                        {r.status === "no-expiry" ? "No expiry" : r.status === "expired" ? "Expired" : "Valid"}
                       </td>
-                      <td className="max-w-xs py-2 pr-3">
-                        {r.notes ? (
-                          <span className="line-clamp-2">{r.notes}</span>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
+                      <td className="max-w-xs py-2 pr-3">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
                       <td className="py-2 pr-3">
                         {r.certificate_url ? (
                           <a
@@ -950,16 +870,9 @@ async function runCustom() {
           </div>
 
           {education && education.length > 10 && (
-            <div
-              className="mt-2 flex items-center justify-between text-xs text-slate-600"
-              data-hide-on-print
-            >
+            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
               <div>
-                Showing{" "}
-                {showAllEducation
-                  ? education.length
-                  : Math.min(10, education.length)}{" "}
-                of {education.length} records
+                Showing {showAllEducation ? education.length : Math.min(10, education.length)} of {education.length} records
               </div>
               <button
                 type="button"
@@ -972,11 +885,10 @@ async function runCustom() {
           )}
         </Card>
 
-        {/* Allergen review log / due */}
+        {/* Allergen log */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-3 text-base font-semibold">
-            Allergen Register — reviews due/overdue (≤90 days)
-          </h3>
+          <h3 className="mb-3 text-base font-semibold">Allergen Register — reviews due/overdue (≤90 days)</h3>
+
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50/80">
@@ -997,20 +909,10 @@ async function runCustom() {
                 ) : (
                   allergenLog.map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">
-                        {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
-                      </td>
+                      <td className="py-2 pr-3">{r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}</td>
                       <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
-                      <td className="py-2 pr-3">
-                        {r.next_due ? formatISOToUK(r.next_due) : "—"}
-                      </td>
-                      <td
-                        className={`py-2 pr-3 ${
-                          r.days_until != null && r.days_until < 0
-                            ? "text-red-700"
-                            : ""
-                        }`}
-                      >
+                      <td className="py-2 pr-3">{r.next_due ? formatISOToUK(r.next_due) : "—"}</td>
+                      <td className={`py-2 pr-3 ${r.days_until != null && r.days_until < 0 ? "text-red-700" : ""}`}>
                         {r.days_until != null ? r.days_until : "—"}
                       </td>
                     </tr>
@@ -1021,15 +923,13 @@ async function runCustom() {
           </div>
         </Card>
 
-        {/* Manager / supervisor staff reviews */}
+        {/* Staff reviews */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-1 text-base font-semibold">
-            Manager / Supervisor QC Reviews
-          </h3>
+          <h3 className="mb-1 text-base font-semibold">Manager / Supervisor QC Reviews</h3>
           <p className="mb-3 text-xs text-slate-500">
-            Logged from the Manager Dashboard QC review form. Shows who was
-            reviewed, who reviewed them, and the rating and notes.
+            Logged from the Manager Dashboard QC review form. Shows who was reviewed, who reviewed them, and the rating and notes.
           </p>
+
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50/80">
@@ -1054,31 +954,17 @@ async function runCustom() {
                 ) : (
                   staffReviews.map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">
-                        {formatISOToUK(r.review_date)}
-                      </td>
-                      <td className="py-2 pr-3">
-                        {formatTimeHM(r.created_at)}
-                      </td>
+                      <td className="py-2 pr-3">{formatISOToUK(r.review_date)}</td>
+                      <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
                       <td className="py-2 pr-3">
                         {r.staff_name}
                         {r.staff_initials ? ` (${r.staff_initials})` : ""}
                       </td>
-                      <td className="py-2 pr-3">
-                        {r.location_name ?? "—"}
-                      </td>
-                      <td className="py-2 pr-3">
-                        {r.reviewer_name || r.reviewer_email || "—"}
-                      </td>
+                      <td className="py-2 pr-3">{r.location_name ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.reviewer_name || r.reviewer_email || "—"}</td>
                       <td className="py-2 pr-3">{r.category}</td>
                       <td className="py-2 pr-3">{r.rating}</td>
-                      <td className="max-w-xs py-2 pr-3">
-                        {r.notes ? (
-                          <span className="line-clamp-2">{r.notes}</span>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
+                      <td className="max-w-xs py-2 pr-3">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
                     </tr>
                   ))
                 )}
@@ -1086,6 +972,9 @@ async function runCustom() {
             </table>
           </div>
         </Card>
+
+        {/* Optional: show “due soon” blocks if you actually want them visible */}
+        {(teamDue?.length || allergenLog?.length) ? null : null}
       </div>
 
       <style jsx global>{`
