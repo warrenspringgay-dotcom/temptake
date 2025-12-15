@@ -3,10 +3,6 @@ import Link from "next/link";
 import GuidesAnalytics from "@/components/GuidesAnalytics";
 import BackToGuides from "@/components/BackToGuides";
 
-
-
-
-
 export const metadata: Metadata = {
   title: "Allergen matrix (UK): how often to review it and what inspectors expect",
   description:
@@ -18,6 +14,11 @@ export default function AllergenMatrixGuide() {
   return (
     <article className="mx-auto max-w-3xl px-4 py-8">
       <GuidesAnalytics slug="allergen-matrix-uk" />
+
+      {/* ✅ Put it where people can actually see it */}
+      <div className="mb-4">
+        <BackToGuides />
+      </div>
 
       <h1 className="text-3xl font-extrabold">
         Allergen matrix (UK): how often to review it and what inspectors expect
@@ -66,7 +67,6 @@ export default function AllergenMatrixGuide() {
           <Link href="/allergens" className="underline font-semibold">
             Set up your allergen review →
           </Link>
-          <BackToGuides />
         </p>
       </div>
     </article>

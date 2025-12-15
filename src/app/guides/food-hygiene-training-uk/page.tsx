@@ -14,7 +14,7 @@ export default function TrainingExpiryGuide() {
   return (
     <article className="mx-auto max-w-3xl px-4 py-8">
       <GuidesAnalytics slug="food-hygiene-training-expiry-uk" />
-
+<BackToGuides />
       <h1 className="text-3xl font-extrabold">
         Food hygiene training expiry (UK): who needs what level and when
       </h1>
@@ -60,7 +60,7 @@ export default function TrainingExpiryGuide() {
           <Link href="/team" className="underline font-semibold">
             Track staff training →
           </Link>
-          <BackToGuides />
+         
         </p>
       </div>
     </article>

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import GuidesAnalytics from "@/components/GuidesAnalytics";
-
+import BackToGuides from "@/components/BackToGuides";
 export const metadata: Metadata = {
   title: "Safer Food Better Business logs: what you must keep vs what’s optional",
   description:
@@ -13,7 +13,7 @@ export default function SFBBLogsGuide() {
   return (
     <article className="mx-auto max-w-3xl px-4 py-8">
       <GuidesAnalytics slug="sfbb-logs" />
-
+<BackToGuides />
       <h1 className="text-3xl font-extrabold">
         Safer Food Better Business logs: what you must keep vs what’s optional
       </h1>

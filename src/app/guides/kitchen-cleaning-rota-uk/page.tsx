@@ -22,7 +22,7 @@ export default function CleaningRotaGuide() {
     <article className="mx-auto max-w-3xl px-4 py-8 text-slate-900">
       {/* PostHog tracking */}
       <GuidesAnalytics slug="kitchen-cleaning-rota-uk" />
-
+<BackToGuides />
       <header className="space-y-3">
         <h1 className="text-3xl font-extrabold leading-tight">
           Kitchen cleaning rota (UK): what it must include and how to keep it compliant
@@ -194,7 +194,7 @@ export default function CleaningRotaGuide() {
           This setup alone removes a huge amount of inspection stress.
         </p>
       </section>
-<BackToGuides />
+
       <footer className="mt-10 border-t border-slate-200 pt-4 text-xs text-slate-500">
         Written for UK food businesses. Not legal advice, but aligned with common
         Environmental Health expectations.
