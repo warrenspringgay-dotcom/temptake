@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import GuidesAnalytics from "@/components/GuidesAnalytics";
-
+import BackToGuides from "@/components/BackToGuides";
 export const metadata: Metadata = {
   title: "Food hygiene training expiry (UK): who needs what level and when",
   description:
@@ -59,6 +59,7 @@ export default function TrainingExpiryGuide() {
           <Link href="/team" className="underline font-semibold">
             Track staff training →
           </Link>
+          <BackToGuides />
         </p>
       </div>
     </article>

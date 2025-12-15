@@ -2,7 +2,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import GuidesAnalytics from "@/components/GuidesAnalytics";
-
+import BackToGuides from "@/components/BackToGuides";
 export const metadata: Metadata = {
   title: "Kitchen cleaning rota (UK): what it must include and how to keep it compliant",
   description:
@@ -194,7 +194,7 @@ export default function CleaningRotaGuide() {
           This setup alone removes a huge amount of inspection stress.
         </p>
       </section>
-
+<BackToGuides />
       <footer className="mt-10 border-t border-slate-200 pt-4 text-xs text-slate-500">
         Written for UK food businesses. Not legal advice, but aligned with common
         Environmental Health expectations.

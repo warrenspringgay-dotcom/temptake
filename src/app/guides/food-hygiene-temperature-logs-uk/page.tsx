@@ -1,6 +1,7 @@
 // src/app/guides/food-hygiene-temperature-logs-uk/page.tsx
 import type { Metadata } from "next";
 import Link from "next/link";
+import BackToGuides from "@/components/BackToGuides";
 
 const SITE_URL = "https://temptake.app";
 const SLUG = "food-hygiene-temperature-logs-uk";
@@ -281,6 +282,7 @@ export default function GuideFoodHygieneTempLogsUKPage() {
             <Link href="/guides" className="underline">
               /guides
             </Link>
+            <BackToGuides />
           </div>
         </footer>
       </article>

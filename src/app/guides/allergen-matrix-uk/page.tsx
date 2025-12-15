@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import GuidesAnalytics from "@/components/GuidesAnalytics";
+import BackToGuides from "@/components/BackToGuides";
+
+
+
+
 
 export const metadata: Metadata = {
   title: "Allergen matrix (UK): how often to review it and what inspectors expect",
@@ -61,6 +66,7 @@ export default function AllergenMatrixGuide() {
           <Link href="/allergens" className="underline font-semibold">
             Set up your allergen review →
           </Link>
+          <BackToGuides />
         </p>
       </div>
     </article>

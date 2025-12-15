@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import GuidesAnalytics from "@/components/GuidesAnalytics";
+import BackToGuides from "@/components/BackToGuides";
 
 export const metadata: Metadata = {
   title: "Guides · TempTake",
@@ -156,6 +157,7 @@ export default function GuidesIndexPage() {
           <Link href="/cleaning-rota" className="underline font-semibold">
             cleaning rota
           </Link>
+          <BackToGuides />
           .
         </p>
       </section>
