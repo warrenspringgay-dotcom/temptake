@@ -157,9 +157,10 @@ export default function GuidesIndexPage() {
           <Link href="/cleaning-rota" className="underline font-semibold">
             cleaning rota
           </Link>
-          <BackToGuides />
+         
           .
         </p>
+        <BackToGuides />
       </section>
     </main>
   );

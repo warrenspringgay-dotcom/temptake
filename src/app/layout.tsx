@@ -1,6 +1,5 @@
 // src/app/layout.tsx
 import "./globals.css";
-import type { ReactNode } from "react";
 import { Analytics } from "@vercel/analytics/next";
 
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
@@ -9,16 +8,15 @@ import { ToastProvider } from "@/components/ui/use-toast";
 import { GlobalLoadingProvider } from "@/components/GlobalLoadingProvider";
 import { PHProvider } from "@/components/PosthogProvider";
 import { getUserOrNull } from "@/app/actions/auth";
-
-// ✅ These should be relative to /src/app if the files live there.
-// If yours are actually in /src/components, swap these to "@/components/HeaderShell" etc.
 import HeaderShell from "./app/HeaderShell";
 import FabShell from "./FabShell";
+import ComplianceWidget from "@/components/ComplianceWidget"; // 👈 NEW
+import ComplianceIndicatorShell from "@/components/ComplianceIndicatorShell";
 
 export default async function RootLayout({
   children,
 }: {
-  children: ReactNode;
+  children: React.ReactNode;
 }) {
   const user = await getUserOrNull();
 
@@ -34,10 +32,15 @@ export default async function RootLayout({
 
               <Pwa />
 
+              {/* Global compliance badge (top-right) */}
+              <ComplianceWidget />
+
               <main className="mx-auto max-w-6xl px-4 py-2">{children}</main>
 
-              <script src="https://tally.so/widgets/embed.js" async />
+              <script src="https://tally.so/widgets/embed.js" async></script>
 
+
+<ComplianceIndicatorShell />
               {/* FAB now respects route rules */}
               <FabShell />
 
@@ -45,7 +48,6 @@ export default async function RootLayout({
             </GlobalLoadingProvider>
           </ToastProvider>
         </PHProvider>
-
         <Analytics />
       </body>
     </html>
