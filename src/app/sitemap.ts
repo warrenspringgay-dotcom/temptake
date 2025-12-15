@@ -1,4 +1,3 @@
-// src/app/sitemap.ts
 import { MetadataRoute } from "next";
 
 const SITE_URL = "https://temptake.app";
@@ -33,7 +32,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.8,
     },
 
-    // Help & education (high trust for Google)
+    // Help & education (trust + relevance)
     {
       url: `${SITE_URL}/help`,
       lastModified: now,
@@ -49,9 +48,33 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.9,
     },
 
-    // Individual guides (THIS is what actually ranks)
+    // Individual guides (ranking pages)
     {
       url: `${SITE_URL}/guides/food-hygiene-temperature-logs-uk`,
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.85,
+    },
+    {
+      url: `${SITE_URL}/guides/kitchen-cleaning-rota-uk`,
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.85,
+    },
+    {
+      url: `${SITE_URL}/guides/allergen-matrix-uk`,
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.85,
+    },
+    {
+      url: `${SITE_URL}/guides/food-hygiene-training-expiry-uk`,
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.85,
+    },
+    {
+      url: `${SITE_URL}/guides/safer-food-better-business-logs`,
       lastModified: now,
       changeFrequency: "monthly",
       priority: 0.85,
