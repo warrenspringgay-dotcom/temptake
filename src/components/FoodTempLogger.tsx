@@ -105,6 +105,19 @@ function toISODate(val: any): string | null {
   return d.toISOString().slice(0, 10);
 }
 
+// ✅ New: dd-mm-yyyy (local date parts)
+function formatDDMMYYYY(val: any): string | null {
+  if (!val) return null;
+  const d = new Date(val);
+  if (Number.isNaN(d.getTime())) return null;
+
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = String(d.getFullYear());
+
+  return `${dd}-${mm}-${yyyy}`;
+}
+
 function getDow1to7(ymd: string) {
   const date = new Date(ymd);
   return ((date.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
@@ -694,7 +707,9 @@ export default function DashboardPage() {
             footer={
               <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
                 <span>View details</span>
-                <span className="opacity-80">{hasAnyKpiAlert ? "Now" : "OK"}</span>
+                <span className="opacity-80">
+                  {hasAnyKpiAlert ? "Now" : "OK"}
+                </span>
               </div>
             }
           />
@@ -711,7 +726,9 @@ export default function DashboardPage() {
         <div className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur flex flex-col">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div>
-              <h2 className="text-sm font-extrabold text-slate-900">Kitchen wall</h2>
+              <h2 className="text-sm font-extrabold text-slate-900">
+                Kitchen wall
+              </h2>
               <p className="text-[11px] font-medium text-slate-500">
                 Latest three notes from the team.
               </p>
@@ -726,7 +743,8 @@ export default function DashboardPage() {
 
           {wallPosts.length === 0 ? (
             <div className="mt-1 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-xs text-slate-500 flex-1 flex items-center">
-              No posts yet. When the team adds messages on the wall, the latest three will show here.
+              No posts yet. When the team adds messages on the wall, the latest
+              three will show here.
             </div>
           ) : (
             <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -751,10 +769,13 @@ export default function DashboardPage() {
                     <div className="text-base font-extrabold tracking-wide text-slate-900">
                       {p.initials || "??"}
                     </div>
+
+                    {/* ✅ Date now dd-mm-yyyy */}
                     <span className="rounded-full bg-white/60 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
-                      {toISODate(p.created_at) ?? ""}
+                      {formatDDMMYYYY(p.created_at) ?? ""}
                     </span>
                   </div>
+
                   <div className="text-[11px] font-medium text-slate-800 line-clamp-3">
                     {p.message}
                   </div>
@@ -766,7 +787,9 @@ export default function DashboardPage() {
 
         <div className="rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-md shadow-amber-200/60 flex flex-col">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-extrabold text-amber-900">Employee of the month</h2>
+            <h2 className="text-sm font-extrabold text-amber-900">
+              Employee of the month
+            </h2>
             <span className="text-xl" aria-hidden="true">
               🏆
             </span>
@@ -791,12 +814,14 @@ export default function DashboardPage() {
               </div>
 
               <p className="mt-3 text-[11px] font-medium text-amber-900/80">
-                Based on completed cleaning tasks and temperature logs this month.
+                Based on completed cleaning tasks and temperature logs this
+                month.
               </p>
             </>
           ) : (
             <p className="text-xs font-medium text-amber-900/80">
-              No leaderboard data yet. Once your team completes cleaning tasks and logs temperatures, the top performer will be highlighted here.
+              No leaderboard data yet. Once your team completes cleaning tasks
+              and logs temperatures, the top performer will be highlighted here.
             </p>
           )}
 
@@ -814,14 +839,54 @@ export default function DashboardPage() {
       <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur space-y-3">
         <h2 className="text-sm font-extrabold text-slate-900">Quick actions</h2>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <QuickLink href="/routines" label="Routines" icon="📋" canHover={canHover} />
-          <QuickLink href="/allergens" label="Allergens" icon="⚠️" canHover={canHover} />
-          <QuickLink href="/cleaning-rota" label="Cleaning rota" icon="🧽" canHover={canHover} />
-          <QuickLink href="/team" label="Team & training" icon="👥" canHover={canHover} />
-          <QuickLink href="/reports" label="Reports" icon="📊" canHover={canHover} />
-          <QuickLink href="/locations" label="Locations & sites" icon="📍" canHover={canHover} />
-          <QuickLink href="/manager" label="Manager view" icon="💼" canHover={canHover} />
-          <QuickLink href="/help" label="Help & support" icon="❓" canHover={canHover} />
+          <QuickLink
+            href="/routines"
+            label="Routines"
+            icon="📋"
+            canHover={canHover}
+          />
+          <QuickLink
+            href="/allergens"
+            label="Allergens"
+            icon="⚠️"
+            canHover={canHover}
+          />
+          <QuickLink
+            href="/cleaning-rota"
+            label="Cleaning rota"
+            icon="🧽"
+            canHover={canHover}
+          />
+          <QuickLink
+            href="/team"
+            label="Team & training"
+            icon="👥"
+            canHover={canHover}
+          />
+          <QuickLink
+            href="/reports"
+            label="Reports"
+            icon="📊"
+            canHover={canHover}
+          />
+          <QuickLink
+            href="/locations"
+            label="Locations & sites"
+            icon="📍"
+            canHover={canHover}
+          />
+          <QuickLink
+            href="/manager"
+            label="Manager view"
+            icon="💼"
+            canHover={canHover}
+          />
+          <QuickLink
+            href="/help"
+            label="Help & support"
+            icon="❓"
+            canHover={canHover}
+          />
         </div>
       </section>
 
