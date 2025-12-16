@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -59,6 +58,7 @@ export default function ComplianceIndicatorShell() {
     async function run() {
       const { data } = await supabase.auth.getSession();
       if (cancelled) return;
+
       if (!data.session) {
         setSignedIn(false);
         return;
@@ -102,7 +102,8 @@ export default function ComplianceIndicatorShell() {
           const due = (tasks ?? []).filter((t: any) => {
             if (t.frequency === "daily") return true;
             const d = new Date(today);
-            if (t.frequency === "weekly") return t.weekday === ((d.getDay() + 6) % 7) + 1;
+            if (t.frequency === "weekly")
+              return t.weekday === ((d.getDay() + 6) % 7) + 1;
             if (t.frequency === "monthly") return t.month_day === d.getDate();
             return false;
           });
@@ -190,14 +191,14 @@ export default function ComplianceIndicatorShell() {
   const tempsScore = kpi.tempFails7d > 0 ? 0 : 40;
 
   const cleaningPct =
-    kpi.cleaningDueToday > 0 ? (kpi.cleaningDoneToday / kpi.cleaningDueToday) : 1;
+    kpi.cleaningDueToday > 0
+      ? kpi.cleaningDoneToday / kpi.cleaningDueToday
+      : 1;
   const cleaningScore = Math.round(clamp(cleaningPct, 0, 1) * 20);
 
-  const trainingScore =
-    kpi.trainingOver > 0 ? 0 : kpi.trainingDueSoon > 0 ? 12 : 20;
+  const trainingScore = kpi.trainingOver > 0 ? 0 : kpi.trainingDueSoon > 0 ? 12 : 20;
 
-  const allergenScore =
-    kpi.allergenOver > 0 ? 0 : kpi.allergenDueSoon > 0 ? 12 : 20;
+  const allergenScore = kpi.allergenOver > 0 ? 0 : kpi.allergenDueSoon > 0 ? 12 : 20;
 
   const score = clamp(tempsScore + cleaningScore + trainingScore + allergenScore, 0, 100);
 
@@ -208,55 +209,58 @@ export default function ComplianceIndicatorShell() {
     !hardFail &&
     (kpi.trainingDueSoon > 0 ||
       kpi.allergenDueSoon > 0 ||
-      (kpi.cleaningDueToday > 0 && kpi.cleaningDoneToday < kpi.cleaningDueToday));
+      (kpi.cleaningDueToday > 0 &&
+        kpi.cleaningDoneToday < kpi.cleaningDueToday));
 
   const label = hardFail ? "FAIL" : warn ? "WARN" : "OK";
-  const ring =
-    hardFail ? "stroke-red-500" : warn ? "stroke-amber-500" : "stroke-emerald-500";
-  const bg =
-    hardFail ? "bg-red-50" : warn ? "bg-amber-50" : "bg-emerald-50";
+  const ring = hardFail
+    ? "stroke-red-500"
+    : warn
+    ? "stroke-amber-500"
+    : "stroke-emerald-500";
+  const bg = hardFail ? "bg-red-50" : warn ? "bg-amber-50" : "bg-emerald-50";
 
   const dash = C * (1 - score / 100);
 
   return (
-    <div className="fixed right-4 top-[72px] z-[60]">
-      
-        <div
-          className={`rounded-full ${bg} shadow-lg border border-slate-200/60 backdrop-blur`}
-          style={{ width: SIZE + 18, height: SIZE + 18 }}
-        >
-          <div className="relative flex h-full w-full items-center justify-center">
-            <svg width={SIZE} height={SIZE} className="rotate-[-90deg]">
-              <circle
-                cx={SIZE / 2}
-                cy={SIZE / 2}
-                r={R}
-                fill="none"
-                stroke="#e5e7eb"
-                strokeWidth={STROKE}
-              />
-              <circle
-                cx={SIZE / 2}
-                cy={SIZE / 2}
-                r={R}
-                fill="none"
-                strokeWidth={STROKE}
-                strokeLinecap="round"
-                strokeDasharray={C}
-                strokeDashoffset={dash}
-                className={ring}
-              />
-            </svg>
+    <div className="fixed right-4 top-[72px] z-[60] print:hidden">
+      <div
+        className={`rounded-full ${bg} shadow-lg border border-slate-200/60 backdrop-blur`}
+        style={{ width: SIZE + 18, height: SIZE + 18 }}
+      >
+        <div className="relative flex h-full w-full items-center justify-center">
+          <svg width={SIZE} height={SIZE} className="rotate-[-90deg]">
+            <circle
+              cx={SIZE / 2}
+              cy={SIZE / 2}
+              r={R}
+              fill="none"
+              stroke="#e5e7eb"
+              strokeWidth={STROKE}
+            />
+            <circle
+              cx={SIZE / 2}
+              cy={SIZE / 2}
+              r={R}
+              fill="none"
+              strokeWidth={STROKE}
+              strokeLinecap="round"
+              strokeDasharray={C}
+              strokeDashoffset={dash}
+              className={ring}
+            />
+          </svg>
 
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-900">
-              <div className="text-[22px] font-extrabold leading-none">{score}%</div>
-              <div className="mt-0.5 text-[11px] font-extrabold tracking-wide opacity-80">
-                {label}
-              </div>
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-900">
+            <div className="text-[22px] font-extrabold leading-none">
+              {score}%
+            </div>
+            <div className="mt-0.5 text-[11px] font-extrabold tracking-wide opacity-80">
+              {label}
             </div>
           </div>
         </div>
-      
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-// src/app/reports/page.tsx
+// src/app/(protected)/reports/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -89,7 +89,7 @@ function toISODate(val: any): string {
   return `${y}-${m}-${day}`;
 }
 
-// dd-mm-yyyy (per your request to standardise)
+// dd-mm-yyyy
 function formatISOToUK(iso: string | null | undefined): string {
   const d = safeDate(iso);
   if (!d) return "—";
@@ -111,6 +111,12 @@ function addDaysISO(ymd: string, days: number) {
   const d = safeDate(ymd) ?? new Date();
   d.setDate(d.getDate() + days);
   return toISODate(d);
+}
+
+/* ===================== Type guards ===================== */
+
+function isTeamRow(v: TeamRow | null): v is TeamRow {
+  return v !== null;
 }
 
 /* ===================== Data fetch helpers ===================== */
@@ -194,7 +200,10 @@ async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[
     )
   );
 
-  const staffMap = new Map<string, { name: string; email: string | null; initials: string | null }>();
+  const staffMap = new Map<
+    string,
+    { name: string; email: string | null; initials: string | null }
+  >();
 
   if (staffIds.length) {
     const { data: sData, error: sErr } = await supabase
@@ -217,7 +226,7 @@ async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[
   today0.setHours(0, 0, 0, 0);
 
   return trainings
-    .map((r: any) => {
+    .map((r: any): TeamRow | null => {
       const staff = staffMap.get(String(r.staff_id)) ?? {
         name: "—",
         email: null,
@@ -239,11 +248,11 @@ async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[
         initials: staff.initials,
         expires_on: exp.toISOString(),
         days_until,
-      } as TeamRow;
+      };
     })
-    .filter(Boolean)
-    .filter((r: any) => r.days_until != null && r.days_until <= withinDays)
-    .sort((a, b) => (a!.expires_on || "").localeCompare(b!.expires_on || ""));
+    .filter(isTeamRow)
+    .filter((r) => r.days_until != null && r.days_until <= withinDays)
+    .sort((a, b) => (a.expires_on || "").localeCompare(b.expires_on || ""));
 }
 
 /**
@@ -424,7 +433,6 @@ function tempsToCSV(rows: TempRow[]) {
 /* ===================== Page ===================== */
 
 export default function ReportsPage() {
-  // default dates (UI) but we auto-run 90 day audit once org is known
   const today = new Date();
   const d30 = new Date(Date.now() - 29 * 24 * 3600 * 1000);
   const [from, setFrom] = useState(toISODate(d30));
@@ -449,7 +457,6 @@ export default function ReportsPage() {
 
   const printRef = useRef<HTMLDivElement>(null);
 
-  // controls how many rows are visible
   const [showAllTemps, setShowAllTemps] = useState(false);
   const [showAllEducation, setShowAllEducation] = useState(false);
 
@@ -485,7 +492,9 @@ export default function ReportsPage() {
         .order("name");
 
       if (!error && data) {
-        setLocations(data.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })));
+        setLocations(
+          data.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" }))
+        );
       }
 
       const activeLoc = await getActiveLocationIdClient();
@@ -594,8 +603,6 @@ export default function ReportsPage() {
     locationFilter === "all"
       ? "All locations"
       : locations.find((l) => l.id === locationFilter)?.name ?? "This location";
-
-  /* ========================= RENDER ========================= */
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
@@ -847,7 +854,9 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3">
                         {r.status === "no-expiry" ? "No expiry" : r.status === "expired" ? "Expired" : "Valid"}
                       </td>
-                      <td className="max-w-xs py-2 pr-3">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
+                      <td className="max-w-xs py-2 pr-3">
+                        {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                      </td>
                       <td className="py-2 pr-3">
                         {r.certificate_url ? (
                           <a
@@ -972,9 +981,6 @@ export default function ReportsPage() {
             </table>
           </div>
         </Card>
-
-        {/* Optional: show “due soon” blocks if you actually want them visible */}
-        {(teamDue?.length || allergenLog?.length) ? null : null}
       </div>
 
       <style jsx global>{`
@@ -986,6 +992,24 @@ export default function ReportsPage() {
           button {
             display: none !important;
           }
+
+          /* Kill any “overlay UI” during print (compliance orb, FAB, etc.) */
+          [data-compliance-indicator],
+          #tt-compliance-indicator,
+          .tt-compliance-indicator,
+          [data-fab],
+          #tt-fab,
+          .tt-fab {
+            display: none !important;
+            visibility: hidden !important;
+          }
+
+          /* If something is position:fixed and still sneaks in, nuke it */
+          * {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+
           a {
             text-decoration: none;
             color: inherit;

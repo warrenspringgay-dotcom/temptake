@@ -29,7 +29,8 @@ const authedLinks: Tab[] = [
   { href: "/suppliers", label: "Suppliers" },
   { href: "/reports", label: "Reports" },
   { href: "/locations", label: "Locations & sites" },
-  { href: "/billing", label: "Billing & subscription" }, // 👈 added
+  { href: "/billing", label: "Billing & subscription" },
+  { href: "/guides", label: "Guides" }, // 👈 added
   { href: "/settings", label: "Settings" },
   { href: "/help", label: "Help & support" },
 ];
