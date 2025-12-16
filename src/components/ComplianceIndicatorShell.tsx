@@ -1,381 +1,397 @@
 // src/components/ComplianceIndicatorShell.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 
 type Kpi = {
-  // temps
+  tempLogsToday: number;
   tempFails7d: number;
-  tempLogs7d: number;
-
-  // cleaning
-  cleaningTasksTotal: number;
   cleaningDueToday: number;
   cleaningDoneToday: number;
-
-  // training
-  teamCount: number;
-  trainingOver: number;
   trainingDueSoon: number;
-
-  // allergens
-  allergenConfigCount: number;
-  allergenOver: number;
+  trainingOver: number;
   allergenDueSoon: number;
+  allergenOver: number;
 };
 
-const SIZE = 112;
-const STROKE = 10;
-const R = (SIZE - STROKE) / 2;
-const C = 2 * Math.PI * R;
+type CleanTask = {
+  id: string;
+  frequency: "daily" | "weekly" | "monthly";
+  weekday: number | null;
+  month_day: number | null;
+};
 
-const LS_DISMISS = "tt_compliance_orb_dismissed_until";
+const LS_HIDE = "tt_hide_compliance_orb";
+const isoToday = () => new Date().toISOString().slice(0, 10);
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
+function getDow1to7(ymd: string) {
+  const date = new Date(ymd);
+  return ((date.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
+}
+function getDom(ymd: string) {
+  return new Date(ymd).getDate();
+}
+function isDueOn(t: CleanTask, ymd: string) {
+  if (t.frequency === "daily") return true;
+  if (t.frequency === "weekly") return t.weekday === getDow1to7(ymd);
+  return t.month_day === getDom(ymd);
 }
 
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+function clamp(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n));
 }
 
-function dismissedNow(): boolean {
-  try {
-    const until = localStorage.getItem(LS_DISMISS);
-    if (!until) return false;
-    return new Date(until).getTime() > Date.now();
-  } catch {
-    return false;
-  }
+function labelFrom(score: number) {
+  if (score >= 90) return "OK";
+  if (score >= 70) return "GOOD";
+  if (score >= 40) return "RISK";
+  return "BAD";
 }
 
-function dismissForHours(hours = 8) {
-  try {
-    const d = new Date();
-    d.setHours(d.getHours() + hours);
-    localStorage.setItem(LS_DISMISS, d.toISOString());
-  } catch {}
+function ringTone(score: number) {
+  if (score >= 90) return "rgba(16,185,129,0.95)"; // emerald
+  if (score >= 70) return "rgba(34,197,94,0.95)";  // green
+  if (score >= 40) return "rgba(245,158,11,0.95)"; // amber
+  return "rgba(239,68,68,0.95)";                   // red
 }
 
 export default function ComplianceIndicatorShell() {
-  const pathname = usePathname();
-
-  const hide = useMemo(() => {
-    if (!pathname) return true;
-
-    // hide on auth + marketing + reports (you asked) + print handled by print:hidden too
-    return (
-      pathname.startsWith("/login") ||
-      pathname.startsWith("/signup") ||
-      pathname.startsWith("/forgot-password") ||
-      pathname.startsWith("/reset-password") ||
-      pathname.startsWith("/launch") ||
-      pathname.startsWith("/pricing") ||
-      pathname.startsWith("/reports")
-    );
-  }, [pathname]);
-
-  const [signedIn, setSignedIn] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
-
+  const [hidden, setHidden] = useState(false);
   const [kpi, setKpi] = useState<Kpi>({
+    tempLogsToday: 0,
     tempFails7d: 0,
-    tempLogs7d: 0,
-    cleaningTasksTotal: 0,
     cleaningDueToday: 0,
     cleaningDoneToday: 0,
-    teamCount: 0,
-    trainingOver: 0,
     trainingDueSoon: 0,
-    allergenConfigCount: 0,
-    allergenOver: 0,
+    trainingOver: 0,
     allergenDueSoon: 0,
+    allergenOver: 0,
   });
 
+  const refreshTimer = useRef<number | null>(null);
+
+  // hydrate hidden state
   useEffect(() => {
-    setDismissed(dismissedNow());
+    try {
+      setHidden(localStorage.getItem(LS_HIDE) === "1");
+    } catch {}
   }, []);
 
+  async function loadTempsKpi(orgId: string, locationId: string | null, todayISO: string) {
+    const since = new Date();
+    since.setDate(since.getDate() - 7);
+
+    let query = supabase
+      .from("food_temp_logs")
+      .select("at,status,org_id,location_id")
+      .eq("org_id", orgId)
+      .order("at", { ascending: false })
+      .limit(500);
+
+    if (locationId) query = query.eq("location_id", locationId);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    let tempLogsToday = 0;
+    let tempFails7d = 0;
+
+    (data ?? []).forEach((r: any) => {
+      const at = r.at ?? r.created_at ?? null;
+      const d = at ? new Date(at) : null;
+      if (!d || Number.isNaN(d.getTime())) return;
+
+      const iso = d.toISOString().slice(0, 10);
+      const status: string | null = r.status ?? null;
+
+      if (iso === todayISO) tempLogsToday += 1;
+      if (d >= since && status === "fail") tempFails7d += 1;
+    });
+
+    setKpi((prev) => ({ ...prev, tempLogsToday, tempFails7d }));
+  }
+
+  async function loadCleaningKpi(orgId: string, locationId: string | null, todayISO: string) {
+    if (!locationId) {
+      setKpi((prev) => ({ ...prev, cleaningDueToday: 0, cleaningDoneToday: 0 }));
+      return;
+    }
+
+    const { data: tData, error: tErr } = await supabase
+      .from("cleaning_tasks")
+      .select("id,frequency,weekday,month_day")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId);
+
+    if (tErr) throw tErr;
+
+   type CleanFrequency = "daily" | "weekly" | "monthly";
+
+type CleanTask = {
+  id: string;
+  frequency: CleanFrequency;
+  weekday: number | null;
+  month_day: number | null;
+};
+
+function toCleanFrequency(v: any): CleanFrequency {
+  const s = String(v ?? "daily").toLowerCase();
+  if (s === "weekly" || s === "monthly" || s === "daily") return s;
+  return "daily";
+}
+
+// ...
+
+const tasks: CleanTask[] = (tData ?? []).map((r: any) => ({
+  id: String(r.id),
+  frequency: toCleanFrequency(r.frequency),
+  weekday: r.weekday != null ? Number(r.weekday) : null,
+  month_day: r.month_day != null ? Number(r.month_day) : null,
+}));
+
+
+    const dueIds = tasks.filter((t) => isDueOn(t, todayISO)).map((t) => t.id);
+    const cleaningDueToday = dueIds.length;
+
+    if (!dueIds.length) {
+      setKpi((prev) => ({ ...prev, cleaningDueToday: 0, cleaningDoneToday: 0 }));
+      return;
+    }
+
+    const { data: rData, error: rErr } = await supabase
+      .from("cleaning_task_runs")
+      .select("task_id,run_on")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .eq("run_on", todayISO)
+      .in("task_id", dueIds);
+
+    if (rErr) throw rErr;
+
+    const cleaningDoneToday = (rData ?? []).length;
+    setKpi((prev) => ({ ...prev, cleaningDueToday, cleaningDoneToday }));
+  }
+
+  async function loadTrainingAllergenKpi(orgId: string) {
+    // training
+    let trainingDueSoon = 0;
+    let trainingOver = 0;
+
+    try {
+      const { data, error } = await supabase
+        .from("trainings")
+        .select("expires_on")
+        .eq("org_id", orgId)
+        .limit(500);
+
+      if (error) throw error;
+
+      const today = new Date();
+      const soon = new Date();
+      soon.setDate(soon.getDate() + 30);
+
+      (data ?? []).forEach((r: any) => {
+        if (!r.expires_on) return;
+        const exp = new Date(r.expires_on);
+        if (Number.isNaN(exp.getTime())) return;
+        if (exp < today) trainingOver++;
+        else if (exp <= soon) trainingDueSoon++;
+      });
+    } catch {}
+
+    // allergen review
+    let allergenDueSoon = 0;
+    let allergenOver = 0;
+
+    try {
+      const { data, error } = await supabase
+        .from("allergen_review_log")
+        .select("reviewed_on,interval_days")
+        .eq("org_id", orgId)
+        .order("reviewed_on", { ascending: false })
+        .limit(365);
+
+      if (error) throw error;
+
+      const todayD = new Date();
+      todayD.setHours(0, 0, 0, 0);
+      const soon = new Date(todayD);
+      soon.setDate(soon.getDate() + 30);
+
+      (data ?? []).forEach((r: any) => {
+        const last = r.reviewed_on ? new Date(r.reviewed_on) : null;
+        const interval = Number(r.interval_days ?? 0);
+        if (!last || !Number.isFinite(interval) || interval <= 0) return;
+
+        const due = new Date(last);
+        due.setDate(due.getDate() + interval);
+
+        if (due < todayD) allergenOver++;
+        else if (due <= soon) allergenDueSoon++;
+      });
+    } catch {}
+
+    setKpi((prev) => ({ ...prev, trainingDueSoon, trainingOver, allergenDueSoon, allergenOver }));
+  }
+
+  async function refresh() {
+    const orgId = await getActiveOrgIdClient();
+    if (!orgId) return;
+
+    const locationId = await getActiveLocationIdClient();
+    const today = isoToday();
+
+    await Promise.all([
+      loadTempsKpi(orgId, locationId, today),
+      loadCleaningKpi(orgId, locationId, today),
+      loadTrainingAllergenKpi(orgId),
+    ]);
+  }
+
+  // initial load
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      try {
+        if (dead) return;
+        await refresh();
+      } catch {}
+    })();
+    return () => {
+      dead = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // realtime subscriptions: refresh when relevant tables change
   useEffect(() => {
     let cancelled = false;
 
-    async function run() {
-      const { data } = await supabase.auth.getSession();
-      if (cancelled) return;
-
-      if (!data.session) {
-        setSignedIn(false);
-        return;
-      }
-      setSignedIn(true);
-
+    (async () => {
       const orgId = await getActiveOrgIdClient();
-      const locationId = await getActiveLocationIdClient();
-      if (!orgId) return;
+      if (!orgId || cancelled) return;
 
-      const today = todayISO();
-      const since = new Date();
-      since.setDate(since.getDate() - 7);
+      const channel = supabase
+        .channel(`tt-compliance-${orgId}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "cleaning_task_runs", filter: `org_id=eq.${orgId}` },
+          () => scheduleRefresh()
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "food_temp_logs", filter: `org_id=eq.${orgId}` },
+          () => scheduleRefresh()
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "trainings", filter: `org_id=eq.${orgId}` },
+          () => scheduleRefresh()
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "allergen_review_log", filter: `org_id=eq.${orgId}` },
+          () => scheduleRefresh()
+        )
+        .subscribe();
 
-      let tempFails7d = 0;
-      let tempLogs7d = 0;
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    })();
 
-      // temps
-      try {
-        const { data: temps } = await supabase
-          .from("food_temp_logs")
-          .select("at,status,created_at")
-          .eq("org_id", orgId)
-          .limit(500);
-
-        (temps ?? []).forEach((r: any) => {
-          const d = new Date(r.at ?? r.created_at);
-          if (d >= since) {
-            tempLogs7d++;
-            if (r.status === "fail") tempFails7d++;
-          }
-        });
-      } catch {}
-
-      // cleaning
-      let cleaningTasksTotal = 0;
-      let cleaningDueToday = 0;
-      let cleaningDoneToday = 0;
-
-      try {
-        if (locationId) {
-          const { data: tasks } = await supabase
-            .from("cleaning_tasks")
-            .select("id,frequency,weekday,month_day")
-            .eq("org_id", orgId)
-            .eq("location_id", locationId);
-
-          cleaningTasksTotal = (tasks ?? []).length;
-
-          const due = (tasks ?? []).filter((t: any) => {
-            if (t.frequency === "daily") return true;
-            const d = new Date(today);
-            if (t.frequency === "weekly") return t.weekday === ((d.getDay() + 6) % 7) + 1;
-            if (t.frequency === "monthly") return t.month_day === d.getDate();
-            return false;
-          });
-
-          cleaningDueToday = due.length;
-
-          const { data: runs } = await supabase
-            .from("cleaning_task_runs")
-            .select("task_id,run_on")
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .eq("run_on", today);
-
-          const done = new Set((runs ?? []).map((r: any) => r.task_id));
-          cleaningDoneToday = due.filter((t: any) => done.has(t.id)).length;
-        }
-      } catch {}
-
-      // training
-      let teamCount = 0;
-      let trainingOver = 0;
-      let trainingDueSoon = 0;
-
-      const soon = new Date();
-      soon.setDate(soon.getDate() + 14);
-      const now = new Date();
-
-      try {
-        const { data: team } = await supabase.from("team_members").select("*").eq("org_id", orgId);
-
-        teamCount = (team ?? []).length;
-
-        (team ?? []).forEach((r: any) => {
-          const d = new Date(r.training_expires_at ?? r.training_expiry);
-          if (isNaN(d.getTime())) return;
-          if (d < now) trainingOver++;
-          else if (d <= soon) trainingDueSoon++;
-        });
-      } catch {}
-
-      // allergens
-      let allergenConfigCount = 0;
-      let allergenOver = 0;
-      let allergenDueSoon = 0;
-
-      try {
-        const { data: ar } = await supabase
-          .from("allergen_review")
-          .select("last_reviewed,interval_days")
-          .eq("org_id", orgId);
-
-        allergenConfigCount = (ar ?? []).length;
-
-        (ar ?? []).forEach((r: any) => {
-          const last = new Date(r.last_reviewed);
-          if (isNaN(last.getTime())) return;
-          const due = new Date(last);
-          due.setDate(due.getDate() + Number(r.interval_days ?? 0));
-          if (due < now) allergenOver++;
-          else if (due <= soon) allergenDueSoon++;
-        });
-      } catch {}
-
-      if (cancelled) return;
-
-      setKpi({
-        tempFails7d,
-        tempLogs7d,
-        cleaningTasksTotal,
-        cleaningDueToday,
-        cleaningDoneToday,
-        teamCount,
-        trainingOver,
-        trainingDueSoon,
-        allergenConfigCount,
-        allergenOver,
-        allergenDueSoon,
-      });
+    function scheduleRefresh() {
+      // debounce: lots of changes can land quickly
+      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+      refreshTimer.current = window.setTimeout(() => {
+        refresh().catch(() => {});
+      }, 250);
     }
 
-    run();
-    const t = setInterval(run, 120000);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (hide || !signedIn || dismissed) return null;
+  // score (Operational compliance today)
+  const score = useMemo(() => {
+    const cleaningDue = kpi.cleaningDueToday;
+    const cleaningDone = kpi.cleaningDoneToday;
 
-  // ---------- Scoring ----------
-  // Key rule: missing setup/data DOES NOT score as "perfect".
-  // Temps: if no logs in 7d => 0 for that category and status becomes SETUP.
-  // Cleaning: if no tasks exist => 0 for that category and status becomes SETUP.
-  // Training: if no team members => 0 for that category and status becomes SETUP.
-  // Allergens: if no allergen config => 0 for that category and status becomes SETUP.
+    // cleaning: 0 points if nothing is scheduled (don’t “reward” emptiness)
+    const cleaningPct =
+      cleaningDue > 0 ? clamp(cleaningDone / cleaningDue, 0, 1) : 0;
+    const cleaningScore = Math.round(cleaningPct * 40);
 
-  const needsSetup =
-    kpi.tempLogs7d === 0 ||
-    kpi.cleaningTasksTotal === 0 ||
-    kpi.teamCount === 0 ||
-    kpi.allergenConfigCount === 0;
+    // temps: must have at least one log today to earn points
+    const tempScore =
+      kpi.tempLogsToday <= 0 ? 0 : kpi.tempFails7d > 0 ? 0 : 40;
 
-  // weights
-  const W_TEMPS = 40;
-  const W_CLEAN = 20;
-  const W_TRAIN = 20;
-  const W_ALLER = 20;
+    // training: lightweight impact
+    const trainingScore = kpi.trainingOver > 0 ? 0 : kpi.trainingDueSoon > 0 ? 5 : 10;
 
-  const tempsScore =
-    kpi.tempLogs7d === 0 ? 0 : kpi.tempFails7d > 0 ? 0 : W_TEMPS;
+    // allergen: lightweight impact
+    const allergenScore = kpi.allergenOver > 0 ? 0 : kpi.allergenDueSoon > 0 ? 5 : 10;
 
-  const cleaningScore =
-    kpi.cleaningTasksTotal === 0
-      ? 0
-      : kpi.cleaningDueToday === 0
-      ? W_CLEAN
-      : Math.round(clamp(kpi.cleaningDoneToday / kpi.cleaningDueToday, 0, 1) * W_CLEAN);
+    return clamp(tempScore + cleaningScore + trainingScore + allergenScore, 0, 100);
+  }, [kpi]);
 
-  const trainingScore =
-    kpi.teamCount === 0 ? 0 : kpi.trainingOver > 0 ? 0 : kpi.trainingDueSoon > 0 ? 12 : W_TRAIN;
+  const label = useMemo(() => labelFrom(score), [score]);
+  const tone = useMemo(() => ringTone(score), [score]);
 
-  const allergenScore =
-    kpi.allergenConfigCount === 0
-      ? 0
-      : kpi.allergenOver > 0
-      ? 0
-      : kpi.allergenDueSoon > 0
-      ? 12
-      : W_ALLER;
+  if (hidden) return null;
 
-  const score = clamp(tempsScore + cleaningScore + trainingScore + allergenScore, 0, 100);
-
-  const hardFail = kpi.tempFails7d > 0 || kpi.trainingOver > 0 || kpi.allergenOver > 0;
-
-  const warn =
-    !hardFail &&
-    !needsSetup &&
-    (kpi.trainingDueSoon > 0 ||
-      kpi.allergenDueSoon > 0 ||
-      (kpi.cleaningDueToday > 0 && kpi.cleaningDoneToday < kpi.cleaningDueToday));
-
-  const label = hardFail ? "FAIL" : needsSetup ? "SETUP" : warn ? "WARN" : "OK";
-
-  const ring = hardFail
-    ? "stroke-red-500"
-    : needsSetup
-    ? "stroke-slate-400"
-    : warn
-    ? "stroke-amber-500"
-    : "stroke-emerald-500";
-
-  const bg = hardFail
-    ? "bg-red-50/40"
-    : needsSetup
-    ? "bg-white/25"
-    : warn
-    ? "bg-amber-50/35"
-    : "bg-emerald-50/35";
-
-  const dash = C * (1 - score / 100);
+  const deg = Math.round((score / 100) * 360);
 
   return (
-    <div className="fixed right-4 top-[72px] z-[60] print:hidden">
+    <div className="print:hidden pointer-events-none fixed right-4 top-[72px] z-50">
       <div
-        className={[
-          "relative rounded-full shadow-lg border border-white/30 backdrop-blur-md",
-          "bg-white/20",
-          bg,
-        ].join(" ")}
-        style={{ width: SIZE + 22, height: SIZE + 22 }}
+        className="pointer-events-auto relative h-[112px] w-[112px] rounded-full border border-white/30 bg-white/25 shadow-xl backdrop-blur-md"
+        style={{
+          boxShadow: "0 12px 32px rgba(0,0,0,0.18)",
+        }}
+        aria-label="Compliance indicator"
+        title="Operational compliance (today)"
       >
-        {/* tiny close */}
+        {/* ring */}
+        <div
+          className="absolute inset-0 rounded-full"
+          style={{
+            background: `conic-gradient(${tone} ${deg}deg, rgba(255,255,255,0.15) ${deg}deg)`,
+          }}
+        />
+
+        {/* inner glass */}
+        <div className="absolute inset-[10px] rounded-full bg-white/35 backdrop-blur-md border border-white/30" />
+
+        {/* X close */}
         <button
           type="button"
           onClick={() => {
-            dismissForHours(8);
-            setDismissed(true);
+            try {
+              localStorage.setItem(LS_HIDE, "1");
+            } catch {}
+            setHidden(true);
           }}
-          className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-white/40 text-slate-700 hover:bg-white/60"
+          className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-white/35 text-slate-800 hover:bg-white/50"
           aria-label="Hide compliance indicator"
-          title="Hide"
         >
           ✕
         </button>
 
-        <div className="relative flex h-full w-full items-center justify-center">
-          <svg width={SIZE} height={SIZE} className="rotate-[-90deg]">
-            <circle
-              cx={SIZE / 2}
-              cy={SIZE / 2}
-              r={R}
-              fill="none"
-              stroke="rgba(226,232,240,0.9)"
-              strokeWidth={STROKE}
-            />
-            <circle
-              cx={SIZE / 2}
-              cy={SIZE / 2}
-              r={R}
-              fill="none"
-              strokeWidth={STROKE}
-              strokeLinecap="round"
-              strokeDasharray={C}
-              strokeDashoffset={dash}
-              className={ring}
-            />
-          </svg>
-
-          {/* minimal inside text only */}
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-900">
-            <div className="text-[24px] font-extrabold leading-none">{score}%</div>
-            <div className="mt-0.5 text-[11px] font-extrabold tracking-wide opacity-80">
+        {/* text */}
+        <div className="absolute inset-0 grid place-items-center text-center">
+          <div>
+            <div className="text-3xl font-extrabold text-slate-900">{score}%</div>
+            <div className="text-[12px] font-bold tracking-wide text-slate-900/80">
               {label}
             </div>
-            <div className="mt-1 text-[10px] font-semibold opacity-70">
+            <div className="mt-0.5 text-[11px] font-medium text-slate-900/70">
               Compliance
             </div>
           </div>
