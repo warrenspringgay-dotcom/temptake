@@ -612,86 +612,109 @@ if (rowId) {
       alert(e?.message || "Delete failed.");
     }
   }
+async function markReviewedToday() {
+  if (!canManage) {
+    alert("Only managers / owners can mark the allergen register as reviewed.");
+    return;
+  }
 
-  /* ---------- review save ---------- */
-  async function markReviewedToday() {
-    if (!canManage) {
-      alert(
-        "Only managers / owners can mark the allergen register as reviewed."
-      );
-      return;
+  const id = orgId ?? (await getActiveOrgIdClient());
+  const today = todayISO();
+
+  // Who is reviewing (prefer team member name)
+  let reviewer = "Manager";
+
+  try {
+    const userRes = await supabase.auth.getUser();
+    const email = userRes.data.user?.email?.toLowerCase() ?? null;
+
+    if (email && id) {
+      const { data: tm } = await supabase
+        .from("team_members")
+        .select("name")
+        .eq("email", email)
+        .eq("org_id", id)
+        .maybeSingle();
+
+      reviewer = tm?.name ?? email ?? reviewer;
     }
+  } catch {
+    // ignore
+  }
 
-    const id = orgId ?? (await getActiveOrgIdClient());
-    const today = todayISO();
+  const newInterval = review.intervalDays || 30;
 
-    // Who is reviewing (prefer team member name)
-    let reviewer = "Manager";
+  // Update local pill state immediately (so UI feels responsive)
+  setReview((r) => ({
+    ...r,
+    lastReviewedOn: today,
+    lastReviewedBy: reviewer,
+    intervalDays: newInterval,
+  }));
 
-    try {
-      const userRes = await supabase.auth.getUser();
-      const email = userRes.data.user?.email?.toLowerCase() ?? null;
+  // No org: local only
+  if (!id) {
+    await fireConfetti();
+    bumpVibrate();
+    return;
+  }
 
-      if (email && id) {
-        const { data: tm } = await supabase
-          .from("team_members")
-          .select("name")
-          .eq("email", email)
-          .eq("org_id", id)
-          .maybeSingle();
+  // 1) Persist settings row (used by KPIs) WITHOUT upsert/onConflict
+  // Try update first:
+  const { data: existing, error: existingErr } = await supabase
+    .from("allergen_review")
+    .select("org_id")
+    .eq("org_id", id)
+    .maybeSingle();
 
-        reviewer = tm?.name ?? email ?? reviewer;
-      }
-    } catch {
-      // ignore
-    }
+  if (existingErr) {
+    alert(`Failed to save review: ${existingErr.message}`);
+    return;
+  }
 
-    // Update local pill state immediately
-    setReview((r) => ({
-      ...r,
-      lastReviewedOn: today,
-      lastReviewedBy: reviewer,
-    }));
-
-    // No org: local only (still give a little celebration)
-    if (!id) {
-      await fireConfetti();
-      bumpVibrate();
-      return;
-    }
-
-    // Persist both settings row (used by KPIs) and history log
-    const newInterval = review.intervalDays || 30;
-
-    const { error: settingsErr } = await supabase
+  if (existing) {
+    const { error: updErr } = await supabase
       .from("allergen_review")
-      .upsert(
-        {
-          org_id: id,
-          last_reviewed: today,
-          interval_days: newInterval,
-        },
-        { onConflict: "org_id" }
-      );
+      .update({
+        last_reviewed: today,
+        interval_days: newInterval,
+      })
+      .eq("org_id", id);
 
-    const { error: logErr } = await supabase.from("allergen_review_log").insert({
+    if (updErr) {
+      alert(`Failed to save review: ${updErr.message}`);
+      return;
+    }
+  } else {
+    const { error: insErr } = await supabase.from("allergen_review").insert({
       org_id: id,
-      reviewed_on: today,
-      reviewer,
+      last_reviewed: today,
       interval_days: newInterval,
-      notes: null,
-      created_at: new Date().toISOString(),
     });
 
-    if (settingsErr || logErr) {
-      const msg = settingsErr?.message ?? logErr?.message ?? "Unknown error";
-      alert(`Failed to save review: ${msg}`);
+    if (insErr) {
+      alert(`Failed to save review: ${insErr.message}`);
       return;
     }
-
-    await fireConfetti();
-    bumpVibrate(15);
   }
+
+  // 2) Always append to history log
+  const { error: logErr } = await supabase.from("allergen_review_log").insert({
+    org_id: id,
+    reviewed_on: today,
+    reviewer,
+    interval_days: newInterval,
+    notes: null,
+  });
+
+  if (logErr) {
+    alert(`Failed to save review: ${logErr.message}`);
+    return;
+  }
+
+  await fireConfetti();
+  bumpVibrate(15);
+}
 
   /* ===== Query (SAFE FOODS) ===== */
   const selectedAllergenKeys = useMemo(
