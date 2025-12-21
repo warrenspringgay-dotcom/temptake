@@ -1,10 +1,10 @@
+// src/components/UserMenu.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
-
 import { useAuth } from "@/components/AuthProvider";
 
 function initialsFromEmail(email?: string | null) {
@@ -27,8 +27,36 @@ export default function UserMenu() {
   const { user, ready } = useAuth();
 
   const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
+  // Close on route change
   useEffect(() => setOpen(false), [pathname]);
+
+  // Close on click outside or Escape
+  useEffect(() => {
+    if (!open) return;
+
+    function handleClickOutside(e: MouseEvent) {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
 
   const email = user?.email ?? null;
   const inits = useMemo(() => initialsFromEmail(email), [email]);
@@ -41,7 +69,12 @@ export default function UserMenu() {
   }
 
   if (!ready) {
-    return <div className="h-9 w-9 rounded-full border bg-white/80" aria-hidden="true" />;
+    return (
+      <div
+        className="h-9 w-9 rounded-full border bg-white/80"
+        aria-hidden="true"
+      />
+    );
   }
 
   if (!user) {
@@ -56,7 +89,7 @@ export default function UserMenu() {
   }
 
   return (
-    <div className="relative">
+    <div className="relative" ref={menuRef}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -77,7 +110,9 @@ export default function UserMenu() {
             <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
               Signed in as
             </div>
-            <div className="truncate text-sm font-semibold text-gray-900">{email ?? "—"}</div>
+            <div className="truncate text-sm font-semibold text-gray-900">
+              {email ?? "—"}
+            </div>
           </div>
 
           <div className="p-2 text-sm">
@@ -85,7 +120,11 @@ export default function UserMenu() {
               Settings
             </Link>
 
-            <Link href="/food-hygiene-rating-log" className={itemCls()} role="menuitem">
+            <Link
+              href="/food-hygiene"
+              className={itemCls()}
+              role="menuitem"
+            >
               Food hygiene rating log
             </Link>
 

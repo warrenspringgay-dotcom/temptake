@@ -36,6 +36,45 @@ function deriveInitialsSafe(name?: string | null, email?: string | null) {
   return base.slice(0, 4);
 }
 
+// New: ensure a 14-day trial row exists for this org if it has no billing_subscriptions yet
+async function ensureTrialForOrg(orgId: string, userId: string) {
+  const { data: existing, error } = await supabaseAdmin
+    .from("billing_subscriptions")
+    .select("id, stripe_subscription_id, status, trial_ends_at")
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[ensureOrg] billing_subscriptions lookup failed", error);
+    return;
+  }
+
+  // If there is already any billing row for this org, don't mess with it
+  if (existing) {
+    return;
+  }
+
+  const trialEnds = new Date();
+  trialEnds.setDate(trialEnds.getDate() + 14);
+
+  const { error: insErr } = await supabaseAdmin
+    .from("billing_subscriptions")
+    .insert({
+      org_id: orgId,
+      user_id: userId,
+      status: "trialing",
+      trial_ends_at: trialEnds.toISOString(),
+      // stripe_subscription_id stays null until Stripe checkout happens
+    } as any);
+
+  if (insErr) {
+    console.error(
+      "[ensureOrg] billing_subscriptions insert failed",
+      insErr
+    );
+  }
+}
+
 export async function ensureOrgForCurrentUser(args?: {
   ownerName?: string;
   businessName?: string;
@@ -220,6 +259,9 @@ export async function ensureOrgForCurrentUser(args?: {
   if (!tm.ok) return tm;
 
   const locationId = await ensureDefaultLocation(orgId);
+
+  // 5) Ensure a billing_subscriptions trial row for this org (if none exists)
+  await ensureTrialForOrg(orgId, userId);
 
   return { ok: true, orgId, locationId };
 }

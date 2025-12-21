@@ -109,31 +109,32 @@ export async function POST(req: NextRequest) {
 
     // 6) Create Stripe checkout session
     const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      customer_email: user.email ?? undefined,
-      line_items: [{ price: priceId, quantity: 1 }],
+  mode: "subscription",
+  customer_email: user.email ?? undefined,
+  line_items: [{ price: priceId, quantity: 1 }],
 
-      subscription_data: {
-        trial_period_days: 14,
-        metadata: {
-          org_id: orgId,
-          plan_tier: plan.tier,
-          max_locations: plan.maxLocations?.toString() ?? "",
-          billing_interval: billingInterval,
-          supabase_user_id: user.id,
-        },
-      },
+  subscription_data: {
+    // no more trial_period_days here
+    metadata: {
+      org_id: orgId,
+      plan_tier: plan.tier,
+      max_locations: plan.maxLocations?.toString() ?? "",
+      billing_interval: billingInterval,
+      supabase_user_id: user.id,
+    },
+  },
 
-      success_url: successUrl,
-      cancel_url: cancelUrl,
+  success_url: successUrl,
+  cancel_url: cancelUrl,
 
-      metadata: {
-        supabase_user_id: user.id,
-        org_id: orgId,
-        plan_tier: plan.tier,
-        billing_interval: billingInterval,
-      },
-    });
+  metadata: {
+    supabase_user_id: user.id,
+    org_id: orgId,
+    plan_tier: plan.tier,
+    billing_interval: billingInterval,
+  },
+});
+
 
     if (!session.url) {
       console.error("[stripe] checkout session missing url");

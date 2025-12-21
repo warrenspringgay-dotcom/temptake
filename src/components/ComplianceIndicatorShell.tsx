@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
@@ -17,23 +18,34 @@ type Kpi = {
   allergenOver: number;
 };
 
+type CleanFrequency = "daily" | "weekly" | "monthly";
+
 type CleanTask = {
   id: string;
-  frequency: "daily" | "weekly" | "monthly";
+  frequency: CleanFrequency;
   weekday: number | null;
   month_day: number | null;
 };
 
 const LS_HIDE = "tt_hide_compliance_orb";
+
 const isoToday = () => new Date().toISOString().slice(0, 10);
 
 function getDow1to7(ymd: string) {
   const date = new Date(ymd);
   return ((date.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
 }
+
 function getDom(ymd: string) {
   return new Date(ymd).getDate();
 }
+
+function toCleanFrequency(v: any): CleanFrequency {
+  const s = String(v ?? "daily").toLowerCase();
+  if (s === "weekly" || s === "monthly" || s === "daily") return s;
+  return "daily";
+}
+
 function isDueOn(t: CleanTask, ymd: string) {
   if (t.frequency === "daily") return true;
   if (t.frequency === "weekly") return t.weekday === getDow1to7(ymd);
@@ -52,13 +64,24 @@ function labelFrom(score: number) {
 }
 
 function ringTone(score: number) {
-  if (score >= 90) return "rgba(16,185,129,0.95)"; // emerald
-  if (score >= 70) return "rgba(34,197,94,0.95)";  // green
-  if (score >= 40) return "rgba(245,158,11,0.95)"; // amber
-  return "rgba(239,68,68,0.95)";                   // red
+  if (score >= 90) return "rgba(16,185,129,0.95)";
+  if (score >= 70) return "rgba(34,197,94,0.95)";
+  if (score >= 40) return "rgba(245,158,11,0.95)";
+  return "rgba(239,68,68,0.95)";
 }
 
 export default function ComplianceIndicatorShell() {
+  const pathname = usePathname();
+
+  // 1) Make this *client-only* to avoid hydration mismatch
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const isMarketingOrAuth =
+    pathname === "/" || pathname === "/login" || pathname === "/signup";
+
   const [hidden, setHidden] = useState(false);
   const [kpi, setKpi] = useState<Kpi>({
     tempLogsToday: 0,
@@ -73,12 +96,15 @@ export default function ComplianceIndicatorShell() {
 
   const refreshTimer = useRef<number | null>(null);
 
-  // hydrate hidden state
+  // hydrate "hidden" from localStorage (client only)
   useEffect(() => {
+    if (!mounted) return;
     try {
       setHidden(localStorage.getItem(LS_HIDE) === "1");
-    } catch {}
-  }, []);
+    } catch {
+      // ignore
+    }
+  }, [mounted]);
 
   async function loadTempsKpi(orgId: string, locationId: string | null, todayISO: string) {
     const since = new Date();
@@ -128,30 +154,12 @@ export default function ComplianceIndicatorShell() {
 
     if (tErr) throw tErr;
 
-   type CleanFrequency = "daily" | "weekly" | "monthly";
-
-type CleanTask = {
-  id: string;
-  frequency: CleanFrequency;
-  weekday: number | null;
-  month_day: number | null;
-};
-
-function toCleanFrequency(v: any): CleanFrequency {
-  const s = String(v ?? "daily").toLowerCase();
-  if (s === "weekly" || s === "monthly" || s === "daily") return s;
-  return "daily";
-}
-
-// ...
-
-const tasks: CleanTask[] = (tData ?? []).map((r: any) => ({
-  id: String(r.id),
-  frequency: toCleanFrequency(r.frequency),
-  weekday: r.weekday != null ? Number(r.weekday) : null,
-  month_day: r.month_day != null ? Number(r.month_day) : null,
-}));
-
+    const tasks: CleanTask[] = (tData ?? []).map((r: any) => ({
+      id: String(r.id),
+      frequency: toCleanFrequency(r.frequency),
+      weekday: r.weekday != null ? Number(r.weekday) : null,
+      month_day: r.month_day != null ? Number(r.month_day) : null,
+    }));
 
     const dueIds = tasks.filter((t) => isDueOn(t, todayISO)).map((t) => t.id);
     const cleaningDueToday = dueIds.length;
@@ -176,7 +184,6 @@ const tasks: CleanTask[] = (tData ?? []).map((r: any) => ({
   }
 
   async function loadTrainingAllergenKpi(orgId: string) {
-    // training
     let trainingDueSoon = 0;
     let trainingOver = 0;
 
@@ -200,9 +207,10 @@ const tasks: CleanTask[] = (tData ?? []).map((r: any) => ({
         if (exp < today) trainingOver++;
         else if (exp <= soon) trainingDueSoon++;
       });
-    } catch {}
+    } catch {
+      // ignore
+    }
 
-    // allergen review
     let allergenDueSoon = 0;
     let allergenOver = 0;
 
@@ -232,9 +240,17 @@ const tasks: CleanTask[] = (tData ?? []).map((r: any) => ({
         if (due < todayD) allergenOver++;
         else if (due <= soon) allergenDueSoon++;
       });
-    } catch {}
+    } catch {
+      // ignore
+    }
 
-    setKpi((prev) => ({ ...prev, trainingDueSoon, trainingOver, allergenDueSoon, allergenOver }));
+    setKpi((prev) => ({
+      ...prev,
+      trainingDueSoon,
+      trainingOver,
+      allergenDueSoon,
+      allergenOver,
+    }));
   }
 
   async function refresh() {
@@ -251,50 +267,64 @@ const tasks: CleanTask[] = (tData ?? []).map((r: any) => ({
     ]);
   }
 
-  // initial load
+  // initial load (client only because mounted gate)
   useEffect(() => {
+    if (!mounted) return;
     let dead = false;
+
     (async () => {
       try {
         if (dead) return;
         await refresh();
-      } catch {}
+      } catch {
+        // ignore
+      }
     })();
+
     return () => {
       dead = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mounted]);
 
-  // realtime subscriptions: refresh when relevant tables change
+  // realtime subscriptions
   useEffect(() => {
+    if (!mounted) return;
+
     let cancelled = false;
 
     (async () => {
       const orgId = await getActiveOrgIdClient();
       if (!orgId || cancelled) return;
 
+      const scheduleRefresh = () => {
+        if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+        refreshTimer.current = window.setTimeout(() => {
+          refresh().catch(() => {});
+        }, 250);
+      };
+
       const channel = supabase
         .channel(`tt-compliance-${orgId}`)
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "cleaning_task_runs", filter: `org_id=eq.${orgId}` },
-          () => scheduleRefresh()
+          scheduleRefresh
         )
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "food_temp_logs", filter: `org_id=eq.${orgId}` },
-          () => scheduleRefresh()
+          scheduleRefresh
         )
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "trainings", filter: `org_id=eq.${orgId}` },
-          () => scheduleRefresh()
+          scheduleRefresh
         )
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "allergen_review_log", filter: `org_id=eq.${orgId}` },
-          () => scheduleRefresh()
+          scheduleRefresh
         )
         .subscribe();
 
@@ -303,39 +333,25 @@ const tasks: CleanTask[] = (tData ?? []).map((r: any) => ({
       };
     })();
 
-    function scheduleRefresh() {
-      // debounce: lots of changes can land quickly
-      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
-      refreshTimer.current = window.setTimeout(() => {
-        refresh().catch(() => {});
-      }, 250);
-    }
-
     return () => {
       cancelled = true;
       if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mounted]);
 
-  // score (Operational compliance today)
+  // score & visuals
   const score = useMemo(() => {
     const cleaningDue = kpi.cleaningDueToday;
     const cleaningDone = kpi.cleaningDoneToday;
 
-    // cleaning: 0 points if nothing is scheduled (don’t “reward” emptiness)
-    const cleaningPct =
-      cleaningDue > 0 ? clamp(cleaningDone / cleaningDue, 0, 1) : 0;
+    const cleaningPct = cleaningDue > 0 ? clamp(cleaningDone / cleaningDue, 0, 1) : 0;
     const cleaningScore = Math.round(cleaningPct * 40);
 
-    // temps: must have at least one log today to earn points
-    const tempScore =
-      kpi.tempLogsToday <= 0 ? 0 : kpi.tempFails7d > 0 ? 0 : 40;
+    const tempScore = kpi.tempLogsToday <= 0 ? 0 : kpi.tempFails7d > 0 ? 0 : 40;
 
-    // training: lightweight impact
     const trainingScore = kpi.trainingOver > 0 ? 0 : kpi.trainingDueSoon > 0 ? 5 : 10;
 
-    // allergen: lightweight impact
     const allergenScore = kpi.allergenOver > 0 ? 0 : kpi.allergenDueSoon > 0 ? 5 : 10;
 
     return clamp(tempScore + cleaningScore + trainingScore + allergenScore, 0, 100);
@@ -344,7 +360,8 @@ const tasks: CleanTask[] = (tData ?? []).map((r: any) => ({
   const label = useMemo(() => labelFrom(score), [score]);
   const tone = useMemo(() => ringTone(score), [score]);
 
-  if (hidden) return null;
+  // final visibility gate
+  if (!mounted || hidden || isMarketingOrAuth) return null;
 
   const deg = Math.round((score / 100) * 360);
 
@@ -352,9 +369,7 @@ const tasks: CleanTask[] = (tData ?? []).map((r: any) => ({
     <div className="print:hidden pointer-events-none fixed right-4 top-[72px] z-50">
       <div
         className="pointer-events-auto relative h-[112px] w-[112px] rounded-full border border-white/30 bg-white/25 shadow-xl backdrop-blur-md"
-        style={{
-          boxShadow: "0 12px 32px rgba(0,0,0,0.18)",
-        }}
+        style={{ boxShadow: "0 12px 32px rgba(0,0,0,0.18)" }}
         aria-label="Compliance indicator"
         title="Operational compliance (today)"
       >
@@ -375,7 +390,9 @@ const tasks: CleanTask[] = (tData ?? []).map((r: any) => ({
           onClick={() => {
             try {
               localStorage.setItem(LS_HIDE, "1");
-            } catch {}
+            } catch {
+              // ignore
+            }
             setHidden(true);
           }}
           className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-white/35 text-slate-800 hover:bg-white/50"

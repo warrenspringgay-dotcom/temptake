@@ -1,3 +1,4 @@
+// src/app/api/billing/status/route.ts
 import { NextResponse } from "next/server";
 import { getSubscriptionForCurrentUser } from "@/lib/subscription";
 
@@ -12,6 +13,7 @@ export async function GET() {
       active: info.active,
       status: info.status,
       currentPeriodEnd: info.currentPeriodEnd,
+      trialEndsAt: info.trialEndsAt,
       // keep compatibility with your existing hook usage
       hasValid: info.active,
     },

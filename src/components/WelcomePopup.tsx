@@ -1,25 +1,33 @@
+// src/components/WelcomePopup.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 const LS_KEY = "tt_welcome_seen_v1";
 
 export default function WelcomePopup({ user }: { user: any | null }) {
   const [open, setOpen] = useState(false);
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     if (!user) return;
 
+    // Only show when we came from signup with ?welcome=1
+    const welcomeFlag = searchParams.get("welcome");
+    if (welcomeFlag !== "1") return;
+
     try {
       const seen = localStorage.getItem(LS_KEY);
       if (seen === "1") return;
+
       setOpen(true);
       localStorage.setItem(LS_KEY, "1");
     } catch {
-      // ignore
+      // localStorage might fail; still show once
       setOpen(true);
     }
-  }, [user]);
+  }, [user, searchParams]);
 
   if (!open) return null;
 

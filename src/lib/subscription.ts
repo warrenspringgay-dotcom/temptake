@@ -14,9 +14,10 @@ export type SubscriptionStatus =
 
 export type UserSubscriptionInfo = {
   loggedIn: boolean;
-  active: boolean; // true if user currently has an active (or trialing) sub
+  active: boolean; // true if org currently has an active (or trialing) sub
   status: SubscriptionStatus;
   currentPeriodEnd: string | null;
+  trialEndsAt: string | null;
 };
 
 export async function getSubscriptionForCurrentUser(): Promise<UserSubscriptionInfo> {
@@ -33,14 +34,17 @@ export async function getSubscriptionForCurrentUser(): Promise<UserSubscriptionI
       active: false,
       status: null,
       currentPeriodEnd: null,
+      trialEndsAt: null,
     };
   }
 
   const { data, error } = await supabase
     .from("billing_subscriptions")
-    .select("status, current_period_end, cancel_at_period_end")
+    .select(
+      "status, current_period_end, cancel_at_period_end, trial_ends_at, stripe_subscription_id"
+    )
     .eq("user_id", user.id)
-    .order("current_period_end", { ascending: false })
+    .order("created_at", { ascending: false })
     .limit(1);
 
   if (error || !data || data.length === 0) {
@@ -49,29 +53,44 @@ export async function getSubscriptionForCurrentUser(): Promise<UserSubscriptionI
       active: false,
       status: null,
       currentPeriodEnd: null,
+      trialEndsAt: null,
     };
   }
 
   const row = data[0];
   const status = (row.status as SubscriptionStatus) ?? null;
   const currentPeriodEnd = row.current_period_end as string | null;
+  const trialEndsAt = row.trial_ends_at as string | null;
   const cancelAtPeriodEnd = !!row.cancel_at_period_end;
+  const hasStripeSub = !!row.stripe_subscription_id;
 
   const now = new Date();
-  const periodEndDate = currentPeriodEnd ? new Date(currentPeriodEnd) : null;
+  let active = false;
 
-  const isWithinPeriod =
-    periodEndDate == null ? true : periodEndDate.getTime() > now.getTime();
+  if (!hasStripeSub) {
+    // Cardless trial mode: org has no Stripe sub yet, so rely solely on trial_ends_at
+    if (status === "trialing" && trialEndsAt) {
+      const trialEndDate = new Date(trialEndsAt);
+      active = trialEndDate.getTime() > now.getTime();
+    }
+  } else {
+    // Normal Stripe subscription logic
+    const periodEndDate = currentPeriodEnd ? new Date(currentPeriodEnd) : null;
 
-  const isActiveStatus =
-    status === "active" || status === "trialing" || status === "past_due";
+    const isWithinPeriod =
+      periodEndDate == null ? true : periodEndDate.getTime() > now.getTime();
 
-  const active = isActiveStatus && isWithinPeriod && !cancelAtPeriodEnd;
+    const isActiveStatus =
+      status === "active" || status === "trialing" || status === "past_due";
+
+    active = isActiveStatus && isWithinPeriod && !cancelAtPeriodEnd;
+  }
 
   return {
     loggedIn: true,
     active,
     status,
     currentPeriodEnd,
+    trialEndsAt,
   };
 }
