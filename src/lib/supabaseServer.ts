@@ -1,18 +1,15 @@
 // src/lib/supabaseServer.ts
 import { cookies } from "next/headers";
-import {
-  createServerClient as createSupabaseClient,
-  type CookieOptions,
-} from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 
 /**
- * Universal server-side Supabase client (routes, layouts, server actions).
+ * Server Supabase client for Server Components / Route Handlers.
+ * Reads cookies. Does not write cookies (server components cannot mutate response).
  */
 export async function getServerSupabase() {
-  // Next.js 15: cookies() is async
   const cookieStore = await cookies();
 
-  return createSupabaseClient(
+  return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -20,36 +17,16 @@ export async function getServerSupabase() {
         get(name: string) {
           return cookieStore.get(name)?.value;
         },
-        set(name: string, value: string, options: CookieOptions = {}) {
-          try {
-            cookieStore.set(name, value, {
-              ...options,
-              path: "/",
-            });
-          } catch {
-            // ignore – can fail in some runtimes
-          }
-        },
-        remove(name: string, options: CookieOptions = {}) {
-          try {
-            cookieStore.set(name, "", {
-              ...options,
-              path: "/",
-              maxAge: 0,
-            });
-          } catch {
-            // ignore
-          }
-        },
+        // No-ops in server components / route handlers unless you wire response cookies.
+        set() {},
+        remove() {},
       },
     }
   );
 }
 
 /**
- * Backwards-compat alias for existing code that imports
- * `getServerSupabaseAction`.
+ * Backwards-compatible alias.
+ * Some files still import `getServerSupabaseAction`.
  */
-export async function getServerSupabaseAction() {
-  return getServerSupabase();
-}
+export const getServerSupabaseAction = getServerSupabase;

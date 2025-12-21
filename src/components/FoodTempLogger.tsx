@@ -8,6 +8,8 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import OnboardingBanner from "@/components/OnboardingBanner";
+import WelcomePopup from "@/components/WelcomePopup";
+
 
 /* ---------- CONFIG ---------- */
 
@@ -292,8 +294,10 @@ function KpiTile({
 
   return <div className="w-full h-full">{inner}</div>;
 }
-
 /* ---------- Component ---------- */
+
+  // ...the rest of your existing DashboardPage state + effects...
+
 
 export default function DashboardPage() {
   const [kpi, setKpi] = useState<KpiState>({
@@ -313,6 +317,31 @@ export default function DashboardPage() {
   const [err, setErr] = useState<string | null>(null);
 
   const headerDate = formatPrettyDate(new Date());
+
+  const [user, setUser] = React.useState<any | null>(null);
+  const [authReady, setAuthReady] = React.useState(false);
+
+  React.useEffect(() => {
+    let mounted = true;
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (!mounted) return;
+      setUser(data?.user ?? null);
+      setAuthReady(true);
+    });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      setUser(session?.user ?? null);
+      setAuthReady(true);
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
 
   // Detect hover capability (prevents transforms on touch devices)
   const [canHover, setCanHover] = useState(false);
@@ -624,9 +653,10 @@ export default function DashboardPage() {
     : "ok";
 
   /* ---------- render ---------- */
-
   return (
-    <div className="mx-auto max-w-5xl px-3 sm:px-4 pt-2 pb-4 space-y-4">
+    <div className="mx-auto max-w-5xl px-4 pt-2 pb-6 space-y-4">
+      {authReady && user ? <WelcomePopup user={user} /> : null}
+
       <OnboardingBanner />
 
       <header className="text-center">

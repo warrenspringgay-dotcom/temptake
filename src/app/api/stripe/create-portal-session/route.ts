@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
-import { getServerSupabase } from "@/lib/supabaseServer";
+import { getServerSupabaseAction } from "@/lib/supabaseServer";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
   apiVersion: "2025-11-17.clover",
@@ -8,9 +8,9 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = await getServerSupabase();
+    const supabase = await getServerSupabaseAction();
 
-    // 1) Get logged-in user
+    // 1) Auth
     const {
       data: { user },
       error: authError,
@@ -20,24 +20,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Not signed in." }, { status: 401 });
     }
 
-    // 2) Resolve org_id from profiles (SOURCE OF TRUTH)
+    // 2) Resolve org_id (single source of truth)
     const { data: profile, error: profileErr } = await supabase
       .from("profiles")
       .select("org_id")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
 
     if (profileErr || !profile?.org_id) {
-      console.error("[billing] profile missing org_id", profileErr);
       return NextResponse.json(
         { error: "No organisation linked to this account." },
         { status: 400 }
       );
     }
 
-    const orgId = profile.org_id;
+    const orgId = String(profile.org_id);
 
-    // 3) Look up Stripe customer by org_id (NOT user_id)
+    // 3) Find Stripe customer id (prefer org_id, fallback to user_id)
     const { data: customerRow, error: customerErr } = await supabase
       .from("billing_customers")
       .select("stripe_customer_id")
@@ -45,32 +44,46 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (customerErr) {
-      console.error("[billing] billing_customers error", customerErr);
+      console.error("[portal] billing_customers lookup error:", customerErr);
       return NextResponse.json(
-        { error: "Failed to load billing customer." },
-        { status: 500 }
-      );
-    }
-
-    if (!customerRow?.stripe_customer_id) {
-      return NextResponse.json(
-        { error: "No Stripe customer linked to this organisation yet." },
+        { error: "Could not load billing customer record." },
         { status: 400 }
       );
     }
 
-    // 4) Create Stripe billing portal session
+    let stripeCustomerId = customerRow?.stripe_customer_id ?? null;
+
+    // Fallback: older schema keyed by user_id
+    if (!stripeCustomerId) {
+      const { data: byUser, error: byUserErr } = await supabase
+        .from("billing_customers")
+        .select("stripe_customer_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (!byUserErr && byUser?.stripe_customer_id) {
+        stripeCustomerId = byUser.stripe_customer_id;
+      }
+    }
+
+    if (!stripeCustomerId) {
+      return NextResponse.json(
+        { error: "No Stripe customer is linked to this account yet." },
+        { status: 400 }
+      );
+    }
+
+    // 4) Create portal session
     const origin = new URL(req.url).origin;
 
     const portalSession = await stripe.billingPortal.sessions.create({
-      customer: customerRow.stripe_customer_id,
+      customer: stripeCustomerId,
       return_url: `${origin}/billing`,
     });
 
-    // 5) Redirect user to Stripe portal
     return NextResponse.redirect(portalSession.url, { status: 303 });
   } catch (err: any) {
-    console.error("[billing] portal session error", err);
+    console.error("[portal] create portal session error:", err);
     return NextResponse.json(
       { error: "Internal error creating billing portal session." },
       { status: 500 }

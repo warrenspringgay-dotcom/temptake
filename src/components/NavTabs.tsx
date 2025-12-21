@@ -1,4 +1,3 @@
-// src/components/NavTabs.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -7,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { Trophy } from "lucide-react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { useAuth } from "@/components/AuthProvider";
 
 type Tab = {
   href: string;
@@ -20,47 +20,22 @@ const BASE_TABS: Tab[] = [
   { href: "/routines", label: "Routines" },
   { href: "/allergens", label: "Allergens" },
   { href: "/cleaning-rota", label: "Cleaning Rota" },
-  
-  // Manager dashboard – manager-only
-  {
-    href: "/manager",
-    label: "Manager Dashboard",
-    requiresManager: true,
-  },
-
-  {
-    href: "/leaderboard",
-    label: "Leaderboard",
-    icon: <Trophy className="h-4 w-4 text-amber-500" />,
-  },
+  { href: "/manager", label: "Manager Dashboard", requiresManager: true },
+  { href: "/leaderboard", label: "Leaderboard", icon: <Trophy className="h-4 w-4 text-amber-500" /> },
   { href: "/team", label: "Team" },
   { href: "/suppliers", label: "Suppliers" },
-
   { href: "/reports", label: "Reports" },
 ];
 
 export default function NavTabs() {
   const pathname = usePathname();
+  const { user, ready } = useAuth();
 
-  // 🔐 Auth
-  const [user, setUser] = useState<any | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
-
-  // Role flag for manager-only tab
   const [canSeeManager, setCanSeeManager] = useState(false);
 
-  // 1) Check if user is logged in
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data?.user ?? null);
-      setAuthChecked(true);
-    });
-  }, []);
-
-  // 2) If logged in, resolve role from team_members
   useEffect(() => {
     (async () => {
-      if (!authChecked || !user) {
+      if (!ready || !user) {
         setCanSeeManager(false);
         return;
       }
@@ -87,32 +62,24 @@ export default function NavTabs() {
         }
 
         const role = (data.role ?? "").toLowerCase();
-        const allowed =
-          role === "owner" || role === "manager" || role === "admin";
-
-        setCanSeeManager(allowed);
+        setCanSeeManager(role === "owner" || role === "manager" || role === "admin");
       } catch {
         setCanSeeManager(false);
       }
     })();
-  }, [authChecked, user]);
+  }, [ready, user]);
 
-  // 3) Filter tabs based on role
   const tabs = useMemo(
     () => BASE_TABS.filter((t) => (t.requiresManager ? canSeeManager : true)),
     [canSeeManager]
   );
 
-  // 4) Hide nav completely if auth not done or not logged in
-  if (!authChecked) return null;
-  if (!user) return null;
+  if (!ready || !user) return null;
 
   return (
     <ul className="flex flex-nowrap items-center gap-1 min-w-max px-2">
       {tabs.map((t) => {
-        const active =
-          pathname === t.href ||
-          (pathname?.startsWith(t.href + "/") ?? false);
+        const active = pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
 
         return (
           <li key={t.href} className="shrink-0">
@@ -120,9 +87,7 @@ export default function NavTabs() {
               href={t.href}
               className={[
                 "inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors whitespace-nowrap",
-                active
-                  ? "bg-black text-white"
-                  : "text-slate-700 hover:bg-gray-100 hover:text-black",
+                active ? "bg-black text-white" : "text-slate-700 hover:bg-gray-100 hover:text-black",
               ].join(" ")}
             >
               {t.icon && <span>{t.icon}</span>}

@@ -1,16 +1,28 @@
 // src/lib/orgServer.ts
-import { ensureOrgForCurrentUser } from "@/lib/ensureOrg";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 /**
- * Server-side helper to get the active organisation id
- * for the current authenticated user.
- *
- * This will also create the org + membership if needed.
+ * Server-side helper to read the active org id for the current authed user.
+ * IMPORTANT: This should NOT attempt to create orgs or mutate membership.
+ * Org bootstrapping must happen via POST /api/org/ensure (service role).
  */
 export async function getActiveOrgIdServer(): Promise<string | null> {
-  const orgId = await ensureOrgForCurrentUser();
-  return orgId ?? null;
-}
+  const supabase = await getServerSupabase();
 
-// Re-export in case other server code wants to call it directly
-export { ensureOrgForCurrentUser };
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) return null;
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("org_id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (error) return null;
+
+  return data?.org_id ? String(data.org_id) : null;
+}

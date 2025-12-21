@@ -1,149 +1,225 @@
 // src/lib/ensureOrg.ts
 import { getServerSupabase } from "@/lib/supabaseServer";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-/**
- * Ensure the logged-in user has an organisation + membership.
- * Uses:
- *   - organisations
- *   - team_members (matched by email)
- *
- * Returns the org_id or null.
- */
-export async function ensureOrgForCurrentUser(): Promise<string | null> {
+type EnsureOrgResult =
+  | { ok: true; orgId: string; locationId: string | null }
+  | { ok: false; reason: string };
+
+// Super defensive initials generator – never returns empty / null
+function deriveInitialsSafe(name?: string | null, email?: string | null) {
+  const cleanName = (name ?? "").trim();
+
+  let base = "";
+
+  if (cleanName) {
+    const parts = cleanName.split(/\s+/).filter(Boolean);
+    const a = parts[0]?.[0] ?? "";
+    const b = parts[1]?.[0] ?? "";
+    base = (a + b || a).toUpperCase();
+  }
+
+  if (!base && email) {
+    const firstChunk = email
+      .trim()
+      .split(/[@\s.]+/)
+      .filter(Boolean)[0];
+    if (firstChunk?.[0]) {
+      base = firstChunk[0].toUpperCase();
+    }
+  }
+
+  if (!base) {
+    base = "O";
+  }
+
+  return base.slice(0, 4);
+}
+
+export async function ensureOrgForCurrentUser(args?: {
+  ownerName?: string;
+  businessName?: string;
+  locationName?: string;
+}): Promise<EnsureOrgResult> {
   const supabase = await getServerSupabase();
 
-  // 1) Get current user from auth
   const {
     data: { user },
-    error: userError,
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (userError) {
-    console.warn(
-      "[Server] ensureOrgForCurrentUser: failed to get user",
-      userError?.message || userError
+  if (authError || !user) {
+    return { ok: false, reason: "no-auth" };
+  }
+
+  const userId = user.id;
+  const email = (user.email ?? "").toLowerCase() || null;
+
+  const ownerNameRaw =
+    (args?.ownerName ?? "").trim() ||
+    (user.user_metadata?.full_name ?? "").trim() ||
+    (email ?? "Owner");
+
+  const ownerName = ownerNameRaw.trim();
+
+  const businessName =
+    (args?.businessName ?? "").trim() || "My Business";
+
+  // use business name as default location label, nicer than "Main site"
+  const locationName =
+    (args?.locationName ?? "").trim() || businessName || "Main site";
+
+  const initials = deriveInitialsSafe(ownerName, email);
+
+  // 1) Ensure profile row exists (role NOT NULL etc.)
+  const { error: profileUpsertErr } = await supabaseAdmin
+    .from("profiles")
+    .upsert(
+      {
+        id: userId,
+        email,
+        role: "owner",
+        full_name: ownerName || null,
+      } as any,
+      { onConflict: "id" }
     );
-    return null;
+
+  if (profileUpsertErr) {
+    console.error("[ensureOrg] profile upsert failed", profileUpsertErr);
+    return { ok: false, reason: "profile-upsert-failed" };
   }
 
-  if (!user) {
-    // Not logged in – nothing to do
-    return null;
+  // 2) Load profile org_id (might already be set for existing accounts)
+  const { data: profile, error: profErr } = await supabaseAdmin
+    .from("profiles")
+    .select("org_id")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (profErr) {
+    console.error("[ensureOrg] profile lookup failed", profErr);
+    return { ok: false, reason: "profile-lookup-failed" };
   }
 
-  const email = user.email;
-  if (!email) {
-    console.warn("[Server] ensureOrgForCurrentUser: user has no email");
-    return null;
-  }
-
-  // 2) Check if they already have a team_members row (match by email)
-  try {
-    const { data: memberRows, error: tmErr } = await supabase
-      .from("team_members")
-      .select("org_id, email")
-      .eq("email", email)
-      .limit(1);
-
-    if (tmErr) {
-      console.warn(
-        "[Server] ensureOrgForCurrentUser: failed to load membership",
-        tmErr?.message || tmErr
+  // Helper: ensure membership row exists
+  async function ensureMembershipOwner(orgId: string) {
+    const { error } = await supabaseAdmin
+      .from("user_orgs")
+      .upsert(
+        { user_id: userId, org_id: orgId, role: "owner", active: true },
+        { onConflict: "user_id" } // you already have UNIQUE(user_id)
       );
-    } else if (memberRows && memberRows.length > 0) {
-      const existingOrgId = memberRows[0].org_id as string | null;
-      if (existingOrgId) {
-        return existingOrgId;
-      }
+
+    if (error) {
+      console.error("[ensureOrg] user_orgs upsert failed", error);
+      return { ok: false as const, reason: "membership-upsert-failed" };
     }
-  } catch (err: any) {
-    console.warn(
-      "[Server] ensureOrgForCurrentUser: membership query threw",
-      err?.message || err
-    );
-    // carry on – we can still try to create an org
+
+    return { ok: true as const };
   }
 
-  // 3) No membership found – try to create a new organisation
-  const defaultNameFromEmail =
-    email.split("@")[0]?.replace(/[^\w\s-]/g, " ") || "My business";
+  // Helper: ensure an owner row exists in team_members
+  async function ensureTeamMemberOwner(orgId: string) {
+    if (!email) return { ok: true as const }; // nothing sensible to key on
 
-  const defaultName =
-    (user.user_metadata?.business_name as string | undefined) ||
-    defaultNameFromEmail ||
-    "My business";
+    const payload = {
+      org_id: orgId,
+      user_id: userId as any, // drop this if the column doesn't exist
+      email,
+      name: ownerName || email,
+      initials, // always non-empty string here
+      role: "owner",
+      active: true,
+    };
 
-  let orgId: string | null = null;
+    const { error } = await supabaseAdmin
+      .from("team_members")
+      .upsert(payload, {
+        onConflict: "org_id,email",
+      });
 
-  try {
-    const { data: org, error: orgErr } = await supabase
-      .from("organisations") // 👈 table name
-      .insert({ name: defaultName })
+    if (error) {
+      console.error("[ensureOrg] team_members upsert failed", error);
+      return { ok: false as const, reason: "team-upsert-failed" };
+    }
+
+    return { ok: true as const };
+  }
+
+  // Helper: ensure at least one active location and return its id
+  async function ensureDefaultLocation(orgId: string): Promise<string | null> {
+    const { data: existing, error: findErr } = await supabaseAdmin
+      .from("locations")
       .select("id")
-      .single();
+      .eq("org_id", orgId)
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
-    if (orgErr || !org) {
-      const msg = orgErr?.message || String(orgErr || "");
-
-      if (msg.includes("row-level security")) {
-        console.warn(
-          "[Server] ensureOrgForCurrentUser: could not auto-create org due to RLS. You can add a policy to allow inserts, or create orgs manually.",
-          msg
-        );
-        return null;
-      }
-
-      console.warn(
-        "[Server] ensureOrgForCurrentUser: failed to create org",
-        msg
-      );
+    if (findErr) {
+      console.error("[ensureOrg] locations lookup failed", findErr);
       return null;
     }
 
-    orgId = org.id as string;
-  } catch (err: any) {
-    console.warn(
-      "[Server] ensureOrgForCurrentUser: org insert threw",
-      err?.message || err
-    );
-    return null;
-  }
+    if (existing?.id) return String(existing.id);
 
-  if (!orgId) return null;
+    const { data: created, error: insErr } = await supabaseAdmin
+      .from("locations")
+      .insert({
+        org_id: orgId,
+        name: locationName,
+        active: true,
+      })
+      .select("id")
+      .single();
 
-  // 4) Create team_members row linking user to this org (by email)
-  try {
-    const initialsFromMeta =
-      (user.user_metadata?.initials as string | undefined)?.toUpperCase();
-    const initialsFromEmail = email.slice(0, 2).toUpperCase();
-
-    const initials = initialsFromMeta || initialsFromEmail || null;
-    const nameFromMeta =
-      (user.user_metadata?.full_name as string | undefined) || null;
-
-    const { error: memberErr } = await supabase.from("team_members").insert({
-      org_id: orgId,
-      email,
-      name: nameFromMeta || email,
-      initials,
-      role: "owner",
-    });
-
-    if (memberErr) {
-      console.warn(
-        "[Server] ensureOrgForCurrentUser: failed to create team member",
-        memberErr?.message || memberErr
-      );
-      // org exists even if membership failed
-      return orgId;
+    if (insErr) {
+      console.error("[ensureOrg] locations insert failed", insErr);
+      return null;
     }
-  } catch (err: any) {
-    console.warn(
-      "[Server] ensureOrgForCurrentUser: member insert threw",
-      err?.message || err
-    );
-    return orgId;
+
+    return created?.id ? String(created.id) : null;
   }
 
-  return orgId;
+  // 3) Either reuse existing org or create a new one
+  let orgId: string;
+
+  if (profile?.org_id) {
+    orgId = String(profile.org_id);
+  } else {
+    const { data: orgRow, error: orgErr } = await supabaseAdmin
+      .from("orgs")
+      .insert({ name: businessName })
+      .select("id")
+      .single();
+
+    if (orgErr || !orgRow?.id) {
+      console.error("[ensureOrg] org create failed", orgErr);
+      return { ok: false, reason: "org-create-failed" };
+    }
+
+    orgId = String(orgRow.id);
+
+    const { error: profileUpdateErr } = await supabaseAdmin
+      .from("profiles")
+      .update({ org_id: orgId })
+      .eq("id", userId);
+
+    if (profileUpdateErr) {
+      console.error("[ensureOrg] profile update failed", profileUpdateErr);
+      return { ok: false, reason: "profile-update-failed" };
+    }
+  }
+
+  // 4) Membership + owner team row + default location
+  const mem = await ensureMembershipOwner(orgId);
+  if (!mem.ok) return mem;
+
+  const tm = await ensureTeamMemberOwner(orgId);
+  if (!tm.ok) return tm;
+
+  const locationId = await ensureDefaultLocation(orgId);
+
+  return { ok: true, orgId, locationId };
 }

@@ -6,7 +6,6 @@ import { getPlanForLocationCount } from "@/lib/billingTiers";
 export const dynamic = "force-dynamic";
 
 export default async function BillingPage() {
-  // ✅ IMPORTANT: await the helper so supabase is NOT a Promise
   const supabase = await getServerSupabase();
 
   const {
@@ -18,33 +17,44 @@ export default async function BillingPage() {
     redirect(`/login?next=/billing`);
   }
 
-  // How many locations in this org?
-  const { data: profile } = await supabase
+  // Get org_id for this user
+  const { data: profile, error: profileErr } = await supabase
     .from("profiles")
     .select("org_id")
     .eq("id", user.id)
     .maybeSingle();
 
+  if (profileErr) {
+    console.error("[billing/page] profile lookup error", profileErr);
+  }
+
   const orgId = profile?.org_id as string | undefined;
 
+  // Count locations for the org
   let locationCount = 0;
   if (orgId) {
-    const { count } = await supabase
+    const { count, error: locErr } = await supabase
       .from("locations")
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId);
+
+    if (locErr) console.error("[billing/page] locations count error", locErr);
     locationCount = count ?? 0;
   }
 
   const plan = getPlanForLocationCount(locationCount || 1);
 
-  // Latest subscription row (if any)
-  const { data: subRows } = await supabase
+  // ✅ IMPORTANT: subscriptions are org-scoped (webhook writes org_id)
+  const { data: subRows, error: subErr } = await supabase
     .from("billing_subscriptions")
     .select("*")
-    .eq("user_id", user.id)
+    .eq("org_id", orgId ?? "__no_org__")
     .order("created_at", { ascending: false })
     .limit(1);
+
+  if (subErr) {
+    console.error("[billing/page] subscription lookup error", subErr);
+  }
 
   const subscription = subRows?.[0] ?? null;
   const status = (subscription?.status as string | null) ?? null;
@@ -52,7 +62,7 @@ export default async function BillingPage() {
   const hasActiveSub =
     status === "active" || status === "trialing" || status === "past_due";
 
-  const trialEndsAt = subscription?.trial_ends_at as string | null;
+  const trialEndsAt = (subscription?.trial_ends_at as string | null) ?? null;
 
   return (
     <main className="mx-auto max-w-4xl space-y-8 px-4 py-10">
@@ -87,12 +97,10 @@ export default async function BillingPage() {
         )}
 
         <div className="mt-2 text-xs text-slate-600">
-          Locations in this organisation: <strong>{locationCount}</strong>.{" "}
-          This band covers{" "}
+          Locations in this organisation: <strong>{locationCount}</strong>. This
+          band covers{" "}
           {plan.maxLocations
-            ? `up to ${plan.maxLocations} location${
-                plan.maxLocations > 1 ? "s" : ""
-              }.`
+            ? `up to ${plan.maxLocations} location${plan.maxLocations > 1 ? "s" : ""}.`
             : "6+ locations on a custom package."}
         </div>
       </div>
@@ -101,9 +109,8 @@ export default async function BillingPage() {
       <section className="grid items-start gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,2fr)]">
         {/* Left: main purchase card */}
         <div className="rounded-2xl border bg-white px-5 py-6 shadow-sm">
-          <h2 className="mb-1 text-sm font-semibold text-slate-700">
-            MONTHLY
-          </h2>
+          <h2 className="mb-1 text-sm font-semibold text-slate-700">MONTHLY</h2>
+
           <div className="flex items-baseline gap-1">
             <div className="text-3xl font-semibold text-slate-900">
               £{plan.pricePerMonth ?? 9.99}
@@ -114,17 +121,20 @@ export default async function BillingPage() {
           <p className="mt-3 text-sm text-slate-700">
             Pricing is banded by the number of locations on your account:
           </p>
+
           <ul className="mt-2 space-y-1 text-sm text-slate-600">
             <li>• 1 site → £9.99 / month</li>
             <li>• 2–3 sites → £19.99 / month</li>
             <li>• 4–5 sites → £29.99 / month</li>
-            <li>• 6+ sites → custom pricing <a
-  href="mailto:info@temptake.com"
-  className="text-emerald-600 underline hover:text-emerald-400"
->
-  contact us
-</a>
-</li>
+            <li>
+              • 6+ sites → custom pricing{" "}
+              <a
+                href="mailto:info@temptake.com"
+                className="text-emerald-600 underline hover:text-emerald-400"
+              >
+                contact us
+              </a>
+            </li>
           </ul>
 
           <form method="POST" action="/api/stripe/create-checkout-session">
@@ -148,7 +158,7 @@ export default async function BillingPage() {
           )}
         </div>
 
-        {/* Right: multi-site explanation – upgrade FIRST, then add locations */}
+        {/* Right: multi-site explanation */}
         <div className="flex flex-col rounded-2xl border border-amber-200 bg-amber-50 p-5">
           <div className="inline-flex w-fit items-center rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
             Multi-site pricing
@@ -162,12 +172,10 @@ export default async function BillingPage() {
             <li>1. Open the Stripe billing portal from the button below.</li>
             <li>2. Upgrade to a band that covers the number of sites you need.</li>
             <li>
-              3. Come back to TempTake – the <strong>Add location</strong>{" "}
-              button will unlock and you can add your extra sites.
+              3. Come back to TempTake – the <strong>Add location</strong> button
+              will unlock and you can add your extra sites.
             </li>
           </ul>
-
-      
         </div>
       </section>
 

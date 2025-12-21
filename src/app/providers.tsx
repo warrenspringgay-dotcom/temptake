@@ -1,7 +1,20 @@
+// src/app/Providers.tsx
 "use client";
-import { SettingsProvider } from "@/contexts/SettingsContext";
+
+import React from "react";
+import { AuthProvider } from "@/components/AuthProvider";
+import { ToastProvider } from "@/components/ui/use-toast";
+import { GlobalLoadingProvider } from "@/components/GlobalLoadingProvider";
+import { PHProvider } from "@/components/PosthogProvider";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
-  // Add more providers here if needed (Theme, QueryClient, etc.)
-  return <SettingsProvider>{children}</SettingsProvider>;
+  return (
+    <PHProvider>
+      <ToastProvider>
+        <GlobalLoadingProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </GlobalLoadingProvider>
+      </ToastProvider>
+    </PHProvider>
+  );
 }

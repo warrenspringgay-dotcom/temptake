@@ -7,19 +7,17 @@ import Pwa from "@/components/Pwa";
 import { ToastProvider } from "@/components/ui/use-toast";
 import { GlobalLoadingProvider } from "@/components/GlobalLoadingProvider";
 import { PHProvider } from "@/components/PosthogProvider";
-import { getUserOrNull } from "@/app/actions/auth";
-import HeaderShell from "./app/HeaderShell";
-import FabShell from "./FabShell";
-import ComplianceWidget from "@/components/ComplianceWidget"; // 👈 NEW
+import ComplianceWidget from "@/components/ComplianceWidget";
 import ComplianceIndicatorShell from "@/components/ComplianceIndicatorShell";
+import FabShell from "./FabShell";
 
-export default async function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const user = await getUserOrNull();
+import { AuthProvider } from "@/components/AuthProvider";
+import HeaderShell from "../app/app/HeaderShell";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>{/* meta/manifest etc */}</head>
@@ -28,26 +26,26 @@ export default async function RootLayout({
         <PHProvider>
           <ToastProvider>
             <GlobalLoadingProvider>
-              <HeaderShell user={user} />
+              <AuthProvider>
+                <Pwa />
 
-              <Pwa />
+                {/* Header/top bar (logo, user menu, nav) */}
+                <HeaderShell />
 
-              {/* Global compliance badge (top-right) */}
-              <ComplianceWidget />
+                <ComplianceWidget />
 
-              <main className="mx-auto max-w-6xl px-4 py-2">{children}</main>
+                <main className="mx-auto max-w-6xl px-4 py-2">{children}</main>
 
-              <script src="https://tally.so/widgets/embed.js" async></script>
+                <script src="https://tally.so/widgets/embed.js" async />
 
-
-<ComplianceIndicatorShell />
-              {/* FAB now respects route rules */}
-              <FabShell />
-
-              <ServiceWorkerRegister />
+                <ComplianceIndicatorShell />
+                <FabShell />
+                <ServiceWorkerRegister />
+              </AuthProvider>
             </GlobalLoadingProvider>
           </ToastProvider>
         </PHProvider>
+
         <Analytics />
       </body>
     </html>

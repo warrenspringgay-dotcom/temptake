@@ -1,7 +1,17 @@
-// Client-side (used in components, login form, etc.)
 import { createBrowserClient } from "@supabase/ssr";
 
-export const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __tt_supabase__: ReturnType<typeof createBrowserClient> | undefined;
+}
+
+export const supabase =
+  globalThis.__tt_supabase__ ??
+  createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+if (process.env.NODE_ENV !== "production") {
+  globalThis.__tt_supabase__ = supabase;
+}

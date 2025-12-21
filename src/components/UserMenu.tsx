@@ -1,96 +1,58 @@
-// src/components/UserMenu.tsx
 "use client";
 
-import React, { useEffect, useState, useTransition } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
-import { signOutAction } from "@/app/actions/auth";
 
-export type UserInfo = {
-  id: string;
-  email: string | null;
-  fullName: string | null;
-};
+import { useAuth } from "@/components/AuthProvider";
 
-function getInitials(nameOrEmail: string | null | undefined) {
-  if (!nameOrEmail) return "?";
-
-  const name = nameOrEmail.trim();
-  if (name.includes("@")) {
-    return name[0]?.toUpperCase() ?? "?";
-  }
-
-  const parts = name.split(/\s+/).filter(Boolean);
-  if (!parts.length) return "?";
-  if (parts.length === 1) return parts[0][0]?.toUpperCase() ?? "?";
-  return (
-    (parts[0][0]?.toUpperCase() ?? "") +
-    (parts[parts.length - 1][0]?.toUpperCase() ?? "")
-  );
+function initialsFromEmail(email?: string | null) {
+  if (!email) return "?";
+  const part = email.split("@")[0] || "";
+  const chars = part.replace(/[^a-z0-9]/gi, "").slice(0, 2);
+  return (chars || "?").toUpperCase();
 }
 
-type Props = {
-  initialUser?: UserInfo | null;
-};
+function itemCls(disabled?: boolean) {
+  return [
+    "block rounded-lg px-3 py-2",
+    disabled ? "text-gray-400 cursor-not-allowed" : "hover:bg-gray-50",
+  ].join(" ");
+}
 
-export default function UserMenu({ initialUser = null }: Props) {
-  const [user, setUser] = useState<UserInfo | null>(initialUser);
-  const [isPending, startTransition] = useTransition();
+export default function UserMenu() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { user, ready } = useAuth();
+
   const [open, setOpen] = useState(false);
 
-  // Load / keep user in sync with Supabase client
-  useEffect(() => {
-    let mounted = true;
+  useEffect(() => setOpen(false), [pathname]);
 
-    async function loadUser() {
-      const { data } = await supabase.auth.getUser();
-      const u = data.user;
-      if (!mounted) return;
-      if (u) {
-        setUser({
-          id: u.id,
-          email: u.email ?? null,
-          fullName: (u.user_metadata as any)?.full_name ?? null,
-        });
-      } else {
-        setUser(null);
-      }
-    }
+  const email = user?.email ?? null;
+  const inits = useMemo(() => initialsFromEmail(email), [email]);
 
-    // If we didn't get a server user, fetch from client
-    if (!initialUser) {
-      loadUser();
-    }
+  async function signOut() {
+    await supabase.auth.signOut();
+    setOpen(false);
+    router.replace("/login");
+    router.refresh();
+  }
 
-    const { data: authSub } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        if (!mounted) return;
-        const u = session?.user ?? null;
-        if (u) {
-          setUser({
-            id: u.id,
-            email: u.email ?? null,
-            fullName: (u.user_metadata as any)?.full_name ?? null,
-          });
-        } else {
-          setUser(null);
-        }
-      }
+  if (!ready) {
+    return <div className="h-9 w-9 rounded-full border bg-white/80" aria-hidden="true" />;
+  }
+
+  if (!user) {
+    return (
+      <Link
+        href="/login"
+        className="rounded-lg bg-black px-3 py-2 text-xs font-medium text-white hover:bg-gray-900"
+      >
+        Sign in
+      </Link>
     );
-
-    return () => {
-      mounted = false;
-      authSub.subscription.unsubscribe();
-    };
-  }, [initialUser]);
-
-  const initials = getInitials(user?.fullName || user?.email || null);
-
-  function handleSignOut() {
-    supabase.auth.signOut().catch(() => {});
-    startTransition(() => {
-      signOutAction();
-    });
   }
 
   return (
@@ -98,116 +60,61 @@ export default function UserMenu({ initialUser = null }: Props) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white"
+        className="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-white text-xs font-semibold hover:bg-gray-50"
+        title={email ?? "Signed in"}
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
-        {initials}
+        {inits}
       </button>
 
       {open && (
         <div
-          className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-200 bg-white shadow-lg"
-          onMouseLeave={() => setOpen(false)}
+          role="menu"
+          className="absolute right-0 mt-2 w-72 overflow-hidden rounded-2xl border bg-white shadow-lg"
         >
-          <div className="px-4 py-3 border-b border-slate-100 text-xs text-slate-500">
-            {user ? (
-              <>
-                <div className="mb-1 text-[11px] uppercase tracking-wide">
-                  Signed in as
-                </div>
-                <div className="text-slate-800 text-sm break-all">
-                  {user.email}
-                </div>
-              </>
-            ) : (
-              <div className="text-slate-700">Not signed in</div>
-            )}
+          <div className="border-b px-4 py-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+              Signed in as
+            </div>
+            <div className="truncate text-sm font-semibold text-gray-900">{email ?? "—"}</div>
           </div>
 
-          <div className="py-1 text-sm">
-            {user ? (
-              <>
-                <Link
-                  href="/settings"
-                  className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={() => setOpen(false)}
-                >
-                  Settings
-                </Link>
-                <Link
-                  href="/food-hygiene"
-                  className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={() => setOpen(false)}
-                >
-                  Food hygiene rating log
-                </Link>
-                <Link
-                  href="/locations"
-                  className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={() => setOpen(false)}
-                >
-                  Locations
-                </Link>
-                <Link
-                  href="/billing"
-                  className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={() => setOpen(false)}
-                >
-                  Billing &amp; subscription
-                </Link>
+          <div className="p-2 text-sm">
+            <Link href="/settings" className={itemCls()} role="menuitem">
+              Settings
+            </Link>
 
+            <Link href="/food-hygiene-rating-log" className={itemCls()} role="menuitem">
+              Food hygiene rating log
+            </Link>
 
-                {/* ✅ Direct guide link (the one you deployed) */}
-                <Link
-                  href="/guides"
-                  className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={() => setOpen(false)}
-                >
-                  Guides
-                </Link>
+            <Link href="/locations" className={itemCls()} role="menuitem">
+              Locations
+            </Link>
 
+            <Link href="/billing" className={itemCls()} role="menuitem">
+              Billing &amp; subscription
+            </Link>
 
-                <Link
-                  href="/help"
-                  className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={() => setOpen(false)}
-                >
-                  Help &amp; support
-                </Link>
+            <Link href="/guides" className={itemCls()} role="menuitem">
+              Guides
+            </Link>
 
-                <button
-                  type="button"
-                  onClick={handleSignOut}
-                  disabled={isPending}
-                  className="mt-1 block w-full px-4 py-2 text-left text-red-600 hover:bg-red-50 disabled:opacity-60"
-                >
-                  {isPending ? "Signing out…" : "Sign out"}
-                </button>
-              </>
-            ) : (
-              <>
-                <Link
-                  href="/login"
-                  className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={() => setOpen(false)}
-                >
-                  Login
-                </Link>
-                <Link
-                  href="/signup"
-                  className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={() => setOpen(false)}
-                >
-                  Create account
-                </Link>
-                <Link
-                  href="/help"
-                  className="block px-4 py-2 hover:bg-slate-50 text-slate-700"
-                  onClick={() => setOpen(false)}
-                >
-                  Help &amp; support
-                </Link>
-              </>
-            )}
+            <Link href="/support" className={itemCls()} role="menuitem">
+              Help &amp; support
+            </Link>
+
+            <div className="my-2 border-t" />
+
+            <button
+              type="button"
+              onClick={signOut}
+              className="block w-full rounded-lg px-3 py-2 text-left text-red-700 hover:bg-red-50"
+              role="menuitem"
+            >
+              Sign out
+            </button>
           </div>
         </div>
       )}

@@ -13,6 +13,8 @@ export default function FabShell() {
     pathname.startsWith("/launch") ||
     pathname.startsWith("/billing") ||
     pathname.startsWith("/pricing") ||
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/signup") ||
     pathname === "/app" ||
     pathname.startsWith("/demo-wall");
 
