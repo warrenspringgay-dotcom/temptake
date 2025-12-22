@@ -357,6 +357,7 @@ export default function TempFab() {
         }
 
         // locations from recent logs
+                // locations from recent logs
         if (orgId) {
           let q = supabase
             .from("food_temp_logs")
@@ -367,17 +368,27 @@ export default function TempFab() {
 
           if (locationId) q = q.eq("location_id", locationId);
 
-          const { data } = await q;
-          const fromAreas =
-            (data ?? [])
-              .map((r: any) => (r.area ?? "").toString().trim())
-              .filter((s: string) => s.length > 0) || [];
-          const unique = Array.from(new Set(fromAreas));
-          setLocations(unique.length ? unique : ["Kitchen"]);
+          type LogRow = { area: string | null };
+
+          const { data: logsData } = await q;
+
+          // logsData comes back as any[], normalise to a clean string[]
+          const fromAreas: string[] =
+            (logsData ?? [])
+              .map((r: LogRow) => (r.area ?? "").toString().trim())
+              .filter((s: string) => s.length > 0);
+
+          const unique: string[] = Array.from(new Set<string>(fromAreas));
+
+          const finalAreas: string[] = unique.length ? unique : ["Kitchen"];
+
+          setLocations(finalAreas);
+
           if (!form.location) {
-            setForm((f) => ({ ...f, location: unique[0] || "Kitchen" }));
+            setForm((f) => ({ ...f, location: finalAreas[0] || "Kitchen" }));
           }
         }
+
       } catch {
         if (!locations.length) {
           setLocations(["Kitchen"]);
@@ -435,36 +446,27 @@ export default function TempFab() {
   // Realtime: update orb instantly when runs/tasks change
   useEffect(() => {
     if (!activeOrgId || !activeLocationId) return;
+      const channel = supabase
+        .channel("food_temp_logs_changes")
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "food_temp_logs",
+            filter: `org_id=eq.${activeOrgId}`,
+          },
+          (payload: any) => {
+            // only care about the active location (runs have location_id)
+            const loc =
+              (payload.new as any)?.location_id ??
+              (payload.old as any)?.location_id ??
+              null;
+            if (loc && String(loc) !== String(activeLocationId)) return;
 
-    const channel = supabase
-      .channel(`tt-fab-cleaning-${activeOrgId}-${activeLocationId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "cleaning_task_runs",
-          filter: `org_id=eq.${activeOrgId}`,
-        },
-        (payload) => {
-          // only care about the active location (runs have location_id)
-          const loc = (payload.new as any)?.location_id ?? (payload.old as any)?.location_id ?? null;
-          if (loc && String(loc) !== String(activeLocationId)) return;
-          void refreshCleaningOpen(true);
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "cleaning_tasks",
-          filter: `org_id=eq.${activeOrgId}`,
-        },
-        (payload) => {
-          // tasks have location_id; ignore other locations
-          const loc = (payload.new as any)?.location_id ?? (payload.old as any)?.location_id ?? null;
-          if (loc && String(loc) !== String(activeLocationId)) return;
+            // ...rest of your logic...
+          
+
           void refreshCleaningOpen(true);
         }
       )

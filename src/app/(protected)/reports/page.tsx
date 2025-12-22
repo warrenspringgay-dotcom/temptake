@@ -251,8 +251,15 @@ async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[
       };
     })
     .filter(isTeamRow)
-    .filter((r) => r.days_until != null && r.days_until <= withinDays)
-    .sort((a, b) => (a.expires_on || "").localeCompare(b.expires_on || ""));
+    .filter((r: { days_until: number | null }) =>
+  r.days_until != null && r.days_until <= withinDays
+)
+
+   .sort(
+  (a: any, b: any) =>
+    (a.expires_on || "").localeCompare(b.expires_on || "")
+);
+
 }
 
 /**
@@ -295,8 +302,12 @@ async function fetchAllergenLog(withinDays: number, orgId: string): Promise<Alle
         days_until,
       } as AllergenRow;
     })
-    .filter((r) => r.days_until != null && r.days_until <= withinDays)
-    .sort((a, b) => (a.next_due || "").localeCompare(b.next_due || ""));
+    .filter((r: any) => r.days_until != null && r.days_until <= withinDays)
+.sort(
+  (a: any, b: any) =>
+    (a.next_due || "").localeCompare(b.next_due || "")
+);
+
 }
 
 /**

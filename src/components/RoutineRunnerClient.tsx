@@ -71,18 +71,21 @@ export default function RoutineRunModal({
 
         if (error) throw error;
 
-        const list = Array.from(
-          new Set(
-            (data ?? [])
-              .map((r: any) =>
-                (r.initials ?? "").toString().toUpperCase().trim()
-              )
-              .filter(Boolean)
-          )
-        );
+        // after: const { data } = await supabase.from("team_members").select("initials")
 
-        setInitialOptions(list);
-        setInitials((prev) => prev || list[0] || "");
+type TeamRow = { initials: string | null };
+
+const list: string[] = Array.from(
+  new Set<string>(
+    ((data ?? []) as TeamRow[])
+      .map((r) => (r.initials ?? "").toUpperCase().trim() || null)
+      .filter((v): v is string => !!v)
+  )
+);
+
+setInitialOptions(list);
+setInitials((prev) => prev || list[0] || "");
+
       } catch {
         // ignore – user can still type manually
       }
@@ -99,6 +102,7 @@ export default function RoutineRunModal({
     if (!routine) {
       alert("No routine loaded – please close this window and try again.");
       return;
+      
     }
 
     setSaving(true);

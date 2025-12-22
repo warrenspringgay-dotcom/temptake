@@ -1,113 +1,74 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import type { User, Session } from "@supabase/supabase-js";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import type { Session, User, AuthChangeEvent } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseBrowser";
 
-type AuthCtx = {
+type AuthContextValue = {
   user: User | null;
-  ready: boolean;
+  ready: boolean; // true once we've checked auth at least once
 };
 
-const Ctx = createContext<AuthCtx>({ user: null, ready: false });
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
-
-  // prevent refresh storms
-  const refreshQueued = useRef(false);
-
-  const queueRefresh = () => {
-    if (refreshQueued.current) return;
-    refreshQueued.current = true;
-
-    // schedule once per tick
-    setTimeout(() => {
-      refreshQueued.current = false;
-      router.refresh();
-    }, 0);
-  };
 
   useEffect(() => {
     let cancelled = false;
 
-    const setFromSession = (session: Session | null) => {
-      if (cancelled) return;
-      setUser(session?.user ?? null);
-      setReady(true);
-    };
-
+    // Initial auth fetch
     async function initialSync() {
       try {
-        const { data } = await supabase.auth.getSession();
-        setFromSession(data.session ?? null);
-      } catch {
-        setFromSession(null);
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!cancelled) {
+          setUser(user ?? null);
+        }
+      } finally {
+        if (!cancelled) setReady(true);
       }
     }
 
     initialSync();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      setFromSession(session ?? null);
+    // Subscribe to auth state changes
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      (event: AuthChangeEvent, session: Session | null) => {
+        if (cancelled) return;
 
-      // only refresh on events that should change server-rendered gating/UI
-      if (
-        event === "SIGNED_IN" ||
-        event === "SIGNED_OUT" ||
-        event === "USER_UPDATED"
-      ) {
-        queueRefresh();
+        // You can log or branch on event if you care:
+        // console.log("[auth] event", event);
+
+        setUser(session?.user ?? null);
       }
-    });
-
-    // Dev-only: cheap rescue, but throttle so it doesn't become a DDOS
-    if (process.env.NODE_ENV === "development") {
-      let last = 0;
-      const throttleMs = 1500;
-
-      const resync = async () => {
-        const now = Date.now();
-        if (now - last < throttleMs) return;
-        last = now;
-
-        try {
-          const { data } = await supabase.auth.getSession();
-          setFromSession(data.session ?? null);
-        } catch {
-          setFromSession(null);
-        }
-      };
-
-      const onVisible = () => {
-        if (document.visibilityState === "visible") void resync();
-      };
-      const onFocus = () => void resync();
-
-      document.addEventListener("visibilitychange", onVisible);
-      window.addEventListener("focus", onFocus);
-
-      return () => {
-        cancelled = true;
-        sub?.subscription?.unsubscribe();
-        document.removeEventListener("visibilitychange", onVisible);
-        window.removeEventListener("focus", onFocus);
-      };
-    }
+    );
 
     return () => {
       cancelled = true;
-      sub?.subscription?.unsubscribe();
+      sub?.subscription.unsubscribe();
     };
-  }, [router]);
+  }, []);
 
-  const value = useMemo(() => ({ user, ready }), [user, ready]);
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, ready }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
-export function useAuth() {
-  return useContext(Ctx);
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext);
+  if (!ctx) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return ctx;
 }

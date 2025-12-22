@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 
 type CleanTask = {
   id: string;
@@ -123,10 +124,13 @@ export default function ComplianceWidget() {
 
     prime();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!mounted) return;
-      setSignedIn(!!session?.user);
-    });
+ const { data: sub } = supabase.auth.onAuthStateChange(
+  (_event: AuthChangeEvent, session: Session | null) => {
+    if (!mounted) return;
+    setSignedIn(!!session?.user);
+  }
+);
+
 
     return () => {
       mounted = false;

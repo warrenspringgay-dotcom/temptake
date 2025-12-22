@@ -1,15 +1,16 @@
-// src/app/dashboard/page.tsx
+// src/app/(protected)/dashboard/page.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import OnboardingBanner from "@/components/OnboardingBanner";
 import WelcomePopup from "@/components/WelcomePopup";
-
+import type { User } from "@supabase/supabase-js";
 
 /* ---------- CONFIG ---------- */
 
@@ -107,7 +108,7 @@ function toISODate(val: any): string | null {
   return d.toISOString().slice(0, 10);
 }
 
-// ✅ New: dd-mm-yyyy (local date parts)
+// dd-mm-yyyy (local date parts)
 function formatDDMMYYYY(val: any): string | null {
   if (!val) return null;
   const d = new Date(val);
@@ -294,10 +295,8 @@ function KpiTile({
 
   return <div className="w-full h-full">{inner}</div>;
 }
+
 /* ---------- Component ---------- */
-
-  // ...the rest of your existing DashboardPage state + effects...
-
 
 export default function DashboardPage() {
   const [kpi, setKpi] = useState<KpiState>({
@@ -324,24 +323,26 @@ export default function DashboardPage() {
   React.useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getUser().then(({ data }) => {
+    supabase.auth.getUser().then(({ data }: { data: { user: User | null } }) => {
+
       if (!mounted) return;
       setUser(data?.user ?? null);
       setAuthReady(true);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!mounted) return;
-      setUser(session?.user ?? null);
-      setAuthReady(true);
-    });
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, session: Session | null) => {
+        if (!mounted) return;
+        setUser(session?.user ?? null);
+        setAuthReady(true);
+      }
+    );
 
     return () => {
       mounted = false;
-      sub.subscription.unsubscribe();
+      sub?.subscription?.unsubscribe();
     };
   }, []);
-
 
   // Detect hover capability (prevents transforms on touch devices)
   const [canHover, setCanHover] = useState(false);
@@ -387,7 +388,6 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ---------- loaders ---------- */
@@ -800,7 +800,6 @@ export default function DashboardPage() {
                       {p.initials || "??"}
                     </div>
 
-                    {/* ✅ Date now dd-mm-yyyy */}
                     <span className="rounded-full bg-white/60 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
                       {formatDDMMYYYY(p.created_at) ?? ""}
                     </span>

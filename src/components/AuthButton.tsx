@@ -1,40 +1,68 @@
-'use client';
+// src/components/AuthButton.tsx
+"use client";
 
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseBrowser";
 
 export default function AuthButton() {
-  const [email, setEmail] = useState<string | null>(null);
   const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
-      setEmail(s?.user?.email ?? null)
-    );
-    return () => sub.subscription.unsubscribe();
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!cancelled) {
+          setEmail(user?.email ?? null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  if (!email) {
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+    router.replace("/login");
+    router.refresh();
+  }
+
+  if (loading) {
     return (
-      <a
-        href="/login"
-        className="rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
-      >
-        Sign in
-      </a>
+      <div className="h-9 w-20 rounded-lg bg-gray-100 animate-pulse" aria-hidden="true" />
     );
   }
 
+  // Not signed in: show a button that routes to /login
+  if (!email) {
+    return (
+      <button
+        type="button"
+        onClick={() => router.push("/login")}
+        className="rounded-lg bg-black px-3 py-2 text-xs font-medium text-white hover:bg-gray-900"
+      >
+        Sign in
+      </button>
+    );
+  }
+
+  // Signed in: show "Sign out"
   return (
     <button
-      onClick={async () => {
-        await supabase.auth.signOut();
-        router.replace('/login');
-      }}
-      className="rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
-      title={email}
+      type="button"
+      onClick={handleSignOut}
+      className="rounded-lg border px-3 py-2 text-xs font-medium text-gray-800 hover:bg-gray-50"
     >
       Sign out
     </button>

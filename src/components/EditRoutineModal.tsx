@@ -90,16 +90,17 @@ export default function RoutineRunModal({
           .eq("active", true)
           .order("initials");
 
-        const list = Array.from(
-          new Set(
-            (data ?? [])
-              .map((r: any) => (r.initials ?? "").toUpperCase())
-              .filter(Boolean)
-          )
-        );
+     const list: string[] = Array.from(
+  new Set<string>(
+    (data ?? [])
+      .map((r: any) => r.initials as string | null)
+      .filter((v: string | null): v is string => !!v)
+  )
+);
 
-        setInitialOptions(list);
-        setInitials((prev) => prev || list[0] || "");
+
+setInitialOptions(list);
+setInitials((prev) => prev || list[0] || "");
       } catch {
         // ignore
       }

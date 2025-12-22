@@ -10,6 +10,8 @@ import RoutineRunModal from "@/components/RoutineRunModal";
 
 const LS_LAST_INITIALS = "tt_last_initials";
 
+
+
 type RoutineItem = {
   id?: string;
   routine_id?: string;
@@ -112,7 +114,8 @@ export default function RoutineManager() {
         return;
       }
 
-      const ids = routines.map((r) => r.id);
+      const ids = routines.map((r: any) => r.id);
+
       const { data: items, error: iErr } = await supabase
         .from("temp_routine_items")
         .select("id,routine_id,position,location,item,target_key")

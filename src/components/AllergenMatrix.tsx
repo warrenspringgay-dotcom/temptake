@@ -69,24 +69,31 @@ export default function AllergenMatrix() {
       setLoading(true);
       const oid = await getActiveOrgIdClient();
       setOrgId(oid ?? null);
+// initials (for updated_by and convenience)
+if (oid) {
+  const { data, error } = await supabase
+    .from("team_members")
+    .select("initials")
+    .eq("org_id", oid)
+    .order("initials");
 
-      // initials (for updated_by and convenience)
-      if (oid) {
-        const { data: tm } = await supabase
-          .from("team_members")
-          .select("initials")
-          .eq("org_id", oid)
-          .order("initials");
-        const list = Array.from(
-          new Set(
-            (tm ?? [])
-              .map((r: any) => (r.initials ?? "").toString().toUpperCase().trim())
-              .filter(Boolean)
-          )
-        );
-        setInitials(list);
-        if (!ini && list[0]) setIni(list[0]);
-      }
+  if (!error && data) {
+    // data is { initials: string | null }[]
+    const list: string[] = Array.from(
+      new Set(
+        (data as { initials: string | null }[])
+          .map((r) => (r.initials ?? "").toString().toUpperCase().trim())
+          .filter((v): v is string => v.length > 0)
+      )
+    );
+
+    setInitials(list);
+    if (!ini && list[0]) {
+      setIni(list[0]);
+    }
+  }
+}
+
 
       // allergen matrix
       if (oid) {

@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
 import ActionMenu from "@/components/ActionMenu";
+import type { RoutineWithItems, RoutineItemInput } from "@/types/routines";
+
 
 type RoutineItem = {
   id?: string;
@@ -65,7 +67,8 @@ export default function RoutinesManager() {
         return;
       }
 
-      const ids = routines.map((r) => r.id);
+      const ids = routines.map((r: RoutineWithItems) => r.id);
+
       const { data: items, error: iErr } = await supabase
         .from("temp_routine_items")
         .select("id,routine_id,position,location,item,target_key")
@@ -74,18 +77,19 @@ export default function RoutinesManager() {
       if (iErr) throw iErr;
 
       const grouped = new Map<string, RoutineItem[]>();
-      (items ?? []).forEach((it) => {
-        const arr = grouped.get(it.routine_id) ?? [];
-        arr.push({
-          id: it.id,
-          routine_id: it.routine_id,
-          position: Number(it.position ?? 0),
-          location: it.location ?? null,
-          item: it.item ?? null,
-          target_key: it.target_key ?? "chill",
-        });
-        grouped.set(it.routine_id, arr);
-      });
+(items ?? []).forEach((it: any) => {
+  const arr = grouped.get(it.routine_id) ?? [];
+  arr.push({
+    id: it.id,
+    routine_id: it.routine_id,
+    position: Number(it.position ?? 0),
+    location: it.location ?? null,
+    item: it.item ?? null,
+    target_key: it.target_key ?? "chill",
+  });
+  grouped.set(it.routine_id, arr);
+});
+
 
       setRows(
         routines.map((r: any) => ({
