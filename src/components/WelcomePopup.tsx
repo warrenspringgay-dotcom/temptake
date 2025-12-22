@@ -38,8 +38,8 @@ export default function WelcomePopup({ user }: { user: any | null }) {
         <div className="mt-2 text-sm text-slate-600">
           Quick setup:
           <ol className="mt-2 list-decimal pl-5 space-y-1">
-            <li>Add your first location (Sites).</li>
             <li>Add your team members.</li>
+            <li>Create your cleaning rota.</li>
             <li>Build your temp routines.</li>
           </ol>
         </div>

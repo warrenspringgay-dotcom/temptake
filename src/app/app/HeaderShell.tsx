@@ -10,6 +10,7 @@ import MobileMenu from "@/components/MobileMenu";
 import UserMenu from "@/components/UserMenu";
 import OrgName from "@/components/OrgName";
 import LocationSwitcher from "@/components/LocationSwitcher";
+
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 import { useAuth } from "@/components/AuthProvider";
 
@@ -17,11 +18,14 @@ export default function HeaderShell() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+
   const { hasValid } = useSubscriptionStatus();
   const { user, ready } = useAuth();
 
+  // After login/signup, push the user into the app
   useEffect(() => {
     if (!ready || !user) return;
+
     if (!pathname.startsWith("/login") && !pathname.startsWith("/signup")) return;
 
     const nextParam = searchParams.get("next");
@@ -39,13 +43,17 @@ export default function HeaderShell() {
     pathname.startsWith("/launch") ||
     pathname === "/app" ||
     pathname.startsWith("/demo-wall") ||
-    pathname.startsWith("/pricing");
+    pathname.startsWith("/pricing") ||
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/signup");
 
   if (hideHeader) return null;
+  if (!ready) return null;
 
-  // Keep header visible even while auth hydrates.
-  // The nav + user menu can still render and update themselves.
-  // This removes the “looks logged out until tab switch” perception.
+  // ✅ Nav should ALWAYS show for logged-in users (trial or not)
+  const showNav = !!user;
+
+  // ✅ Location switcher can stay gated behind subscription
   const showLocation = !!user && hasValid;
 
   return (
@@ -57,16 +65,17 @@ export default function HeaderShell() {
             <span className="font-semibold">TempTake</span>
           </Link>
 
+          {/* Org name in the middle on mobile */}
           <div className="flex-1 md:hidden">
             <OrgName className="block truncate text-center text-xs font-semibold" />
           </div>
 
-          {/* ✅ Always mount NavTabs on desktop.
-              It already handles showing Sign in/out internally via Supabase session. */}
+          {/* Main nav (desktop) */}
           <div className="mx-auto hidden md:block">
-            <NavTabs />
+            {showNav && <NavTabs />}
           </div>
 
+          {/* Right-hand side controls */}
           <div className="ml-auto flex items-center gap-3">
             {showLocation && (
               <div className="max-w-[180px] flex-1 md:max-w-[220px]">
