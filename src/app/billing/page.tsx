@@ -2,6 +2,9 @@
 import { redirect } from "next/navigation";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { getPlanForLocationCount } from "@/lib/billingTiers";
+import TrialBanner from "@/components/TrialBanner"
+      
+
 
 export const dynamic = "force-dynamic";
 
@@ -156,6 +159,8 @@ export default async function BillingPage() {
               Drop us a line at <strong>info@temptake.com</strong>.
             </p>
           )}
+          
+      <TrialBanner />
         </div>
 
         {/* Right: multi-site explanation */}
@@ -200,5 +205,6 @@ export default async function BillingPage() {
         </form>
       </section>
     </main>
+    
   );
 }

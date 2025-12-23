@@ -4,33 +4,27 @@ import { ensureOrgForCurrentUser } from "@/lib/ensureOrg";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json().catch(() => ({}))) as {
-      ownerName?: string;
-      businessName?: string;
-    };
+    const body = (await req.json().catch(() => null)) as
+      | { ownerName?: string; businessName?: string }
+      | null;
+
+    const ownerName = body?.ownerName ?? "";
+    const businessName = body?.businessName ?? "";
 
     const result = await ensureOrgForCurrentUser({
-      ownerName: body.ownerName,
-      businessName: body.businessName,
+      ownerName,
+      businessName,
     });
 
     if (!result.ok) {
-      const status = result.reason === "no-auth" ? 401 : 500;
-      return NextResponse.json(
-        { ok: false, reason: result.reason },
-        { status }
-      );
+      return NextResponse.json(result, { status: 500 });
     }
 
-    return NextResponse.json({
-      ok: true,
-      orgId: result.orgId,
-      locationId: result.locationId ?? null,
-    });
+    return NextResponse.json(result);
   } catch (err) {
-    console.error("[api/signup/bootstrap] exception", err);
+    console.error("[signup/bootstrap] unexpected error", err);
     return NextResponse.json(
-      { ok: false, reason: "exception" },
+      { ok: false as const, reason: "exception" },
       { status: 500 }
     );
   }

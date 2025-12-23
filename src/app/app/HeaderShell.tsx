@@ -1,3 +1,4 @@
+// src/app/app/HeaderShell.tsx
 "use client";
 
 import React, { useEffect } from "react";
@@ -19,7 +20,9 @@ export default function HeaderShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const { hasValid } = useSubscriptionStatus();
+  const { active, onTrial } = useSubscriptionStatus();
+  const hasValid = active || onTrial; // treat trial as “valid” for gating
+
   const { user, ready } = useAuth();
 
   // After login/signup, push the user into the app
@@ -50,10 +53,10 @@ export default function HeaderShell() {
   if (hideHeader) return null;
   if (!ready) return null;
 
-  // ✅ Nav should ALWAYS show for logged-in users (trial or not)
+  // Nav should ALWAYS show for logged-in users
   const showNav = !!user;
 
-  // ✅ Location switcher can stay gated behind subscription
+  // Location switcher only when sub/trial is valid
   const showLocation = !!user && hasValid;
 
   return (
@@ -65,17 +68,14 @@ export default function HeaderShell() {
             <span className="font-semibold">TempTake</span>
           </Link>
 
-          {/* Org name in the middle on mobile */}
           <div className="flex-1 md:hidden">
             <OrgName className="block truncate text-center text-xs font-semibold" />
           </div>
 
-          {/* Main nav (desktop) */}
           <div className="mx-auto hidden md:block">
             {showNav && <NavTabs />}
           </div>
 
-          {/* Right-hand side controls */}
           <div className="ml-auto flex items-center gap-3">
             {showLocation && (
               <div className="max-w-[180px] flex-1 md:max-w-[220px]">

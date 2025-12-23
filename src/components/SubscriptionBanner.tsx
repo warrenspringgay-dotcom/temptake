@@ -1,6 +1,7 @@
 // src/components/SubscriptionBanner.tsx
 "use client";
 
+import React from "react";
 import Link from "next/link";
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 
@@ -9,63 +10,45 @@ function formatDate(iso: string | null | undefined) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString("en-GB", {
-    day: "2-digit",
+    day: "numeric",
     month: "short",
     year: "numeric",
   });
 }
 
 export default function SubscriptionBanner() {
-  const { status, trialEndsAt, currentPeriodEnd, loading, error } =
-    useSubscriptionStatus();
+  const info = useSubscriptionStatus();
 
-  if (loading || error) return null;
-  if (!status) return null; // no subscription yet – nothing to show here
+  if (!info.loggedIn) return null;
 
-  const trialEndNice = formatDate(trialEndsAt);
-  const renewNice = formatDate(currentPeriodEnd);
+  // Only show if they're on trial or have no active subscription
+  if (info.active && !info.onTrial) return null;
 
-  let bgClasses =
-    "bg-amber-50 border-amber-200 text-amber-900"; // default (trial)
-  let label = "";
-  let message = "";
-  let ctaText = "Manage in billing";
+  const label =
+    info.onTrial && info.daysLeft != null
+      ? `Free trial: ${info.daysLeft} day${
+          info.daysLeft === 1 ? "" : "s"
+        } left`
+      : "No subscription";
 
-  if (status === "trialing") {
-    if (!trialEndNice) return null; // no date, skip banner
-    label = "Free trial";
-    message = `Your TempTake free trial ends on ${trialEndNice}. After that your plan continues as a paid subscription unless you cancel.`;
-  } else if (status === "past_due") {
-    bgClasses = "bg-red-50 border-red-200 text-red-900";
-    label = "Payment issue";
-    message =
-      "We couldn't take your latest payment. Please update your card details to keep TempTake running smoothly.";
-  } else {
-    // Active / anything else – dashboard banner not needed
-    return null;
-  }
+  const endLabel = formatDate(info.trialEndsAt || info.currentPeriodEnd);
 
   return (
-    <div
-      className={`mb-4 rounded-xl border px-4 py-3 text-sm ${bgClasses}`}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide opacity-80">
-            {label}
-          </div>
-          <div className="mt-0.5">{message}</div>
-          {status === "active" && renewNice && (
-            <div className="mt-0.5 text-xs opacity-80">
-              Renews on {renewNice}.
+          <div className="font-semibold">{label}</div>
+          {endLabel && (
+            <div className="text-xs text-amber-800">
+              Ends on: {endLabel}
             </div>
           )}
         </div>
         <Link
           href="/billing"
-          className="inline-flex shrink-0 items-center rounded-full border border-current px-3 py-1 text-xs font-semibold hover:bg-black/5"
+          className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800"
         >
-          {ctaText}
+          Go to billing
         </Link>
       </div>
     </div>

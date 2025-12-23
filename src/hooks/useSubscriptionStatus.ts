@@ -1,33 +1,37 @@
 "use client";
 
 import useSWR from "swr";
-import { useAuth } from "@/components/AuthProvider";
 
-const fetcher = (url: string) =>
-  fetch(url, { cache: "no-store" }).then((r) => r.json());
+export type SubscriptionStatusInfo = {
+  loggedIn: boolean;
+  hasValid: boolean;
+  status: string | null;
+  currentPeriodEnd: string | null;
+  trialEndsAt: string | null;
+};
 
-export function useSubscriptionStatus() {
-  const { user, ready } = useAuth();
+const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
-  // 🔑 Critical: only fetch when auth is settled AND user exists
-  const shouldFetch = ready && !!user;
+export function useSubscriptionStatus(): SubscriptionStatusInfo & { loading: boolean } {
+  const { data, error, isLoading } = useSWR("/api/billing/status", fetcher);
 
-  const { data, error, isLoading } = useSWR(
-    shouldFetch ? "/api/billing/status" : null,
-    fetcher,
-    {
-      refreshInterval: shouldFetch ? 60_000 : 0,
-      revalidateOnFocus: true,
-      dedupingInterval: 10_000,
-    }
-  );
+  if (error || !data) {
+    return {
+      loading: false,
+      loggedIn: false,
+      hasValid: false,
+      status: null,
+      currentPeriodEnd: null,
+      trialEndsAt: null,
+    };
+  }
 
   return {
-    loading: shouldFetch ? isLoading : false,
-    error,
-    status: data?.status ?? null,
-    hasValid: data?.hasValid ?? false,
-    trialEndsAt: data?.trialEndsAt ?? null,
-    currentPeriodEnd: data?.currentPeriodEnd ?? null,
+    loading: isLoading,
+    loggedIn: !!data.loggedIn,
+    hasValid: !!data.hasValid,
+    status: data.status ?? null,
+    currentPeriodEnd: data.currentPeriodEnd ?? null,
+    trialEndsAt: data.trialEndsAt ?? null,
   };
 }

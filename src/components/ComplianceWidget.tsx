@@ -1,3 +1,4 @@
+// src/components/ComplianceWidget.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -76,7 +77,10 @@ function toneClasses(tone: "danger" | "warn" | "ok" | "neutral") {
   }
 }
 
-// Only hide on truly public pages
+// LocalStorage key for "I've closed this"
+const HIDE_LS_KEY = "tt_compliance_hidden_v1";
+
+// Pages where the widget should never show
 const HIDE_PREFIX = [
   "/launch",
   "/pricing",
@@ -84,17 +88,21 @@ const HIDE_PREFIX = [
   "/signup",
   "/forgot-password",
   "/reset-password",
-  "/guides", // public SEO content
-  "/help",   // public support page (your choice)
+  "/guides",
+  "/help",
 ];
 
 export default function ComplianceWidget() {
   const pathname = usePathname();
 
+  // route-based gating (public vs app pages)
   const eligible = useMemo(() => {
     if (!pathname) return false;
-    if (pathname === "/") return false;
-    return !HIDE_PREFIX.some((p) => pathname === p || pathname.startsWith(p + "/"));
+    if (pathname === "/" || pathname === "/app") return false;
+
+    return !HIDE_PREFIX.some(
+      (p) => pathname === p || pathname.startsWith(p + "/")
+    );
   }, [pathname]);
 
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
@@ -112,7 +120,32 @@ export default function ComplianceWidget() {
     allergenDueSoon: number;
   } | null>(null);
 
-  // ✅ Make auth state reliable (same pattern as your UserMenu)
+  // "X" / close state (persisted)
+  const [hidden, setHidden] = useState(false);
+
+  useEffect(() => {
+    // read persisted hide flag on mount
+    try {
+      if (typeof window === "undefined") return;
+      const v = window.localStorage.getItem(HIDE_LS_KEY);
+      if (v === "1") setHidden(true);
+    } catch {
+      // localStorage can fail in weird browsers; ignore
+    }
+  }, []);
+
+  const handleHide = () => {
+    setHidden(true);
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(HIDE_LS_KEY, "1");
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  // Auth state
   useEffect(() => {
     let mounted = true;
 
@@ -124,13 +157,12 @@ export default function ComplianceWidget() {
 
     prime();
 
- const { data: sub } = supabase.auth.onAuthStateChange(
-  (_event: AuthChangeEvent, session: Session | null) => {
-    if (!mounted) return;
-    setSignedIn(!!session?.user);
-  }
-);
-
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, session: Session | null) => {
+        if (!mounted) return;
+        setSignedIn(!!session?.user);
+      }
+    );
 
     return () => {
       mounted = false;
@@ -143,7 +175,7 @@ export default function ComplianceWidget() {
     let cancelled = false;
 
     (async () => {
-      if (!eligible) {
+      if (!eligible || hidden) {
         setLoading(false);
         setScore(null);
         setDetails(null);
@@ -279,9 +311,7 @@ export default function ComplianceWidget() {
           });
         }
 
-        // Score (25 each pillar)
         const tempScore = tempsOk ? 25 : 0;
-
         const cleaningScore =
           cleaningDue === 0
             ? 25
@@ -290,10 +320,8 @@ export default function ComplianceWidget() {
             : cleaningDone > 0
             ? 12
             : 0;
-
         const trainingScore =
           trainingExpired > 0 ? 0 : trainingDueSoon > 0 ? 12 : 25;
-
         const allergenScore =
           allergenOver > 0 ? 0 : allergenDueSoon > 0 ? 12 : 25;
 
@@ -324,9 +352,11 @@ export default function ComplianceWidget() {
     return () => {
       cancelled = true;
     };
-  }, [eligible, signedIn, pathname]);
+  }, [eligible, signedIn, pathname, hidden]);
 
+  // final visibility gate
   if (!eligible) return null;
+  if (hidden) return null;
   if (signedIn !== true) return null;
   if (loading) return null;
   if (score === null) return null;
@@ -338,12 +368,22 @@ export default function ComplianceWidget() {
     <div className="fixed right-4 top-[76px] z-[9999]">
       <div
         className={cls(
-          "rounded-2xl border px-3 py-2 shadow-lg backdrop-blur",
+          "relative rounded-2xl border px-3 py-2 shadow-lg backdrop-blur",
           "ring-1",
           tone.wrap,
           tone.ring
         )}
       >
+        {/* Close / X button */}
+        <button
+          type="button"
+          onClick={handleHide}
+          className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 shadow-sm hover:bg-slate-100"
+          aria-label="Hide compliance indicator"
+        >
+          ×
+        </button>
+
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -351,11 +391,18 @@ export default function ComplianceWidget() {
           aria-expanded={open}
           aria-label="Compliance score"
         >
-          <span className={cls("rounded-full px-2 py-1 text-[11px] font-extrabold", tone.pill)}>
+          <span
+            className={cls(
+              "rounded-full px-2 py-1 text-[11px] font-extrabold",
+              tone.pill
+            )}
+          >
             {score}%
           </span>
           <span className="text-xs font-semibold">{meta.label}</span>
-          <span className="ml-1 text-xs opacity-70">{open ? "▲" : "▼"}</span>
+          <span className="ml-1 text-xs opacity-70">
+            {open ? "▲" : "▼"}
+          </span>
         </button>
 
         {open && details && (
@@ -363,7 +410,9 @@ export default function ComplianceWidget() {
             <div className="space-y-1">
               <div className="flex justify-between gap-3">
                 <span>Temps today</span>
-                <span className="font-semibold">{details.tempsOk ? "OK" : "Missing"}</span>
+                <span className="font-semibold">
+                  {details.tempsOk ? "OK" : "Missing"}
+                </span>
               </div>
               <div className="flex justify-between gap-3">
                 <span>Cleaning today</span>

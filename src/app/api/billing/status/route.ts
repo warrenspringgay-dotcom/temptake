@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const info = await getSubscriptionForCurrentUser();
 
+  // Shape kept compatible with your existing hooks:
   return NextResponse.json(
     {
       loggedIn: info.loggedIn,
@@ -14,8 +15,7 @@ export async function GET() {
       status: info.status,
       currentPeriodEnd: info.currentPeriodEnd,
       trialEndsAt: info.trialEndsAt,
-      // keep compatibility with your existing hook usage
-      hasValid: info.active,
+      hasValid: info.hasValid,
     },
     { status: 200 }
   );
