@@ -1,18 +1,20 @@
 // src/components/WelcomePopup.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { useAuth } from "@/components/AuthProvider";
+import { useEffect, useState } from "react";
+import type { User } from "@supabase/supabase-js";
 
-const LS_KEY = "tt_welcome_seen_v2";
+const LS_KEY = "tt_welcome_seen_v1";
 
-export default function WelcomePopup() {
-  const { user, ready } = useAuth();
+type WelcomePopupProps = {
+  user: User | null;
+};
+
+export default function WelcomePopup({ user }: WelcomePopupProps) {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    if (!ready) return;          // wait for AuthProvider
-    if (!user) return;           // only for logged-in users
+    if (!user) return;
 
     try {
       const seen = window.localStorage.getItem(LS_KEY);
@@ -21,10 +23,10 @@ export default function WelcomePopup() {
       setOpen(true);
       window.localStorage.setItem(LS_KEY, "1");
     } catch {
-      // localStorage blocked? still show once
+      // localStorage might explode in some weird browser modes – just show it once
       setOpen(true);
     }
-  }, [ready, user]);
+  }, [user]);
 
   if (!open) return null;
 
@@ -32,12 +34,11 @@ export default function WelcomePopup() {
     <div className="fixed inset-0 z-[9999] grid place-items-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
         <div className="text-lg font-semibold">Welcome to TempTake</div>
-
         <div className="mt-2 text-sm text-slate-600">
-          Quick setup checklist:
-          <ol className="mt-2 list-decimal pl-5 space-y-1">
+          Quick setup:
+          <ol className="mt-2 list-decimal space-y-1 pl-5">
+            <li>Add your first location (Sites).</li>
             <li>Add your team members.</li>
-            <li>Create your cleaning rota.</li>
             <li>Build your temp routines.</li>
           </ol>
         </div>

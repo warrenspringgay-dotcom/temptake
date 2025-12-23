@@ -9,7 +9,7 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import OnboardingBanner from "@/components/OnboardingBanner";
-import WelcomePopup from "@/components/WelcomePopup";
+import WelcomeGate from "@/components/WelcomeGate";
 import type { User } from "@supabase/supabase-js";
 
 /* ---------- CONFIG ---------- */
@@ -653,11 +653,13 @@ export default function DashboardPage() {
     : "ok";
 
   /* ---------- render ---------- */
-  return (
-    <div className="mx-auto max-w-5xl px-4 pt-2 pb-6 space-y-4">
-      {authReady && user ? <WelcomePopup user={user} /> : null}
+return (
+  <div className="mx-auto max-w-5xl px-4 pt-2 pb-6 space-y-4">
+    <WelcomeGate />
 
-      <OnboardingBanner />
+    <OnboardingBanner />
+    ...
+
 
       <header className="text-center">
         <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">

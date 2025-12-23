@@ -4,31 +4,43 @@
 import Link from "next/link";
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 
+function calcDaysLeft(trialEndsAt: string | null): number | null {
+  if (!trialEndsAt) return null;
+
+  const now = new Date();
+  const end = new Date(trialEndsAt);
+  if (Number.isNaN(end.getTime())) return null;
+
+  const diffMs = end.getTime() - now.getTime();
+  if (diffMs <= 0) return 0;
+
+  return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+}
+
 export default function TrialBanner() {
-  const { loggedIn, onTrial, daysLeft, trialEndsAt } = useSubscriptionStatus();
+  const { loading, loggedIn, onTrial, trialEndsAt } = useSubscriptionStatus();
 
-  // Not logged in or not on trial → no banner
-  if (!loggedIn || !onTrial) return null;
+  // Not ready or not logged in or not actually on trial → nothing
+  if (loading || !loggedIn || !onTrial) return null;
 
-  // If we somehow don't have a valid date or days, bail
-  if (!trialEndsAt || daysLeft == null || daysLeft <= 0) return null;
+  const daysLeft = calcDaysLeft(trialEndsAt);
+  if (daysLeft === null || daysLeft <= 0) return null;
 
   return (
-    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="font-semibold">
-            Trial active · {daysLeft} day{daysLeft === 1 ? "" : "s"} left
+            Free trial: {daysLeft} day{daysLeft === 1 ? "" : "s"} left
           </div>
-          <div className="text-xs text-emerald-800">
-            You’ve got full access during the trial. Build your locations,
-            routines and team. Add billing details to continue after the trial
-            ends.
+          <div className="text-xs text-amber-800">
+            You&apos;ve got full access during the trial. Add your billing details to keep
+            TempTake running after it ends.
           </div>
         </div>
         <Link
           href="/billing"
-          className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+          className="rounded-full bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
         >
           Go to billing
         </Link>
