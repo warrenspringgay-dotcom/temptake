@@ -13,9 +13,20 @@ export type SubscriptionStatus =
 export type SubscriptionStatusInfo = {
   loggedIn: boolean;
   status: SubscriptionStatus | null;
-  active: boolean;     // active or trial or past_due
+
+  // true if paid or trial or past_due
+  active: boolean;
+
+  // true if currently in free trial window
   onTrial: boolean;
+
+  // ISO string from billing_subscriptions.trial_ends_at (or null)
   trialEndsAt: string | null;
+
+  // ISO string from Stripe period end (or null)
+  currentPeriodEnd: string | null;
+
+  // trial days remaining, null if not on trial
   daysLeft: number | null;
 };
 
@@ -28,6 +39,7 @@ const INITIAL: HookReturn = {
   active: false,
   onTrial: false,
   trialEndsAt: null,
+  currentPeriodEnd: null,
   daysLeft: null,
 };
 
@@ -46,6 +58,7 @@ export function useSubscriptionStatus(): HookReturn {
         const loggedIn = !!json.loggedIn;
         const status = (json.status ?? null) as SubscriptionStatus | null;
         const trialEndsAt = (json.trialEndsAt ?? null) as string | null;
+        const currentPeriodEnd = (json.currentPeriodEnd ?? null) as string | null;
 
         let daysLeft: number | null = null;
         let onTrial = false;
@@ -53,6 +66,7 @@ export function useSubscriptionStatus(): HookReturn {
         if (status === "trialing" && trialEndsAt) {
           const now = new Date();
           const end = new Date(trialEndsAt);
+
           if (!Number.isNaN(end.getTime())) {
             const diffMs = end.getTime() - now.getTime();
             daysLeft = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
@@ -73,6 +87,7 @@ export function useSubscriptionStatus(): HookReturn {
             active,
             onTrial,
             trialEndsAt,
+            currentPeriodEnd,
             daysLeft,
           });
         }

@@ -439,16 +439,15 @@ export default function ComplianceIndicatorShell() {
 
   const deg = Math.round((score / 100) * 360);
 
-  return (
-    <div className="print:hidden pointer-events-none fixed right-4 top-[72px] z-50">
-      <div
-        className="pointer-events-auto relative h-[112px] w-[112px] rounded-full border border-white/30 bg-white/25 shadow-xl backdrop-blur-md"
-        style={{
-          boxShadow: "0 12px 32px rgba(0,0,0,0.18)",
-        }}
+return (
+  <div className="print:hidden fixed right-4 top-[72px] z-50">
+    <div
+      className="relative h-[112px] w-[112px] rounded-full border border-white/30 bg-white/25 shadow-xl backdrop-blur-md"
+      style={{ boxShadow: "0 12px 32px rgba(0,0,0,0.18)" }}
+    >
         aria-label="Compliance indicator"
         title="Operational compliance (today)"
-      >
+      
         {/* arc */}
         <svg
           viewBox="0 0 100 100"
