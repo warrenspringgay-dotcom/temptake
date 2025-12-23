@@ -1,72 +1,97 @@
 // src/hooks/useSubscriptionStatus.ts
 "use client";
 
-import useSWR from "swr";
+import { useEffect, useState } from "react";
 
 export type SubscriptionStatus =
-  | "active"
+  | "none"
   | "trialing"
+  | "active"
   | "past_due"
-  | "canceled"
-  | "incomplete"
-  | "incomplete_expired"
-  | "unpaid"
-  | "unknown"
-  | null;
+  | "canceled";
 
 export type SubscriptionStatusInfo = {
   loggedIn: boolean;
-  active: boolean;              // from API: `active`
-  onTrial: boolean;             // derived from `trialEndsAt`
-  status: SubscriptionStatus;   // from API: `status`
-  currentPeriodEnd: string | null;
-  trialEndsAt: string | null;   // from API: `trialEndsAt`
+  status: SubscriptionStatus | null;
+  active: boolean;     // active or trial or past_due
+  onTrial: boolean;
+  trialEndsAt: string | null;
+  daysLeft: number | null;
 };
 
-type ApiResponse = {
-  loggedIn?: boolean;
-  active?: boolean;
-  status?: SubscriptionStatus;
-  currentPeriodEnd?: string | null;
-  trialEndsAt?: string | null;
-  hasValid?: boolean; // legacy, we can ignore or use if you want
+type HookReturn = SubscriptionStatusInfo & { loading: boolean };
+
+const INITIAL: HookReturn = {
+  loading: true,
+  loggedIn: false,
+  status: null,
+  active: false,
+  onTrial: false,
+  trialEndsAt: null,
+  daysLeft: null,
 };
 
-const fetcher = (url: string) =>
-  fetch(url).then((r) => {
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.json();
-  }) as Promise<ApiResponse>;
+export function useSubscriptionStatus(): HookReturn {
+  const [state, setState] = useState<HookReturn>(INITIAL);
 
-export function useSubscriptionStatus(): SubscriptionStatusInfo & { loading: boolean } {
-  const { data, error, isLoading } = useSWR<ApiResponse>("/api/billing/status", fetcher, {
-    refreshInterval: 60_000,
-  });
+  useEffect(() => {
+    let cancelled = false;
 
-  const loggedIn = !!data?.loggedIn;
+    async function load() {
+      try {
+        const res = await fetch("/api/billing/status", { cache: "no-store" });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const json = await res.json();
 
-  const status: SubscriptionStatus =
-    (data?.status as SubscriptionStatus | undefined) ?? null;
+        const loggedIn = !!json.loggedIn;
+        const status = (json.status ?? null) as SubscriptionStatus | null;
+        const trialEndsAt = (json.trialEndsAt ?? null) as string | null;
 
-  const currentPeriodEnd = data?.currentPeriodEnd ?? null;
-  const trialEndsAt = data?.trialEndsAt ?? null;
+        let daysLeft: number | null = null;
+        let onTrial = false;
 
-  const active = !!data?.active;
+        if (status === "trialing" && trialEndsAt) {
+          const now = new Date();
+          const end = new Date(trialEndsAt);
+          if (!Number.isNaN(end.getTime())) {
+            const diffMs = end.getTime() - now.getTime();
+            daysLeft = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+            onTrial = diffMs > 0;
+          }
+        }
 
-  let onTrial = false;
-  if (trialEndsAt) {
-    const now = new Date();
-    const end = new Date(trialEndsAt);
-    onTrial = end.getTime() > now.getTime();
-  }
+        const active =
+          status === "active" ||
+          status === "trialing" ||
+          status === "past_due";
 
-  return {
-    loading: isLoading || (!data && !error),
-    loggedIn,
-    active,
-    onTrial,
-    status,
-    currentPeriodEnd,
-    trialEndsAt,
-  };
+        if (!cancelled) {
+          setState({
+            loading: false,
+            loggedIn,
+            status,
+            active,
+            onTrial,
+            trialEndsAt,
+            daysLeft,
+          });
+        }
+      } catch (e) {
+        console.error("[useSubscriptionStatus] failed", e);
+        if (!cancelled) {
+          setState(INITIAL);
+        }
+      }
+    }
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return state;
 }
+
+export default useSubscriptionStatus;
