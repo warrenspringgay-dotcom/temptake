@@ -5,7 +5,7 @@ import { PHProvider } from "@/components/PosthogProvider";
 import { ToastProvider } from "@/components/ui/use-toast";
 import { GlobalLoadingProvider } from "@/components/GlobalLoadingProvider";
 import { AuthProvider } from "@/components/AuthProvider";
-import Pwa from "@/components/Pwa";
+// import Pwa from "@/components/Pwa";   // ⛔️ TEMP: remove for debugging
 import { Analytics } from "@vercel/analytics/react";
 
 export const dynamic = "force-dynamic";
@@ -23,14 +23,12 @@ export default function RootLayout({
           <ToastProvider>
             <GlobalLoadingProvider>
               <AuthProvider>
-                <Pwa>
-                  {/* 🔹 TEMP: NO header, NO compliance widgets */}
-                  <main className="mx-auto max-w-6xl px-4 py-2">
-                    {children}
-                  </main>
+                {/* 🔧 TEMP: minimal shell, no header, no widgets, no PWA wrapper */}
+                <main className="mx-auto max-w-6xl px-4 py-2">
+                  {children}
+                </main>
 
-                  <Analytics />
-                </Pwa>
+                <Analytics />
               </AuthProvider>
             </GlobalLoadingProvider>
           </ToastProvider>
