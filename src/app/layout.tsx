@@ -11,7 +11,7 @@ import { AuthProvider } from "@/components/AuthProvider";
 import Pwa from "@/components/Pwa";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import ComplianceIndicatorShell from "@/components/ComplianceIndicatorShell";
-
+import ComplianceWidgetGate from "@/components/ComplianceWidgetGate";
 // Header + FAB live in app/ so import relatively
 import HeaderShell from "./app/HeaderShell";
 import FabShell from "./FabShell";
@@ -35,27 +35,31 @@ export default function RootLayout({
           <ToastProvider>
             <GlobalLoadingProvider>
               <AuthProvider>
-                <Pwa>
-                  {/* Top bar with logo, NavTabs, user menu, location switcher */}
-                  <HeaderShell />
+                {/* PWA shell (no children) */}
+                <Pwa />
 
-                  {/* Main page content */}
-                  <main className="mx-auto max-w-6xl px-4 py-2">
-                    {children}
-                  </main>
+            
+<HeaderShell />
+<main className="mx-auto max-w-6xl px-4 py-2">{children}</main>
+<ComplianceWidgetGate />
 
-                  {/* Floating compliance donut */}
-                  <ComplianceIndicatorShell />
 
-                  {/* Floating action button etc */}
-                  <FabShell />
-                  <ServiceWorkerRegister />
-                </Pwa>
+                {/* Main content */}
+                <main className="mx-auto max-w-6xl px-4 py-2">
+                  {children}
+                </main>
+
+                {/* Floating compliance donut */}
+                <ComplianceIndicatorShell />
+
+                {/* FAB, service worker, etc */}
+                <FabShell />
+                <ServiceWorkerRegister />
               </AuthProvider>
-            </GlobalLoadingProvider>
 
-            {/* Vercel analytics */}
-            <Analytics />
+              {/* Vercel analytics */}
+              <Analytics />
+            </GlobalLoadingProvider>
           </ToastProvider>
         </PHProvider>
       </body>
