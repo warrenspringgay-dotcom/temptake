@@ -7,7 +7,6 @@ import { GlobalLoadingProvider } from "@/components/GlobalLoadingProvider";
 import { AuthProvider } from "@/components/AuthProvider";
 import HeaderShell from "@/app/app/HeaderShell";        // ✅ put the header back
 import { Analytics } from "@vercel/analytics/react";
-import ComplianceWidgetGate from "@/components/ComplianceWidgetGate";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
