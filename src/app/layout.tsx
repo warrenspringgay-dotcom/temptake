@@ -9,7 +9,6 @@ import HeaderShell from "@/app/app/HeaderShell";        // ✅ put the header ba
 import { Analytics } from "@vercel/analytics/react";
 import ComplianceWidgetGate from "@/components/ComplianceWidgetGate";
 
-
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -27,7 +26,7 @@ export default function RootLayout({
               <AuthProvider>
                 {/* Header on all “app” pages; HeaderShell already hides itself on login/launch etc */}
                 <HeaderShell />
-<ComplianceWidgetGate />
+
                 <main className="mx-auto max-w-6xl px-4 py-2">
                   {children}
                 </main>
