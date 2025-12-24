@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import clsx from "clsx";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 
@@ -13,72 +14,44 @@ export default function OrgName({ className }: Props) {
   const [name, setName] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    let alive = true;
 
-    async function loadName() {
+    (async () => {
       try {
         const orgId = await getActiveOrgIdClient();
-        if (!orgId) {
-          if (!cancelled) setName(null);
-          return;
-        }
+        if (!orgId) return;
 
-        // 1) Prefer per-org settings row
-        const { data: settingsRow, error: sErr } = await supabase
-          .from("settings")
-          .select("org_name")
-          .eq("org_id", orgId)
-          .order("updated_at", { ascending: false })
-          .order("created_at", { ascending: false })
-          .limit(1)
+        const { data, error } = await supabase
+          .from("orgs")
+          .select("name")
+          .eq("id", orgId)
           .maybeSingle();
 
-        if (sErr) {
-          console.warn("OrgName settings read error", sErr);
+        if (!alive) return;
+
+        if (error) {
+          console.error("OrgName error", error);
+          setName(null);
+        } else {
+          const raw = (data?.name ?? "").toString().trim();
+          setName(raw || null);
         }
-
-        let orgName: string | null =
-          (settingsRow?.org_name as string | null) ?? null;
-
-        // 2) Fallback to orgs table if needed
-        if (!orgName) {
-          const { data: orgRow, error: oErr } = await supabase
-            .from("orgs")
-            .select("name")
-            .eq("id", orgId)
-            .maybeSingle();
-
-          if (oErr) {
-            console.warn("OrgName orgs read error", oErr);
-          }
-
-          orgName = (orgRow?.name as string | null) ?? null;
-        }
-
-        if (!cancelled) setName(orgName);
-      } catch (err) {
-        console.error("Failed to load org name", err);
-        if (!cancelled) setName(null);
+      } catch (e) {
+        if (!alive) return;
+        console.error("OrgName exception", e);
+        setName(null);
       }
-    }
-
-    loadName();
-
-    const handler = () => loadName();
-    window.addEventListener("tt-settings-updated", handler);
+    })();
 
     return () => {
-      cancelled = true;
-      window.removeEventListener("tt-settings-updated", handler);
+      alive = false;
     };
   }, []);
 
-  if (!name) {
-    return <span className={className} />;
-  }
+  if (!name) return null;
 
   return (
-    <span className={className} title={name}>
+    <span className={clsx("text-xs font-medium text-slate-600", className)}>
       {name}
     </span>
   );

@@ -11,7 +11,6 @@ import MobileMenu from "@/components/MobileMenu";
 import UserMenu from "@/components/UserMenu";
 import OrgName from "@/components/OrgName";
 import LocationSwitcher from "@/components/LocationSwitcher";
-
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 import { useAuth } from "@/components/AuthProvider";
 
@@ -20,16 +19,16 @@ export default function HeaderShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const { active, onTrial } = useSubscriptionStatus();
-  const hasValid = active || onTrial; // treat trial as “valid” for gating
-
+  const { hasValid } = useSubscriptionStatus();
   const { user, ready } = useAuth();
 
   // After login/signup, push the user into the app
   useEffect(() => {
     if (!ready || !user) return;
 
-    if (!pathname.startsWith("/login") && !pathname.startsWith("/signup")) return;
+    if (!pathname.startsWith("/login") && !pathname.startsWith("/signup")) {
+      return;
+    }
 
     const nextParam = searchParams.get("next");
     const safeNext =
@@ -50,13 +49,9 @@ export default function HeaderShell() {
     pathname.startsWith("/login") ||
     pathname.startsWith("/signup");
 
-  if (hideHeader) return null;
-  if (!ready) return null;
+  if (hideHeader || !ready) return null;
 
-  // Nav should ALWAYS show for logged-in users
   const showNav = !!user;
-
-  // Location switcher only when sub/trial is valid
   const showLocation = !!user && hasValid;
 
   return (
