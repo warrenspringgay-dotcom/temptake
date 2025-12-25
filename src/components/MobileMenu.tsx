@@ -5,32 +5,40 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
-
-type Props = {
-  user: any | null;
-};
+import { useAuth } from "@/components/AuthProvider";
+import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 
 type Tab = {
   href: string;
   label: string;
   icon?: React.ReactNode;
   requiresManager?: boolean;
+  requiresPlan?: boolean; // needs active sub or trial
 };
 
 const authedLinks: Tab[] = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/routines", label: "Routines" },
-  { href: "/allergens", label: "Allergens" },
-  { href: "/cleaning-rota", label: "Cleaning rota" },
-  { href: "/food-hygiene", label: "Food hygiene" },
-  { href: "/manager", label: "Manager", requiresManager: true },
-  { href: "/leaderboard", label: "Leaderboard" },
-  { href: "/team", label: "Team" },
-  { href: "/suppliers", label: "Suppliers" },
-  { href: "/reports", label: "Reports" },
+
+  // plan-gated
+  { href: "/routines", label: "Routines", requiresPlan: true },
+  { href: "/allergens", label: "Allergens", requiresPlan: true },
+  { href: "/cleaning-rota", label: "Cleaning rota", requiresPlan: true },
+  { href: "/food-hygiene", label: "Food hygiene", requiresPlan: true },
+  {
+    href: "/manager",
+    label: "Manager",
+    requiresManager: true,
+    requiresPlan: true,
+  },
+  { href: "/leaderboard", label: "Leaderboard", requiresPlan: true },
+  { href: "/team", label: "Team", requiresPlan: true },
+  { href: "/suppliers", label: "Suppliers", requiresPlan: true },
+  { href: "/reports", label: "Reports", requiresPlan: true },
+
+  // these are “account” things, still fine without a plan
   { href: "/locations", label: "Locations & sites" },
   { href: "/billing", label: "Billing & subscription" },
-  { href: "/guides", label: "Guides" }, // 👈 added
+  { href: "/guides", label: "Guides" },
   { href: "/settings", label: "Settings" },
   { href: "/help", label: "Help & support" },
 ];
@@ -44,11 +52,14 @@ const publicLinks: { href: string; label: string }[] = [
 const cn = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
 
-export default function MobileMenu({ user }: Props) {
+export default function MobileMenu() {
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
+
+  const { user, ready } = useAuth();
+  const { hasValid } = useSubscriptionStatus();
 
   const isManager =
     user?.user_metadata?.role === "manager" ||
@@ -75,9 +86,18 @@ export default function MobileMenu({ user }: Props) {
     user?.email ||
     "Account";
 
-  // When logged in, filter out manager-only links if not a manager
+  // If auth not ready yet, don’t show anything to avoid the “logged-out” flash
+  if (!ready) {
+    return null;
+  }
+
+  // When logged in, apply manager + plan gating
   const links: { href: string; label: string }[] = user
-    ? authedLinks.filter((l) => !l.requiresManager || isManager)
+    ? authedLinks.filter(
+        (l) =>
+          (!l.requiresManager || isManager) &&
+          (!l.requiresPlan || hasValid)
+      )
     : publicLinks;
 
   return (
@@ -94,7 +114,6 @@ export default function MobileMenu({ user }: Props) {
         <span className="mt-[3px] block h-[2px] w-4 rounded bg-slate-800" />
       </button>
 
-      {/* Overlay + panel */}
       {open && (
         <div className="fixed inset-0 z-50 md:hidden">
           {/* Dim background – clicking closes menu */}

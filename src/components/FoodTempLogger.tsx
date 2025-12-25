@@ -658,7 +658,7 @@ return (
     <WelcomeGate />
 
     <OnboardingBanner />
-    ...
+  
 
 
       <header className="text-center">

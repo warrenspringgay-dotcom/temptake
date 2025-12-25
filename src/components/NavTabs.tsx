@@ -8,20 +8,21 @@ import { Trophy } from "lucide-react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { useAuth } from "@/components/AuthProvider";
+import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 
 type Tab = {
   href: string;
   label: string;
   icon?: React.ReactNode;
   requiresManager?: boolean;
-  requiresPlan?: boolean; // 👈 new: subscription gating
+  requiresPlan?: boolean; // needs active sub OR trial
 };
 
 const BASE_TABS: Tab[] = [
+  // Always visible for logged-in users
+  { href: "/dashboard", label: "Dashboard" },
 
-
-  // everything below is gated behind an active plan
-  { href: "/dashboard", label: "Dashboard", requiresPlan: true },  // always visible
+  // Plan-gated tabs
   { href: "/routines", label: "Routines", requiresPlan: true },
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning Rota", requiresPlan: true },
@@ -45,11 +46,11 @@ const BASE_TABS: Tab[] = [
 export default function NavTabs() {
   const pathname = usePathname();
   const { user, ready } = useAuth();
+  const { hasValid, loading: billingLoading } = useSubscriptionStatus();
 
   const [canSeeManager, setCanSeeManager] = useState(false);
-  const [hasActivePlan, setHasActivePlan] = useState<boolean>(false);
 
-  // 1) Role-based gating (owner / manager / admin)
+  // ---- Role-based gating for Manager Dashboard ----
   useEffect(() => {
     (async () => {
       if (!ready || !user) {
@@ -88,59 +89,32 @@ export default function NavTabs() {
     })();
   }, [ready, user]);
 
-  // 2) Subscription-based gating
-  useEffect(() => {
-    if (!ready || !user) {
-      setHasActivePlan(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        // 🔧 Wire this to whatever billing-status endpoint you already have.
-        // Expected response shape: { hasActivePlan: boolean }
-        const res = await fetch("/api/billing/status", { method: "GET" });
-        if (!res.ok) {
-          if (!cancelled) setHasActivePlan(false);
-          return;
-        }
-
-        const json = (await res.json()) as { hasActivePlan?: boolean };
-        if (!cancelled) {
-          setHasActivePlan(!!json.hasActivePlan);
-        }
-      } catch {
-        if (!cancelled) setHasActivePlan(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, user]);
-
+  // ---- Apply gating rules to tabs ----
   const tabs = useMemo(
     () =>
       BASE_TABS.filter((t) => {
-        // manager-only tabs
+        // Manager-only tabs
         if (t.requiresManager && !canSeeManager) return false;
 
-        // subscription-only tabs
-        if (t.requiresPlan && !hasActivePlan) return false;
+        // Plan-only tabs: hide if billing says no valid plan/trial
+        if (t.requiresPlan && !hasValid) return false;
 
         return true;
       }),
-    [canSeeManager, hasActivePlan]
+    [canSeeManager, hasValid]
   );
 
+  // While auth is not ready, don't render nav at all
   if (!ready || !user) return null;
+
+  // Optional: while billing is loading, show all tabs except manager ones,
+  // so the UI doesn't "flash" hidden then visible.
+  const effectiveTabs = billingLoading ? BASE_TABS.filter(t => !t.requiresManager || canSeeManager) : tabs;
 
   return (
     <ul className="flex flex-nowrap items-center gap-1 min-w-max px-2">
-      {tabs.map((t) => {
-        const active =
+      {effectiveTabs.map((t) => {
+        const isActive =
           pathname === t.href ||
           (pathname?.startsWith(t.href + "/") ?? false);
 
@@ -150,7 +124,7 @@ export default function NavTabs() {
               href={t.href}
               className={[
                 "inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors whitespace-nowrap",
-                active
+                isActive
                   ? "bg-black text-white"
                   : "text-slate-700 hover:bg-gray-100 hover:text-black",
               ].join(" ")}
