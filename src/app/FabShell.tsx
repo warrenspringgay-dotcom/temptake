@@ -1,24 +1,28 @@
-// src/app/FabShell.tsx
+// src/components/FabShell.tsx
 "use client";
 
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
 import TempFab from "@/components/QuickActionsFab";
 
 export default function FabShell() {
   const pathname = usePathname();
+  const { user, ready } = useAuth();
 
-  // Same hide rules as HeaderShell (no FAB on marketing/demo pages)
-  const hideFab =
+  // While auth is resolving, don't flash the FAB
+  if (!ready) return null;
+
+  // No FAB if not logged in
+  if (!user) return null;
+
+  // Hide on public / marketing pages
+  const hideOnPublic =
     pathname === "/" ||
-    pathname.startsWith("/launch") ||
-    pathname.startsWith("/billing") ||
-    pathname.startsWith("/pricing") ||
-    pathname.startsWith("/login") ||
-    pathname.startsWith("/signup") ||
-    pathname === "/app" ||
-    pathname.startsWith("/demo-wall");
+    pathname?.startsWith("/login") ||
+    pathname?.startsWith("/signup");
 
-  if (hideFab) return null;
+  if (hideOnPublic) return null;
 
+  // Everywhere else for logged-in users
   return <TempFab />;
 }
