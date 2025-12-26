@@ -503,12 +503,11 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  const headerDate = formatPrettyDate(new Date(selectedDateISO));
-  const currentLocationName = locations.find((l) => l.id === locationId)?.name ?? "This location";
+  // ✅ this is the centered date you want
+  const centeredDate = formatPrettyDate(new Date(selectedDateISO));
 
   const tempsTone: "neutral" | "ok" | "warn" | "danger" = tempsSummary.fails7d > 0 ? "danger" : "ok";
   const incidentsTone: "neutral" | "ok" | "warn" | "danger" = incidentSummary.todayCount > 0 ? "warn" : "ok";
-
   const trainingTone: "neutral" | "ok" | "warn" | "danger" =
     trainingExpired > 0 ? "danger" : trainingDueSoon > 0 ? "warn" : "ok";
 
@@ -521,14 +520,13 @@ export default function ManagerDashboardPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-3 sm:px-4 pt-2 pb-6 space-y-4">
-      {/* Header (controls removed from here) */}
-      <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Manager</div>
-          <h1 className="text-xl font-extrabold text-slate-900 leading-tight">Manager Dashboard</h1>
-          <div className="mt-0.5 text-xs font-medium text-slate-500">
-            {headerDate} · {currentLocationName}
-          </div>
+      {/* ✅ Header changed: only centered date */}
+      <header className="py-2">
+        <div className="text-center">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today</div>
+          <h1 className="mt-1 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+            {centeredDate}
+          </h1>
         </div>
       </header>
 
@@ -556,7 +554,13 @@ export default function ManagerDashboardPage() {
             }
           />
 
-          <KpiTile title="Incidents" icon="⚠️" tone={incidentsTone} value={incidentSummary.todayCount} sub={`Last 7d: ${incidentSummary.last7Count}`} />
+          <KpiTile
+            title="Incidents"
+            icon="⚠️"
+            tone={incidentsTone}
+            value={incidentSummary.todayCount}
+            sub={`Last 7d: ${incidentSummary.last7Count}`}
+          />
 
           <KpiTile
             title="Training"
@@ -566,16 +570,24 @@ export default function ManagerDashboardPage() {
             sub={
               <>
                 Due soon (30d):{" "}
-                <span className={cls("font-semibold", trainingDueSoon > 0 && "text-amber-700")}>{trainingDueSoon}</span>
+                <span className={cls("font-semibold", trainingDueSoon > 0 && "text-amber-700")}>
+                  {trainingDueSoon}
+                </span>
               </>
             }
           />
 
-          <KpiTile title="Cleaning completion" icon="✅" tone="neutral" value={`${cleaningDoneTotal}/${cleaningTotal}`} sub="Done / total (selected day)" />
+          <KpiTile
+            title="Cleaning completion"
+            icon="✅"
+            tone="neutral"
+            value={`${cleaningDoneTotal}/${cleaningTotal}`}
+            sub="Done / total (selected day)"
+          />
         </div>
       </section>
 
-      {/* ✅ MOVED CONTROLS: under KPIs, above Cleaning Progress */}
+      {/* Controls under KPIs */}
       <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="flex flex-wrap items-center gap-2 justify-end">
           <div className="flex items-center gap-2">
@@ -682,7 +694,7 @@ export default function ManagerDashboardPage() {
         </div>
       </section>
 
-      {/* Incidents table (selected day) */}
+      {/* Incidents table */}
       <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Incidents</div>
@@ -729,7 +741,7 @@ export default function ManagerDashboardPage() {
         <TableFooterToggle total={incidentsToday.length} showingAll={showAllIncidents} onToggle={() => setShowAllIncidents((v) => !v)} />
       </section>
 
-      {/* Today’s activity */}
+      {/* Activity */}
       <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today&apos;s activity</div>
@@ -737,9 +749,10 @@ export default function ManagerDashboardPage() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
-          {/* Temps list */}
           <div>
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Temperature logs</h3>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Temperature logs
+            </h3>
 
             <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
@@ -792,9 +805,10 @@ export default function ManagerDashboardPage() {
             <TableFooterToggle total={todayTemps.length} showingAll={showAllTemps} onToggle={() => setShowAllTemps((v) => !v)} />
           </div>
 
-          {/* Cleaning runs list */}
           <div>
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Cleaning runs</h3>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Cleaning runs
+            </h3>
 
             <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">

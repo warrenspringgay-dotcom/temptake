@@ -15,7 +15,14 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
-import { Thermometer, Brush, Mic, MicOff, ClipboardList } from "lucide-react";
+import {
+  Thermometer,
+  Brush,
+  Mic,
+  MicOff,
+  ClipboardList,
+  CheckSquare,
+} from "lucide-react";
 import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
 
 const LS_LAST_INITIALS = "tt_last_initials";
@@ -70,6 +77,129 @@ function inferStatus(
   return "pass";
 }
 
+/* ===================== Daily sign-off modal + logic ===================== */
+
+type DailySignoffRow = {
+  id: string;
+  org_id: string;
+  location_id: string;
+  signoff_on: string; // YYYY-MM-DD
+  signed_by: string | null;
+  notes: string | null;
+  created_at: string | null;
+};
+
+function SignoffModal({
+  open,
+  dateLabel,
+  initials,
+  notes,
+  saving,
+  signedAlready,
+  onClose,
+  onSave,
+  setInitials,
+  setNotes,
+}: {
+  open: boolean;
+  dateLabel: string;
+  initials: string;
+  notes: string;
+  saving: boolean;
+  signedAlready: boolean;
+  onClose: () => void;
+  onSave: () => void;
+  setInitials: (v: string) => void;
+  setNotes: (v: string) => void;
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-3">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+        onClick={onClose}
+        aria-label="Close sign off modal"
+      />
+
+      <div className="relative w-full max-w-[520px] overflow-hidden rounded-3xl border border-white/30 bg-white shadow-2xl">
+        <div className="bg-slate-900 px-5 py-4 text-white">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] opacity-80">
+            Day sign-off
+          </div>
+          <div className="text-xl font-extrabold leading-tight">{dateLabel}</div>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+            {signedAlready ? (
+              <div>Already signed off today. Saving will update initials/notes.</div>
+            ) : (
+              <div>One tap to sign off. Notes optional.</div>
+            )}
+          </div>
+
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Initials</div>
+            <input
+              value={initials}
+              onChange={(e) => setInitials(e.target.value)}
+              className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+              placeholder="e.g. WS"
+              maxLength={8}
+            />
+          </div>
+
+          <div>
+            <div className="text-sm font-semibold text-slate-900">
+              Notes (optional)
+            </div>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="mt-2 w-full min-h-[120px] rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+              placeholder="Issues, corrective actions, follow-ups..."
+              maxLength={1500}
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              Close
+            </button>
+
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={saving}
+              className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {saving ? "Saving..." : "Sign off"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function prettyDateLabel(ymd: string) {
+  const d = new Date(`${ymd}T00:00:00`);
+  const weekday = d.toLocaleDateString("en-GB", { weekday: "long" });
+  const day = d.toLocaleDateString("en-GB", { day: "2-digit" });
+  const month = d.toLocaleDateString("en-GB", { month: "long" });
+  const year = d.toLocaleDateString("en-GB", { year: "numeric" });
+  return `${weekday} ${day} ${month} ${year}`;
+}
+
+/* ======================================================================= */
+
 export default function TempFab() {
   const { addToast } = useToast();
   const router = useRouter();
@@ -112,6 +242,21 @@ export default function TempFab() {
   const cleaningRefreshInFlight = useRef(false);
   const cleaningRefreshQueued = useRef(false);
 
+  // Sign-off state (SINGLE source of truth)
+  const [signoffOpen, setSignoffOpen] = useState(false);
+  const [signoffSaving, setSignoffSaving] = useState(false);
+  const [signoffInitials, setSignoffInitials] = useState("");
+  const [signoffNotes, setSignoffNotes] = useState("");
+  const [signoffExisting, setSignoffExisting] = useState<DailySignoffRow | null>(
+    null
+  );
+
+  const signoffDateISO = useMemo(() => isoToday(), []);
+  const signoffDateLabel = useMemo(
+    () => prettyDateLabel(signoffDateISO),
+    [signoffDateISO]
+  );
+
   // ✅ Voice hook must be top-level (not inside useEffect)
   const { supported: voiceSupported, listening, start, stop } = useVoiceTempEntry(
     {
@@ -137,8 +282,6 @@ export default function TempFab() {
       },
     }
   );
-
-  /* --------- helpers --------- */
 
   async function refreshEntriesToday() {
     try {
@@ -177,7 +320,6 @@ export default function TempFab() {
   // Count today’s *open* cleaning tasks:
   // tasks due today minus runs recorded today
   async function refreshCleaningOpen(force = false) {
-    // simple coalescing so spam events don't overlap
     if (cleaningRefreshInFlight.current) {
       cleaningRefreshQueued.current = true;
       return;
@@ -186,29 +328,28 @@ export default function TempFab() {
     cleaningRefreshInFlight.current = true;
 
     try {
-      const orgId = force ? (activeOrgId ?? (await getActiveOrgIdClient())) : (activeOrgId ?? (await getActiveOrgIdClient()));
+      const orgId = force
+        ? activeOrgId ?? (await getActiveOrgIdClient())
+        : activeOrgId ?? (await getActiveOrgIdClient());
       if (!orgId) {
         setOpenCleaning(0);
         return;
       }
 
-      const locationId =
-        force
-          ? (activeLocationId ?? (await getActiveLocationIdClient()))
-          : (activeLocationId ?? (await getActiveLocationIdClient()));
+      const locationId = force
+        ? activeLocationId ?? (await getActiveLocationIdClient())
+        : activeLocationId ?? (await getActiveLocationIdClient());
 
       if (!locationId) {
         setOpenCleaning(0);
         return;
       }
 
-      // keep state fresh for realtime subscription usage
       if (orgId !== activeOrgId) setActiveOrgId(orgId);
       if (locationId !== activeLocationId) setActiveLocationId(locationId);
 
       const todayISO = isoToday();
 
-      // 1) Load all cleaning tasks for this org + location
       const { data: tData, error: tErr } = await supabase
         .from("cleaning_tasks")
         .select("id, frequency, weekday, month_day")
@@ -243,7 +384,6 @@ export default function TempFab() {
         return;
       }
 
-      // 2) Load runs for today
       const { data: rData, error: rErr } = await supabase
         .from("cleaning_task_runs")
         .select("task_id, run_on")
@@ -269,9 +409,145 @@ export default function TempFab() {
 
       if (cleaningRefreshQueued.current) {
         cleaningRefreshQueued.current = false;
-        // run one more time if we got spammed while busy
         void refreshCleaningOpen(true);
       }
+    }
+  }
+
+  // Open sign-off (loads existing row if present)
+  async function openDaySignoff() {
+    setShowMenu(false);
+
+    try {
+      const orgId = await getActiveOrgIdClient();
+      const locationId = await getActiveLocationIdClient();
+
+      if (!orgId || !locationId) {
+        addToast({
+          title: "Missing org/location",
+          message: "Select a location first.",
+          type: "error",
+        });
+        return;
+      }
+
+      // Prefill initials from last-used, then from current form
+      let prefIni = "";
+      try {
+        prefIni = (localStorage.getItem(LS_LAST_INITIALS) || "")
+          .toUpperCase()
+          .trim();
+      } catch {}
+      if (!prefIni) prefIni = (form.staff_initials || "").toUpperCase().trim();
+
+      const todayISO = isoToday();
+
+      const { data, error } = await supabase
+        .from("daily_signoffs")
+        .select("id,org_id,location_id,signoff_on,signed_by,notes,created_at")
+        .eq("org_id", String(orgId))
+        .eq("location_id", String(locationId))
+        .eq("signoff_on", todayISO)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      const existing = data
+        ? ({
+            id: String((data as any).id),
+            org_id: String((data as any).org_id),
+            location_id: String((data as any).location_id),
+            signoff_on: String((data as any).signoff_on),
+            signed_by: (data as any).signed_by
+              ? String((data as any).signed_by)
+              : null,
+            notes: (data as any).notes ? String((data as any).notes) : null,
+            created_at: (data as any).created_at
+              ? String((data as any).created_at)
+              : null,
+          } as DailySignoffRow)
+        : null;
+
+      setSignoffExisting(existing);
+      setSignoffInitials((existing?.signed_by ?? prefIni).toUpperCase());
+      setSignoffNotes(existing?.notes ?? "");
+      setSignoffOpen(true);
+
+      posthog.capture("fab_choose_day_signoff");
+    } catch (e: any) {
+      console.error(e);
+      addToast({
+        title: "Couldn’t open sign off",
+        message: e?.message ?? "Something went wrong.",
+        type: "error",
+      });
+    }
+  }
+
+  // Save sign-off (upsert by unique index)
+  async function saveDaySignoff() {
+    const initialsTxt = signoffInitials.trim().toUpperCase();
+    if (!initialsTxt) {
+      addToast({
+        title: "Initials required",
+        message: "Add initials to sign off the day.",
+        type: "error",
+      });
+      return;
+    }
+
+    setSignoffSaving(true);
+    try {
+      const orgId = await getActiveOrgIdClient();
+      const locationId = await getActiveLocationIdClient();
+
+      if (!orgId || !locationId) throw new Error("Missing org/location");
+
+      const todayISO = isoToday();
+
+      const payload = {
+        org_id: String(orgId),
+        location_id: String(locationId),
+        signoff_on: todayISO,
+        signed_by: initialsTxt,
+        notes: signoffNotes.trim() ? signoffNotes.trim() : null,
+      };
+
+      const { data, error } = await supabase
+        .from("daily_signoffs")
+        .upsert(payload, { onConflict: "org_id,location_id,signoff_on" })
+        .select("id,org_id,location_id,signoff_on,signed_by,notes,created_at")
+        .single();
+
+      if (error) throw error;
+
+      setSignoffExisting({
+        id: String((data as any).id),
+        org_id: String((data as any).org_id),
+        location_id: String((data as any).location_id),
+        signoff_on: String((data as any).signoff_on),
+        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+        notes: (data as any).notes ? String((data as any).notes) : null,
+        created_at: (data as any).created_at ? String((data as any).created_at) : null,
+      });
+
+      try {
+        localStorage.setItem(LS_LAST_INITIALS, initialsTxt);
+      } catch {}
+
+      addToast({ title: "Day signed off", type: "success" });
+      setSignoffOpen(false);
+
+      posthog.capture("day_signoff_saved", { source: "fab", date: todayISO });
+    } catch (e: any) {
+      console.error(e);
+      addToast({
+        title: "Sign off failed",
+        message: e?.message ?? "Could not save sign off.",
+        type: "error",
+      });
+    } finally {
+      setSignoffSaving(false);
     }
   }
 
@@ -302,7 +578,6 @@ export default function TempFab() {
         setActiveOrgId(orgId ?? null);
         setActiveLocationId(locationId ?? null);
 
-        // initials from team_members (and logged-in user)
         if (orgId) {
           const [{ data: authData }, { data: tmData }] = await Promise.all([
             supabase.auth.getUser(),
@@ -356,8 +631,6 @@ export default function TempFab() {
           }
         }
 
-        // locations from recent logs
-                // locations from recent logs
         if (orgId) {
           let q = supabase
             .from("food_temp_logs")
@@ -372,7 +645,6 @@ export default function TempFab() {
 
           const { data: logsData } = await q;
 
-          // logsData comes back as any[], normalise to a clean string[]
           const fromAreas: string[] =
             (logsData ?? [])
               .map((r: LogRow) => (r.area ?? "").toString().trim())
@@ -388,7 +660,6 @@ export default function TempFab() {
             setForm((f) => ({ ...f, location: finalAreas[0] || "Kitchen" }));
           }
         }
-
       } catch {
         if (!locations.length) {
           setLocations(["Kitchen"]);
@@ -439,33 +710,30 @@ export default function TempFab() {
       void refreshCleaningOpen(true);
     };
     window.addEventListener("tt-cleaning-changed", onCleaningChanged);
-    return () => window.removeEventListener("tt-cleaning-changed", onCleaningChanged);
+    return () =>
+      window.removeEventListener("tt-cleaning-changed", onCleaningChanged);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime: update orb instantly when runs/tasks change
+  // Realtime: update orb instantly when logs change (kept as-is)
   useEffect(() => {
     if (!activeOrgId || !activeLocationId) return;
-      const channel = supabase
-        .channel("food_temp_logs_changes")
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "food_temp_logs",
-            filter: `org_id=eq.${activeOrgId}`,
-          },
-          (payload: any) => {
-            // only care about the active location (runs have location_id)
-            const loc =
-              (payload.new as any)?.location_id ??
-              (payload.old as any)?.location_id ??
-              null;
-            if (loc && String(loc) !== String(activeLocationId)) return;
-
-            // ...rest of your logic...
-          
+    const channel = supabase
+      .channel("food_temp_logs_changes")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "food_temp_logs",
+          filter: `org_id=eq.${activeOrgId}`,
+        },
+        (payload: any) => {
+          const loc =
+            (payload.new as any)?.location_id ??
+            (payload.old as any)?.location_id ??
+            null;
+          if (loc && String(loc) !== String(activeLocationId)) return;
 
           void refreshCleaningOpen(true);
         }
@@ -781,6 +1049,18 @@ export default function TempFab() {
                   </span>
                 </button>
 
+                {/* Day sign-off */}
+                <button
+                  type="button"
+                  onClick={openDaySignoff}
+                  className="w-full rounded-xl bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-700 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:brightness-105"
+                >
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <CheckSquare className="h-4 w-4" />
+                    Day sign-off
+                  </span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -797,6 +1077,20 @@ export default function TempFab() {
           </div>
         </div>
       )}
+
+      {/* Day sign-off modal */}
+      <SignoffModal
+        open={signoffOpen}
+        dateLabel={signoffDateLabel}
+        initials={signoffInitials}
+        notes={signoffNotes}
+        saving={signoffSaving}
+        signedAlready={!!signoffExisting}
+        onClose={() => setSignoffOpen(false)}
+        onSave={saveDaySignoff}
+        setInitials={setSignoffInitials}
+        setNotes={setSignoffNotes}
+      />
 
       {/* Routine picker modal */}
       {showPicker && (
@@ -904,7 +1198,9 @@ export default function TempFab() {
                       onClick={() => (listening ? stop() : start())}
                       className={cls(
                         "inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-white shadow-sm transition",
-                        listening ? "bg-rose-600 hover:bg-rose-700" : "bg-slate-900 hover:bg-black"
+                        listening
+                          ? "bg-rose-600 hover:bg-rose-700"
+                          : "bg-slate-900 hover:bg-black"
                       )}
                     >
                       {listening ? (
@@ -935,7 +1231,9 @@ export default function TempFab() {
                   <input
                     type="date"
                     value={form.date}
-                    onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, date: e.target.value }))
+                    }
                     className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                   />
                 </div>
@@ -947,7 +1245,10 @@ export default function TempFab() {
                   <select
                     value={form.staff_initials}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, staff_initials: e.target.value }))
+                      setForm((f) => ({
+                        ...f,
+                        staff_initials: e.target.value,
+                      }))
                     }
                     className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                   >
@@ -967,7 +1268,9 @@ export default function TempFab() {
                 </label>
                 <input
                   value={form.location}
-                  onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, location: e.target.value }))
+                  }
                   list="tt-areas"
                   className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                   placeholder="e.g. Walk-in fridge"
@@ -985,7 +1288,9 @@ export default function TempFab() {
                 </label>
                 <input
                   value={form.item}
-                  onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, item: e.target.value }))
+                  }
                   className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                   placeholder="e.g. Chicken curry hot hold"
                 />
@@ -1017,7 +1322,9 @@ export default function TempFab() {
                   </label>
                   <input
                     value={form.temp_c}
-                    onChange={(e) => setForm((f) => ({ ...f, temp_c: e.target.value }))}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, temp_c: e.target.value }))
+                    }
                     className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                     inputMode="decimal"
                     placeholder="e.g. 3.4"
@@ -1054,7 +1361,6 @@ export default function TempFab() {
         onClose={() => setRunRoutine(null)}
         onSaved={async () => {
           setRunRoutine(null);
-          // routines may have side effects; keep KPIs fresh
           await refreshEntriesToday();
           await refreshCleaningOpen(true);
         }}
