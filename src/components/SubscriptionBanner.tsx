@@ -1,3 +1,4 @@
+// src/components/SubscriptionBanner.tsx
 "use client";
 
 import Link from "next/link";
@@ -15,14 +16,16 @@ function formatDate(iso: string | null | undefined) {
   });
 }
 
-function calcDaysLeft(trialEndsAt: string | null): number | null {
-  if (!trialEndsAt) return null;
+function calcDaysLeft(endsAt: string | null): number | null {
+  if (!endsAt) return null;
 
   const now = new Date();
-  const end = new Date(trialEndsAt);
+  const end = new Date(endsAt);
   if (Number.isNaN(end.getTime())) return null;
 
   const diffMs = end.getTime() - now.getTime();
+
+  // ended
   if (diffMs <= 0) return 0;
 
   return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
@@ -41,48 +44,58 @@ export default function SubscriptionBanner() {
   // Not ready or not logged in → no banner
   if (loading || !loggedIn) return null;
 
-  const trialDaysLeft = calcDaysLeft(trialEndsAt);
+  const WARN_DAYS = 7;
 
-  // ✅ Case 1: fully active subscription
-  if (active) {
-    const renewText = formatDate(currentPeriodEnd);
+  // ✅ Active subscription → HIDE banner (you only want it when expiring/expired)
+  if (active) return null;
 
-    return (
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="font-semibold">Subscription active</div>
-            {renewText && (
-              <div className="text-xs text-emerald-800">
-                Renews / billed on {renewText}.
+  // ✅ Trial: only show when trial is ending soon or has ended
+  if (onTrial) {
+    const trialDaysLeft = calcDaysLeft(trialEndsAt);
+
+    // If we can't compute days left, keep quiet rather than spamming
+    if (trialDaysLeft === null) return null;
+
+    // Trial still has plenty of time → no banner
+    if (trialDaysLeft > WARN_DAYS) return null;
+
+    const endsText = formatDate(trialEndsAt);
+
+    // Trial ended
+    if (trialDaysLeft === 0) {
+      return (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="font-semibold">Trial ended</div>
+              <div className="text-xs text-red-800">
+                Your trial has ended{endsText ? ` (ended ${endsText})` : ""}. Add
+                a plan to restore full access.
               </div>
-            )}
+            </div>
+
+            <Link
+              href="/billing"
+              className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+            >
+              Choose a plan
+            </Link>
           </div>
-
-          <Link
-            href="/billing"
-            className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
-          >
-            Manage billing
-          </Link>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  // ✅ Case 2: on free trial
-  if (onTrial && trialDaysLeft !== null) {
+    // Trial ending soon
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="font-semibold">
-              Free trial: {trialDaysLeft} day
-              {trialDaysLeft === 1 ? "" : "s"} left
+              Trial ending soon: {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} left
             </div>
             <div className="text-xs text-amber-800">
-              You’ve got full access during the trial. Add your billing details
-              to continue after it ends.
+              {endsText ? `Ends ${endsText}. ` : ""}
+              Add billing now to avoid losing access.
             </div>
           </div>
 
@@ -97,14 +110,17 @@ export default function SubscriptionBanner() {
     );
   }
 
-  // ✅ Case 3: no active sub, no trial
+  // ✅ No active sub, no trial → this counts as expired/inactive, so show it
+  const renewText = formatDate(currentPeriodEnd);
+
   return (
     <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="font-semibold">No active subscription</div>
+          <div className="font-semibold">Subscription inactive</div>
           <div className="text-xs text-red-800">
-            Some features may be limited. Add a plan to unlock everything.
+            {renewText ? `Last period ended ${renewText}. ` : ""}
+            Update billing to restore full access.
           </div>
         </div>
 
@@ -112,7 +128,7 @@ export default function SubscriptionBanner() {
           href="/billing"
           className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
         >
-          Choose a plan
+          Manage billing
         </Link>
       </div>
     </div>

@@ -131,13 +131,22 @@ function SignoffModal({
           <div className="text-xl font-extrabold leading-tight">{dateLabel}</div>
         </div>
 
+        {/* ✅ this wrapper was missing in your paste */}
         <div className="p-5 space-y-4">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+          {/* SFBB statement */}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 space-y-1">
+            <div className="font-semibold text-slate-900">Daily diary sign-off</div>
+            <div>
+              By signing, I confirm today’s food safety checks were completed and I
+              have reviewed the records for this site (temps, cleaning, allergens
+              and any issues). Any problems found have been recorded with
+              corrective actions and notes.
+            </div>
             {signedAlready ? (
-              <div>Already signed off today. Saving will update initials/notes.</div>
-            ) : (
-              <div>One tap to sign off. Notes optional.</div>
-            )}
+              <div className="text-xs text-slate-500">
+                Already signed off today. Saving again updates initials/notes.
+              </div>
+            ) : null}
           </div>
 
           <div>

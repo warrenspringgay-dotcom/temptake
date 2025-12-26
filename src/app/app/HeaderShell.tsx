@@ -4,23 +4,33 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
+import React, { useEffect, useMemo, useState } from "react";
+
 import NavTabs from "@/components/NavTabs";
 import OrgName from "@/components/OrgName";
 import LocationSwitcher from "@/components/LocationSwitcher";
 import UserMenu from "@/components/UserMenu";
 import MobileMenu from "@/components/MobileMenu";
 import { useAuth } from "@/components/AuthProvider";
+
 export default function HeaderShell() {
   const { ready, user } = useAuth();
   const pathname = usePathname();
 
-  const hideOnPublic =
-    pathname === "/" ||
-    pathname?.startsWith("/login") ||
-    pathname?.startsWith("/signup");
+  // ✅ ensure server + first client render match
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
-  // On public pages, hide header entirely
-  if (hideOnPublic && !user) {
+  const hideOnPublic = useMemo(() => {
+    return (
+      pathname === "/" ||
+      pathname?.startsWith("/login") ||
+      pathname?.startsWith("/signup")
+    );
+  }, [pathname]);
+
+  // ✅ only decide to hide after mount (prevents hydration mismatch)
+  if (mounted && hideOnPublic && !user) {
     return null;
   }
 
@@ -30,7 +40,7 @@ export default function HeaderShell() {
         {/* Logo + brand */}
         <Link href="/dashboard" className="flex items-center gap-2">
           <Image
-            src="/logo.png"     // 👈 your logo path
+            src="/logo.png"
             alt="TempTake logo"
             width={28}
             height={28}

@@ -73,6 +73,34 @@ type LocationOption = {
   name: string;
 };
 
+type IncidentRow = {
+  id: string;
+  happened_on: string | null; // yyyy-mm-dd
+  type: string | null;
+  details: string | null;
+  corrective_action: string | null;
+  preventive_action: string | null;
+  created_by: string | null;
+  created_at: string | null; // ISO datetime
+};
+
+type SignoffRow = {
+  id: string;
+  signoff_on: string; // yyyy-mm-dd
+  signed_by: string | null;
+  notes: string | null;
+  created_at: string | null; // ISO datetime
+};
+
+type CleaningRunRow = {
+  id: string;
+  run_on: string; // yyyy-mm-dd
+  done_at: string | null; // ISO datetime
+  done_by: string | null;
+  category: string;
+  task: string;
+};
+
 /* ===================== Date helpers ===================== */
 
 function safeDate(val: any): Date | null {
@@ -177,6 +205,172 @@ async function fetchCleaningCount(
 }
 
 /**
+ * Cleaning rota submissions trail (runs) joined to tasks for category+task text.
+ */
+async function fetchCleaningRunsTrail(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<CleaningRunRow[]> {
+  let runsQ = supabase
+    .from("cleaning_task_runs")
+    .select("id, task_id, run_on, done_at, done_by, location_id")
+    .eq("org_id", orgId)
+    .gte("run_on", fromISO)
+    .lte("run_on", toISO)
+    .order("run_on", { ascending: false })
+    .order("done_at", { ascending: false })
+    .limit(3000);
+
+  if (locationId) runsQ = runsQ.eq("location_id", locationId);
+
+  const { data: runs, error: runsErr } = await runsQ;
+  if (runsErr) throw runsErr;
+
+  const runRows = (runs ?? []) as any[];
+  if (!runRows.length) return [];
+
+  const taskIds = Array.from(new Set(runRows.map((r) => String(r.task_id)).filter(Boolean)));
+
+  // Fetch tasks for mapping (category/task)
+  let tasksQ = supabase
+    .from("cleaning_tasks")
+    .select("id, task, category")
+    .eq("org_id", orgId)
+    .in("id", taskIds)
+    .limit(5000);
+
+  if (locationId) tasksQ = tasksQ.eq("location_id", locationId);
+
+  const { data: tasks, error: tasksErr } = await tasksQ;
+  if (tasksErr) throw tasksErr;
+
+  const taskMap = new Map<string, { task: string; category: string }>();
+  for (const t of (tasks ?? []) as any[]) {
+    taskMap.set(String(t.id), {
+      task: String(t.task ?? "—"),
+      category: String(t.category ?? "Uncategorised"),
+    });
+  }
+
+  return runRows.map((r) => {
+    const t = taskMap.get(String(r.task_id)) ?? { task: "—", category: "Uncategorised" };
+    return {
+      id: String(r.id),
+      run_on: String(r.run_on),
+      done_at: r.done_at ? String(r.done_at) : null,
+      done_by: r.done_by ? String(r.done_by) : null,
+      category: t.category,
+      task: t.task,
+    };
+  });
+}
+
+/**
+ * Day sign-offs trail
+ */
+async function fetchSignoffsTrail(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<SignoffRow[]> {
+  let q = supabase
+    .from("daily_signoffs")
+    .select("id, signoff_on, signed_by, notes, created_at, location_id")
+    .eq("org_id", orgId)
+    .gte("signoff_on", fromISO)
+    .lte("signoff_on", toISO)
+    .order("signoff_on", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(3000);
+
+  if (locationId) q = q.eq("location_id", locationId);
+
+  const { data, error } = await q;
+  if (error) throw error;
+
+  return (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    signoff_on: String(r.signoff_on),
+    signed_by: r.signed_by ? String(r.signed_by) : null,
+    notes: r.notes ? String(r.notes) : null,
+    created_at: r.created_at ? String(r.created_at) : null,
+  }));
+}
+
+/**
+ * Incidents trail
+ * Primary: cleaning_incidents (matches your rota/manager logic)
+ * Fallback: incidents (older table some of your code referenced)
+ */
+async function fetchIncidentsTrail(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<IncidentRow[]> {
+  // try cleaning_incidents first
+  try {
+    let q = supabase
+      .from("cleaning_incidents")
+      .select(
+        "id,happened_on,type,details,corrective_action,preventive_action,created_by,created_at,location_id"
+      )
+      .eq("org_id", orgId)
+      .gte("happened_on", fromISO)
+      .lte("happened_on", toISO)
+      .order("happened_on", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(3000);
+
+    if (locationId) q = q.eq("location_id", locationId);
+
+    const { data, error } = await q;
+    if (error) throw error;
+
+    return (data ?? []).map((r: any) => ({
+      id: String(r.id),
+      happened_on: r.happened_on ? String(r.happened_on) : null,
+      type: r.type ? String(r.type) : null,
+      details: r.details ? String(r.details) : null,
+      corrective_action: r.corrective_action ? String(r.corrective_action) : null,
+      preventive_action: r.preventive_action ? String(r.preventive_action) : null,
+      created_by: r.created_by ? String(r.created_by) : null,
+      created_at: r.created_at ? String(r.created_at) : null,
+    }));
+  } catch {
+    // fallback to incidents
+    let q2 = supabase
+      .from("incidents")
+      .select("id,happened_on,type,details,corrective_action,created_by,created_at,location_id")
+      .eq("org_id", orgId)
+      .gte("happened_on", fromISO)
+      .lte("happened_on", toISO)
+      .order("happened_on", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(3000);
+
+    if (locationId) q2 = q2.eq("location_id", locationId);
+
+    const { data, error } = await q2;
+    if (error) throw error;
+
+    return (data ?? []).map((r: any) => ({
+      id: String(r.id),
+      happened_on: r.happened_on ? String(r.happened_on) : null,
+      type: r.type ? String(r.type) : null,
+      details: r.details ? String(r.details) : null,
+      corrective_action: r.corrective_action ? String(r.corrective_action) : null,
+      preventive_action: null,
+      created_by: r.created_by ? String(r.created_by) : null,
+      created_at: r.created_at ? String(r.created_at) : null,
+    }));
+  }
+}
+
+/**
  * Training due / overdue in next `withinDays` days.
  * Sourced from `trainings` table (expires_on) + `staff` for names.
  */
@@ -200,10 +394,7 @@ async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[
     )
   );
 
-  const staffMap = new Map<
-    string,
-    { name: string; email: string | null; initials: string | null }
-  >();
+  const staffMap = new Map<string, { name: string; email: string | null; initials: string | null }>();
 
   if (staffIds.length) {
     const { data: sData, error: sErr } = await supabase
@@ -227,11 +418,7 @@ async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[
 
   return trainings
     .map((r: any): TeamRow | null => {
-      const staff = staffMap.get(String(r.staff_id)) ?? {
-        name: "—",
-        email: null,
-        initials: null,
-      };
+      const staff = staffMap.get(String(r.staff_id)) ?? { name: "—", email: null, initials: null };
 
       const exp = safeDate(r.expires_on);
       if (!exp) return null;
@@ -251,15 +438,8 @@ async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[
       };
     })
     .filter(isTeamRow)
-    .filter((r: { days_until: number | null }) =>
-  r.days_until != null && r.days_until <= withinDays
-)
-
-   .sort(
-  (a: any, b: any) =>
-    (a.expires_on || "").localeCompare(b.expires_on || "")
-);
-
+    .filter((r: { days_until: number | null }) => r.days_until != null && r.days_until <= withinDays)
+    .sort((a: any, b: any) => (a.expires_on || "").localeCompare(b.expires_on || ""));
 }
 
 /**
@@ -291,8 +471,7 @@ async function fetchAllergenLog(withinDays: number, orgId: string): Promise<Alle
       const next0 = nextDue ? new Date(nextDue) : null;
       if (next0) next0.setHours(0, 0, 0, 0);
 
-      const days_until =
-        next0 ? Math.round((next0.getTime() - today0.getTime()) / 86400000) : null;
+      const days_until = next0 ? Math.round((next0.getTime() - today0.getTime()) / 86400000) : null;
 
       return {
         id: String(r.id),
@@ -303,11 +482,7 @@ async function fetchAllergenLog(withinDays: number, orgId: string): Promise<Alle
       } as AllergenRow;
     })
     .filter((r: any) => r.days_until != null && r.days_until <= withinDays)
-.sort(
-  (a: any, b: any) =>
-    (a.next_due || "").localeCompare(b.next_due || "")
-);
-
+    .sort((a: any, b: any) => (a.next_due || "").localeCompare(b.next_due || ""));
 }
 
 /**
@@ -392,9 +567,7 @@ async function fetchEducation(orgId: string): Promise<EducationRow[]> {
     const awarded = safeDate(r.awarded_on);
     const expires = safeDate(r.expires_on);
 
-    const awarded0 = awarded ? new Date(awarded) : null;
     const expires0 = expires ? new Date(expires) : null;
-    if (awarded0) awarded0.setHours(0, 0, 0, 0);
     if (expires0) expires0.setHours(0, 0, 0, 0);
 
     let daysUntil: number | null = null;
@@ -461,22 +634,23 @@ export default function ReportsPage() {
   const [education, setEducation] = useState<EducationRow[] | null>(null);
   const [cleaningCount, setCleaningCount] = useState(0);
 
+  // NEW: trails
+  const [incidents, setIncidents] = useState<IncidentRow[] | null>(null);
+  const [signoffs, setSignoffs] = useState<SignoffRow[] | null>(null);
+  const [cleaningRuns, setCleaningRuns] = useState<CleaningRunRow[] | null>(null);
+
+  const [showAllTemps, setShowAllTemps] = useState(false);
+  const [showAllEducation, setShowAllEducation] = useState(false);
+  const [showAllIncidents, setShowAllIncidents] = useState(false);
+  const [showAllSignoffs, setShowAllSignoffs] = useState(false);
+  const [showAllCleaningRuns, setShowAllCleaningRuns] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const [initialRunDone, setInitialRunDone] = useState(false);
 
   const printRef = useRef<HTMLDivElement>(null);
-
-  const [showAllTemps, setShowAllTemps] = useState(false);
-  const [showAllEducation, setShowAllEducation] = useState(false);
-
-  const kpi = useMemo(() => {
-    const t = temps ?? [];
-    const fails = t.filter((r) => r.status === "fail").length;
-    const locationsSet = new Set(t.map((r) => r.location));
-    return { count: t.length, fails, locations: locationsSet.size };
-  }, [temps]);
 
   const visibleTemps = useMemo(() => {
     if (!temps) return null;
@@ -487,6 +661,21 @@ export default function ReportsPage() {
     if (!education) return null;
     return showAllEducation ? education : education.slice(0, 10);
   }, [education, showAllEducation]);
+
+  const visibleIncidents = useMemo(() => {
+    if (!incidents) return null;
+    return showAllIncidents ? incidents : incidents.slice(0, 10);
+  }, [incidents, showAllIncidents]);
+
+  const visibleSignoffs = useMemo(() => {
+    if (!signoffs) return null;
+    return showAllSignoffs ? signoffs : signoffs.slice(0, 10);
+  }, [signoffs, showAllSignoffs]);
+
+  const visibleCleaningRuns = useMemo(() => {
+    if (!cleaningRuns) return null;
+    return showAllCleaningRuns ? cleaningRuns : cleaningRuns.slice(0, 10);
+  }, [cleaningRuns, showAllCleaningRuns]);
 
   /* ---------- boot: org + locations ---------- */
 
@@ -503,9 +692,7 @@ export default function ReportsPage() {
         .order("name");
 
       if (!error && data) {
-        setLocations(
-          data.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" }))
-        );
+        setLocations(data.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })));
       }
 
       const activeLoc = await getActiveLocationIdClient();
@@ -526,16 +713,26 @@ export default function ReportsPage() {
       setErr(null);
       setLoading(true);
 
-      const [t, cleanCount, reviews] = await Promise.all([
+      const [t, cleanCount, reviews, inc, so, cr] = await Promise.all([
         fetchTemps(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningCount(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchStaffReviews(rangeFrom, rangeTo, orgIdValue, locationId),
+        fetchIncidentsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
+        fetchSignoffsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
+        fetchCleaningRunsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
       ]);
 
       setTemps(t);
       setCleaningCount(cleanCount);
       setStaffReviews(reviews);
+      setIncidents(inc);
+      setSignoffs(so);
+      setCleaningRuns(cr);
+
       setShowAllTemps(false);
+      setShowAllIncidents(false);
+      setShowAllSignoffs(false);
+      setShowAllCleaningRuns(false);
 
       if (includeAncillary) {
         const withinDays = 90;
@@ -557,6 +754,9 @@ export default function ReportsPage() {
       setStaffReviews(null);
       setEducation(null);
       setCleaningCount(0);
+      setIncidents(null);
+      setSignoffs(null);
+      setCleaningRuns(null);
     } finally {
       setLoading(false);
     }
@@ -709,33 +909,9 @@ export default function ReportsPage() {
             {err}
           </div>
         )}
-      </Card>
-
-      {/* KPI cards */}
-      <Card className="border-none bg-transparent p-0 shadow-none">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Entries</div>
-            <div className="text-2xl font-semibold text-slate-900">{kpi.count}</div>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Failures</div>
-            <div className="text-2xl font-semibold text-slate-900">{kpi.fails}</div>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Locations</div>
-            <div className="text-2xl font-semibold text-slate-900">{kpi.locations}</div>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Cleaning tasks logged
-            </div>
-            <div className="text-2xl font-semibold text-slate-900">{cleaningCount}</div>
-          </div>
-        </div>
 
         {!temps && !loading && (
-          <div className="mt-2 text-xs text-slate-500">
+          <div className="mt-3 text-xs text-slate-500">
             Run a report to see results. (Instant Audit defaults to 90 days, which is your inspection-ready view.)
           </div>
         )}
@@ -817,6 +993,205 @@ export default function ReportsPage() {
                 className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
               >
                 {showAllTemps ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Cleaning rota submissions trail */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Cleaning rota submissions {cleaningRuns ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+
+          <div className="mb-2 text-xs text-slate-500">
+            Recorded from cleaning_task_runs. Shows category + task, who did it, and timestamp.
+            <span className="ml-2 font-semibold text-slate-700">Total logged: {cleaningCount}</span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Category</th>
+                  <th className="py-2 pr-3">Task</th>
+                  <th className="py-2 pr-3">By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!cleaningRuns ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : cleaningRuns.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      No cleaning submissions for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  visibleCleaningRuns!.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">{formatISOToUK(r.run_on)}</td>
+                      <td className="py-2 pr-3">{formatTimeHM(r.done_at)}</td>
+                      <td className="py-2 pr-3 font-semibold">{r.category}</td>
+                      <td className="py-2 pr-3">{r.task}</td>
+                      <td className="py-2 pr-3">{r.done_by ? r.done_by.toUpperCase() : "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {cleaningRuns && cleaningRuns.length > 10 && (
+            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
+              <div>
+                Showing {showAllCleaningRuns ? cleaningRuns.length : Math.min(10, cleaningRuns.length)} of{" "}
+                {cleaningRuns.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllCleaningRuns((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllCleaningRuns ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Incidents */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Incidents & corrective actions {incidents ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Type</th>
+                  <th className="py-2 pr-3">By</th>
+                  <th className="py-2 pr-3">Details</th>
+                  <th className="py-2 pr-3">Corrective</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!incidents ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : incidents.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 text-center text-slate-500">
+                      No incidents for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  visibleIncidents!.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">{r.happened_on ? formatISOToUK(r.happened_on) : "—"}</td>
+                      <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
+                      <td className="py-2 pr-3 font-semibold">{r.type ?? "Incident"}</td>
+                      <td className="py-2 pr-3">{r.created_by ? r.created_by.toUpperCase() : "—"}</td>
+                      <td className="py-2 pr-3 max-w-xs">
+                        {r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}
+                      </td>
+                      <td className="py-2 pr-3 max-w-xs">
+                        {r.corrective_action ? (
+                          <span className="line-clamp-2">{r.corrective_action}</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {incidents && incidents.length > 10 && (
+            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
+              <div>
+                Showing {showAllIncidents ? incidents.length : Math.min(10, incidents.length)} of {incidents.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllIncidents((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllIncidents ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Day sign-offs */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Day sign-offs {signoffs ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Signed by</th>
+                  <th className="py-2 pr-3">Notes / corrective actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!signoffs ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : signoffs.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                      No sign-offs for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  visibleSignoffs!.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">{formatISOToUK(r.signoff_on)}</td>
+                      <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
+                      <td className="py-2 pr-3 font-semibold">{r.signed_by ? r.signed_by.toUpperCase() : "—"}</td>
+                      <td className="py-2 pr-3 max-w-xl">
+                        {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {signoffs && signoffs.length > 10 && (
+            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
+              <div>
+                Showing {showAllSignoffs ? signoffs.length : Math.min(10, signoffs.length)} of {signoffs.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllSignoffs((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllSignoffs ? "Show first 10" : "View all"}
               </button>
             </div>
           )}
@@ -1015,7 +1390,6 @@ export default function ReportsPage() {
             visibility: hidden !important;
           }
 
-          /* If something is position:fixed and still sneaks in, nuke it */
           * {
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
