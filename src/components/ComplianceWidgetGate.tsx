@@ -2,19 +2,28 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import ComplianceIndicatorShell from "./ComplianceIndicatorShell";
-
-const HIDE_EXACT = ["/", "/login", "/signup", "/client", "/client/launch"];
-const HIDE_PREFIX = ["/client/"];
+import { useAuth } from "@/components/AuthProvider";
+import ComplianceIndicatorShell from "@/components/ComplianceIndicatorShell";
 
 export default function ComplianceWidgetGate() {
-  const pathname = usePathname() || "/";
+  const { user, ready } = useAuth();
+  const pathname = usePathname();
 
+  // Don’t show anything while auth is still resolving
+  if (!ready) return null;
+
+  // Only logged-in users get the widget
+  if (!user) return null;
+
+  // Hide on public / auth / billing pages
   const hide =
-    HIDE_EXACT.includes(pathname) ||
-    HIDE_PREFIX.some((prefix) => pathname.startsWith(prefix));
+    pathname === "/" ||
+    pathname?.startsWith("/login") ||
+    pathname?.startsWith("/signup") ||
+    pathname?.startsWith("/billing");
 
   if (hide) return null;
 
+  // Everywhere else: show the donut widget
   return <ComplianceIndicatorShell />;
 }

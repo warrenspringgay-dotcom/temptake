@@ -2,29 +2,14 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 
-/* ---------- Types ---------- */
-
 type LocationOption = { id: string; name: string };
 
-type StaffOption = { id: string; name: string; initials: string | null };
-
-type ReviewSummary = { last7: number; last30: number; staffWithReviews: number };
 type TempSummary = { today: number; fails7d: number };
-type TrainingSummary = { loggedToday: number; overdue: number };
-type CleaningSummary = { loggedToday: number };
-
-type ReviewFormState = {
-  staff_id: string;
-  category: string;
-  rating: number;
-  notes: string;
-};
 
 type TodayTempRow = {
   id: string;
@@ -36,58 +21,67 @@ type TodayTempRow = {
   status: string | null;
 };
 
-type TodayCleaningRow = {
+type CleaningTask = {
   id: string;
-  time: string | null;
-  routine: string;
-  staff: string | null;
-  notes: string | null;
+  frequency: "daily" | "weekly" | "monthly";
+  category: string | null;
+  task: string | null;
+  weekday: number | null;
+  month_day: number | null;
 };
 
-type EducationRow = {
-  id: string;
-  staffId: string | null;
-  staffName: string;
-  staffInitials: string | null;
-  type: string | null;
-  awardedOn: string | null;
-  expiresOn: string | null;
-  daysOverdue: number | null;
-};
-
-type FoodHygieneStatus = {
-  lastInspectedOn: string | null;
-  rating: number | null;
-  nextDueOn: string | null;
-  daysToDue: number | null;
-  overdue: boolean;
-  dueSoon: boolean;
-};
-
-type ManagerSignoffRow = {
+type CleaningTaskRun = {
   id: string;
   org_id: string;
-  location_id: string;
-  signed_on: string; // yyyy-mm-dd
-  signed_at: string; // timestamptz
-  manager_initials: string;
-  notes: string | null;
-  temp_logs_today: number;
-  temp_fails_7d: number;
-  cleaning_logged_today: number;
-  training_overdue: number;
-  qc_reviews_7d: number;
-  qc_reviews_30d: number;
-  staff_reviewed_30d: number;
+  task_id: string;
+  run_on: string;
+  done_by: string | null;
+  done_at: string | null;
+  location_id: string | null;
 };
 
-const CATEGORY_OPTIONS = ["Temps", "Cleaning", "Allergens", "General"];
+type CleaningActivityRow = {
+  id: string;
+  time: string | null;
+  category: string;
+  staff: string | null;
+  notes: string | null;
+  task: string | null;
+};
 
-/* ---------- Helpers ---------- */
+type CleaningCategoryProgressRow = {
+  category: string;
+  done: number;
+  total: number;
+};
+
+type CleaningIncident = {
+  id: string;
+  happened_on: string;
+  type: string | null;
+  details: string | null;
+  corrective_action: string | null;
+  preventive_action: string | null;
+  created_by: string | null;
+  created_at: string | null;
+};
+
+type IncidentSummary = { todayCount: number; last7Count: number };
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MONTHS = [
-  "January","February","March","April","May","June","July","August","September","October","November","December",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 function formatPrettyDate(d: Date) {
@@ -105,25 +99,23 @@ function formatTimeHM(d: Date | null | undefined): string | null {
   return `${hours}:${mins}`;
 }
 
-function formatISOToUK(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
-}
-
-function addMonths(date: Date, months: number): Date {
-  const d = new Date(date);
-  const day = d.getDate();
-  d.setMonth(d.getMonth() + months);
-  if (d.getDate() < day) d.setDate(0);
-  return d;
-}
-
 const cls = (...p: Array<string | false | null | undefined>) => p.filter(Boolean).join(" ");
+
+const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+const addDaysISO = (ymd: string, delta: number) => {
+  const d = new Date(ymd);
+  d.setDate(d.getDate() + delta);
+  return isoDate(d);
+};
+
+const getDow1to7 = (ymd: string) => ((new Date(ymd).getDay() + 6) % 7) + 1; // Mon=1..Sun=7
+const getDom = (ymd: string) => new Date(ymd).getDate();
+
+function isDueOn(t: CleaningTask, ymd: string) {
+  if (t.frequency === "daily") return true;
+  if (t.frequency === "weekly") return t.weekday === getDow1to7(ymd);
+  return t.month_day === getDom(ymd);
+}
 
 /* ---------- KPI Tile ---------- */
 
@@ -135,14 +127,12 @@ function KpiTile({
   sub,
   tone,
   icon,
-  onClick,
 }: {
   title: string;
   value: React.ReactNode;
   sub: React.ReactNode;
   tone: "neutral" | "ok" | "warn" | "danger";
   icon?: string;
-  onClick?: () => void;
 }) {
   const toneCls =
     tone === "danger"
@@ -162,7 +152,7 @@ function KpiTile({
       ? "bg-emerald-400"
       : "bg-slate-300";
 
-  const Inner = (
+  return (
     <motion.div
       whileHover={{ y: -3 }}
       className={cls(
@@ -178,9 +168,7 @@ function KpiTile({
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-700/90">
             {title}
           </div>
-          <div className="mt-2 text-3xl font-extrabold text-slate-900 leading-none">
-            {value}
-          </div>
+          <div className="mt-2 text-3xl font-extrabold text-slate-900 leading-none">{value}</div>
         </div>
         {icon ? (
           <div className="shrink-0 text-lg opacity-90" aria-hidden="true">
@@ -192,72 +180,69 @@ function KpiTile({
       <div className="mt-auto pt-3 text-[11px] font-medium text-slate-600">{sub}</div>
     </motion.div>
   );
+}
 
-  return onClick ? (
-    <button type="button" onClick={onClick} className="w-full text-left">
-      {Inner}
-    </button>
-  ) : (
-    Inner
+function TableFooterToggle({
+  total,
+  showingAll,
+  onToggle,
+}: {
+  total: number;
+  showingAll: boolean;
+  onToggle: () => void;
+}) {
+  if (total <= 10) return null;
+
+  return (
+    <div className="mt-2 flex items-center justify-between text-xs">
+      <div className="text-slate-500">
+        Showing {showingAll ? total : 10} of <span className="font-semibold">{total}</span>
+      </div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+      >
+        {showingAll ? "Show less" : `Show all (${total})`}
+      </button>
+    </div>
   );
 }
 
 /* ===================================================================== */
 
-const LS_LAST_INITIALS = "tt_last_initials"; // reuse existing convention
-
 export default function ManagerDashboardPage() {
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
-
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [locationLoading, setLocationLoading] = useState(false);
 
-  const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
-  const [staffLoading, setStaffLoading] = useState(false);
-
-  const [tempsSummary, setTempsSummary] = useState<TempSummary | null>(null);
-  const [trainingSummary, setTrainingSummary] = useState<TrainingSummary | null>(null);
-  const [cleaningSummary, setCleaningSummary] = useState<CleaningSummary | null>(null);
-  const [reviewSummary, setReviewSummary] = useState<ReviewSummary | null>(null);
-
-  const [todayTemps, setTodayTemps] = useState<TodayTempRow[]>([]);
-  const [todayCleaningRuns, setTodayCleaningRuns] = useState<TodayCleaningRow[]>([]);
-
-  const [educationDue, setEducationDue] = useState<EducationRow[]>([]);
-  const [foodHygiene, setFoodHygiene] = useState<FoodHygieneStatus | null>(null);
-
-  const [loadingCards, setLoadingCards] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Review modal
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [savingReview, setSavingReview] = useState(false);
-  const [reviewForm, setReviewForm] = useState<ReviewFormState>({
-    staff_id: "",
-    category: CATEGORY_OPTIONS[0],
-    rating: 5,
-    notes: "",
-  });
-
-  // Education modal
-  const [educationModalOpen, setEducationModalOpen] = useState(false);
-
-  // Sign-off
-  const [signoffOpen, setSignoffOpen] = useState(false);
-  const [signoffInitials, setSignoffInitials] = useState<string>("");
-  const [signoffNotes, setSignoffNotes] = useState<string>("");
-  const [savingSignoff, setSavingSignoff] = useState(false);
-  const [lastSignoffToday, setLastSignoffToday] = useState<ManagerSignoffRow | null>(null);
-
-  const today = useMemo(() => new Date(), []);
-  const todayISO = useMemo(() => {
+  const nowISO = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
-    return d.toISOString().slice(0, 10);
+    return isoDate(d);
   }, []);
 
-  /* ---------- Boot: org + location ---------- */
+  const [selectedDateISO, setSelectedDateISO] = useState<string>(nowISO);
+
+  const [tempsSummary, setTempsSummary] = useState<TempSummary>({ today: 0, fails7d: 0 });
+  const [todayTemps, setTodayTemps] = useState<TodayTempRow[]>([]);
+
+  const [cleaningCategoryProgress, setCleaningCategoryProgress] = useState<CleaningCategoryProgressRow[]>([]);
+  const [cleaningActivity, setCleaningActivity] = useState<CleaningActivityRow[]>([]);
+
+  const [incidentSummary, setIncidentSummary] = useState<IncidentSummary>({ todayCount: 0, last7Count: 0 });
+  const [incidentsToday, setIncidentsToday] = useState<CleaningIncident[]>([]);
+
+  const [trainingDueSoon, setTrainingDueSoon] = useState(0);
+  const [trainingExpired, setTrainingExpired] = useState(0);
+
+  const [showAllTemps, setShowAllTemps] = useState(false);
+  const [showAllCleaning, setShowAllCleaning] = useState(false);
+  const [showAllIncidents, setShowAllIncidents] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -267,20 +252,10 @@ export default function ManagerDashboardPage() {
 
       setLocationLoading(true);
       try {
-        const { data, error } = await supabase
-          .from("locations")
-          .select("id,name")
-          .eq("org_id", oId)
-          .order("name");
-
+        const { data, error } = await supabase.from("locations").select("id,name").eq("org_id", oId).order("name");
         if (error) throw error;
 
-        const locs =
-          data?.map((r: any) => ({
-            id: String(r.id),
-            name: r.name ?? "Unnamed",
-          })) ?? [];
-
+        const locs = data?.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })) ?? [];
         setLocations(locs);
 
         const activeLoc = await getActiveLocationIdClient();
@@ -295,114 +270,51 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
-  /* ---------- Load initials default ---------- */
-
   useEffect(() => {
-    try {
-      const ini = (localStorage.getItem(LS_LAST_INITIALS) ?? "").toUpperCase().trim();
-      setSignoffInitials(ini);
-    } catch {
-      setSignoffInitials("");
-    }
-  }, []);
+    if (!orgId || !locationId) return;
+    refreshAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, locationId, selectedDateISO]);
 
-  /* ---------- Load staff list for QC reviews ---------- */
-
-  useEffect(() => {
-    if (!orgId) return;
-
-    (async () => {
-      try {
-        setStaffLoading(true);
-        const { data, error } = await supabase
-          .from("staff")
-          .select("id, name, initials, active, email")
-          .eq("org_id", orgId)
-          .eq("active", true)
-          .order("name");
-
-        if (error) throw error;
-
-        const staffList: StaffOption[] =
-          data?.map((r: any) => ({
-            id: String(r.id),
-            name: r.name ?? r.email ?? "Unnamed",
-            initials: r.initials ?? null,
-          })) ?? [];
-
-        setStaffOptions(staffList);
-
-        setReviewForm((prev) => {
-          if (!prev.staff_id || !staffList.some((s) => s.id === prev.staff_id)) {
-            return { ...prev, staff_id: "" };
-          }
-          return prev;
-        });
-      } catch (e: any) {
-        console.error(e);
-      } finally {
-        setStaffLoading(false);
-      }
-    })();
-  }, [orgId]);
-
-  /* ---------- Sign-off loader ---------- */
-
-  async function loadTodaySignoff(oId: string, locId: string) {
-    try {
-      const { data, error } = await supabase
-        .from("manager_signoffs")
-        .select("*")
-        .eq("org_id", oId)
-        .eq("location_id", locId)
-        .eq("signed_on", todayISO)
-        .order("signed_at", { ascending: false })
-        .limit(1);
-
-      if (error) throw error;
-      setLastSignoffToday((data?.[0] as any) ?? null);
-    } catch (e) {
-      // If table not created / RLS blocks, don’t hard-fail the whole page
-      console.warn("Signoff load failed", e);
-      setLastSignoffToday(null);
-    }
-  }
-
-  /* ---------- Refresh dashboard cards + activity lists ---------- */
-
-  async function refreshCards() {
-    if (!orgId || !locationId) {
-      setErr("No location selected.");
-      return;
-    }
-
-    setLoadingCards(true);
+  async function refreshAll() {
+    if (!orgId || !locationId) return;
+    setLoading(true);
     setErr(null);
 
     try {
-      const sevenDaysAgoISO = new Date(today.getTime() - 7 * 24 * 3600 * 1000).toISOString();
-      const thirtyDaysAgoISO = new Date(today.getTime() - 30 * 24 * 3600 * 1000).toISOString();
+      const d0 = new Date(selectedDateISO);
+      d0.setHours(0, 0, 0, 0);
+      const d1 = new Date(d0);
+      d1.setDate(d1.getDate() + 1);
 
-      const dateStartToday = new Date(todayISO);
-      const dateEndToday = new Date(dateStartToday);
-      dateEndToday.setDate(dateEndToday.getDate() + 1);
+      const sevenDaysAgo = new Date(d0);
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const trainingBase = new Date(nowISO);
+      trainingBase.setHours(0, 0, 0, 0);
+      const thirtyDaysAhead = new Date(trainingBase);
+      thirtyDaysAhead.setDate(thirtyDaysAhead.getDate() + 30);
 
       const [
-        tempsRes,
-        failsRes,
-        trainingRes,
-        cleaningRes,
-        reviewsRes,
+        tempsCountRes,
+        fails7dRes,
         tempsListRes,
-        cleaningListRes,
+
+        cleaningTasksRes,
+        cleaningRunsDayRes,
+
+        incidentsDayRes,
+        incidents7dRes,
+
+        trainingsRes,
       ] = await Promise.all([
         supabase
           .from("food_temp_logs")
           .select("id", { count: "exact", head: true })
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .gte("at", dateStartToday.toISOString())
-          .lt("at", dateEndToday.toISOString()),
+          .gte("at", d0.toISOString())
+          .lt("at", d1.toISOString()),
 
         supabase
           .from("food_temp_logs")
@@ -410,401 +322,289 @@ export default function ManagerDashboardPage() {
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .eq("status", "fail")
-          .gte("at", sevenDaysAgoISO),
-
-        supabase
-          .from("trainings")
-          .select("id, staff_id, type, awarded_on, expires_on, created_at")
-          .eq("org_id", orgId),
-
-        supabase
-          .from("cleaning_task_runs")
-          .select("id", { count: "exact", head: true })
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .gte("done_at", dateStartToday.toISOString())
-          .lt("done_at", dateEndToday.toISOString()),
-
-        supabase
-          .from("staff_reviews")
-          .select("id, staff_id, review_date", { count: "exact", head: false })
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .gte("review_date", thirtyDaysAgoISO.slice(0, 10)),
+          .gte("at", sevenDaysAgo.toISOString())
+          .lt("at", d1.toISOString()),
 
         supabase
           .from("food_temp_logs")
           .select("*")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .gte("at", dateStartToday.toISOString())
-          .lt("at", dateEndToday.toISOString())
+          .gte("at", d0.toISOString())
+          .lt("at", d1.toISOString())
           .order("at", { ascending: false })
           .limit(200),
 
         supabase
-          .from("cleaning_task_runs")
-          .select("*")
+          .from("cleaning_tasks")
+          .select("id, frequency, category, task, weekday, month_day")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .gte("done_at", dateStartToday.toISOString())
-          .lt("done_at", dateEndToday.toISOString())
+          .limit(5000),
+
+        supabase
+          .from("cleaning_task_runs")
+          .select("id, org_id, task_id, run_on, done_at, done_by, location_id")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("run_on", selectedDateISO)
           .order("done_at", { ascending: false })
-          .limit(200),
+          .limit(5000),
+
+        supabase
+          .from("cleaning_incidents")
+          .select("id,happened_on,type,details,corrective_action,preventive_action,created_by,created_at")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("happened_on", selectedDateISO)
+          .order("created_at", { ascending: false })
+          .limit(500),
+
+        supabase
+          .from("cleaning_incidents")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .gte("happened_on", isoDate(sevenDaysAgo))
+          .lte("happened_on", selectedDateISO),
+
+        supabase.from("trainings").select("id, expires_on").eq("org_id", orgId).limit(5000),
       ]);
 
-      setTempsSummary({ today: tempsRes.count ?? 0, fails7d: failsRes.count ?? 0 });
+      const firstError =
+        tempsCountRes.error ||
+        fails7dRes.error ||
+        tempsListRes.error ||
+        cleaningTasksRes.error ||
+        cleaningRunsDayRes.error ||
+        incidentsDayRes.error ||
+        incidents7dRes.error ||
+        trainingsRes.error;
 
-      /* ---- Training summary + educationDue ---- */
-      const trainingRows: any[] = (trainingRes.data as any[]) ?? [];
-      const today0 = new Date(todayISO);
-      today0.setHours(0, 0, 0, 0);
+      if (firstError) throw firstError;
 
-      const staffIds = Array.from(
-        new Set(
-          trainingRows
-            .map((t) => t.staff_id)
-            .filter((id) => id != null)
-            .map((id) => String(id))
-        )
-      );
+      setTempsSummary({
+        today: tempsCountRes.count ?? 0,
+        fails7d: fails7dRes.count ?? 0,
+      });
 
-      const staffMap = new Map<string, { name: string; initials: string | null }>();
-
-      if (staffIds.length) {
-        const { data: staffData } = await supabase.from("staff").select("id, name, initials").in("id", staffIds);
-        for (const s of staffData ?? []) {
-          staffMap.set(String(s.id), { name: s.name ?? "Unknown", initials: s.initials ?? null });
-        }
-      }
-
-      const loggedToday = trainingRows.filter((t) => {
-        if (!t.created_at) return false;
-        const d = new Date(t.created_at);
-        return d.toISOString().slice(0, 10) === todayISO;
-      }).length;
-
-      const overdueRows: EducationRow[] = trainingRows
-        .filter((t) => t.expires_on)
-        .map((t) => {
-          const staff = staffMap.get(String(t.staff_id));
-          const exp = new Date(t.expires_on);
-          exp.setHours(0, 0, 0, 0);
-
-          const daysOver = Math.round((today0.getTime() - exp.getTime()) / 86400000) || 0;
-
-          return {
-            id: String(t.id),
-            staffId: t.staff_id ? String(t.staff_id) : null,
-            staffName: staff?.name ?? "Unknown",
-            staffInitials: staff?.initials ?? null,
-            type: t.type ?? null,
-            awardedOn: t.awarded_on ? new Date(t.awarded_on).toISOString().slice(0, 10) : null,
-            expiresOn: exp.toISOString().slice(0, 10),
-            daysOverdue: daysOver > 0 ? daysOver : null,
-          } as EducationRow;
-        })
-        .filter((r) => r.daysOverdue != null && r.daysOverdue > 0)
-        .sort((a, b) => (b.daysOverdue ?? 0) - (a.daysOverdue ?? 0));
-
-      setTrainingSummary({ loggedToday, overdue: overdueRows.length });
-      setEducationDue(overdueRows);
-
-      setCleaningSummary({ loggedToday: cleaningRes.count ?? 0 });
-
-      /* ---- Reviews summary ---- */
-      const reviewRows: any[] = (reviewsRes.data as any[]) ?? [];
-      const last7 = reviewRows.filter((r) => r.review_date && r.review_date >= sevenDaysAgoISO.slice(0, 10)).length;
-      const last30 = reviewRows.length;
-      const staffSet = new Set(reviewRows.map((r) => (r.staff_id ? String(r.staff_id) : "")));
-      staffSet.delete("");
-
-      setReviewSummary({ last7, last30, staffWithReviews: staffSet.size });
-
-      /* ---- Today’s temp logs list ---- */
       const tempsData: any[] = (tempsListRes.data as any[]) ?? [];
       setTodayTemps(
         tempsData.map((r) => {
-          const ts = r.created_at || r.at ? new Date(r.created_at ?? r.at) : null;
+          const ts = r.at ? new Date(r.at) : r.created_at ? new Date(r.created_at) : null;
           return {
             id: String(r.id),
             time: formatTimeHM(ts) ?? "—",
-            staff: r.staff_initials ?? r.initials ?? "—",
-            item: r.note ?? "—",
-            area: r.area ?? "—",
+            staff: (r.staff_initials ?? r.initials ?? "—").toString(),
+            item: (r.note ?? r.item ?? "—").toString(),
+            area: (r.area ?? "—").toString(),
             temp_c: r.temp_c != null ? Number(r.temp_c) : null,
             status: r.status ?? null,
           };
         })
       );
 
-      /* ---- Today’s cleaning runs list ---- */
-      const cleaningData: any[] = (cleaningListRes.data as any[]) ?? [];
-      setTodayCleaningRuns(
-        cleaningData.map((r) => {
-          const doneAt: Date | null = r.done_at ? new Date(r.done_at) : r.created_at ? new Date(r.created_at) : null;
-          const routineName = r.routine_name || r.routine || r.name || "Cleaning routine";
-          const staffNameOrInitials =
-            r.completed_by_initials || r.staff_initials || r.initials || r.completed_by || r.done_by || null;
-          const notesVal = r.notes || r.comment || null;
+      const tRows: any[] = (trainingsRes.data as any[]) ?? [];
+      let expired = 0;
+      let dueSoon = 0;
+      for (const t of tRows) {
+        if (!t.expires_on) continue;
+        const exp = new Date(t.expires_on);
+        exp.setHours(0, 0, 0, 0);
+        if (Number.isNaN(exp.getTime())) continue;
 
+        if (exp < trainingBase) expired++;
+        else if (exp <= thirtyDaysAhead) dueSoon++;
+      }
+      setTrainingExpired(expired);
+      setTrainingDueSoon(dueSoon);
+
+      const tasksRaw: any[] = (cleaningTasksRes.data as any[]) ?? [];
+      const tasks: CleaningTask[] = tasksRaw.map((t) => ({
+        id: String(t.id),
+        frequency: (String(t.frequency ?? "daily").toLowerCase() as any) ?? "daily",
+        category: t.category ?? null,
+        task: t.task ?? null,
+        weekday: t.weekday != null ? Number(t.weekday) : null,
+        month_day: t.month_day != null ? Number(t.month_day) : null,
+      }));
+
+      const taskById = new Map<string, CleaningTask>();
+      for (const t of tasks) taskById.set(t.id, t);
+
+      const runsRaw: CleaningTaskRun[] = ((cleaningRunsDayRes.data as any[]) ?? []).map((r: any) => ({
+        id: String(r.id),
+        org_id: String(r.org_id),
+        task_id: String(r.task_id),
+        run_on: String(r.run_on),
+        done_by: r.done_by ? String(r.done_by) : null,
+        done_at: r.done_at ? String(r.done_at) : null,
+        location_id: r.location_id ? String(r.location_id) : null,
+      }));
+
+      const dueThatDay = tasks.filter((t) => isDueOn(t, selectedDateISO));
+      const runTaskIds = new Set<string>(runsRaw.map((r) => String(r.task_id)));
+
+      const byCat = new Map<string, { total: number; done: number }>();
+      for (const t of dueThatDay) {
+        const cat = (t.category ?? "Uncategorised").toString();
+        const cur = byCat.get(cat) ?? { total: 0, done: 0 };
+        cur.total += 1;
+        if (runTaskIds.has(t.id)) cur.done += 1;
+        byCat.set(cat, cur);
+      }
+
+      setCleaningCategoryProgress(
+        Array.from(byCat.entries())
+          .map(([category, v]) => ({ category, done: v.done, total: v.total }))
+          .sort((a, b) => a.category.localeCompare(b.category))
+      );
+
+      setCleaningActivity(
+        runsRaw.map((r) => {
+          const doneAt = r.done_at ? new Date(r.done_at) : null;
+          const t = taskById.get(String(r.task_id));
           return {
             id: String(r.id),
             time: formatTimeHM(doneAt),
-            routine: routineName,
-            staff: staffNameOrInitials,
-            notes: notesVal,
+            category: (t?.category ?? "Uncategorised").toString(),
+            staff: r.done_by ? String(r.done_by) : null,
+            notes: null,
+            task: t?.task ?? null,
           };
         })
       );
 
-      /* ---- Food hygiene rating / reminder (18-month cycle) ---- */
-      try {
-        const todayZero = new Date(todayISO);
-        todayZero.setHours(0, 0, 0, 0);
+      const incDay = ((incidentsDayRes.data as any[]) ?? []).map((r: any) => ({
+        id: String(r.id),
+        happened_on: String(r.happened_on),
+        type: r.type ? String(r.type) : null,
+        details: r.details ? String(r.details) : null,
+        corrective_action: r.corrective_action ? String(r.corrective_action) : null,
+        preventive_action: r.preventive_action ? String(r.preventive_action) : null,
+        created_by: r.created_by ? String(r.created_by) : null,
+        created_at: r.created_at ? String(r.created_at) : null,
+      })) as CleaningIncident[];
 
-        type HygieneRow = {
-          inspected_on?: string | null;
-          inspection_date?: string | null;
-          visit_date?: string | null;
-          rating?: any;
-          location_id?: string | null;
-          created_at?: string | null;
-        };
+      setIncidentsToday(incDay);
+      setIncidentSummary({
+        todayCount: incDay.length,
+        last7Count: incidents7dRes.count ?? 0,
+      });
 
-        let chosen: HygieneRow | null = null;
-
-        const { data: inspRows } = await supabase
-          .from("food_hygiene_inspections")
-          .select("inspected_on, inspection_date, rating, location_id, created_at")
-          .eq("org_id", orgId)
-          .order("inspected_on", { ascending: false })
-          .order("inspection_date", { ascending: false })
-          .order("created_at", { ascending: false })
-          .limit(20);
-
-        const allInsp = (inspRows ?? []) as HygieneRow[];
-        if (allInsp.length) {
-          chosen = locationId
-            ? allInsp.find((r) => r.location_id === locationId) ?? allInsp[0]
-            : allInsp[0];
-        }
-
-        if (!chosen) {
-          const { data: ratingRows } = await supabase
-            .from("food_hygiene_ratings")
-            .select("visit_date, rating, location_id, created_at")
-            .eq("org_id", orgId)
-            .order("visit_date", { ascending: false })
-            .order("created_at", { ascending: false })
-            .limit(50);
-
-          const allRatings = (ratingRows ?? []) as HygieneRow[];
-          if (allRatings.length) {
-            chosen = locationId
-              ? allRatings.find((r) => r.location_id === locationId) ?? allRatings[0]
-              : allRatings[0];
-          }
-        }
-
-        if (!chosen) {
-          setFoodHygiene(null);
-        } else {
-          const rawDate =
-            chosen.inspected_on ?? chosen.inspection_date ?? chosen.visit_date ?? chosen.created_at ?? null;
-
-          if (!rawDate) {
-            setFoodHygiene(null);
-          } else {
-            const lastDate = new Date(rawDate);
-            if (Number.isNaN(lastDate.getTime())) {
-              setFoodHygiene(null);
-            } else {
-              const nextDue = addMonths(lastDate, 18);
-              const diffDays = Math.round((nextDue.getTime() - todayZero.getTime()) / 86400000);
-
-              setFoodHygiene({
-                lastInspectedOn: lastDate.toISOString().slice(0, 10),
-                rating:
-                  typeof chosen.rating === "number"
-                    ? chosen.rating
-                    : chosen.rating != null
-                    ? Number(chosen.rating)
-                    : null,
-                nextDueOn: nextDue.toISOString().slice(0, 10),
-                daysToDue: diffDays,
-                overdue: diffDays < 0,
-                dueSoon: diffDays >= 0 && diffDays <= 90,
-              });
-            }
-          }
-        }
-      } catch (e) {
-        console.error("Food hygiene fetch error", e);
-        setFoodHygiene(null);
-      }
-
-      // Load signoff last (non-fatal if missing)
-      await loadTodaySignoff(orgId, locationId);
+      setShowAllTemps(false);
+      setShowAllCleaning(false);
+      setShowAllIncidents(false);
     } catch (e: any) {
       console.error(e);
-      setErr(e?.message ?? "Failed to refresh manager dashboard.");
+      setErr(e?.message ?? "Failed to load manager dashboard.");
     } finally {
-      setLoadingCards(false);
+      setLoading(false);
     }
   }
 
-  useEffect(() => {
-    if (orgId && locationId) refreshCards();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, locationId]);
+  const headerDate = formatPrettyDate(new Date(selectedDateISO));
+  const currentLocationName = locations.find((l) => l.id === locationId)?.name ?? "This location";
 
-  /* ---------- Review modal handlers ---------- */
-
-  function openReviewModal() {
-    setReviewForm({
-      staff_id: "",
-      category: CATEGORY_OPTIONS[0],
-      rating: 5,
-      notes: "",
-    });
-    setReviewOpen(true);
-  }
-
-  async function handleSaveReview(e: React.FormEvent) {
-    e.preventDefault();
-    if (!orgId || !locationId) return;
-    if (!reviewForm.staff_id) {
-      alert("Please select a staff member.");
-      return;
-    }
-
-    try {
-      setSavingReview(true);
-      const { staff_id, category, rating, notes } = reviewForm;
-
-      const payload = {
-        org_id: orgId,
-        location_id: locationId,
-        staff_id,
-        review_date: todayISO,
-        category,
-        rating,
-        notes: notes.trim() || null,
-      };
-
-      const { error } = await supabase.from("staff_reviews").insert(payload);
-      if (error) throw error;
-
-      setReviewOpen(false);
-      await refreshCards();
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message ?? "Failed to save review.");
-    } finally {
-      setSavingReview(false);
-    }
-  }
-
-  /* ---------- Sign-off handlers ---------- */
-
-  function openSignoff() {
-    setSignoffNotes("");
-    setSignoffOpen(true);
-  }
-
-  async function saveSignoff() {
-    if (!orgId || !locationId) return;
-    const ini = signoffInitials.toUpperCase().trim();
-    if (!ini) {
-      alert("Enter initials.");
-      return;
-    }
-
-    try {
-      setSavingSignoff(true);
-
-      // Snapshot current KPI counts
-      const payload = {
-        org_id: orgId,
-        location_id: locationId,
-        signed_on: todayISO,
-
-        manager_initials: ini,
-        notes: signoffNotes.trim() || null,
-
-        temp_logs_today: tempsSummary?.today ?? 0,
-        temp_fails_7d: tempsSummary?.fails7d ?? 0,
-        cleaning_logged_today: cleaningSummary?.loggedToday ?? 0,
-        training_overdue: trainingSummary?.overdue ?? 0,
-
-        qc_reviews_7d: reviewSummary?.last7 ?? 0,
-        qc_reviews_30d: reviewSummary?.last30 ?? 0,
-        staff_reviewed_30d: reviewSummary?.staffWithReviews ?? 0,
-      };
-
-      const { error } = await supabase.from("manager_signoffs").insert(payload);
-      if (lastSignoffToday) {
-        // allow multiple sign-offs, but if you want to block, enforce unique constraint instead
-        // (keeping it permissive for now)
-      }
-      if (error) throw error;
-
-      try {
-        localStorage.setItem(LS_LAST_INITIALS, ini);
-      } catch {}
-
-      setSignoffOpen(false);
-      await loadTodaySignoff(orgId, locationId);
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message ?? "Failed to save sign-off. Check table/RLS.");
-    } finally {
-      setSavingSignoff(false);
-    }
-  }
-
-  const currentLocationName =
-    locations.find((l) => l.id === locationId)?.name ?? "This location";
-
-  const trainingOverdueCount = trainingSummary?.overdue ?? 0;
-
-  const tempsTone: "neutral" | "ok" | "warn" | "danger" =
-    (tempsSummary?.fails7d ?? 0) > 0 ? "danger" : "ok";
+  const tempsTone: "neutral" | "ok" | "warn" | "danger" = tempsSummary.fails7d > 0 ? "danger" : "ok";
+  const incidentsTone: "neutral" | "ok" | "warn" | "danger" = incidentSummary.todayCount > 0 ? "warn" : "ok";
 
   const trainingTone: "neutral" | "ok" | "warn" | "danger" =
-    trainingOverdueCount > 0 ? "danger" : "ok";
+    trainingExpired > 0 ? "danger" : trainingDueSoon > 0 ? "warn" : "ok";
 
-  const foodTone: "neutral" | "ok" | "warn" | "danger" =
-    !foodHygiene
-      ? "neutral"
-      : foodHygiene.overdue
-      ? "danger"
-      : foodHygiene.dueSoon
-      ? "warn"
-      : "ok";
+  const cleaningDoneTotal = cleaningCategoryProgress.reduce((a, r) => a + r.done, 0);
+  const cleaningTotal = cleaningCategoryProgress.reduce((a, r) => a + r.total, 0);
 
-  const signedOff = !!lastSignoffToday;
-
-  /* ====================== RENDER ====================== */
+  const tempsToRender = showAllTemps ? todayTemps : todayTemps.slice(0, 10);
+  const cleaningToRender = showAllCleaning ? cleaningActivity : cleaningActivity.slice(0, 10);
+  const incidentsToRender = showAllIncidents ? incidentsToday : incidentsToday.slice(0, 10);
 
   return (
     <div className="mx-auto max-w-6xl px-3 sm:px-4 pt-2 pb-6 space-y-4">
-      {/* Header + location picker */}
+      {/* Header (controls removed from here) */}
       <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Manager
-          </div>
-          <h1 className="text-xl font-extrabold text-slate-900 leading-tight">
-            Manager Dashboard
-          </h1>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Manager</div>
+          <h1 className="text-xl font-extrabold text-slate-900 leading-tight">Manager Dashboard</h1>
           <div className="mt-0.5 text-xs font-medium text-slate-500">
-            Today: {formatPrettyDate(today)} · {currentLocationName}
+            {headerDate} · {currentLocationName}
           </div>
         </div>
+      </header>
 
-        <div className="flex items-center gap-2">
+      {err && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+          {err}
+        </div>
+      )}
+
+      {/* KPI cards */}
+      <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <KpiTile
+            title="Temps"
+            icon="🌡"
+            tone={tempsTone}
+            value={tempsSummary.today}
+            sub={
+              <>
+                Fails (7d):{" "}
+                <span className={cls("font-semibold", tempsSummary.fails7d > 0 && "text-red-700")}>
+                  {tempsSummary.fails7d}
+                </span>
+              </>
+            }
+          />
+
+          <KpiTile title="Incidents" icon="⚠️" tone={incidentsTone} value={incidentSummary.todayCount} sub={`Last 7d: ${incidentSummary.last7Count}`} />
+
+          <KpiTile
+            title="Training"
+            icon="🎓"
+            tone={trainingTone}
+            value={trainingExpired}
+            sub={
+              <>
+                Due soon (30d):{" "}
+                <span className={cls("font-semibold", trainingDueSoon > 0 && "text-amber-700")}>{trainingDueSoon}</span>
+              </>
+            }
+          />
+
+          <KpiTile title="Cleaning completion" icon="✅" tone="neutral" value={`${cleaningDoneTotal}/${cleaningTotal}`} sub="Done / total (selected day)" />
+        </div>
+      </section>
+
+      {/* ✅ MOVED CONTROLS: under KPIs, above Cleaning Progress */}
+      <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedDateISO((d) => addDaysISO(d, -1))}
+              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              title="Previous day"
+            >
+              ←
+            </button>
+
+            <input
+              type="date"
+              value={selectedDateISO}
+              onChange={(e) => setSelectedDateISO(e.target.value)}
+              className="h-9 rounded-xl border border-slate-300 bg-white/90 px-3 text-sm shadow-sm"
+            />
+
+            <button
+              type="button"
+              onClick={() => setSelectedDateISO((d) => addDaysISO(d, +1))}
+              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              title="Next day"
+            >
+              →
+            </button>
+          </div>
+
           <select
             value={locationId ?? ""}
             onChange={(e) => setLocationId(e.target.value || null)}
@@ -820,179 +620,126 @@ export default function ManagerDashboardPage() {
 
           <button
             type="button"
-            onClick={refreshCards}
-            disabled={loadingCards || !orgId || !locationId}
+            onClick={refreshAll}
+            disabled={loading || !orgId || !locationId}
             className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
           >
-            {loadingCards ? "Refreshing…" : "Refresh"}
+            {loading ? "Refreshing…" : "Refresh"}
           </button>
-
-          <button
-            type="button"
-            onClick={openSignoff}
-            disabled={!orgId || !locationId}
-            className={cls(
-              "rounded-xl px-4 py-2 text-sm font-extrabold shadow-sm transition",
-              signedOff
-                ? "bg-slate-900 text-white hover:bg-black"
-                : "bg-indigo-600 text-white hover:bg-indigo-500"
-            )}
-            title="Create a daily manager sign-off (audit trail)"
-          >
-            {signedOff ? "View sign-off" : "Sign off today"}
-          </button>
-        </div>
-      </header>
-
-      {err && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
-          {err}
-        </div>
-      )}
-
-      {/* Sign-off status strip */}
-      <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <span
-              className={cls(
-                "inline-flex rounded-full px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.22em]",
-                signedOff ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
-              )}
-            >
-              {signedOff ? "Signed off" : "Not signed off"}
-            </span>
-
-            {signedOff && lastSignoffToday ? (
-              <div className="text-xs text-slate-600">
-                {lastSignoffToday.manager_initials.toUpperCase()} ·{" "}
-                {new Date(lastSignoffToday.signed_at).toLocaleTimeString("en-GB", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </div>
-            ) : (
-              <div className="text-xs text-slate-600">
-                Complete QC review then sign off for audit trail.
-              </div>
-            )}
-          </div>
-
-          {signedOff && lastSignoffToday?.notes ? (
-            <div className="text-xs text-slate-600 max-w-2xl truncate">
-              Notes: <span className="font-medium">{lastSignoffToday.notes}</span>
-            </div>
-          ) : null}
         </div>
       </section>
 
-      {/* KPI cards */}
-      <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <KpiTile
-            title="Temps today"
-            icon="🌡"
-            tone={tempsTone}
-            value={tempsSummary?.today ?? 0}
-            sub={
-              <>
-                Fails (7d):{" "}
-                <span className={cls("font-semibold", (tempsSummary?.fails7d ?? 0) > 0 && "text-red-700")}>
-                  {tempsSummary?.fails7d ?? 0}
-                </span>
-              </>
-            }
-          />
-
-          <KpiTile
-            title="Cleaning logged"
-            icon="🧽"
-            tone="ok"
-            value={cleaningSummary?.loggedToday ?? 0}
-            sub="Completed today"
-          />
-
-          <KpiTile
-            title="Training overdue"
-            icon="🎓"
-            tone={trainingTone}
-            value={trainingOverdueCount}
-            sub={trainingOverdueCount > 0 ? "Tap to review overdue list" : "Up to date"}
-            onClick={() => trainingOverdueCount > 0 && setEducationModalOpen(true)}
-          />
-
-          <KpiTile
-            title="QC reviews (30d)"
-            icon="📝"
-            tone="neutral"
-            value={reviewSummary?.last30 ?? 0}
-            sub={`${reviewSummary?.staffWithReviews ?? 0} staff reviewed · ${reviewSummary?.last7 ?? 0} in 7d`}
-          />
-
-          <KpiTile
-            title="Food hygiene"
-            icon="⭐"
-            tone={foodTone}
-            value={foodHygiene?.rating ?? "—"}
-            sub={
-              foodHygiene
-                ? foodHygiene.overdue
-                  ? "Overdue"
-                  : foodHygiene.dueSoon
-                  ? "Due soon"
-                  : "Up to date"
-                : "No inspection logged yet"
-            }
-          />
-        </div>
-      </section>
-
-      {/* QC section */}
+      {/* Cleaning by category table */}
       <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-              QC Reviews
-            </div>
-            <div className="mt-0.5 text-sm font-semibold text-slate-900">
-              Log supervision checks
-            </div>
-            <p className="mt-1 text-xs text-slate-600 max-w-2xl">
-              Record manager checks across temps, cleaning, allergens and general standards.
-              This creates an audit trail of supervision.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={openReviewModal}
-            className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-black"
-          >
-            Log review
-          </button>
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Cleaning progress</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Tasks due by category</div>
         </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Category</th>
+                <th className="px-3 py-2">Completed</th>
+                <th className="px-3 py-2">Total</th>
+                <th className="px-3 py-2">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cleaningCategoryProgress.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                    No cleaning tasks due (or none loaded).
+                  </td>
+                </tr>
+              ) : (
+                cleaningCategoryProgress.map((r) => {
+                  const pct = r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
+                  const pill =
+                    pct === 100
+                      ? "bg-emerald-100 text-emerald-800"
+                      : pct >= 50
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-red-100 text-red-800";
+
+                  return (
+                    <tr key={r.category} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 font-semibold">{r.category}</td>
+                      <td className="px-3 py-2">{r.done}</td>
+                      <td className="px-3 py-2">{r.total}</td>
+                      <td className="px-3 py-2">
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                          {pct}%
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Incidents table (selected day) */}
+      <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Incidents</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Incident log & corrective actions</div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Time</th>
+                <th className="px-3 py-2">Type</th>
+                <th className="px-3 py-2">By</th>
+                <th className="px-3 py-2">Details</th>
+                <th className="px-3 py-2">Corrective</th>
+              </tr>
+            </thead>
+            <tbody>
+              {incidentsToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-3 py-4 text-center text-slate-500">
+                    No incidents logged.
+                  </td>
+                </tr>
+              ) : (
+                incidentsToRender.map((r) => (
+                  <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                    <td className="px-3 py-2">
+                      {r.created_at
+                        ? new Date(r.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+                        : "—"}
+                    </td>
+                    <td className="px-3 py-2 font-semibold">{r.type ?? "Incident"}</td>
+                    <td className="px-3 py-2">{r.created_by?.toUpperCase() ?? "—"}</td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.details ?? "—"}</td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.corrective_action ?? "—"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle total={incidentsToday.length} showingAll={showAllIncidents} onToggle={() => setShowAllIncidents((v) => !v)} />
       </section>
 
       {/* Today’s activity */}
       <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Today&apos;s activity
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Quick review before sign-off
-          </div>
-          <p className="mt-1 text-xs text-slate-600">
-            Check temps and cleaning runs for this location before logging QC supervision.
-          </p>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today&apos;s activity</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Temps + cleaning (category-based)</div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
           {/* Temps list */}
           <div>
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-              Temperature logs
-            </h3>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Temperature logs</h3>
 
             <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
@@ -1007,14 +754,14 @@ export default function ManagerDashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {todayTemps.length === 0 ? (
+                  {tempsToRender.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
-                        No temperature logs for today.
+                        No temperature logs.
                       </td>
                     </tr>
                   ) : (
-                    todayTemps.map((r) => (
+                    tempsToRender.map((r) => (
                       <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                         <td className="px-3 py-2">{r.time}</td>
                         <td className="px-3 py-2">{r.staff}</td>
@@ -1026,9 +773,7 @@ export default function ManagerDashboardPage() {
                             <span
                               className={cls(
                                 "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                                r.status === "pass"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-red-100 text-red-800"
+                                r.status === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
                               )}
                             >
                               {r.status}
@@ -1043,36 +788,39 @@ export default function ManagerDashboardPage() {
                 </tbody>
               </table>
             </div>
+
+            <TableFooterToggle total={todayTemps.length} showingAll={showAllTemps} onToggle={() => setShowAllTemps((v) => !v)} />
           </div>
 
           {/* Cleaning runs list */}
           <div>
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-              Cleaning runs
-            </h3>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Cleaning runs</h3>
 
             <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
                 <thead className="bg-slate-50">
                   <tr className="text-left text-slate-500">
                     <th className="px-3 py-2">Time</th>
-                    <th className="px-3 py-2">Routine</th>
+                    <th className="px-3 py-2">Category</th>
                     <th className="px-3 py-2">Staff</th>
                     <th className="px-3 py-2">Notes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {todayCleaningRuns.length === 0 ? (
+                  {cleaningToRender.length === 0 ? (
                     <tr>
                       <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
-                        No cleaning routines logged for today.
+                        No cleaning tasks completed.
                       </td>
                     </tr>
                   ) : (
-                    todayCleaningRuns.map((r) => (
+                    cleaningToRender.map((r) => (
                       <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                         <td className="px-3 py-2">{r.time ?? "—"}</td>
-                        <td className="px-3 py-2">{r.routine}</td>
+                        <td className="px-3 py-2">
+                          <div className="font-semibold">{r.category}</div>
+                          {r.task ? <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">{r.task}</div> : null}
+                        </td>
                         <td className="px-3 py-2">{r.staff ?? "—"}</td>
                         <td className="px-3 py-2 max-w-[14rem] truncate">{r.notes ?? "—"}</td>
                       </tr>
@@ -1081,304 +829,11 @@ export default function ManagerDashboardPage() {
                 </tbody>
               </table>
             </div>
+
+            <TableFooterToggle total={cleaningActivity.length} showingAll={showAllCleaning} onToggle={() => setShowAllCleaning((v) => !v)} />
           </div>
         </div>
       </section>
-
-      {/* Education overdue modal */}
-      {educationModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
-          onClick={() => setEducationModalOpen(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
-          >
-            <div className="bg-slate-900 px-4 py-3 text-white">
-              <div className="text-[11px] uppercase tracking-[0.22em] opacity-80">Action needed</div>
-              <div className="text-lg font-extrabold">Overdue training</div>
-              <div className="text-xs opacity-80">Chase certificates and refresher training.</div>
-            </div>
-
-            <div className="p-4">
-              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-                <table className="min-w-full text-xs">
-                  <thead className="bg-slate-50">
-                    <tr className="text-left text-slate-500">
-                      <th className="px-3 py-2">Staff</th>
-                      <th className="px-3 py-2">Type</th>
-                      <th className="px-3 py-2">Awarded</th>
-                      <th className="px-3 py-2">Expired on</th>
-                      <th className="px-3 py-2">Days overdue</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {educationDue.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="px-3 py-4 text-center text-slate-500">
-                          No overdue training found.
-                        </td>
-                      </tr>
-                    ) : (
-                      educationDue.map((row) => (
-                        <tr key={row.id} className="border-t border-slate-100 text-slate-800">
-                          <td className="px-3 py-2">
-                            {row.staffId ? (
-                              <Link
-                                href={`/team?staff=${row.staffId}`}
-                                className="font-semibold text-emerald-700 hover:underline"
-                              >
-                                {row.staffName}
-                                {row.staffInitials ? ` (${row.staffInitials.toUpperCase()})` : ""}
-                              </Link>
-                            ) : (
-                              <>
-                                {row.staffName}
-                                {row.staffInitials ? ` (${row.staffInitials.toUpperCase()})` : ""}
-                              </>
-                            )}
-                          </td>
-                          <td className="px-3 py-2">{row.type ?? "—"}</td>
-                          <td className="px-3 py-2">{row.awardedOn ? formatISOToUK(row.awardedOn) : "—"}</td>
-                          <td className="px-3 py-2 text-red-700 font-semibold">
-                            {row.expiresOn ? formatISOToUK(row.expiresOn) : "—"}
-                          </td>
-                          <td className="px-3 py-2 font-extrabold text-red-700">{row.daysOverdue ?? "—"}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="mt-3 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setEducationModalOpen(false)}
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* QC Review modal */}
-      {reviewOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
-          onClick={() => !savingReview && setReviewOpen(false)}
-        >
-          <form
-            onSubmit={handleSaveReview}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
-          >
-            <div className="bg-slate-900 px-4 py-3 text-white">
-              <div className="text-[11px] uppercase tracking-[0.22em] opacity-80">QC Review</div>
-              <div className="text-lg font-extrabold">Log staff review</div>
-              <div className="text-xs opacity-80">Record a supervision check for audit trail.</div>
-            </div>
-
-            <div className="p-4">
-              <label className="mb-3 block text-sm">
-                <span className="mb-1 block text-slate-700 font-semibold">Staff member</span>
-                <select
-                  required
-                  value={reviewForm.staff_id}
-                  onChange={(e) => setReviewForm((prev) => ({ ...prev, staff_id: e.target.value }))}
-                  className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
-                >
-                  <option value="">
-                    {staffLoading ? "Loading staff…" : staffOptions.length === 0 ? "No active staff" : "Select…"}
-                  </option>
-                  {staffOptions.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                      {s.initials ? ` (${s.initials.toUpperCase()})` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="mb-3 block text-sm">
-                <span className="mb-1 block text-slate-700 font-semibold">Area / category</span>
-                <select
-                  value={reviewForm.category}
-                  onChange={(e) => setReviewForm((prev) => ({ ...prev, category: e.target.value }))}
-                  className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
-                >
-                  {CATEGORY_OPTIONS.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="mb-3 block text-sm">
-                <span className="mb-1 block text-slate-700 font-semibold">Rating (1–5)</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={5}
-                  value={reviewForm.rating}
-                  onChange={(e) => setReviewForm((prev) => ({ ...prev, rating: Number(e.target.value) || 1 }))}
-                  className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
-                />
-              </label>
-
-              <label className="mb-4 block text-sm">
-                <span className="mb-1 block text-slate-700 font-semibold">Notes / feedback</span>
-                <textarea
-                  rows={4}
-                  value={reviewForm.notes}
-                  onChange={(e) => setReviewForm((prev) => ({ ...prev, notes: e.target.value }))}
-                  placeholder="What did they do well? Any corrective advice?"
-                  className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm shadow-sm"
-                />
-              </label>
-
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setReviewOpen(false)}
-                  disabled={savingReview}
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingReview || !reviewForm.staff_id}
-                  className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-                >
-                  {savingReview ? "Saving…" : "Save review"}
-                </button>
-              </div>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Sign-off modal */}
-      {signoffOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
-          onClick={() => !savingSignoff && setSignoffOpen(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
-          >
-            <div className="bg-indigo-700 px-4 py-3 text-white">
-              <div className="text-[11px] uppercase tracking-[0.22em] opacity-90">
-                Daily manager sign-off
-              </div>
-              <div className="text-lg font-extrabold">
-                {formatPrettyDate(new Date(todayISO))}
-              </div>
-              <div className="text-xs opacity-90">{currentLocationName}</div>
-            </div>
-
-            <div className="p-4 space-y-3">
-              {/* Snapshot */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm">
-                <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                  Snapshot
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
-                  <div>
-                    Temps today:{" "}
-                    <span className="font-extrabold text-slate-900">{tempsSummary?.today ?? 0}</span>
-                  </div>
-                  <div>
-                    Fails (7d):{" "}
-                    <span className={cls("font-extrabold", (tempsSummary?.fails7d ?? 0) > 0 ? "text-red-700" : "text-slate-900")}>
-                      {tempsSummary?.fails7d ?? 0}
-                    </span>
-                  </div>
-                  <div>
-                    Cleaning today:{" "}
-                    <span className="font-extrabold text-slate-900">{cleaningSummary?.loggedToday ?? 0}</span>
-                  </div>
-                  <div>
-                    Training overdue:{" "}
-                    <span className={cls("font-extrabold", trainingOverdueCount > 0 ? "text-red-700" : "text-slate-900")}>
-                      {trainingOverdueCount}
-                    </span>
-                  </div>
-                  <div>
-                    QC (7d):{" "}
-                    <span className="font-extrabold text-slate-900">{reviewSummary?.last7 ?? 0}</span>
-                  </div>
-                  <div>
-                    QC (30d):{" "}
-                    <span className="font-extrabold text-slate-900">{reviewSummary?.last30 ?? 0}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Initials */}
-              <label className="block">
-                <div className="text-sm font-semibold text-slate-800">Manager initials</div>
-                <input
-                  value={signoffInitials}
-                  onChange={(e) => setSignoffInitials(e.target.value.toUpperCase())}
-                  placeholder="e.g. WS"
-                  className="mt-1 h-10 w-full rounded-2xl border border-slate-300 bg-white px-3 text-sm uppercase shadow-sm"
-                  maxLength={6}
-                />
-              </label>
-
-              {/* Notes */}
-              <label className="block">
-                <div className="text-sm font-semibold text-slate-800">Notes (optional)</div>
-                <textarea
-                  value={signoffNotes}
-                  onChange={(e) => setSignoffNotes(e.target.value)}
-                  rows={4}
-                  placeholder="Anything to note today? Issues, corrective actions, follow-ups…"
-                  className="mt-1 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
-                />
-              </label>
-
-              {lastSignoffToday && (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-                  Already signed off today at{" "}
-                  {new Date(lastSignoffToday.signed_at).toLocaleTimeString("en-GB", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}{" "}
-                  by {lastSignoffToday.manager_initials.toUpperCase()}.
-                </div>
-              )}
-
-              <div className="flex items-center justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  disabled={savingSignoff}
-                  onClick={() => setSignoffOpen(false)}
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                >
-                  Close
-                </button>
-                <button
-                  type="button"
-                  disabled={savingSignoff || !signoffInitials.trim()}
-                  onClick={saveSignoff}
-                  className="rounded-2xl bg-indigo-600 px-4 py-2 text-sm font-extrabold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60"
-                >
-                  {savingSignoff ? "Saving…" : "Save sign-off"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -140,7 +140,7 @@ export default function UserMenu() {
               Guides
             </Link>
 
-            <Link href="/support" className={itemCls()} role="menuitem">
+            <Link href="/help" className={itemCls()} role="menuitem">
               Help &amp; support
             </Link>
 

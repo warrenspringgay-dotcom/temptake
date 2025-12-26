@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -32,6 +32,27 @@ type Run = {
   task_id: string;
   run_on: string;
   done_by: string | null;
+};
+
+type CleaningIncident = {
+  id: string;
+  happened_on: string;
+  type: string | null;
+  details: string | null;
+  corrective_action: string | null;
+  preventive_action: string | null;
+  created_by: string | null;
+  created_at: string | null;
+};
+
+type DailySignoffRow = {
+  id: string;
+  org_id: string;
+  location_id: string;
+  signoff_on: string; // YYYY-MM-DD
+  signed_by: string | null;
+  notes: string | null;
+  created_at: string | null;
 };
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -67,6 +88,121 @@ function bumpVibrate(ms = 10) {
   const nav = window.navigator as any;
   if (typeof nav.vibrate === "function") {
     nav.vibrate(ms);
+  }
+}
+
+/* ================= SFBB Default Opening/Closing checks =================
+   These come directly from the SFBB “Opening and closing checks” safe method.
+*/
+const SFBB_OPENING_CHECKS: Array<{ task: string; area?: string | null }> = [
+  {
+    task: "Fridges / chilled display equipment / freezers working properly",
+    area: "Kitchen",
+  },
+  { task: "Other equipment working properly (e.g. oven)", area: "Kitchen" },
+  { task: "Staff fit for work and wearing clean work clothes", area: "Kitchen" },
+  {
+    task: "Food prep areas clean and disinfected (surfaces, equipment, utensils)",
+    area: "Kitchen",
+  },
+  { task: "No evidence of pest activity (all areas)", area: "Site" },
+  {
+    task: "Enough handwashing + cleaning materials (soap, paper towels, sanitiser)",
+    area: "Kitchen",
+  },
+  { task: "Hot running water available at all sinks / basins", area: "Kitchen" },
+  { task: "Probe thermometer working + probe wipes available", area: "Kitchen" },
+  { task: "Allergen information accurate for all items on sale", area: "Kitchen" },
+];
+
+const SFBB_CLOSING_CHECKS: Array<{ task: string; area?: string | null }> = [
+  {
+    task: "All food covered, labelled and stored in fridge/freezer (where appropriate)",
+    area: "Kitchen",
+  },
+  { task: "Food on its Use By date thrown away", area: "Kitchen" },
+  { task: "Dirty cleaning equipment cleaned or thrown away", area: "Kitchen" },
+  { task: "Waste removed and new bin bags put in", area: "Kitchen" },
+  {
+    task: "Food prep areas clean and disinfected (surfaces, equipment, utensils)",
+    area: "Kitchen",
+  },
+  { task: "All washing up finished", area: "Kitchen" },
+  { task: "Floors swept and clean", area: "Kitchen" },
+  { task: "‘Prove it’ checks recorded (where required)", area: "Kitchen" },
+];
+
+function normKey(s: string) {
+  return s.trim().toLowerCase();
+}
+
+async function ensureDefaultChecksExist(params: {
+  orgId: string;
+  locationId: string;
+}) {
+  const { orgId, locationId } = params;
+
+  const { data, error } = await supabase
+    .from("cleaning_tasks")
+    .select("id, task, name, category, frequency, location_id")
+    .eq("org_id", orgId)
+    .eq("location_id", locationId);
+
+  if (error) {
+    console.warn("[cleaning] failed to check defaults", error.message);
+    return;
+  }
+
+  const existing = new Set(
+    (data ?? []).map((r: any) => {
+      const task = r.task ?? r.name ?? "";
+      const cat = r.category ?? "";
+      const freq = String(r.frequency ?? "daily").toLowerCase();
+      return `${normKey(cat)}|${normKey(task)}|${freq}`;
+    })
+  );
+
+  const inserts: any[] = [];
+  const openingCat = "Opening checks";
+  const closingCat = "Closing checks";
+
+  for (const t of SFBB_OPENING_CHECKS) {
+    const k = `${normKey(openingCat)}|${normKey(t.task)}|daily`;
+    if (!existing.has(k)) {
+      inserts.push({
+        org_id: orgId,
+        location_id: locationId,
+        task: t.task,
+        area: t.area ?? null,
+        category: openingCat,
+        frequency: "daily",
+        weekday: null,
+        month_day: null,
+      });
+    }
+  }
+
+  for (const t of SFBB_CLOSING_CHECKS) {
+    const k = `${normKey(closingCat)}|${normKey(t.task)}|daily`;
+    if (!existing.has(k)) {
+      inserts.push({
+        org_id: orgId,
+        location_id: locationId,
+        task: t.task,
+        area: t.area ?? null,
+        category: closingCat,
+        frequency: "daily",
+        weekday: null,
+        month_day: null,
+      });
+    }
+  }
+
+  if (!inserts.length) return;
+
+  const { error: insErr } = await supabase.from("cleaning_tasks").insert(inserts);
+  if (insErr) {
+    console.warn("[cleaning] failed to insert SFBB default checks", insErr.message);
   }
 }
 
@@ -271,10 +407,112 @@ export default function CleaningRota() {
   const [manageOpen, setManageOpen] = useState(false);
 
   // permissions: who can manage tasks?
-  const [canManage, setCanManage] = useState(true); // default true so first user isn’t locked out
+  const [canManage, setCanManage] = useState(true);
 
   // which daily category is expanded to show swipe cards
+  // NOTE: start collapsed, and specifically keep Opening checks collapsed until user opens it.
   const [openCategory, setOpenCategory] = useState<string | null>(null);
+
+  // Incidents / corrective actions panel
+  const [incOpen, setIncOpen] = useState(false);
+  const [incidents, setIncidents] = useState<CleaningIncident[]>([]);
+  const [incLoading, setIncLoading] = useState(false);
+  const [incSaving, setIncSaving] = useState(false);
+  const [incForm, setIncForm] = useState({
+    type: "Cleaning missed",
+    details: "",
+    corrective_action: "",
+    preventive_action: "",
+  });
+
+  // Day sign-off (uses your existing daily_signoffs table)
+  const [signoff, setSignoff] = useState<DailySignoffRow | null>(null);
+  const [signoffLoading, setSignoffLoading] = useState(false);
+  const [signoffSaving, setSignoffSaving] = useState(false);
+  const [showSignoffNudge, setShowSignoffNudge] = useState(false);
+
+  const nudgeKeyRef = useRef<string>("");
+
+  async function loadSignoff() {
+    const orgId = await getActiveOrgIdClient();
+    const locationId = await getActiveLocationIdClient();
+    if (!orgId || !locationId) return;
+
+    setSignoffLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("daily_signoffs")
+        .select("id,org_id,location_id,signoff_on,signed_by,notes,created_at")
+        .eq("org_id", orgId)
+        .eq("location_id", locationId)
+        .eq("signoff_on", today)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      const row = data as any;
+      setSignoff(
+        row
+          ? {
+              id: String(row.id),
+              org_id: String(row.org_id),
+              location_id: String(row.location_id),
+              signoff_on: String(row.signoff_on),
+              signed_by: row.signed_by ? String(row.signed_by) : null,
+              notes: row.notes ? String(row.notes) : null,
+              created_at: row.created_at ? String(row.created_at) : null,
+            }
+          : null
+      );
+    } catch (e) {
+      console.warn("[daily_signoffs] load failed", e);
+      setSignoff(null);
+    } finally {
+      setSignoffLoading(false);
+    }
+  }
+
+  async function quickSignoff() {
+    const orgId = await getActiveOrgIdClient();
+    const locationId = await getActiveLocationIdClient();
+    if (!orgId || !locationId) {
+      alert("Select a location first.");
+      return;
+    }
+    if (!ini) {
+      alert("Pick initials first.");
+      return;
+    }
+
+    setSignoffSaving(true);
+    try {
+      const { error } = await supabase
+        .from("daily_signoffs")
+        .upsert(
+          {
+            org_id: orgId,
+            location_id: locationId,
+            signoff_on: today,
+            signed_by: ini.toUpperCase(),
+            notes: null,
+          },
+          { onConflict: "org_id,location_id,signoff_on" }
+        );
+
+      if (error) throw error;
+
+      await loadSignoff();
+      setShowSignoffNudge(false);
+      try {
+        if (nudgeKeyRef.current) localStorage.setItem(nudgeKeyRef.current, "1");
+      } catch {}
+      bumpVibrate(15);
+    } catch (e: any) {
+      alert(e?.message || "Failed to sign off.");
+    } finally {
+      setSignoffSaving(false);
+    }
+  }
 
   /** Load initials and put logged-in user first */
   useEffect(() => {
@@ -291,9 +529,7 @@ export default function CleaningRota() {
       let list: string[] = Array.from(
         new Set(
           (data ?? [])
-            .map((r: any) =>
-              (r.initials ?? "").toString().toUpperCase().trim()
-            )
+            .map((r: any) => (r.initials ?? "").toString().toUpperCase().trim())
             .filter(Boolean)
         )
       );
@@ -306,10 +542,7 @@ export default function CleaningRota() {
           const meRow = data.find(
             (r: any) => (r.email ?? "").toLowerCase() === email
           );
-          const myIni = meRow?.initials
-            ?.toString()
-            .toUpperCase()
-            .trim();
+          const myIni = meRow?.initials?.toString().toUpperCase().trim();
 
           if (myIni && list.includes(myIni)) {
             list = [myIni, ...list.filter((x) => x !== myIni)];
@@ -333,7 +566,7 @@ export default function CleaningRota() {
         const { data: userRes } = await supabase.auth.getUser();
         const email = userRes.user?.email?.toLowerCase() ?? null;
 
-        let manage = true; // default
+        let manage = true;
 
         if (orgId && email) {
           const { data, error } = await supabase
@@ -345,8 +578,7 @@ export default function CleaningRota() {
 
           if (!error && data && data.length > 0) {
             const role = (data[0].role ?? "").toLowerCase();
-            manage =
-              role === "owner" || role === "manager" || role === "admin";
+            manage = role === "owner" || role === "manager" || role === "admin";
           }
         }
 
@@ -357,12 +589,108 @@ export default function CleaningRota() {
     })();
   }, []);
 
+  /** Load incidents for today */
+  async function loadIncidents() {
+    const orgId = await getActiveOrgIdClient();
+    const locationId = await getActiveLocationIdClient();
+    if (!orgId || !locationId) return;
+
+    setIncLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("cleaning_incidents")
+        .select(
+          "id,happened_on,type,details,corrective_action,preventive_action,created_by,created_at"
+        )
+        .eq("org_id", orgId)
+        .eq("location_id", locationId)
+        .eq("happened_on", today)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      setIncidents(
+        (data ?? []).map((r: any) => ({
+          id: String(r.id),
+          happened_on: String(r.happened_on),
+          type: r.type ? String(r.type) : null,
+          details: r.details ? String(r.details) : null,
+          corrective_action: r.corrective_action
+            ? String(r.corrective_action)
+            : null,
+          preventive_action: r.preventive_action
+            ? String(r.preventive_action)
+            : null,
+          created_by: r.created_by ? String(r.created_by) : null,
+          created_at: r.created_at ? String(r.created_at) : null,
+        }))
+      );
+    } catch (e: any) {
+      console.warn("[cleaning_incidents] load failed", e?.message);
+      setIncidents([]);
+    } finally {
+      setIncLoading(false);
+    }
+  }
+
+  async function saveIncident() {
+    const orgId = await getActiveOrgIdClient();
+    const locationId = await getActiveLocationIdClient();
+    if (!orgId || !locationId) {
+      alert("Select a location first.");
+      return;
+    }
+    if (!ini) {
+      alert("Pick initials first.");
+      return;
+    }
+    if (!incForm.details.trim()) {
+      alert("Add what happened.");
+      return;
+    }
+
+    setIncSaving(true);
+    try {
+      const payload = {
+        org_id: orgId,
+        location_id: locationId,
+        happened_on: today,
+        type: incForm.type || null,
+        details: incForm.details.trim(),
+        corrective_action: incForm.corrective_action.trim() || null,
+        preventive_action: incForm.preventive_action.trim() || null,
+        created_by: ini.toUpperCase(),
+      };
+
+      const { error } = await supabase.from("cleaning_incidents").insert(payload);
+      if (error) throw error;
+
+      setIncForm({
+        type: "Cleaning missed",
+        details: "",
+        corrective_action: "",
+        preventive_action: "",
+      });
+
+      await loadIncidents();
+      bumpVibrate(15);
+    } catch (e: any) {
+      alert(e?.message || "Failed to save incident.");
+    } finally {
+      setIncSaving(false);
+    }
+  }
+
   /** Load tasks + today's runs (org + location scoped) */
   async function loadAll() {
     const orgId = await getActiveOrgIdClient();
     const locationId = await getActiveLocationIdClient();
 
     if (!orgId) return;
+
+    if (locationId) {
+      await ensureDefaultChecksExist({ orgId, locationId });
+    }
 
     let tQuery = supabase
       .from("cleaning_tasks")
@@ -412,6 +740,14 @@ export default function CleaningRota() {
         done_by: r.done_by ?? null,
       }))
     );
+
+    await loadIncidents();
+    await loadSignoff();
+
+    // nudge key per day + location
+    if (orgId && locationId) {
+      nudgeKeyRef.current = `tt_cleaning_signoff_nudge_${orgId}_${locationId}_${today}`;
+    }
   }
 
   useEffect(() => {
@@ -436,40 +772,52 @@ export default function CleaningRota() {
   /** Daily summary by category */
   const dailyByCat = useMemo(() => {
     const map = new Map<string, Task[]>();
-    for (const c of CLEANING_CATEGORIES) map.set(c, []);
+
+    const baseCats = [
+      ...CLEANING_CATEGORIES,
+      "Opening checks",
+      "Closing checks",
+    ];
+    for (const c of baseCats) map.set(c, []);
+
     for (const t of dailyToday) {
       const key = t.category ?? "Opening checks";
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(t);
     }
+
     for (const [k, list] of map)
-      map.set(
-        k,
-        list.slice().sort((a, b) => a.task.localeCompare(b.task))
-      );
+      map.set(k, list.slice().sort((a, b) => a.task.localeCompare(b.task)));
+
     return map;
   }, [dailyToday]);
 
-  // Only categories that actually have tasks today
-  const categoriesWithTasks = useMemo(
-    () =>
-      CLEANING_CATEGORIES.filter(
-        (cat) => (dailyByCat.get(cat) ?? []).length > 0
-      ),
-    [dailyByCat]
-  );
-
-  // Default openCategory to the first non-empty category
-  useEffect(() => {
-    if (!openCategory && categoriesWithTasks.length > 0) {
-      setOpenCategory(categoriesWithTasks[0]);
-    }
-  }, [categoriesWithTasks, openCategory]);
+  // Categories that actually have tasks today
+  const categoriesWithTasks = useMemo(() => {
+    const keys = Array.from(dailyByCat.keys());
+    return keys.filter((cat) => (dailyByCat.get(cat) ?? []).length > 0);
+  }, [dailyByCat]);
 
   const doneCount = useMemo(
     () => dueToday.filter((t) => runsKey.has(`${t.id}|${today}`)).length,
     [dueToday, runsKey, today]
   );
+
+  const allDoneToday = dueToday.length > 0 && doneCount === dueToday.length;
+  const isSignedOff = !!signoff?.id;
+
+  // When everything is completed, prompt sign-off (once per day/location per device).
+  useEffect(() => {
+    if (!allDoneToday) return;
+    if (isSignedOff) return;
+
+    try {
+      const k = nudgeKeyRef.current;
+      if (k && localStorage.getItem(k) === "1") return;
+    } catch {}
+
+    setShowSignoffNudge(true);
+  }, [allDoneToday, isSignedOff]);
 
   /** Upcoming 7 days (weekly/monthly only) */
   const days7 = useMemo(() => {
@@ -518,9 +866,7 @@ export default function CleaningRota() {
       done_by: initialsVal.toUpperCase(),
     };
 
-    const { error } = await supabase
-      .from("cleaning_task_runs")
-      .insert(payload);
+    const { error } = await supabase.from("cleaning_task_runs").insert(payload);
 
     if (error) {
       alert(error.message);
@@ -532,7 +878,6 @@ export default function CleaningRota() {
       { task_id: id, run_on: today, done_by: payload.done_by },
     ]);
 
-    // 🎉 Confetti + subtle haptic on single completion
     fireConfetti();
     bumpVibrate();
   }
@@ -567,9 +912,7 @@ export default function CleaningRota() {
     const orgId = await getActiveOrgIdClient();
     const locationId = await getActiveLocationIdClient();
     if (!orgId || !locationId || !ids.length) {
-      if (!orgId || !locationId) {
-        alert("Select a location first.");
-      }
+      if (!orgId || !locationId) alert("Select a location first.");
       return;
     }
 
@@ -581,9 +924,7 @@ export default function CleaningRota() {
       done_by: initialsVal.toUpperCase(),
     }));
 
-    const { error } = await supabase
-      .from("cleaning_task_runs")
-      .insert(payload);
+    const { error } = await supabase.from("cleaning_task_runs").insert(payload);
 
     if (error) {
       alert(error.message);
@@ -599,10 +940,21 @@ export default function CleaningRota() {
       })),
     ]);
 
-    // 🎉 Confetti + subtle haptic on bulk completion
     fireConfetti();
     bumpVibrate(15);
   }
+
+  const signoffStatusText = signoffLoading
+    ? "Checking sign-off…"
+    : isSignedOff
+    ? `Signed off by ${signoff?.signed_by || "—"}`
+    : "Not signed off yet";
+
+  const signoffBadge = signoffLoading
+    ? "bg-slate-100 text-slate-700 border-slate-200"
+    : isSignedOff
+    ? "bg-emerald-50 text-emerald-900 border-emerald-200"
+    : "bg-red-50 text-red-900 border-red-200";
 
   /* ===== RENDER ===== */
   return (
@@ -612,9 +964,7 @@ export default function CleaningRota() {
         <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
           Today
         </div>
-        <div className="text-lg font-semibold text-slate-800">
-          {niceFull(today)}
-        </div>
+        <div className="text-lg font-semibold text-slate-800">{niceFull(today)}</div>
       </div>
 
       {/* ===== Header / Actions ===== */}
@@ -662,13 +1012,250 @@ export default function CleaningRota() {
                   .map((t) => t.id);
                 completeMany(ids, ini);
               }}
-              disabled={
-                !ini || dueToday.every((t) => runsKey.has(`${t.id}|${today}`))
-              }
+              disabled={!ini || dueToday.every((t) => runsKey.has(`${t.id}|${today}`))}
             >
               Complete all today
             </button>
           </div>
+        </div>
+
+        {/* ===== Prominent Day Sign-off Bar ===== */}
+        <div className="mb-4 rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-700/90">
+                Day sign-off
+              </div>
+              <div className="mt-1 flex items-center gap-2">
+                <span
+                  className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-extrabold ${signoffBadge}`}
+                >
+                  {signoffLoading ? "Loading…" : isSignedOff ? "Signed" : "Not signed"}
+                </span>
+                <span className="text-xs font-semibold text-slate-600">
+                  {today}
+                </span>
+              </div>
+              <div className="mt-2 text-sm font-semibold text-slate-900">
+                {signoffStatusText}
+              </div>
+              {allDoneToday && !isSignedOff && (
+                <div className="mt-1 text-[11px] font-semibold text-amber-700">
+                  All tasks completed. Sign off the day to finish the record.
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void quickSignoff()}
+              disabled={signoffSaving || signoffLoading || !ini}
+              className={`h-11 rounded-2xl px-4 text-sm font-extrabold text-white shadow-sm disabled:opacity-60 ${
+                isSignedOff ? "bg-emerald-600 hover:bg-emerald-700" : "bg-slate-900 hover:bg-slate-800"
+              }`}
+            >
+              {signoffSaving ? "Signing…" : isSignedOff ? "Signed off" : "Sign off day"}
+            </button>
+          </div>
+
+          {/* ===== Auto prompt / nudge once completed ===== */}
+          {showSignoffNudge && !isSignedOff && (
+            <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/90 p-3">
+              <div className="text-sm font-semibold text-amber-900">
+                Everything’s done. Sign off the day?
+              </div>
+              <div className="mt-1 text-[11px] text-amber-800">
+                This matches the SFBB diary flow: tasks completed → manager signs.
+              </div>
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSignoffNudge(false);
+                    try {
+                      if (nudgeKeyRef.current) localStorage.setItem(nudgeKeyRef.current, "1");
+                    } catch {}
+                  }}
+                  className="h-10 rounded-2xl border border-amber-200 bg-white/70 px-4 text-xs font-extrabold text-amber-900 hover:bg-white"
+                >
+                  Not now
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void quickSignoff()}
+                  disabled={signoffSaving || !ini}
+                  className="h-10 rounded-2xl bg-amber-600 px-4 text-xs font-extrabold text-white shadow-sm hover:bg-amber-700 disabled:opacity-60"
+                >
+                  {signoffSaving ? "Signing…" : "Sign off now"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ===== Incidents / Corrective actions ===== */}
+        <div className="mb-4 rounded-2xl border border-slate-200/80 bg-white/70 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">
+                Incidents & corrective actions
+              </div>
+              <div className="text-[11px] text-slate-600">
+                Log anything missed or unusual, plus what you did about it.
+              </div>
+            </div>
+            <button
+              type="button"
+              className="rounded-xl border border-slate-200 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-white"
+              onClick={() => {
+                const next = !incOpen;
+                setIncOpen(next);
+                if (next) void loadIncidents();
+              }}
+            >
+              {incOpen ? "Hide" : "Open"}
+            </button>
+          </div>
+
+          {incOpen && (
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3">
+                <div className="text-xs font-semibold text-slate-900">New report</div>
+
+                <label className="mt-2 block text-[11px] font-semibold text-slate-600">
+                  Type
+                </label>
+                <select
+                  value={incForm.type}
+                  onChange={(e) =>
+                    setIncForm((p) => ({ ...p, type: e.target.value }))
+                  }
+                  className="mt-1 h-9 w-full rounded-xl border border-slate-200 bg-white/80 px-3 text-sm shadow-sm"
+                >
+                  <option>Cleaning missed</option>
+                  <option>Equipment issue</option>
+                  <option>Pest/maintenance</option>
+                  <option>Staff hygiene</option>
+                  <option>Other</option>
+                </select>
+
+                <label className="mt-3 block text-[11px] font-semibold text-slate-600">
+                  What happened
+                </label>
+                <textarea
+                  value={incForm.details}
+                  onChange={(e) =>
+                    setIncForm((p) => ({ ...p, details: e.target.value }))
+                  }
+                  className="mt-1 min-h-[70px] w-full rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-sm shadow-sm"
+                  placeholder="Short and factual."
+                />
+
+                <label className="mt-3 block text-[11px] font-semibold text-slate-600">
+                  Corrective action
+                </label>
+                <textarea
+                  value={incForm.corrective_action}
+                  onChange={(e) =>
+                    setIncForm((p) => ({
+                      ...p,
+                      corrective_action: e.target.value,
+                    }))
+                  }
+                  className="mt-1 min-h-[60px] w-full rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-sm shadow-sm"
+                  placeholder="What did you do to fix it?"
+                />
+
+                <label className="mt-3 block text-[11px] font-semibold text-slate-600">
+                  Preventive action
+                </label>
+                <textarea
+                  value={incForm.preventive_action}
+                  onChange={(e) =>
+                    setIncForm((p) => ({
+                      ...p,
+                      preventive_action: e.target.value,
+                    }))
+                  }
+                  className="mt-1 min-h-[60px] w-full rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-sm shadow-sm"
+                  placeholder="How do you stop it happening again?"
+                />
+
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    disabled={incSaving}
+                    onClick={() => void saveIncident()}
+                    className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-extrabold text-white shadow-sm hover:bg-slate-800 disabled:opacity-60"
+                  >
+                    {incSaving ? "Saving…" : "Save report"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-xs font-semibold text-slate-900">
+                    Today’s reports
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-xl border border-slate-200 bg-white/70 px-3 py-1 text-xs font-semibold text-slate-800 hover:bg-white"
+                    onClick={() => void loadIncidents()}
+                    disabled={incLoading}
+                  >
+                    {incLoading ? "Loading…" : "Refresh"}
+                  </button>
+                </div>
+
+                {incidents.length === 0 ? (
+                  <div className="rounded-2xl border border-slate-200/80 bg-white/70 p-3 text-sm text-slate-600">
+                    No incidents logged today.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {incidents.map((it) => (
+                      <div
+                        key={it.id}
+                        className="rounded-2xl border border-slate-200/80 bg-white/70 p-3 text-sm"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="font-semibold text-slate-900">
+                            {it.type || "Incident"}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            {it.created_by ? `By ${it.created_by}` : ""}{" "}
+                            {it.created_at ? `· ${niceShort(it.created_at)}` : ""}
+                          </div>
+                        </div>
+                        {it.details && (
+                          <div className="mt-1 text-[12px] text-slate-700">
+                            {it.details}
+                          </div>
+                        )}
+                        {(it.corrective_action || it.preventive_action) && (
+                          <div className="mt-2 text-[11px] text-slate-600">
+                            {it.corrective_action ? (
+                              <div>
+                                <span className="font-semibold">Fix:</span>{" "}
+                                {it.corrective_action}
+                              </div>
+                            ) : null}
+                            {it.preventive_action ? (
+                              <div className="mt-1">
+                                <span className="font-semibold">Prevent:</span>{" "}
+                                {it.preventive_action}
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ===== Today’s Weekly / Monthly tasks (with visible swipe) ===== */}
@@ -704,7 +1291,7 @@ export default function CleaningRota() {
           )}
         </div>
 
-        {/* ===== Today’s daily tasks – by category with swipe cards ===== */}
+        {/* ===== Today’s daily tasks – by category with collapsible cards ===== */}
         <div className="mt-4">
           <div className="mb-1 flex items-center justify-between">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
@@ -728,47 +1315,53 @@ export default function CleaningRota() {
               {categoriesWithTasks.map((cat) => {
                 const list = dailyByCat.get(cat) ?? [];
                 const total = list.length;
-                const done = list.filter((t) =>
-                  runsKey.has(`${t.id}|${today}`)
-                ).length;
+                const done = list.filter((t) => runsKey.has(`${t.id}|${today}`))
+                  .length;
                 const open = total - done;
                 const expanded = openCategory === cat;
+
+                // Opening checks specifically: collapsible and default collapsed (we already start with null openCategory)
+                const caret = expanded ? "▾" : "▸";
 
                 return (
                   <div
                     key={cat}
                     className="flex flex-col rounded-2xl border border-slate-200/80 bg-white/80 p-3 text-sm shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                   >
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <div
-                        className="flex-1 cursor-pointer"
-                        onClick={() =>
-                          setOpenCategory(expanded ? null : cat)
-                        }
-                      >
-                        <div className="text-sm font-semibold text-slate-900">
-                          {cat}
+                    <button
+                      type="button"
+                      className="mb-2 flex w-full items-start justify-between gap-2 text-left"
+                      onClick={() => setOpenCategory(expanded ? null : cat)}
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-base leading-none text-slate-500">
+                            {caret}
+                          </span>
+                          <div className="text-sm font-semibold text-slate-900">
+                            {cat}
+                          </div>
                         </div>
-                        <div className="text-[11px] text-slate-500">
+                        <div className="mt-1 text-[11px] text-slate-500">
                           {done}/{total} complete · {open} open
                         </div>
                       </div>
+
                       <button
                         type="button"
                         className="shrink-0 rounded-full bg-emerald-600/90 px-3 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-40"
                         disabled={open === 0 || !ini}
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           const ids = list
-                            .filter(
-                              (t) => !runsKey.has(`${t.id}|${today}`)
-                            )
+                            .filter((t) => !runsKey.has(`${t.id}|${today}`))
                             .map((t) => t.id);
                           completeMany(ids, ini);
                         }}
                       >
                         Complete all
                       </button>
-                    </div>
+                    </button>
 
                     {expanded && (
                       <div className="mt-1 space-y-2">
@@ -812,9 +1405,7 @@ export default function CleaningRota() {
               className="rounded-2xl border border-gray-200/80 bg-white/80 p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
             >
               <div className="mb-1 flex items-center justify-between">
-                <div className="font-medium text-slate-900">
-                  {niceShort(day)}
-                </div>
+                <div className="font-medium text-slate-900">{niceShort(day)}</div>
                 <div className="text-xs text-gray-500">{list.length} due</div>
               </div>
               {list.length === 0 ? (
@@ -826,9 +1417,7 @@ export default function CleaningRota() {
                       key={t.id}
                       className="rounded-xl border border-gray-200/80 bg-white px-2 py-1.5 text-sm"
                     >
-                      <div className="font-medium text-slate-900">
-                        {t.task}
-                      </div>
+                      <div className="font-medium text-slate-900">{t.task}</div>
                       <div className="text-xs text-gray-500">
                         {t.category ?? t.area ?? "—"} •{" "}
                         {t.frequency === "weekly" ? "Weekly" : "Monthly"}
