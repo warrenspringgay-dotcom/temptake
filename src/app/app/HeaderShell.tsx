@@ -40,7 +40,8 @@ export default function HeaderShell() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 backdrop-blur-md">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4">
+      <div className="flex h-14 w-full items-center gap-3 px-3 sm:px-4 md:mx-auto md:max-w-6xl md:gap-4">
+
         {/* Logo + brand */}
         <Link href="/dashboard" className="flex items-center gap-2">
           <Image
