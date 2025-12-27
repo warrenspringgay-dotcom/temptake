@@ -46,7 +46,7 @@ export default function SFBBLogsGuide() {
         </p>
 
         <p>
-          <Link href="/dashboard" className="underline font-semibold">
+          <Link href="/app" className="underline font-semibold">
             See compliance at a glance →
           </Link>
         </p>

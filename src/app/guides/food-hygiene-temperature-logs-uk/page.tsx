@@ -116,7 +116,7 @@ export default function GuideFoodHygieneTempLogsUKPage() {
 
           <div className="mt-4 flex flex-wrap gap-2">
             <Link
-              href="/launch"
+              href="/app"
               className="rounded-2xl bg-slate-900 px-4 py-2 text-xs font-extrabold text-white hover:bg-black"
             >
               See TempTake
