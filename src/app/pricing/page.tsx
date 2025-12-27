@@ -77,7 +77,12 @@ export default function PricingPage() {
                   <li>• Priority support and direct product input.</li>
                   <li>• Locked-in preferential launch pricing afterwards.</li>
                 </ul>
-
+<Link
+          href="/"
+          className="absolute right-0 top-0 rounded-full bg-black/50 px-3 py-1 text-xs text-slate-50 shadow-sm backdrop-blur hover:bg-black/70"
+        >
+          ✕ Back
+        </Link>
                 <div className="mt-5">
                <button
                 type="button"

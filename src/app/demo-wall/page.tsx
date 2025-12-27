@@ -35,7 +35,12 @@ export default function DemoWallPage() {
 >
   ✕ Back
 </Link>
-
+<Link
+          href="/"
+          className="absolute right-0 top-0 rounded-full bg-black/50 px-3 py-1 text-xs text-slate-50 shadow-sm backdrop-blur hover:bg-black/70"
+        >
+          ✕ Back
+        </Link>
 
         {/* CTA strip on the right */}
         <div className="flex flex-col items-center justify-center gap-2 text-xs md:items-end">

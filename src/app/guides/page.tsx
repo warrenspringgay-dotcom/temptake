@@ -27,7 +27,12 @@ type Guide = {
   readTime?: string;
   tag?: string;
 };
-
+<Link
+  href="/"
+  className="absolute right-4 top-4 rounded-full bg-black/40 backdrop-blur px-3 py-1 text-sm text-slate-200 hover:bg-black/60"
+>
+  ✕ Back
+</Link>
 const GUIDES: Guide[] = [
   {
     title: "Food hygiene temperature logs (UK): what to record and how often",
