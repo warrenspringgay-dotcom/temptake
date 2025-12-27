@@ -6,9 +6,11 @@ const PUBLIC_PATHS = new Set<string>([
    "/", // home
   "/login",
   "/signup",
+  "/pricing",
   "/reset-password",
   "/help",
   "/guides",
+  "/guides/",
   "/client-launch",
   "/launch",
   "/app", // demo dashboard (public)

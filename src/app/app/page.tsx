@@ -11,6 +11,7 @@ export const metadata = {
 
 export default function AppDemoDashboardPage() {
   return (
+    
     <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">
       {/* Top demo banner + back link */}
       <header className="relative flex flex-wrap items-center justify-between gap-3">
@@ -26,12 +27,17 @@ export default function AppDemoDashboardPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <Link
-            href="/launch#waitlist"
-            className="inline-flex items-center rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
-          >
-            Join early access
-          </Link>
+           <button
+                type="button"
+                data-tally-open="obb4vX"
+                data-tally-layout="modal"
+                data-tally-emoji-text="👋"
+                data-tally-emoji-animation="wave"
+                data-tally-auto-close="0"
+                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 transition hover:brightness-105"
+              >
+                Join the early access list
+              </button>
           <Link
             href="/pricing"
             className="inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
