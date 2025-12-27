@@ -25,6 +25,8 @@ export default function HeaderShell() {
     return (
       pathname === "/" ||
       pathname?.startsWith("/login") ||
+      pathname?.startsWith("/app") ||
+      pathname?.startsWith("/pricing") ||
       pathname?.startsWith("/signup")
     );
   }, [pathname]);
