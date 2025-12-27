@@ -8,7 +8,8 @@ export default async function LeaderboardPage() {
   return (
     <>
     
-      <div className="space-y-6">
+      <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
+
         <Leaderboard />
       </div>
 

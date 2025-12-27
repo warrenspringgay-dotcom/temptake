@@ -244,7 +244,8 @@ export default function DashboardPage() {
     <>
       <WelcomeGate />
 
-      <div className="space-y-4 mx-auto max-w-6xl px-4 py-4">
+      <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
+
         {/* Billing banner (only when relevant) */}
         {!loading && banner && (
           <div
