@@ -5,7 +5,8 @@ export const metadata = { title: "Suppliers · TempTake" };
 
 export default function Page() {
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-6">
+    <main className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
+
       <SuppliersManager />
     </main>
   );
