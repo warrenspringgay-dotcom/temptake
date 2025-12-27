@@ -21,15 +21,17 @@ export default function HeaderShell() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  // Public routes where we hide the header (or at least the nav)
   const hideOnPublic = useMemo(() => {
+    const p = pathname || "";
     return (
-      pathname === "/" ||
-      pathname?.startsWith("/login") ||
-      pathname?.startsWith("/app") ||
-      pathname?.startsWith("/pricing") ||
-      pathname?.startsWith("/login") ||
-      pathname?.startsWith("/guides") ||
-      pathname?.startsWith("/demo-wall")
+      p === "/" ||
+      p.startsWith("/login") ||
+      p.startsWith("/signup") ||
+      p.startsWith("/pricing") ||
+      p.startsWith("/guides") ||
+      p.startsWith("/demo-wall") ||
+      p.startsWith("/app") // demo dashboard (public)
     );
   }, [pathname]);
 
@@ -40,8 +42,8 @@ export default function HeaderShell() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 backdrop-blur-md">
+      {/* ✅ full width on mobile, constrained on md+ */}
       <div className="flex h-14 w-full items-center gap-3 px-3 sm:px-4 md:mx-auto md:max-w-6xl md:gap-4">
-
         {/* Logo + brand */}
         <Link href="/dashboard" className="flex items-center gap-2">
           <Image
