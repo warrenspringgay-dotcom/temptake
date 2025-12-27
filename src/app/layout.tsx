@@ -43,7 +43,8 @@ export default function RootLayout({
                 <HeaderShell />
 
                 {/* Single place where page content is rendered */}
-                <main className="mx-auto max-w-6xl px-4 py-4">
+                <main className="mx-auto w-full px-3 sm:px-4 md:max-w-6xl">
+
                   {children}
                 </main>
 
