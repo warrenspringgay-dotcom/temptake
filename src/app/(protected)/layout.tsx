@@ -12,9 +12,11 @@ export default function ProtectedLayout({
      
 
       {/* Single app content area used by ALL protected pages */}
-     <main className="w-full -mx-3 px-3 sm:mx-0 sm:px-4 md:mx-auto md:max-w-6xl">
-        {children}
-      </main>
+     <main className="w-full px-0 md:mx-auto md:max-w-6xl md:px-4">
+  {children}
+</main>
+
+      
     </>
   );
 }
