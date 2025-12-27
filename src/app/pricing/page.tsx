@@ -2,7 +2,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
-
+import Script from "next/script";
 export const metadata: Metadata = {
   title: "TempTake · Pricing",
   description:
@@ -21,7 +21,7 @@ export default function PricingPage() {
               <span className="font-semibold">TempTake</span>
             </Link>
           </div>
-
+<Script src="https://tally.so/widgets/embed.js" async />
           <Link
             href="/login"
             className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-50 shadow-sm hover:bg-white/10"

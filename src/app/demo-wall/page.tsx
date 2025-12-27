@@ -3,6 +3,7 @@
 
 import React from "react";
 import Link from "next/link";
+import Script from "next/script";
 
 const fakeNotes = [
   { initials: "JB", message: "The pulsing FAB is actual chef crack 🔥", color: "bg-red-200" },
@@ -27,7 +28,7 @@ export default function DemoWallPage() {
             (Real reactions from the first kitchens testing TempTake)
           </p>
         </div>
-
+<Script src="https://tally.so/widgets/embed.js" async />
 <Link
   href="/"
   className="absolute right-4 top-4 rounded-full bg-black/40 backdrop-blur px-3 py-1 text-sm text-slate-200 hover:bg-black/60"
@@ -44,12 +45,17 @@ export default function DemoWallPage() {
           >
             View demo dashboard
           </Link>
-          <Link
-            href="/launch#waitlist"
-            className="inline-flex items-center rounded-full border border-orange-300 bg-white px-4 py-2 text-xs font-medium text-orange-700 hover:bg-orange-50"
-          >
-            Join early access
-          </Link>
+          <button
+                type="button"
+                data-tally-open="obb4vX"
+                data-tally-layout="modal"
+                data-tally-emoji-text="👋"
+                data-tally-emoji-animation="wave"
+                data-tally-auto-close="0"
+                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 transition hover:brightness-105"
+              >
+                Join the early access list
+              </button>
         </div>
       </div>
 

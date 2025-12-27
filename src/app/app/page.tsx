@@ -2,7 +2,7 @@
 import React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-
+import Script from "next/script";
 export const metadata = {
   title: "Food Safety Compliance Software for UK Kitchens | TempTake",
   description:
@@ -25,7 +25,7 @@ export default function AppDemoDashboardPage() {
             app this view uses your own kitchen, checks and staff.
           </p>
         </div>
-
+<Script src="https://tally.so/widgets/embed.js" async />
         <div className="flex flex-wrap items-center gap-2 text-xs">
            <button
                 type="button"
