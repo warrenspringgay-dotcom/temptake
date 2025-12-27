@@ -22,6 +22,7 @@ export async function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
   if (
+    pathname.startsWith("/guides/")||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/assets") ||
