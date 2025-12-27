@@ -235,7 +235,10 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const showBanner = useMemo(() => billing.kind !== "none", [billing]);
+  // ✅ TS-safe narrowing for JSX:
+  const banner = useMemo(() => {
+    return billing.kind === "none" ? null : billing;
+  }, [billing]);
 
   return (
     <>
@@ -243,17 +246,17 @@ export default function DashboardPage() {
 
       <div className="space-y-4 mx-auto max-w-6xl px-4 py-4">
         {/* Billing banner (only when relevant) */}
-        {!loading && showBanner && (
+        {!loading && banner && (
           <div
             className={[
               "rounded-2xl border p-4 shadow-sm backdrop-blur-sm",
-              toneClasses(billing.tone),
+              toneClasses(banner.tone),
             ].join(" ")}
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-sm font-extrabold">{billing.title}</div>
-                <div className="mt-1 text-sm opacity-90">{billing.message}</div>
+                <div className="text-sm font-extrabold">{banner.title}</div>
+                <div className="mt-1 text-sm opacity-90">{banner.message}</div>
               </div>
 
               <Link

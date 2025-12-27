@@ -19,6 +19,48 @@ const fakeNotes = [
   { initials: "NP", message: "i can see how my kitchen is running from home" },
 ];
 
+/* ---------------------- PUBLIC GUIDES (LAUNCH PAGE) ---------------------- */
+/**
+ * Update hrefs if your actual routes differ.
+ * Keep these public (no auth required) so visitors can read before signing up.
+ */const GUIDES = [
+  {
+    title: "Temperature logs (UK)",
+    pill: "Temps",
+    description:
+      "Set up routines, log checks fast, and handle fails properly with a clean audit trail.",
+    href: "/guides/food-hygiene-temperature-logs-uk",
+  },
+  {
+    title: "Cleaning rota (UK)",
+    pill: "Cleaning",
+    description:
+      "Create tasks, complete on mobile, and keep rota records ready for inspection.",
+    href: "/guides/kitchen-cleaning-rota-uk",
+  },
+  {
+    title: "Allergen matrix (UK)",
+    pill: "Allergens",
+    description:
+      "Keep your allergen matrix current and prove you’ve got controls in place.",
+    href: "/guides/allergen-matrix-uk",
+  },
+  {
+    title: "Training expiry (UK)",
+    pill: "Training",
+    description:
+      "Track staff training expiry dates and stop certificates quietly lapsing.",
+    href: "/guides/food-hygiene-training-expiry-uk",
+  },
+  {
+    title: "SFBB logs",
+    pill: "SFBB",
+    description:
+      "How to align your daily records with Safer Food Better Business expectations.",
+    href: "/guides/safer-food-better-business-logs",
+  },
+];
+
 /* ---------------------------- MAIN PAGE ---------------------------- */
 
 export default function LaunchPage() {
@@ -39,12 +81,22 @@ export default function LaunchPage() {
             </Link>
           </div>
 
-          <Link
-            href="/login"
-            className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-50 shadow-sm hover:bg-white/10"
-          >
-            Log in
-          </Link>
+          <div className="flex items-center gap-2">
+            {/* NEW: Guides link (public) */}
+            <a
+              href="#guides"
+              className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-50 shadow-sm hover:bg-white/10"
+            >
+              Guides
+            </a>
+
+            <Link
+              href="/login"
+              className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-50 shadow-sm hover:bg-white/10"
+            >
+              Log in
+            </Link>
+          </div>
         </header>
 
         {/* ----------------------- HERO SECTION ----------------------- */}
@@ -103,6 +155,14 @@ export default function LaunchPage() {
               >
                 Leaderboard & the wall
               </button>
+
+              {/* NEW: quick jump to guides */}
+              <a
+                href="#guides"
+                className="inline-flex items-center justify-center rounded-2xl border border-slate-700 bg-slate-900/40 px-4 py-2 text-[11px] font-medium text-slate-200 hover:bg-slate-800/40"
+              >
+                Read the guides
+              </a>
             </div>
 
             <dl className="mt-8 grid grid-cols-2 gap-4 text-xs text-slate-200 sm:text-sm md:max-w-md">
@@ -186,8 +246,7 @@ export default function LaunchPage() {
               </div>
 
               <div className="mt-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">
-                Voice entry: “Walk-in fridge 3.4 degrees, initials WS” →
-                logged with timestamp.
+                Voice entry: “Walk-in fridge 3.4 degrees, initials WS” → logged with timestamp.
               </div>
             </div>
           </div>
@@ -228,6 +287,45 @@ export default function LaunchPage() {
                 pill="Hands busy? No problem"
                 description="Log temperatures by speaking. Faster during service, fewer missed checks, and still fully auditable."
               />
+            </div>
+          </div>
+        </section>
+
+        {/* ----------------------- NEW: GUIDES SECTION ----------------------- */}
+        <section id="guides" className="border-t border-white/10 bg-slate-950">
+          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
+            <div className="mb-6 max-w-3xl">
+              <h2 className="text-2xl font-semibold sm:text-3xl">
+                Guides for your team,
+                <span className="text-emerald-300"> before they even sign up.</span>
+              </h2>
+              <p className="mt-2 text-sm text-slate-300 sm:text-base">
+                Short, practical docs you can share with staff. No fluff, no “synergy”.
+              </p>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {GUIDES.map((g) => (
+                <Link
+                  key={g.title}
+                  href={g.href}
+                  className="group flex flex-col rounded-2xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg shadow-black/30 hover:bg-slate-900/80"
+                >
+                  <div className="inline-flex w-fit items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300">
+                    {g.pill}
+                  </div>
+                  <div className="mt-3 flex items-start justify-between gap-3">
+                    <h3 className="text-base font-semibold text-slate-50">{g.title}</h3>
+                    <span className="text-xs text-slate-400 group-hover:text-emerald-300">
+                      Read →
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-300">{g.description}</p>
+                  <p className="mt-3 text-[11px] text-slate-500">
+                    Public guide · share with staff
+                  </p>
+                </Link>
+              ))}
             </div>
           </div>
         </section>
@@ -468,6 +566,9 @@ export default function LaunchPage() {
             <div>© {new Date().getFullYear()} TempTake. All rights reserved.</div>
             <div className="flex flex-wrap items-center gap-3">
               <span>Made for UK food businesses.</span>
+              <a href="#guides" className="text-slate-300 hover:text-emerald-300">
+                Guides
+              </a>
               <button
                 type="button"
                 data-tally-open="obb4vX"

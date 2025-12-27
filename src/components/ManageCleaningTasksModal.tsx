@@ -40,8 +40,10 @@ type CleaningTask = {
 type Props = {
   open: boolean;
   onClose: () => void;
-  onSaved: () => Promise<void> | void;
+  onSaved: () => void | Promise<void>;
 };
+
+
 
 const WEEKDAY_OPTIONS = [
   { value: 1, label: "Monday" },

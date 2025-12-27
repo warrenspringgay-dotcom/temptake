@@ -19,6 +19,8 @@ export default function FabShell() {
   const hideOnPublic =
     pathname === "/" ||
     pathname?.startsWith("/login") ||
+    pathname?.startsWith("/guides") ||
+    pathname?.startsWith("/client-launch") ||
     pathname?.startsWith("/signup");
 
   if (hideOnPublic) return null;

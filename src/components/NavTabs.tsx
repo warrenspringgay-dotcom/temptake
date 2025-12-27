@@ -19,10 +19,8 @@ type Tab = {
 };
 
 const BASE_TABS: Tab[] = [
-  // Always visible for logged-in users
   { href: "/dashboard", label: "Dashboard" },
 
-  // Plan-gated tabs
   { href: "/routines", label: "Routines", requiresPlan: true },
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning Rota", requiresPlan: true },
@@ -46,24 +44,38 @@ const BASE_TABS: Tab[] = [
 export default function NavTabs() {
   const pathname = usePathname();
   const { user, ready } = useAuth();
-  const { hasValid, loading: billingLoading } = useSubscriptionStatus();
 
+  // billing
+  const billing = useSubscriptionStatus();
+  const hasValid = billing.hasValid;
+  const billingLoading = billing.loading;
+
+  // manager role
   const [canSeeManager, setCanSeeManager] = useState(false);
+  const [roleLoading, setRoleLoading] = useState(true);
 
-  // ---- Role-based gating for Manager Dashboard ----
   useEffect(() => {
+    let alive = true;
+
     (async () => {
       if (!ready || !user) {
+        if (!alive) return;
         setCanSeeManager(false);
+        setRoleLoading(false);
         return;
       }
+
+      setRoleLoading(true);
 
       try {
         const orgId = await getActiveOrgIdClient();
         const email = user.email?.toLowerCase() ?? null;
 
+        if (!alive) return;
+
         if (!orgId || !email) {
           setCanSeeManager(false);
+          setRoleLoading(false);
           return;
         }
 
@@ -74,49 +86,60 @@ export default function NavTabs() {
           .eq("email", email)
           .maybeSingle();
 
+        if (!alive) return;
+
         if (error || !data) {
           setCanSeeManager(false);
+          setRoleLoading(false);
           return;
         }
 
         const role = (data.role ?? "").toLowerCase();
-        setCanSeeManager(
-          role === "owner" || role === "manager" || role === "admin"
-        );
+        setCanSeeManager(role === "owner" || role === "manager" || role === "admin");
       } catch {
+        if (!alive) return;
         setCanSeeManager(false);
+      } finally {
+        if (!alive) return;
+        setRoleLoading(false);
       }
     })();
+
+    return () => {
+      alive = false;
+    };
   }, [ready, user]);
 
+  // ✅ IMPORTANT:
+  // Treat billing as "unknown" until it has definitely resolved.
+  // While unknown, DO NOT hide plan tabs (prevents the "only dashboard" flash).
+  const billingResolved = !billingLoading && typeof hasValid === "boolean";
+  const allowPlanTabs = billingResolved ? hasValid : true;
+
   // ---- Apply gating rules to tabs ----
-  const tabs = useMemo(
-    () =>
-      BASE_TABS.filter((t) => {
-        // Manager-only tabs
-        if (t.requiresManager && !canSeeManager) return false;
+  const effectiveTabs = useMemo(() => {
+    return BASE_TABS.filter((t) => {
+      // Manager-only tab:
+      // while role is still loading, hide it (prevents pop-in and accidental exposure)
+      if (t.requiresManager) {
+        if (roleLoading) return false;
+        if (!canSeeManager) return false;
+      }
 
-        // Plan-only tabs: hide if billing says no valid plan/trial
-        if (t.requiresPlan && !hasValid) return false;
+      // Plan-only tabs: only hide once billing has actually resolved
+      if (t.requiresPlan && !allowPlanTabs) return false;
 
-        return true;
-      }),
-    [canSeeManager, hasValid]
-  );
+      return true;
+    });
+  }, [canSeeManager, roleLoading, allowPlanTabs]);
 
-  // While auth is not ready, don't render nav at all
   if (!ready || !user) return null;
-
-  // Optional: while billing is loading, show all tabs except manager ones,
-  // so the UI doesn't "flash" hidden then visible.
-  const effectiveTabs = billingLoading ? BASE_TABS.filter(t => !t.requiresManager || canSeeManager) : tabs;
 
   return (
     <ul className="flex flex-nowrap items-center gap-1 min-w-max px-2">
       {effectiveTabs.map((t) => {
         const isActive =
-          pathname === t.href ||
-          (pathname?.startsWith(t.href + "/") ?? false);
+          pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
 
         return (
           <li key={t.href} className="shrink-0">

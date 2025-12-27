@@ -11,8 +11,7 @@ import { AuthProvider } from "@/components/AuthProvider";
 
 import Pwa from "@/components/Pwa";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
-import TempFab from "@/components/QuickActionsFab";
-import ComplianceIndicatorShell from "@/components/ComplianceIndicatorShell";
+import FabShell from "@/app/FabShell";
 import HeaderShell from "@/app/app/HeaderShell"; // ← your existing header with NavTabs
 // src/app/layout.tsx
 
@@ -49,8 +48,8 @@ export default function RootLayout({
                 </main>
 
                 {/* Floating / global widgets */}
-                <ComplianceIndicatorShell />
-                <TempFab />
+               
+                <FabShell />
                 <ServiceWorkerRegister />
               </AuthProvider>
             </GlobalLoadingProvider>
