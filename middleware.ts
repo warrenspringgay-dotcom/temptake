@@ -13,6 +13,8 @@ const PUBLIC_PATHS = new Set<string>([
   "/guides/",
   "/client-launch",
   "/launch",
+  "/demo-wall",
+
   "/app", // demo dashboard (public)
 ]);
 
