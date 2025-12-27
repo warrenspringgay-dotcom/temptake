@@ -3,10 +3,15 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
 const PUBLIC_PATHS = new Set<string>([
-  "/",
+   "/", // home
   "/login",
   "/signup",
-  "/auth/callback",
+  "/reset-password",
+  "/help",
+  "/guides",
+  "/client-launch",
+  "/launch",
+  "/app", // demo dashboard (public)
 ]);
 
 export async function middleware(req: NextRequest) {
