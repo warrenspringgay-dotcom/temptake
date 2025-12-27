@@ -654,7 +654,7 @@ export default function DashboardPage() {
 
   /* ---------- render ---------- */
 return (
-  <div className="mx-auto max-w-5xl px-4 pt-2 pb-6 space-y-4">
+  <>
     <WelcomeGate />
 
     <OnboardingBanner />
@@ -926,7 +926,7 @@ return (
           Loading dashboard…
         </p>
       )}
-    </div>
+    </>
   );
 }
 

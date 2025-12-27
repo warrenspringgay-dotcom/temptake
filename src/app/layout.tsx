@@ -31,7 +31,8 @@ export default function RootLayout({
         <meta name="theme-color" content="#111111" />
         <link rel="manifest" href="/manifest.webmanifest" />
       </head>
-      <body className="bg-gray-100 text-gray-900">
+      <body className="bg-gray-100 text-gray-900 overflow-x-hidden">
+
         <PHProvider>
           <ToastProvider>
             <GlobalLoadingProvider>
