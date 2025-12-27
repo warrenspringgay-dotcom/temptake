@@ -79,17 +79,17 @@ export default function PricingPage() {
                 </ul>
 
                 <div className="mt-5">
-                  <button
-                    type="button"
-                    data-tally-open="obb4vX"
-                    data-tally-layout="modal"
-                    data-tally-emoji-text="👋"
-                    data-tally-emoji-animation="wave"
-                    data-tally-auto-close="0"
-                    className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
-                  >
-                    Apply for early access
-                  </button>
+               <button
+                type="button"
+                data-tally-open="obb4vX"
+                data-tally-layout="modal"
+                data-tally-emoji-text="👋"
+                data-tally-emoji-animation="wave"
+                data-tally-auto-close="0"
+                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 transition hover:brightness-105"
+              >
+                Join the early access list
+              </button>
                 </div>
               </article>
 
@@ -138,12 +138,17 @@ export default function PricingPage() {
                 </p>
 
                 <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-                  <Link
-                    href="/launch#waitlist"
-                    className="rounded-2xl bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-950 shadow-sm hover:bg-emerald-600"
-                  >
-                    Join early access
-                  </Link>
+                <button
+                type="button"
+                data-tally-open="obb4vX"
+                data-tally-layout="modal"
+                data-tally-emoji-text="👋"
+                data-tally-emoji-animation="wave"
+                data-tally-auto-close="0"
+                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 transition hover:brightness-105"
+              >
+                Join the early access list
+              </button>
                   <Link
                     href="/app"
                     className="rounded-2xl border border-slate-600 bg-transparent px-4 py-2 text-xs font-medium text-slate-100 hover:bg-slate-900"
@@ -169,12 +174,17 @@ export default function PricingPage() {
                 <span className="rounded-full border border-slate-600 px-3 py-1 text-[11px] text-slate-200">
                   Custom per-site pricing
                 </span>
-                <Link
-                  href="/launch#waitlist"
-                  className="rounded-2xl bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-950 shadow-sm hover:bg-emerald-600"
-                >
-                  Talk to us about 6+ sites
-                </Link>
+                 <button
+                type="button"
+                data-tally-open="obb4vX"
+                data-tally-layout="modal"
+                data-tally-emoji-text="👋"
+                data-tally-emoji-animation="wave"
+                data-tally-auto-close="0"
+                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 transition hover:brightness-105"
+              >
+                Join the early access list
+              </button>
               </div>
             </div>
 
@@ -242,12 +252,17 @@ export default function PricingPage() {
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Link
-                  href="/launch#waitlist"
-                  className="rounded-2xl bg-emerald-500 px-5 py-2 text-sm font-semibold text-slate-950 shadow-sm hover:bg-emerald-600"
-                >
-                  Join early access
-                </Link>
+                 <button
+                type="button"
+                data-tally-open="obb4vX"
+                data-tally-layout="modal"
+                data-tally-emoji-text="👋"
+                data-tally-emoji-animation="wave"
+                data-tally-auto-close="0"
+                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 transition hover:brightness-105"
+              >
+                Join the early access list
+              </button>
                 <Link
                   href="/app"
                   className="rounded-2xl border border-emerald-400/50 bg-transparent px-4 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-500/10"
