@@ -35,7 +35,6 @@ type Member = {
   active: boolean | null;
   notes?: string | null;
   training_areas?: TrainingArea[] | null; // stored on team_members as text[]
-  staff_id?: string | null; // NEW: link to staff.id for certificates
 };
 
 type TrainingCert = {
@@ -84,15 +83,14 @@ function pillClassSelected(selected: boolean) {
 }
 
 /**
- * Compliance policy: how long before an area turns "red".
- * This does NOT affect UI here, it drives the due_on dates in the tracking table.
+ * 12-month policy for pills.
+ * If you want "12 months" exactly regardless of leap years,
+ * we do date + 12 months (not 365 days).
  */
-const TRAINING_INTERVAL_DAYS = 90;
-
-function addDaysISODate(days: number) {
+function addMonthsISODate(months: number) {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() + days);
+  d.setMonth(d.getMonth() + months);
   return d.toISOString().slice(0, 10);
 }
 
@@ -138,7 +136,7 @@ export default function TeamManager() {
 
   const [highlightId, setHighlightId] = useState<string | null>(null);
 
-  /* ---------- Certificates state (NEW) ---------- */
+  /* ---------- Certificates state ---------- */
   const [certsLoading, setCertsLoading] = useState(false);
   const [certs, setCerts] = useState<TrainingCert[]>([]);
   const [certForm, setCertForm] = useState({
@@ -180,7 +178,7 @@ export default function TeamManager() {
 
       const { data, error } = await supabase
         .from("team_members")
-        .select("id, initials, name, email, role, phone, active, notes, training_areas, staff_id")
+        .select("id, initials, name, email, role, phone, active, notes, training_areas")
         .eq("org_id", id)
         .order("name", { ascending: true });
 
@@ -206,7 +204,7 @@ export default function TeamManager() {
             active: true,
             training_areas: [],
           })
-          .select("id, initials, name, email, role, phone, active, notes, training_areas, staff_id")
+          .select("id, initials, name, email, role, phone, active, notes, training_areas")
           .maybeSingle();
 
         if (!insErr && inserted) {
@@ -290,7 +288,6 @@ export default function TeamManager() {
       active: true,
       notes: "",
       training_areas: [],
-      staff_id: null,
     });
     setEditOpen(true);
   }
@@ -312,20 +309,24 @@ export default function TeamManager() {
     setEditing({ ...editing, training_areas: next });
   }
 
+  /**
+   * Keep pills in team_members AND also track expiry per pill in team_training_area_status
+   * expires_on = today + 12 months.
+   */
   async function syncTrainingTracking(memberId: string, selectedAreas: TrainingArea[]) {
     if (!orgId) return;
 
     const trained_on = todayISODate();
-    const due_on = addDaysISODate(TRAINING_INTERVAL_DAYS);
+    const expires_on = addMonthsISODate(12);
 
+    // Upsert selected
     if (selectedAreas.length) {
       const upserts = selectedAreas.map((area) => ({
         org_id: orgId,
         team_member_id: memberId,
         area,
         trained_on,
-        due_on,
-        interval_days: TRAINING_INTERVAL_DAYS,
+        expires_on,
       }));
 
       const { error: upErr } = await supabase
@@ -335,6 +336,7 @@ export default function TeamManager() {
       if (upErr) throw upErr;
     }
 
+    // Delete unselected
     const allAreaKeys = TRAINING_AREAS.map((a) => a.key);
     const unselected = allAreaKeys.filter((a) => !selectedAreas.includes(a));
 
@@ -433,82 +435,22 @@ export default function TeamManager() {
     }
   }
 
-  /* -------------------- Certificates logic (NEW) -------------------- */
-  async function ensureStaffForMember(m: Member): Promise<string | null> {
-    if (!orgId) return null;
-
-    // If already linked, trust it
-    if (m.staff_id) return m.staff_id;
-
-    // Try to find existing staff by initials in same org
-    const ini = (m.initials ?? safeInitials(m)).trim().toUpperCase();
-    if (!ini) return null;
-
-    const { data: existing, error: exErr } = await supabase
-      .from("staff")
-      .select("id")
-      .eq("org_id", orgId)
-      .eq("initials", ini)
-      .maybeSingle();
-
-    if (exErr) throw exErr;
-
-    let staffId = existing?.id as string | undefined;
-
-    if (!staffId) {
-      const { data: created, error: insErr } = await supabase
-        .from("staff")
-        .insert({
-          org_id: orgId,
-          name: m.name,
-          initials: ini,
-        })
-        .select("id")
-        .single();
-
-      if (insErr) throw insErr;
-      staffId = created?.id as string | undefined;
-    }
-
-    if (!staffId) return null;
-
-    // Store link on team_members for future
-    const { error: upErr } = await supabase
-      .from("team_members")
-      .update({ staff_id: staffId })
-      .eq("id", m.id)
-      .eq("org_id", orgId);
-
-    if (upErr) throw upErr;
-
-    // Update local state too
-    setRows((prev) => prev.map((x) => (x.id === m.id ? { ...x, staff_id: staffId } : x)));
-    if (viewFor?.id === m.id) setViewFor((p) => (p ? { ...p, staff_id: staffId } : p));
-
-    return staffId;
-  }
-
+  /* -------------------- Certificates / Education (team_members-based) -------------------- */
   async function loadCertsForMember(m: Member) {
     setCerts([]);
     setCertsLoading(true);
     try {
-      const staffId = await ensureStaffForMember(m);
-      if (!staffId) {
-        setCerts([]);
-        return;
-      }
-
       const { data, error } = await supabase
         .from("trainings")
         .select("id,type,awarded_on,expires_on,certificate_url,notes")
-        .eq("staff_id", staffId)
+        .eq("team_member_id", m.id)
         .order("awarded_on", { ascending: false })
         .limit(10);
 
       if (error) throw error;
       setCerts((data ?? []) as TrainingCert[]);
     } catch (e: any) {
-      alert(e?.message ?? "Failed to load certificates.");
+      alert(e?.message ?? "Failed to load education/certificates.");
       setCerts([]);
     } finally {
       setCertsLoading(false);
@@ -520,19 +462,16 @@ export default function TeamManager() {
     if (!orgId) return alert("No organisation found.");
 
     const type = (certForm.type ?? "").trim();
-    if (!type) return alert("Certificate type is required.");
+    if (!type) return alert("Course type is required.");
 
     setCertSaving(true);
     try {
-      const staffId = await ensureStaffForMember(viewFor);
-      if (!staffId) return alert("Could not link this person to a staff record (missing initials).");
-
       const { data: auth } = await supabase.auth.getUser();
       const created_by = auth.user?.id ?? null;
 
       const { error } = await supabase.from("trainings").insert({
         org_id: orgId,
-        staff_id: staffId,
+        team_member_id: viewFor.id,
         type,
         awarded_on: certForm.awarded_on || null,
         expires_on: certForm.expires_on || null,
@@ -543,7 +482,6 @@ export default function TeamManager() {
 
       if (error) throw error;
 
-      // reset minimal
       setCertForm({
         type: "Food Hygiene Level 2",
         awarded_on: "",
@@ -554,13 +492,12 @@ export default function TeamManager() {
 
       await loadCertsForMember(viewFor);
     } catch (e: any) {
-      alert(e?.message ?? "Failed to add certificate.");
+      alert(e?.message ?? "Failed to add education/certificate.");
     } finally {
       setCertSaving(false);
     }
   }
 
-  /* -------------------- Card / View -------------------- */
   async function openCard(m: Member) {
     setViewFor(m);
     setViewOpen(true);
@@ -882,7 +819,7 @@ export default function TeamManager() {
                   })}
                 </div>
                 <p className="mt-1 text-[11px] text-slate-500">
-                  Tap to toggle. No pill = no training recorded.
+                  Tap to toggle. Each selected area is recorded as trained today and expires in 12 months.
                 </p>
               </div>
 
@@ -914,7 +851,7 @@ export default function TeamManager() {
         </div>
       )}
 
-      {/* View modal (now includes certificates) */}
+      {/* View modal (includes education/certificates) */}
       {viewOpen && viewFor && (
         <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setViewOpen(false)}>
           <div
@@ -953,10 +890,10 @@ export default function TeamManager() {
                 <span className="font-medium">Notes:</span> {viewFor.notes ?? "—"}
               </div>
 
-              {/* Certificates block (NEW) */}
+              {/* Education / certificates */}
               <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <div className="text-sm font-semibold text-slate-900">Certificates</div>
+                  <div className="text-sm font-semibold text-slate-900">Education / Courses</div>
                   <button
                     onClick={() => void loadCertsForMember(viewFor)}
                     className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
@@ -996,10 +933,10 @@ export default function TeamManager() {
                     ))}
                   </div>
                 ) : (
-                  <div className="text-xs text-slate-500">No certificates recorded.</div>
+                  <div className="text-xs text-slate-500">No courses recorded.</div>
                 )}
 
-                {/* Add certificate form (minimal) */}
+                {/* Add course form */}
                 <div className="mt-3 grid gap-2">
                   <div className="grid grid-cols-2 gap-2">
                     <input
@@ -1044,12 +981,12 @@ export default function TeamManager() {
                       disabled={certSaving}
                       className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                     >
-                      {certSaving ? "Saving…" : "Add certificate"}
+                      {certSaving ? "Saving…" : "Add education"}
                     </button>
                   </div>
                 </div>
               </div>
-              {/* End certificates */}
+              {/* End education */}
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
