@@ -101,6 +101,20 @@ type CleaningRunRow = {
   task: string;
 };
 
+type TrainingAreaStatus = "green" | "amber" | "red" | "unknown";
+
+type TrainingAreaRow = {
+  member_id: string;
+  name: string;
+  initials: string | null;
+  email: string | null;
+  area: string;
+  awarded_on: string | null; // ISO date
+  expires_on: string | null; // ISO date
+  days_until: number | null;
+  status: TrainingAreaStatus;
+};
+
 /* ===================== Date helpers ===================== */
 
 function safeDate(val: any): Date | null {
@@ -141,10 +155,173 @@ function addDaysISO(ymd: string, days: number) {
   return toISODate(d);
 }
 
+function addDays(date: Date, days: number) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
 /* ===================== Type guards ===================== */
 
 function isTeamRow(v: TeamRow | null): v is TeamRow {
   return v !== null;
+}
+
+/* ===================== SFBB training areas ===================== */
+
+// Keep this aligned with your SFBB concept. These are the ones you described.
+const SFBB_AREAS = [
+  "Cross-contamination",
+  "Cleaning",
+  "Chilling",
+  "Cooking",
+  "Allergens",
+  "Management",
+] as const;
+
+type TrainingAreasValue =
+  | null
+  | undefined
+  | string[]
+  | Record<string, any>
+  | Array<{ area?: string; name?: string; awarded_on?: any; expires_on?: any; added_on?: any }>;
+
+/**
+ * Normalise `team_members.training_areas` into:
+ * { [areaName]: { awarded_on?: ISODate, expires_on?: ISODate } }
+ *
+ * Supports:
+ *  - Object map: { "Cleaning": { awarded_on, expires_on } }
+ *  - Array<string>: ["Cleaning","Allergens"]
+ *  - Array<object>: [{ area:"Cleaning", awarded_on:"...", expires_on:"..." }]
+ */
+function normaliseTrainingAreas(val: TrainingAreasValue): Record<string, { awarded_on?: string; expires_on?: string }> {
+  const out: Record<string, { awarded_on?: string; expires_on?: string }> = {};
+
+  if (!val) return out;
+
+  // Array<string>
+  if (Array.isArray(val) && val.every((x) => typeof x === "string")) {
+    for (const area of val as string[]) out[String(area)] = {};
+    return out;
+  }
+
+  // Array<object>
+  if (Array.isArray(val)) {
+    for (const item of val as any[]) {
+      const area = String(item?.area ?? item?.name ?? "").trim();
+      if (!area) continue;
+
+      const awarded = item?.awarded_on ?? item?.added_on ?? null;
+      const expires = item?.expires_on ?? null;
+
+      out[area] = {
+        awarded_on: awarded ? toISODate(awarded) : undefined,
+        expires_on: expires ? toISODate(expires) : undefined,
+      };
+    }
+    return out;
+  }
+
+  // Object map
+  if (typeof val === "object") {
+    for (const [area, meta] of Object.entries(val as Record<string, any>)) {
+      const awarded = meta?.awarded_on ?? meta?.added_on ?? null;
+      const expires = meta?.expires_on ?? null;
+      out[String(area)] = {
+        awarded_on: awarded ? toISODate(awarded) : undefined,
+        expires_on: expires ? toISODate(expires) : undefined,
+      };
+    }
+    return out;
+  }
+
+  return out;
+}
+
+function computeTrainingStatus(awardedISO: string | null, expiresISO: string | null) {
+  const today0 = new Date();
+  today0.setHours(0, 0, 0, 0);
+
+  const awarded = safeDate(awardedISO);
+  const expires = safeDate(expiresISO);
+
+  // If awarded exists but expires doesn't, default to 12 months (365 days).
+  let effectiveExpires: Date | null = expires;
+  if (!effectiveExpires && awarded) effectiveExpires = addDays(awarded, 365);
+
+  if (!awarded && !effectiveExpires) {
+    return { expires_on: null as string | null, days_until: null as number | null, status: "unknown" as TrainingAreaStatus };
+  }
+
+  const exp0 = effectiveExpires ? new Date(effectiveExpires) : null;
+  if (exp0) exp0.setHours(0, 0, 0, 0);
+
+  const days_until = exp0 ? Math.round((exp0.getTime() - today0.getTime()) / 86400000) : null;
+
+  if (days_until == null) return { expires_on: null, days_until: null, status: "unknown" as TrainingAreaStatus };
+  if (days_until < 0) return { expires_on: toISODate(exp0!), days_until, status: "red" as TrainingAreaStatus };
+  if (days_until <= 30) return { expires_on: toISODate(exp0!), days_until, status: "amber" as TrainingAreaStatus };
+  return { expires_on: toISODate(exp0!), days_until, status: "green" as TrainingAreaStatus };
+}
+
+async function fetchTrainingAreasReport(orgId: string): Promise<TrainingAreaRow[]> {
+  const { data, error } = await supabase
+    .from("team_members")
+    .select("id,name,initials,email,active,training_areas")
+    .eq("org_id", orgId)
+    .order("name", { ascending: true })
+    .limit(5000);
+
+  if (error) throw error;
+
+  const rows: TrainingAreaRow[] = [];
+
+  for (const m of (data ?? []) as any[]) {
+    if (m.active === false) continue;
+
+    const member_id = String(m.id);
+    const name = String(m.name ?? "—");
+    const initials = m.initials ? String(m.initials) : null;
+    const email = m.email ? String(m.email) : null;
+
+    const normal = normaliseTrainingAreas(m.training_areas as TrainingAreasValue);
+
+    // Ensure we also surface missing areas explicitly (so audits show gaps)
+    for (const area of SFBB_AREAS) {
+      const meta = normal[String(area)] ?? {};
+      const awarded_on = meta.awarded_on ?? null;
+      const expires_on_in = meta.expires_on ?? null;
+
+      const computed = computeTrainingStatus(awarded_on, expires_on_in);
+
+      rows.push({
+        member_id,
+        name,
+        initials,
+        email,
+        area: String(area),
+        awarded_on,
+        expires_on: computed.expires_on,
+        days_until: computed.days_until,
+        status: computed.status,
+      });
+    }
+  }
+
+  // Sort: worst first, then soonest expiry
+  const rank: Record<TrainingAreaStatus, number> = { red: 0, amber: 1, unknown: 2, green: 3 };
+  rows.sort((a, b) => {
+    const ra = rank[a.status] ?? 9;
+    const rb = rank[b.status] ?? 9;
+    if (ra !== rb) return ra - rb;
+
+    const da = a.days_until ?? 999999;
+    const db = b.days_until ?? 999999;
+    return da - db;
+  });
+
+  return rows;
 }
 
 /* ===================== Data fetch helpers ===================== */
@@ -372,7 +549,8 @@ async function fetchIncidentsTrail(
 
 /**
  * Training due / overdue in next `withinDays` days.
- * Sourced from `trainings` table (expires_on) + `staff` for names.
+ * NOTE: this is your existing “courses/qualifications” model (trainings table).
+ * If you migrate trainings to team_members later, update this.
  */
 async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[]> {
   const { data: tData, error: tErr } = await supabase
@@ -639,6 +817,10 @@ export default function ReportsPage() {
   const [signoffs, setSignoffs] = useState<SignoffRow[] | null>(null);
   const [cleaningRuns, setCleaningRuns] = useState<CleaningRunRow[] | null>(null);
 
+  // NEW: SFBB training pills -> report table
+  const [trainingAreas, setTrainingAreas] = useState<TrainingAreaRow[] | null>(null);
+  const [showAllTrainingAreas, setShowAllTrainingAreas] = useState(false);
+
   const [showAllTemps, setShowAllTemps] = useState(false);
   const [showAllEducation, setShowAllEducation] = useState(false);
   const [showAllIncidents, setShowAllIncidents] = useState(false);
@@ -676,6 +858,11 @@ export default function ReportsPage() {
     if (!cleaningRuns) return null;
     return showAllCleaningRuns ? cleaningRuns : cleaningRuns.slice(0, 10);
   }, [cleaningRuns, showAllCleaningRuns]);
+
+  const visibleTrainingAreas = useMemo(() => {
+    if (!trainingAreas) return null;
+    return showAllTrainingAreas ? trainingAreas : trainingAreas.slice(0, 12);
+  }, [trainingAreas, showAllTrainingAreas]);
 
   /* ---------- boot: org + locations ---------- */
 
@@ -736,15 +923,20 @@ export default function ReportsPage() {
 
       if (includeAncillary) {
         const withinDays = 90;
-        const [m, a, e] = await Promise.all([
+        const [m, a, e, ta] = await Promise.all([
           fetchTeamDue(withinDays, orgIdValue),
           fetchAllergenLog(withinDays, orgIdValue),
           fetchEducation(orgIdValue),
+          fetchTrainingAreasReport(orgIdValue),
         ]);
+
         setTeamDue(m);
         setAllergenLog(a);
         setEducation(e);
+        setTrainingAreas(ta);
+
         setShowAllEducation(false);
+        setShowAllTrainingAreas(false);
       }
     } catch (e: any) {
       setErr(e?.message ?? "Failed to run report.");
@@ -753,6 +945,7 @@ export default function ReportsPage() {
       setAllergenLog(null);
       setStaffReviews(null);
       setEducation(null);
+      setTrainingAreas(null);
       setCleaningCount(0);
       setIncidents(null);
       setSignoffs(null);
@@ -993,6 +1186,98 @@ export default function ReportsPage() {
                 className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
               >
                 {showAllTemps ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* NEW: SFBB Training (pills) */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-1 text-base font-semibold">Training (SFBB areas)</h3>
+          <p className="mb-3 text-xs text-slate-500">
+            Pulled from team_members.training_areas. Each area is assumed valid for 12 months from awarded date.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Initials</th>
+                  <th className="py-2 pr-3">Email</th>
+                  <th className="py-2 pr-3">Area</th>
+                  <th className="py-2 pr-3">Awarded</th>
+                  <th className="py-2 pr-3">Expires</th>
+                  <th className="py-2 pr-3">Days</th>
+                  <th className="py-2 pr-3">Status</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {!trainingAreas ? (
+                  <tr>
+                    <td colSpan={8} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : trainingAreas.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-6 text-center text-slate-500">
+                      No team members found.
+                    </td>
+                  </tr>
+                ) : (
+                  visibleTrainingAreas!.map((r, idx) => (
+                    <tr key={`${r.member_id}-${r.area}-${idx}`} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">{r.name}</td>
+                      <td className="py-2 pr-3">{r.initials ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.email ?? "—"}</td>
+                      <td className="py-2 pr-3 font-semibold">{r.area}</td>
+                      <td className="py-2 pr-3">{r.awarded_on ? formatISOToUK(r.awarded_on) : "—"}</td>
+                      <td className="py-2 pr-3">{r.expires_on ? formatISOToUK(r.expires_on) : "—"}</td>
+                      <td className={`py-2 pr-3 ${r.days_until != null && r.days_until < 0 ? "text-red-700" : ""}`}>
+                        {r.days_until != null ? r.days_until : "—"}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                            r.status === "green"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : r.status === "amber"
+                              ? "bg-amber-100 text-amber-800"
+                              : r.status === "red"
+                              ? "bg-red-100 text-red-800"
+                              : "bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          {r.status === "green"
+                            ? "Valid"
+                            : r.status === "amber"
+                            ? "Due soon"
+                            : r.status === "red"
+                            ? "Overdue"
+                            : "No date"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {trainingAreas && trainingAreas.length > 12 && (
+            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
+              <div>
+                Showing {showAllTrainingAreas ? trainingAreas.length : Math.min(12, trainingAreas.length)} of{" "}
+                {trainingAreas.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllTrainingAreas((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllTrainingAreas ? "Show first 12" : "View all"}
               </button>
             </div>
           )}
@@ -1359,7 +1644,9 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3">{r.reviewer_name || r.reviewer_email || "—"}</td>
                       <td className="py-2 pr-3">{r.category}</td>
                       <td className="py-2 pr-3">{r.rating}</td>
-                      <td className="max-w-xs py-2 pr-3">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
+                      <td className="max-w-xs py-2 pr-3">
+                        {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                      </td>
                     </tr>
                   ))
                 )}
