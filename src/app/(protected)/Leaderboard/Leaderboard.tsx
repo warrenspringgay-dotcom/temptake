@@ -84,7 +84,7 @@ export default function Leaderboard() {
 
   return (
     <>
-      <div className="max-w-5xl mx-auto px-3 sm:px-4 py-4 space-y-4">
+      <>
         {/* Header + Employee of the month card */}
         <div className="flex flex-wrap items-start gap-4">
           <div className="flex-1 min-w-[220px]">
@@ -210,7 +210,7 @@ export default function Leaderboard() {
             or log food temperatures.
           </p>
         </div>
-      </div>
+      </>
 
       {/* FAB fixed bottom-right on this page too */}
       <QuickActionsFab />

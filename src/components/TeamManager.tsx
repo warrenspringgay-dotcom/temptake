@@ -5,10 +5,26 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import ActionMenu from "@/components/ActionMenu";
-import { saveTrainingServer } from "@/app/actions/training";
 import { inviteTeamMemberServer } from "@/app/actions/team";
 
 /* -------------------- Types -------------------- */
+type TrainingArea =
+  | "cross_contamination"
+  | "cleaning"
+  | "chilling"
+  | "cooking"
+  | "allergens"
+  | "management";
+
+const TRAINING_AREAS: { key: TrainingArea; label: string; short: string }[] = [
+  { key: "cross_contamination", label: "Cross-contamination", short: "Cross-contam" },
+  { key: "cleaning", label: "Cleaning", short: "Cleaning" },
+  { key: "chilling", label: "Chilling", short: "Chilling" },
+  { key: "cooking", label: "Cooking", short: "Cooking" },
+  { key: "allergens", label: "Allergens", short: "Allergens" },
+  { key: "management", label: "Management", short: "Management" },
+];
+
 type Member = {
   id: string;
   initials: string | null;
@@ -18,25 +34,20 @@ type Member = {
   phone: string | null;
   active: boolean | null;
   notes?: string | null;
+  training_areas?: TrainingArea[] | null; // stored on team_members as text[]
+  staff_id?: string | null; // NEW: link to staff.id for certificates
 };
 
-type Training = {
+type TrainingCert = {
   id: string;
-  staff_id: string;
   type: string | null;
+  awarded_on: string | null;
+  expires_on: string | null;
   certificate_url: string | null;
-  awarded_on: string | null; // yyyy-mm-dd
-  expires_on: string | null; // yyyy-mm-dd
   notes: string | null;
 };
 
 /* -------------------- Helpers -------------------- */
-function fmt(iso?: string | null) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString();
-}
-
 function safeInitials(m: Member): string {
   const fromField = (m.initials ?? "").trim().toUpperCase();
   if (fromField) return fromField;
@@ -51,6 +62,51 @@ function prettyRole(role: string | null) {
   if (!role) return "—";
   const r = role.toString().toLowerCase();
   return r.charAt(0).toUpperCase() + r.slice(1);
+}
+
+function isTrainingArea(x: string): x is TrainingArea {
+  return TRAINING_AREAS.some((a) => a.key === x);
+}
+
+function normalizeAreas(arr: any): TrainingArea[] {
+  if (!Array.isArray(arr)) return [];
+  const cleaned = arr
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean)
+    .filter(isTrainingArea);
+  return Array.from(new Set(cleaned));
+}
+
+function pillClassSelected(selected: boolean) {
+  return selected
+    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
+}
+
+/**
+ * Compliance policy: how long before an area turns "red".
+ * This does NOT affect UI here, it drives the due_on dates in the tracking table.
+ */
+const TRAINING_INTERVAL_DAYS = 90;
+
+function addDaysISODate(days: number) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function todayISODate() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10);
+}
+
+function formatDate(d: string | null | undefined) {
+  if (!d) return "—";
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return d;
+  return dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
 /* ================================================= */
@@ -71,21 +127,6 @@ export default function TeamManager() {
   const [viewOpen, setViewOpen] = useState(false);
   const [viewFor, setViewFor] = useState<Member | null>(null);
 
-  const [eduOpen, setEduOpen] = useState(false);
-  const [eduFor, setEduFor] = useState<Member | null>(null);
-  const [eduSaving, setEduSaving] = useState(false);
-  const [eduForm, setEduForm] = useState({
-    course: "",
-    provider: "",
-    certificateUrl: "",
-    completedOn: "",
-    expiryOn: "",
-    notes: "",
-  });
-
-  const [eduList, setEduList] = useState<Training[]>([]);
-  const [eduListLoading, setEduListLoading] = useState(false);
-
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteForm, setInviteForm] = useState({
     email: "",
@@ -95,8 +136,19 @@ export default function TeamManager() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
 
-  // Highlight for deep-linked member (from ?staff=)
   const [highlightId, setHighlightId] = useState<string | null>(null);
+
+  /* ---------- Certificates state (NEW) ---------- */
+  const [certsLoading, setCertsLoading] = useState(false);
+  const [certs, setCerts] = useState<TrainingCert[]>([]);
+  const [certForm, setCertForm] = useState({
+    type: "Food Hygiene Level 2",
+    awarded_on: "",
+    expires_on: "",
+    certificate_url: "",
+    notes: "",
+  });
+  const [certSaving, setCertSaving] = useState(false);
 
   /* -------------------- Load team + determine owner -------------------- */
   async function load() {
@@ -128,13 +180,18 @@ export default function TeamManager() {
 
       const { data, error } = await supabase
         .from("team_members")
-        .select("id, initials, name, email, role, phone, active, notes")
+        .select("id, initials, name, email, role, phone, active, notes, training_areas, staff_id")
         .eq("org_id", id)
         .order("name", { ascending: true });
 
       if (error) throw error;
-      members = (data ?? []) as Member[];
 
+      members = (data ?? []).map((m: any) => ({
+        ...m,
+        training_areas: normalizeAreas(m.training_areas),
+      })) as Member[];
+
+      // Auto-create owner row if empty
       if (members.length === 0 && id && userEmail) {
         const { data: inserted, error: insErr } = await supabase
           .from("team_members")
@@ -147,20 +204,24 @@ export default function TeamManager() {
             phone: null,
             notes: null,
             active: true,
+            training_areas: [],
           })
-          .select("id, initials, name, email, role, phone, active, notes")
+          .select("id, initials, name, email, role, phone, active, notes, training_areas, staff_id")
           .maybeSingle();
 
         if (!insErr && inserted) {
-          members = [inserted as Member];
+          members = [
+            {
+              ...(inserted as any),
+              training_areas: normalizeAreas((inserted as any).training_areas),
+            },
+          ];
           ownerFlag = true;
         }
       }
 
       if (!ownerFlag && userEmail && members.length) {
-        const me = members.find(
-          (m) => m.email && m.email.toLowerCase() === userEmail
-        );
+        const me = members.find((m) => m.email && m.email.toLowerCase() === userEmail);
         const role = (me?.role ?? "").toLowerCase();
         ownerFlag = role === "owner" || role === "admin";
       }
@@ -187,8 +248,7 @@ export default function TeamManager() {
 
     const needle = staffParam.trim().toUpperCase();
 
-    // Try match by team member id first
-    let match =
+    const match =
       rows.find((m) => m.id === staffParam) ??
       rows.find((m) => safeInitials(m).toUpperCase() === needle);
 
@@ -198,11 +258,9 @@ export default function TeamManager() {
     setViewOpen(true);
     setHighlightId(match.id);
 
-    // Clean the URL so future refreshes don't keep reopening
     router.replace("/team");
   }, [searchParams, rows, router]);
 
-  // Auto fade highlight after a few seconds
   useEffect(() => {
     if (!highlightId) return;
     const timer = setTimeout(() => setHighlightId(null), 8000);
@@ -231,13 +289,64 @@ export default function TeamManager() {
       phone: "",
       active: true,
       notes: "",
+      training_areas: [],
+      staff_id: null,
     });
     setEditOpen(true);
   }
 
   function openEdit(m: Member) {
-    setEditing({ ...m });
+    setEditing({
+      ...m,
+      training_areas: normalizeAreas(m.training_areas),
+    });
     setEditOpen(true);
+  }
+
+  function toggleArea(area: TrainingArea) {
+    if (!editing) return;
+    const current = normalizeAreas(editing.training_areas);
+    const next = current.includes(area)
+      ? current.filter((x) => x !== area)
+      : [...current, area];
+    setEditing({ ...editing, training_areas: next });
+  }
+
+  async function syncTrainingTracking(memberId: string, selectedAreas: TrainingArea[]) {
+    if (!orgId) return;
+
+    const trained_on = todayISODate();
+    const due_on = addDaysISODate(TRAINING_INTERVAL_DAYS);
+
+    if (selectedAreas.length) {
+      const upserts = selectedAreas.map((area) => ({
+        org_id: orgId,
+        team_member_id: memberId,
+        area,
+        trained_on,
+        due_on,
+        interval_days: TRAINING_INTERVAL_DAYS,
+      }));
+
+      const { error: upErr } = await supabase
+        .from("team_training_area_status")
+        .upsert(upserts, { onConflict: "team_member_id,area" });
+
+      if (upErr) throw upErr;
+    }
+
+    const allAreaKeys = TRAINING_AREAS.map((a) => a.key);
+    const unselected = allAreaKeys.filter((a) => !selectedAreas.includes(a));
+
+    if (unselected.length) {
+      const { error: delErr } = await supabase
+        .from("team_training_area_status")
+        .delete()
+        .eq("team_member_id", memberId)
+        .in("area", unselected);
+
+      if (delErr) throw delErr;
+    }
   }
 
   async function saveMember() {
@@ -247,6 +356,7 @@ export default function TeamManager() {
       if (!editing.name.trim()) return alert("Name is required.");
 
       const roleValue = (editing.role ?? "").trim().toLowerCase() || "staff";
+      const trainingAreas = normalizeAreas(editing.training_areas);
 
       if (editing.id) {
         const updatePayload: any = {
@@ -256,6 +366,7 @@ export default function TeamManager() {
           phone: editing.phone?.trim() || null,
           notes: editing.notes?.trim() || null,
           active: editing.active ?? true,
+          training_areas: trainingAreas,
         };
 
         if (isOwner) {
@@ -268,23 +379,35 @@ export default function TeamManager() {
           .eq("id", editing.id)
           .eq("org_id", orgId);
         if (error) throw error;
+
+        await syncTrainingTracking(editing.id, trainingAreas);
       } else {
         if (!isOwner) {
           alert("Only the owner can add team members.");
           return;
         }
 
-        const { error } = await supabase.from("team_members").insert({
-          org_id: orgId,
-          initials: editing.initials?.trim() || null,
-          name: editing.name.trim(),
-          email: editing.email?.trim() || null,
-          role: roleValue,
-          phone: editing.phone?.trim() || null,
-          notes: editing.notes?.trim() || null,
-          active: true,
-        });
+        const { data: inserted, error } = await supabase
+          .from("team_members")
+          .insert({
+            org_id: orgId,
+            initials: editing.initials?.trim() || null,
+            name: editing.name.trim(),
+            email: editing.email?.trim() || null,
+            role: roleValue,
+            phone: editing.phone?.trim() || null,
+            notes: editing.notes?.trim() || null,
+            active: true,
+            training_areas: trainingAreas,
+          })
+          .select("id")
+          .single();
+
         if (error) throw error;
+
+        if (inserted?.id) {
+          await syncTrainingTracking(inserted.id, trainingAreas);
+        }
       }
 
       setEditOpen(false);
@@ -302,10 +425,7 @@ export default function TeamManager() {
     }
     if (!confirm("Delete this team member?")) return;
     try {
-      const { error } = await supabase
-        .from("team_members")
-        .delete()
-        .eq("id", id);
+      const { error } = await supabase.from("team_members").delete().eq("id", id);
       if (error) throw error;
       await load();
     } catch (e: any) {
@@ -313,109 +433,141 @@ export default function TeamManager() {
     }
   }
 
-  /* -------------------- Training load / save -------------------- */
+  /* -------------------- Certificates logic (NEW) -------------------- */
+  async function ensureStaffForMember(m: Member): Promise<string | null> {
+    if (!orgId) return null;
 
-  async function loadTrainingsFor(member: Member) {
-    setEduListLoading(true);
-    try {
-      const initials = safeInitials(member);
-      if (!initials) {
-        setEduList([]);
-        return;
-      }
+    // If already linked, trust it
+    if (m.staff_id) return m.staff_id;
 
-      const { data: staffRow, error: staffErr } = await supabase
+    // Try to find existing staff by initials in same org
+    const ini = (m.initials ?? safeInitials(m)).trim().toUpperCase();
+    if (!ini) return null;
+
+    const { data: existing, error: exErr } = await supabase
+      .from("staff")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("initials", ini)
+      .maybeSingle();
+
+    if (exErr) throw exErr;
+
+    let staffId = existing?.id as string | undefined;
+
+    if (!staffId) {
+      const { data: created, error: insErr } = await supabase
         .from("staff")
+        .insert({
+          org_id: orgId,
+          name: m.name,
+          initials: ini,
+        })
         .select("id")
-        .eq("initials", initials)
-        .maybeSingle();
+        .single();
 
-      if (staffErr || !staffRow?.id) {
-        setEduList([]);
+      if (insErr) throw insErr;
+      staffId = created?.id as string | undefined;
+    }
+
+    if (!staffId) return null;
+
+    // Store link on team_members for future
+    const { error: upErr } = await supabase
+      .from("team_members")
+      .update({ staff_id: staffId })
+      .eq("id", m.id)
+      .eq("org_id", orgId);
+
+    if (upErr) throw upErr;
+
+    // Update local state too
+    setRows((prev) => prev.map((x) => (x.id === m.id ? { ...x, staff_id: staffId } : x)));
+    if (viewFor?.id === m.id) setViewFor((p) => (p ? { ...p, staff_id: staffId } : p));
+
+    return staffId;
+  }
+
+  async function loadCertsForMember(m: Member) {
+    setCerts([]);
+    setCertsLoading(true);
+    try {
+      const staffId = await ensureStaffForMember(m);
+      if (!staffId) {
+        setCerts([]);
         return;
       }
-
-      const staffId = staffRow.id as string;
 
       const { data, error } = await supabase
         .from("trainings")
-        .select(
-          "id, staff_id, type, certificate_url, awarded_on, expires_on, notes"
-        )
+        .select("id,type,awarded_on,expires_on,certificate_url,notes")
         .eq("staff_id", staffId)
-        .order("awarded_on", { ascending: false });
+        .order("awarded_on", { ascending: false })
+        .limit(10);
 
       if (error) throw error;
-      setEduList((data ?? []) as Training[]);
-    } catch {
-      setEduList([]);
+      setCerts((data ?? []) as TrainingCert[]);
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to load certificates.");
+      setCerts([]);
     } finally {
-      setEduListLoading(false);
+      setCertsLoading(false);
     }
   }
 
-  function openCard(m: Member) {
-    setViewFor(m);
-    setViewOpen(true);
-    void loadTrainingsFor(m);
-  }
+  async function addCertificate() {
+    if (!viewFor) return;
+    if (!orgId) return alert("No organisation found.");
 
-  function openEducation(m: Member) {
-    setEduFor(m);
-    setEduForm({
-      course: "",
-      provider: "",
-      certificateUrl: "",
-      completedOn: "",
-      expiryOn: "",
-      notes: "",
-    });
-    setEduOpen(true);
-  }
+    const type = (certForm.type ?? "").trim();
+    if (!type) return alert("Certificate type is required.");
 
-  async function saveEducation() {
-    if (!eduFor) return;
-    if (!eduForm.course.trim()) return;
-
+    setCertSaving(true);
     try {
-      setEduSaving(true);
+      const staffId = await ensureStaffForMember(viewFor);
+      if (!staffId) return alert("Could not link this person to a staff record (missing initials).");
 
-      const initials = safeInitials(eduFor);
-      if (!initials) {
-        alert("This team member has no initials set.");
-        return;
-      }
+      const { data: auth } = await supabase.auth.getUser();
+      const created_by = auth.user?.id ?? null;
 
-      const combinedNotes =
-        [
-          eduForm.provider && `Provider: ${eduForm.provider}`,
-          eduForm.notes && eduForm.notes,
-        ]
-          .filter(Boolean)
-          .join(" · ") || null;
-
-      const todayISO = new Date().toISOString().slice(0, 10);
-      const awarded_on = eduForm.completedOn || todayISO;
-
-      await saveTrainingServer({
-        type: eduForm.course.trim(),
-        awarded_on,
-        expires_on: eduForm.expiryOn || null,
-        certificate_url: eduForm.certificateUrl.trim() || null,
-        notes: combinedNotes,
-        staffInitials: initials,
+      const { error } = await supabase.from("trainings").insert({
+        org_id: orgId,
+        staff_id: staffId,
+        type,
+        awarded_on: certForm.awarded_on || null,
+        expires_on: certForm.expires_on || null,
+        certificate_url: certForm.certificate_url || null,
+        notes: certForm.notes || null,
+        created_by,
       });
 
-      await loadTrainingsFor(eduFor);
-      setEduOpen(false);
+      if (error) throw error;
+
+      // reset minimal
+      setCertForm({
+        type: "Food Hygiene Level 2",
+        awarded_on: "",
+        expires_on: "",
+        certificate_url: "",
+        notes: "",
+      });
+
+      await loadCertsForMember(viewFor);
     } catch (e: any) {
-      alert(e?.message ?? "Failed to save training.");
+      alert(e?.message ?? "Failed to add certificate.");
     } finally {
-      setEduSaving(false);
+      setCertSaving(false);
     }
   }
 
-  /* -------------------- Invite flow (admin invite link) -------------------- */
+  /* -------------------- Card / View -------------------- */
+  async function openCard(m: Member) {
+    setViewFor(m);
+    setViewOpen(true);
+    await loadCertsForMember(m);
+  }
+
+  /* -------------------- Invite flow -------------------- */
   function openInvite() {
     setInviteForm({ email: "", role: "staff" });
     setInviteError(null);
@@ -446,9 +598,7 @@ export default function TeamManager() {
       if (!res.ok) {
         setInviteError(res.message ?? "Failed to send invite.");
       } else {
-        setInviteInfo(
-          "Invite sent. They’ll get an email to set their password and log in."
-        );
+        setInviteInfo("Invite sent. They’ll get an email to set their password and log in.");
         await load();
       }
     } catch (e: any) {
@@ -464,6 +614,7 @@ export default function TeamManager() {
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-lg font-semibold text-slate-900">Team</h1>
+
         <div className="ml-auto flex min-w-0 items-center gap-2">
           <input
             className="h-9 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900 placeholder:text-slate-400 md:w-64"
@@ -471,6 +622,7 @@ export default function TeamManager() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
+
           {isOwner && (
             <>
               <button
@@ -490,7 +642,7 @@ export default function TeamManager() {
         </div>
       </div>
 
-      {/* Card grid instead of table */}
+      {/* Card grid */}
       {loading ? (
         <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
           Loading…
@@ -501,6 +653,7 @@ export default function TeamManager() {
             const initials = safeInitials(m) || "—";
             const roleLabel = prettyRole(m.role);
             const activeLabel = m.active ? "Active" : "Inactive";
+            const areas = normalizeAreas(m.training_areas);
 
             return (
               <div
@@ -511,7 +664,7 @@ export default function TeamManager() {
                     : ""
                 }`}
               >
-                {/* Header row */}
+                {/* Header */}
                 <div className="mb-2 flex items-start justify-between gap-2">
                   <div className="flex items-start gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
@@ -520,7 +673,7 @@ export default function TeamManager() {
                     <div>
                       <button
                         className="text-sm font-semibold text-slate-900 hover:text-emerald-700"
-                        onClick={() => openCard(m)}
+                        onClick={() => void openCard(m)}
                       >
                         {m.name || "Unnamed"}
                       </button>
@@ -543,50 +696,49 @@ export default function TeamManager() {
 
                   <ActionMenu
                     items={[
-                      {
-                        label: "View card",
-                        onClick: () => openCard(m),
-                      },
-                      {
-                        label: "Edit",
-                        onClick: () => openEdit(m),
-                      },
-                      {
-                        label: "Add education",
-                        onClick: () => openEducation(m),
-                      },
+                      { label: "View card", onClick: () => void openCard(m) },
+                      { label: "Edit", onClick: () => openEdit(m) },
                       ...(isOwner
-                        ? [
-                            {
-                              label: "Delete",
-                              onClick: () => remove(m.id),
-                              variant: "danger" as const,
-                            },
-                          ]
+                        ? [{ label: "Delete", onClick: () => void remove(m.id), variant: "danger" as const }]
                         : []),
                     ]}
                   />
+                </div>
+
+                {/* Training pills row */}
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {areas.length ? (
+                    areas.map((a) => {
+                      const meta = TRAINING_AREAS.find((x) => x.key === a);
+                      if (!meta) return null;
+                      return (
+                        <span
+                          key={a}
+                          className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800"
+                          title={meta.label}
+                        >
+                          {meta.short}
+                        </span>
+                      );
+                    })
+                  ) : (
+                    <span className="text-[11px] text-slate-400">No training selected</span>
+                  )}
                 </div>
 
                 {/* Body */}
                 <div className="space-y-1 text-xs text-slate-800">
                   <div className="flex justify-between gap-2">
                     <span className="text-slate-500">Email</span>
-                    <span className="max-w-[70%] truncate text-right">
-                      {m.email ?? "—"}
-                    </span>
+                    <span className="max-w-[70%] truncate text-right">{m.email ?? "—"}</span>
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-slate-500">Phone</span>
-                    <span className="max-w-[70%] truncate text-right">
-                      {m.phone ?? "—"}
-                    </span>
+                    <span className="max-w-[70%] truncate text-right">{m.phone ?? "—"}</span>
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-slate-500">Initials</span>
-                    <span className="text-right">
-                      {m.initials ?? initials ?? "—"}
-                    </span>
+                    <span className="text-right">{m.initials ?? initials ?? "—"}</span>
                   </div>
                 </div>
 
@@ -596,19 +748,19 @@ export default function TeamManager() {
                   </div>
                 )}
 
-                {/* Footer shortcuts */}
+                {/* Footer */}
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   <button
                     className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-                    onClick={() => openEducation(m)}
+                    onClick={() => openEdit(m)}
                   >
-                    + Add education
+                    Edit training
                   </button>
                   <button
                     className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
-                    onClick={() => openCard(m)}
+                    onClick={() => void openCard(m)}
                   >
-                    View full profile →
+                    View profile →
                   </button>
                 </div>
               </div>
@@ -623,22 +775,14 @@ export default function TeamManager() {
 
       {/* Edit / Add modal */}
       {editOpen && editing && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setEditOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setEditOpen(false)}>
           <div
             className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">
-                {editing.id ? "Edit member" : "Add member"}
-              </div>
-              <button
-                onClick={() => setEditOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-              >
+              <div className="text-base font-semibold">{editing.id ? "Edit member" : "Add member"}</div>
+              <button onClick={() => setEditOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
                 ✕
               </button>
             </div>
@@ -646,85 +790,50 @@ export default function TeamManager() {
             <div className="grid gap-3">
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Initials
-                  </label>
+                  <label className="mb-1 block text-xs text-slate-500">Initials</label>
                   <input
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={editing.initials ?? ""}
-                    onChange={(e) =>
-                      setEditing({
-                        ...editing,
-                        initials: e.target.value,
-                      })
-                    }
+                    onChange={(e) => setEditing({ ...editing, initials: e.target.value })}
                   />
                 </div>
                 <div className="col-span-2">
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Name *
-                  </label>
+                  <label className="mb-1 block text-xs text-slate-500">Name *</label>
                   <input
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={editing.name}
-                    onChange={(e) =>
-                      setEditing({
-                        ...editing,
-                        name: e.target.value,
-                      })
-                    }
+                    onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Email
-                  </label>
+                  <label className="mb-1 block text-xs text-slate-500">Email</label>
                   <input
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={editing.email ?? ""}
-                    onChange={(e) =>
-                      setEditing({
-                        ...editing,
-                        email: e.target.value,
-                      })
-                    }
+                    onChange={(e) => setEditing({ ...editing, email: e.target.value })}
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Phone
-                  </label>
+                  <label className="mb-1 block text-xs text-slate-500">Phone</label>
                   <input
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     value={editing.phone ?? ""}
-                    onChange={(e) =>
-                      setEditing({
-                        ...editing,
-                        phone: e.target.value,
-                      })
-                    }
+                    onChange={(e) => setEditing({ ...editing, phone: e.target.value })}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Role
-                  </label>
+                  <label className="mb-1 block text-xs text-slate-500">Role</label>
                   {isOwner ? (
                     <select
                       className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                       value={(editing.role ?? "staff").toLowerCase()}
-                      onChange={(e) =>
-                        setEditing({
-                          ...editing,
-                          role: e.target.value,
-                        })
-                      }
+                      onChange={(e) => setEditing({ ...editing, role: e.target.value })}
                     >
                       <option value="staff">Staff</option>
                       <option value="manager">Manager</option>
@@ -738,35 +847,51 @@ export default function TeamManager() {
                     />
                   )}
                 </div>
+
                 <label className="mt-6 flex items-center gap-2 text-sm text-slate-800">
                   <input
                     type="checkbox"
                     className="accent-emerald-600"
                     checked={!!editing.active}
-                    onChange={(e) =>
-                      setEditing({
-                        ...editing,
-                        active: e.target.checked,
-                      })
-                    }
+                    onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
                   />
                   Active
                 </label>
               </div>
 
+              {/* Training areas selector */}
               <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Notes
-                </label>
+                <label className="mb-1 block text-xs text-slate-500">Training areas</label>
+                <div className="flex flex-wrap gap-2">
+                  {TRAINING_AREAS.map((a) => {
+                    const selected = normalizeAreas(editing.training_areas).includes(a.key);
+                    return (
+                      <button
+                        key={a.key}
+                        type="button"
+                        onClick={() => toggleArea(a.key)}
+                        className={[
+                          "rounded-full border px-3 py-1 text-xs font-medium transition",
+                          pillClassSelected(selected),
+                        ].join(" ")}
+                        title={a.label}
+                      >
+                        {a.short}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Tap to toggle. No pill = no training recorded.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">Notes</label>
                 <textarea
                   className="min-h-[80px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
                   value={editing.notes ?? ""}
-                  onChange={(e) =>
-                    setEditing({
-                      ...editing,
-                      notes: e.target.value,
-                    })
-                  }
+                  onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
                 />
               </div>
 
@@ -779,7 +904,7 @@ export default function TeamManager() {
                 </button>
                 <button
                   className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-                  onClick={saveMember}
+                  onClick={() => void saveMember()}
                 >
                   Save
                 </button>
@@ -789,12 +914,9 @@ export default function TeamManager() {
         </div>
       )}
 
-      {/* Business card modal */}
+      {/* View modal (now includes certificates) */}
       {viewOpen && viewFor && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setViewOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setViewOpen(false)}>
           <div
             className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
@@ -802,9 +924,7 @@ export default function TeamManager() {
             <div className="bg-slate-900 px-4 py-3 text-white">
               <div className="text-sm opacity-80">Team member</div>
               <div className="text-xl font-semibold">{viewFor.name}</div>
-              <div className="opacity-80">
-                {viewFor.active ? "Active" : "Inactive"}
-              </div>
+              <div className="opacity-80">{viewFor.active ? "Active" : "Inactive"}</div>
             </div>
 
             <div className="space-y-2 p-4 text-sm">
@@ -813,68 +933,134 @@ export default function TeamManager() {
                 {viewFor.initials ?? safeInitials(viewFor) ?? "—"}
               </div>
               <div>
-                <span className="font-medium">Role:</span>{" "}
-                {prettyRole(viewFor.role)}
+                <span className="font-medium">Role:</span> {prettyRole(viewFor.role)}
               </div>
               <div>
-                <span className="font-medium">Email:</span>{" "}
-                {viewFor.email ?? "—"}
+                <span className="font-medium">Email:</span> {viewFor.email ?? "—"}
               </div>
               <div>
-                <span className="font-medium">Phone:</span>{" "}
-                {viewFor.phone ?? "—"}
+                <span className="font-medium">Phone:</span> {viewFor.phone ?? "—"}
               </div>
               <div>
-                <span className="font-medium">Notes:</span>{" "}
-                {viewFor.notes ?? "—"}
+                <span className="font-medium">Training areas:</span>{" "}
+                {normalizeAreas(viewFor.training_areas).length
+                  ? normalizeAreas(viewFor.training_areas)
+                      .map((k) => TRAINING_AREAS.find((a) => a.key === k)?.label ?? k)
+                      .join(", ")
+                  : "—"}
+              </div>
+              <div>
+                <span className="font-medium">Notes:</span> {viewFor.notes ?? "—"}
               </div>
 
-              <div className="mt-3">
-                <div className="mb-1 font-medium">Education</div>
-                {eduListLoading ? (
-                  <div className="text-slate-500">Loading…</div>
-                ) : eduList.length ? (
-                  <ul className="list-disc space-y-1 pl-5">
-                    {eduList.map((t) => (
-                      <li key={t.id}>
-                        <span className="font-medium">
-                          {t.type ?? "Course"}
-                        </span>{" "}
-                        {t.certificate_url && (
-                          <a
-                            className="text-emerald-700 underline"
-                            href={t.certificate_url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            (certificate)
-                          </a>
-                        )}
-                        <div className="text-xs text-slate-600">
-                          Awarded: {fmt(t.awarded_on)} · Expires:{" "}
-                          {fmt(t.expires_on)}
-                          {t.notes ? ` · ${t.notes}` : ""}
+              {/* Certificates block (NEW) */}
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="text-sm font-semibold text-slate-900">Certificates</div>
+                  <button
+                    onClick={() => void loadCertsForMember(viewFor)}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                {certsLoading ? (
+                  <div className="text-xs text-slate-500">Loading…</div>
+                ) : certs.length ? (
+                  <div className="space-y-2">
+                    {certs.map((c) => (
+                      <div key={c.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="text-xs font-semibold text-slate-900">
+                            {c.type ?? "—"}
+                          </div>
+                          {c.certificate_url ? (
+                            <a
+                              href={c.certificate_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                            >
+                              View →
+                            </a>
+                          ) : null}
                         </div>
-                      </li>
+                        <div className="mt-1 text-[11px] text-slate-600">
+                          Awarded: {formatDate(c.awarded_on)} · Expires: {formatDate(c.expires_on)}
+                        </div>
+                        {c.notes ? (
+                          <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
+                        ) : null}
+                      </div>
                     ))}
-                  </ul>
-                ) : (
-                  <div className="text-slate-500">
-                    No education records.
                   </div>
+                ) : (
+                  <div className="text-xs text-slate-500">No certificates recorded.</div>
                 )}
+
+                {/* Add certificate form (minimal) */}
+                <div className="mt-3 grid gap-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                      value={certForm.type}
+                      onChange={(e) => setCertForm((p) => ({ ...p, type: e.target.value }))}
+                      placeholder="Type (e.g. Food Hygiene Level 2)"
+                    />
+                    <input
+                      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                      value={certForm.certificate_url}
+                      onChange={(e) => setCertForm((p) => ({ ...p, certificate_url: e.target.value }))}
+                      placeholder="Certificate URL (optional)"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="date"
+                      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                      value={certForm.awarded_on}
+                      onChange={(e) => setCertForm((p) => ({ ...p, awarded_on: e.target.value }))}
+                    />
+                    <input
+                      type="date"
+                      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                      value={certForm.expires_on}
+                      onChange={(e) => setCertForm((p) => ({ ...p, expires_on: e.target.value }))}
+                    />
+                  </div>
+
+                  <input
+                    className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                    value={certForm.notes}
+                    onChange={(e) => setCertForm((p) => ({ ...p, notes: e.target.value }))}
+                    placeholder="Notes (optional)"
+                  />
+
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => void addCertificate()}
+                      disabled={certSaving}
+                      className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      {certSaving ? "Saving…" : "Add certificate"}
+                    </button>
+                  </div>
+                </div>
               </div>
+              {/* End certificates */}
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
               <button
                 onClick={() => {
                   setViewOpen(false);
-                  openEducation(viewFor);
+                  openEdit(viewFor);
                 }}
                 className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
               >
-                Add education
+                Edit
               </button>
               <button
                 onClick={() => setViewOpen(false)}
@@ -887,206 +1073,38 @@ export default function TeamManager() {
         </div>
       )}
 
-      {/* Education modal */}
-      {eduOpen && eduFor && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setEduOpen(false)}
-        >
-          <div
-            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">
-                Education · {eduFor.name}
-              </div>
-              <button
-                onClick={() => setEduOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="grid gap-3 text-sm">
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Course / Type *
-                </label>
-                <input
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                  value={eduForm.course}
-                  onChange={(e) =>
-                    setEduForm((f) => ({
-                      ...f,
-                      course: e.target.value,
-                    }))
-                  }
-                  placeholder="e.g., Food Hygiene L2"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Provider
-                  </label>
-                  <input
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                    value={eduForm.provider}
-                    onChange={(e) =>
-                      setEduForm((f) => ({
-                        ...f,
-                        provider: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Certificate URL / ID
-                  </label>
-                  <input
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                    value={eduForm.certificateUrl}
-                    onChange={(e) =>
-                      setEduForm((f) => ({
-                        ...f,
-                        certificateUrl: e.target.value,
-                      }))
-                    }
-                    placeholder="Link or reference"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Completed on
-                  </label>
-                  <input
-                    type="date"
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                    value={eduForm.completedOn}
-                    onChange={(e) =>
-                      setEduForm((f) => ({
-                        ...f,
-                        completedOn: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Expiry date
-                  </label>
-                  <input
-                    type="date"
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                    value={eduForm.expiryOn}
-                    onChange={(e) =>
-                      setEduForm((f) => ({
-                        ...f,
-                        expiryOn: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Notes
-                </label>
-                <textarea
-                  className="min-h-[90px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
-                  value={eduForm.notes}
-                  onChange={(e) =>
-                    setEduForm((f) => ({
-                      ...f,
-                      notes: e.target.value,
-                    }))
-                  }
-                  placeholder="Any extra info…"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                  onClick={() => setEduOpen(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-                  disabled={eduSaving || !eduForm.course.trim()}
-                  onClick={saveEducation}
-                >
-                  {eduSaving ? "Saving…" : "Save"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Invite modal */}
       {inviteOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setInviteOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setInviteOpen(false)}>
           <div
             className="mx-auto mt-16 w-full max-w-md rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">
-                Invite team member
-              </div>
-              <button
-                onClick={() => setInviteOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-              >
+              <div className="text-base font-semibold">Invite team member</div>
+              <button onClick={() => setInviteOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
                 ✕
               </button>
             </div>
 
             <div className="space-y-3 text-sm">
               <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Email
-                </label>
+                <label className="mb-1 block text-xs text-slate-500">Email</label>
                 <input
                   type="email"
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                   placeholder="team@example.com"
                   value={inviteForm.email}
-                  onChange={(e) =>
-                    setInviteForm((f) => ({
-                      ...f,
-                      email: e.target.value,
-                    }))
-                  }
+                  onChange={(e) => setInviteForm((f) => ({ ...f, email: e.target.value }))}
                 />
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Role
-                </label>
+                <label className="mb-1 block text-xs text-slate-500">Role</label>
                 <select
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                   value={inviteForm.role}
-                  onChange={(e) =>
-                    setInviteForm((f) => ({
-                      ...f,
-                      role: e.target.value,
-                    }))
-                  }
+                  onChange={(e) => setInviteForm((f) => ({ ...f, role: e.target.value }))}
                 >
                   <option value="staff">Staff</option>
                   <option value="manager">Manager</option>
@@ -1095,8 +1113,7 @@ export default function TeamManager() {
               </div>
 
               <p className="text-xs text-slate-500">
-                We’ll add them to this business and send a sign-in link. If they
-                already have an account, they can just sign in with this email.
+                We’ll add them to this business and send a sign-in link.
               </p>
 
               {inviteError && (
@@ -1120,7 +1137,7 @@ export default function TeamManager() {
                 <button
                   className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
                   disabled={inviteSending}
-                  onClick={sendInvite}
+                  onClick={() => void sendInvite()}
                 >
                   {inviteSending ? "Sending…" : "Send invite"}
                 </button>
