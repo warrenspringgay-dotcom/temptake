@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { useAuth } from "@/components/AuthProvider";
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import Image from "next/image";
 
 type Tab = {
   href: string;
@@ -145,16 +146,24 @@ export default function MobileMenu() {
   return (
     <>
       {/* Hamburger button (mobile only) */}
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 md:hidden"
-        aria-label="Open menu"
-      >
-        <span className="block h-[2px] w-4 rounded bg-slate-800" />
-        <span className="mt-[3px] block h-[2px] w-4 rounded bg-slate-800" />
-        <span className="mt-[3px] block h-[2px] w-4 rounded bg-slate-800" />
-      </button>
+  
+
+<button
+  type="button"
+  onClick={() => setOpen(true)}
+  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50 md:hidden"
+  aria-label="Open menu"
+>
+  <Image
+    src="/logo.png"
+    alt=""
+    width={20}
+    height={20}
+    className="h-5 w-5"
+    priority
+  />
+</button>
+
 
       {open && (
         <div className="fixed inset-0 z-50 md:hidden">
