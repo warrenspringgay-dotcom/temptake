@@ -9,7 +9,8 @@ import ManageCleaningTasksModal, {
   CLEANING_CATEGORIES,
 } from "@/components/ManageCleaningTasksModal";
 
-const PAGE = "max-w-[1100px] mx-auto px-3 sm:px-4";
+const PAGE = "w-full px-3 sm:px-4 md:mx-auto md:max-w-[1100px]";
+
 const CARD =
   "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md";
 
