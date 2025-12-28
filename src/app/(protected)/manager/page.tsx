@@ -519,7 +519,7 @@ export default function ManagerDashboardPage() {
   const incidentsToRender = showAllIncidents ? incidentsToday : incidentsToday.slice(0, 10);
 
   return (
-    <div className="mx-auto max-w-6xl px-3 sm:px-4 pt-2 pb-6 space-y-4">
+    <>
       {/* ✅ Header changed: only centered date */}
       <header className="py-2">
         <div className="text-center">
@@ -848,6 +848,6 @@ export default function ManagerDashboardPage() {
           </div>
         </div>
       </section>
-    </div>
+    </>
   );
 }
