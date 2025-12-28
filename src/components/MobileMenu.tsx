@@ -1,12 +1,13 @@
 // src/components/MobileMenu.tsx
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { useAuth } from "@/components/AuthProvider";
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
+import { getActiveOrgIdClient } from "@/lib/orgClient";
 
 type Tab = {
   href: string;
@@ -35,7 +36,7 @@ const authedLinks: Tab[] = [
   { href: "/suppliers", label: "Suppliers", requiresPlan: true },
   { href: "/reports", label: "Reports", requiresPlan: true },
 
-  // these are “account” things, still fine without a plan
+  // account pages (ok without plan)
   { href: "/locations", label: "Locations & sites" },
   { href: "/billing", label: "Billing & subscription" },
   { href: "/guides", label: "Guides" },
@@ -55,15 +56,58 @@ const cn = (...parts: Array<string | false | null | undefined>) =>
 export default function MobileMenu() {
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+
+  // ✅ NEW: determine manager status from team_members (like NavTabs)
+  const [canSeeManager, setCanSeeManager] = useState(false);
+
   const router = useRouter();
   const pathname = usePathname();
-
   const { user, ready } = useAuth();
   const { hasValid } = useSubscriptionStatus();
 
-  const isManager =
-    user?.user_metadata?.role === "manager" ||
-    user?.user_metadata?.is_manager === true;
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      if (!ready || !user) {
+        if (!cancelled) setCanSeeManager(false);
+        return;
+      }
+
+      try {
+        const orgId = await getActiveOrgIdClient();
+        const email = user.email?.toLowerCase() ?? null;
+
+        if (!orgId || !email) {
+          if (!cancelled) setCanSeeManager(false);
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from("team_members")
+          .select("role,email")
+          .eq("org_id", orgId)
+          .eq("email", email)
+          .maybeSingle();
+
+        if (cancelled) return;
+
+        if (error || !data) {
+          setCanSeeManager(false);
+          return;
+        }
+
+        const role = (data.role ?? "").toLowerCase();
+        setCanSeeManager(role === "owner" || role === "manager" || role === "admin");
+      } catch {
+        if (!cancelled) setCanSeeManager(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, user]);
 
   async function handleSignOut() {
     try {
@@ -87,15 +131,13 @@ export default function MobileMenu() {
     "Account";
 
   // If auth not ready yet, don’t show anything to avoid the “logged-out” flash
-  if (!ready) {
-    return null;
-  }
+  if (!ready) return null;
 
   // When logged in, apply manager + plan gating
   const links: { href: string; label: string }[] = user
     ? authedLinks.filter(
         (l) =>
-          (!l.requiresManager || isManager) &&
+          (!l.requiresManager || canSeeManager) &&
           (!l.requiresPlan || hasValid)
       )
     : publicLinks;
