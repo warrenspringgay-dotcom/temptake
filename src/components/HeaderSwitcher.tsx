@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 
 import HeaderShell from "@/app/app/HeaderShell";
-import MarketingHeader from "@/components/MarketingHeader";
+import MarketingHeader from "../components/MarketingHeader";
 
 /**
  * Picks the right header:
