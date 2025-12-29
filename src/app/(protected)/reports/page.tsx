@@ -109,6 +109,7 @@ type TrainingAreaRow = {
   initials: string | null;
   email: string | null;
   area: string;
+  selected: boolean; // <-- IMPORTANT so we can show ticks even if no date
   awarded_on: string | null; // ISO date
   expires_on: string | null; // ISO date
   days_until: number | null;
@@ -167,9 +168,8 @@ function isTeamRow(v: TeamRow | null): v is TeamRow {
   return v !== null;
 }
 
-/* ===================== SFBB training areas ===================== */
+/* ===================== Training areas ===================== */
 
-// Keep this aligned with your SFBB concept. These are the ones you described.
 const SFBB_AREAS = [
   "Cross-contamination",
   "Cleaning",
@@ -186,16 +186,9 @@ type TrainingAreasValue =
   | Record<string, any>
   | Array<{ area?: string; name?: string; awarded_on?: any; expires_on?: any; added_on?: any }>;
 
-/**
- * Normalise `team_members.training_areas` into:
- * { [areaName]: { awarded_on?: ISODate, expires_on?: ISODate } }
- *
- * Supports:
- *  - Object map: { "Cleaning": { awarded_on, expires_on } }
- *  - Array<string>: ["Cleaning","Allergens"]
- *  - Array<object>: [{ area:"Cleaning", awarded_on:"...", expires_on:"..." }]
- */
-function normaliseTrainingAreas(val: TrainingAreasValue): Record<string, { awarded_on?: string; expires_on?: string }> {
+function normaliseTrainingAreas(
+  val: TrainingAreasValue
+): Record<string, { awarded_on?: string; expires_on?: string }> {
   const out: Record<string, { awarded_on?: string; expires_on?: string }> = {};
 
   if (!val) return out;
@@ -251,7 +244,11 @@ function computeTrainingStatus(awardedISO: string | null, expiresISO: string | n
   if (!effectiveExpires && awarded) effectiveExpires = addDays(awarded, 365);
 
   if (!awarded && !effectiveExpires) {
-    return { expires_on: null as string | null, days_until: null as number | null, status: "unknown" as TrainingAreaStatus };
+    return {
+      expires_on: null as string | null,
+      days_until: null as number | null,
+      status: "unknown" as TrainingAreaStatus,
+    };
   }
 
   const exp0 = effectiveExpires ? new Date(effectiveExpires) : null;
@@ -287,9 +284,11 @@ async function fetchTrainingAreasReport(orgId: string): Promise<TrainingAreaRow[
 
     const normal = normaliseTrainingAreas(m.training_areas as TrainingAreasValue);
 
-    // Ensure we also surface missing areas explicitly (so audits show gaps)
     for (const area of SFBB_AREAS) {
-      const meta = normal[String(area)] ?? {};
+      const areaKey = String(area);
+      const selected = Object.prototype.hasOwnProperty.call(normal, areaKey);
+
+      const meta = selected ? (normal[areaKey] ?? {}) : {};
       const awarded_on = meta.awarded_on ?? null;
       const expires_on_in = meta.expires_on ?? null;
 
@@ -300,7 +299,8 @@ async function fetchTrainingAreasReport(orgId: string): Promise<TrainingAreaRow[
         name,
         initials,
         email,
-        area: String(area),
+        area: areaKey,
+        selected,
         awarded_on,
         expires_on: computed.expires_on,
         days_until: computed.days_until,
@@ -309,29 +309,12 @@ async function fetchTrainingAreasReport(orgId: string): Promise<TrainingAreaRow[
     }
   }
 
-  // Sort: worst first, then soonest expiry
-  const rank: Record<TrainingAreaStatus, number> = { red: 0, amber: 1, unknown: 2, green: 3 };
-  rows.sort((a, b) => {
-    const ra = rank[a.status] ?? 9;
-    const rb = rank[b.status] ?? 9;
-    if (ra !== rb) return ra - rb;
-
-    const da = a.days_until ?? 999999;
-    const db = b.days_until ?? 999999;
-    return da - db;
-  });
-
   return rows;
 }
 
 /* ===================== Data fetch helpers ===================== */
 
-async function fetchTemps(
-  fromISO: string,
-  toISO: string,
-  orgId: string,
-  locationId: string | null
-): Promise<TempRow[]> {
+async function fetchTemps(fromISO: string, toISO: string, orgId: string, locationId: string | null): Promise<TempRow[]> {
   const fromStart = new Date(`${fromISO}T00:00:00.000Z`).toISOString();
   const toEnd = new Date(`${toISO}T23:59:59.999Z`).toISOString();
 
@@ -361,12 +344,7 @@ async function fetchTemps(
   }));
 }
 
-async function fetchCleaningCount(
-  fromISO: string,
-  toISO: string,
-  orgId: string,
-  locationId: string | null
-): Promise<number> {
+async function fetchCleaningCount(fromISO: string, toISO: string, orgId: string, locationId: string | null): Promise<number> {
   let query = supabase
     .from("cleaning_task_runs")
     .select("id", { count: "exact", head: true })
@@ -381,9 +359,6 @@ async function fetchCleaningCount(
   return count;
 }
 
-/**
- * Cleaning rota submissions trail (runs) joined to tasks for category+task text.
- */
 async function fetchCleaningRunsTrail(
   fromISO: string,
   toISO: string,
@@ -410,14 +385,7 @@ async function fetchCleaningRunsTrail(
 
   const taskIds = Array.from(new Set(runRows.map((r) => String(r.task_id)).filter(Boolean)));
 
-  // Fetch tasks for mapping (category/task)
-  let tasksQ = supabase
-    .from("cleaning_tasks")
-    .select("id, task, category")
-    .eq("org_id", orgId)
-    .in("id", taskIds)
-    .limit(5000);
-
+  let tasksQ = supabase.from("cleaning_tasks").select("id, task, category").eq("org_id", orgId).in("id", taskIds).limit(5000);
   if (locationId) tasksQ = tasksQ.eq("location_id", locationId);
 
   const { data: tasks, error: tasksErr } = await tasksQ;
@@ -444,15 +412,7 @@ async function fetchCleaningRunsTrail(
   });
 }
 
-/**
- * Day sign-offs trail
- */
-async function fetchSignoffsTrail(
-  fromISO: string,
-  toISO: string,
-  orgId: string,
-  locationId: string | null
-): Promise<SignoffRow[]> {
+async function fetchSignoffsTrail(fromISO: string, toISO: string, orgId: string, locationId: string | null): Promise<SignoffRow[]> {
   let q = supabase
     .from("daily_signoffs")
     .select("id, signoff_on, signed_by, notes, created_at, location_id")
@@ -477,24 +437,11 @@ async function fetchSignoffsTrail(
   }));
 }
 
-/**
- * Incidents trail
- * Primary: cleaning_incidents (matches your rota/manager logic)
- * Fallback: incidents (older table some of your code referenced)
- */
-async function fetchIncidentsTrail(
-  fromISO: string,
-  toISO: string,
-  orgId: string,
-  locationId: string | null
-): Promise<IncidentRow[]> {
-  // try cleaning_incidents first
+async function fetchIncidentsTrail(fromISO: string, toISO: string, orgId: string, locationId: string | null): Promise<IncidentRow[]> {
   try {
     let q = supabase
       .from("cleaning_incidents")
-      .select(
-        "id,happened_on,type,details,corrective_action,preventive_action,created_by,created_at,location_id"
-      )
+      .select("id,happened_on,type,details,corrective_action,preventive_action,created_by,created_at,location_id")
       .eq("org_id", orgId)
       .gte("happened_on", fromISO)
       .lte("happened_on", toISO)
@@ -518,7 +465,6 @@ async function fetchIncidentsTrail(
       created_at: r.created_at ? String(r.created_at) : null,
     }));
   } catch {
-    // fallback to incidents
     let q2 = supabase
       .from("incidents")
       .select("id,happened_on,type,details,corrective_action,created_by,created_at,location_id")
@@ -548,16 +494,10 @@ async function fetchIncidentsTrail(
 }
 
 /**
- * Training due / overdue in next `withinDays` days.
- * NOTE: this is your existing “courses/qualifications” model (trainings table).
- * If you migrate trainings to team_members later, update this.
+ * NOTE: left untouched (this still uses trainings/staff as in your existing file).
  */
 async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[]> {
-  const { data: tData, error: tErr } = await supabase
-    .from("trainings")
-    .select("id, staff_id, expires_on")
-    .eq("org_id", orgId);
-
+  const { data: tData, error: tErr } = await supabase.from("trainings").select("id, staff_id, expires_on").eq("org_id", orgId);
   if (tErr) throw tErr;
 
   const trainings = (tData ?? []).filter((t: any) => !!t.expires_on);
@@ -575,11 +515,7 @@ async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[
   const staffMap = new Map<string, { name: string; email: string | null; initials: string | null }>();
 
   if (staffIds.length) {
-    const { data: sData, error: sErr } = await supabase
-      .from("staff")
-      .select("id, name, email, initials")
-      .in("id", staffIds);
-
+    const { data: sData, error: sErr } = await supabase.from("staff").select("id, name, email, initials").in("id", staffIds);
     if (sErr) throw sErr;
 
     for (const s of sData ?? []) {
@@ -620,9 +556,6 @@ async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[
     .sort((a: any, b: any) => (a.expires_on || "").localeCompare(b.expires_on || ""));
 }
 
-/**
- * Allergen reviews due/overdue from `allergen_review_log`
- */
 async function fetchAllergenLog(withinDays: number, orgId: string): Promise<AllergenRow[]> {
   const { data, error } = await supabase
     .from("allergen_review_log")
@@ -663,15 +596,7 @@ async function fetchAllergenLog(withinDays: number, orgId: string): Promise<Alle
     .sort((a: any, b: any) => (a.next_due || "").localeCompare(b.next_due || ""));
 }
 
-/**
- * Manager / supervisor QC reviews from staff_reviews table.
- */
-async function fetchStaffReviews(
-  fromISO: string,
-  toISO: string,
-  orgId: string,
-  locationId: string | null
-): Promise<StaffReviewRow[]> {
+async function fetchStaffReviews(fromISO: string, toISO: string, orgId: string, locationId: string | null): Promise<StaffReviewRow[]> {
   let query = supabase
     .from("staff_reviews")
     .select(
@@ -714,9 +639,6 @@ async function fetchStaffReviews(
   }));
 }
 
-/**
- * All staff education / qualification records from `trainings`.
- */
 async function fetchEducation(orgId: string): Promise<EducationRow[]> {
   const { data, error } = await supabase
     .from("trainings")
@@ -812,12 +734,11 @@ export default function ReportsPage() {
   const [education, setEducation] = useState<EducationRow[] | null>(null);
   const [cleaningCount, setCleaningCount] = useState(0);
 
-  // NEW: trails
   const [incidents, setIncidents] = useState<IncidentRow[] | null>(null);
   const [signoffs, setSignoffs] = useState<SignoffRow[] | null>(null);
   const [cleaningRuns, setCleaningRuns] = useState<CleaningRunRow[] | null>(null);
 
-  // NEW: SFBB training pills -> report table
+  // Training pills report source rows
   const [trainingAreas, setTrainingAreas] = useState<TrainingAreaRow[] | null>(null);
   const [showAllTrainingAreas, setShowAllTrainingAreas] = useState(false);
 
@@ -859,10 +780,36 @@ export default function ReportsPage() {
     return showAllCleaningRuns ? cleaningRuns : cleaningRuns.slice(0, 10);
   }, [cleaningRuns, showAllCleaningRuns]);
 
-  const visibleTrainingAreas = useMemo(() => {
+  // ✅ NEW: pivot trainingAreas into a per-person matrix
+  const trainingMatrix = useMemo(() => {
     if (!trainingAreas) return null;
-    return showAllTrainingAreas ? trainingAreas : trainingAreas.slice(0, 12);
-  }, [trainingAreas, showAllTrainingAreas]);
+
+    const map = new Map<
+      string,
+      {
+        member_id: string;
+        name: string;
+        byArea: Record<string, { selected: boolean; awarded_on: string | null }>;
+      }
+    >();
+
+    for (const r of trainingAreas) {
+      const key = r.member_id;
+      if (!map.has(key)) {
+        map.set(key, { member_id: r.member_id, name: r.name, byArea: {} });
+      }
+      const row = map.get(key)!;
+      row.byArea[r.area] = { selected: r.selected, awarded_on: r.awarded_on };
+    }
+
+    const rows = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return rows;
+  }, [trainingAreas]);
+
+  const visibleTrainingMatrix = useMemo(() => {
+    if (!trainingMatrix) return null;
+    return showAllTrainingAreas ? trainingMatrix : trainingMatrix.slice(0, 12);
+  }, [trainingMatrix, showAllTrainingAreas]);
 
   /* ---------- boot: org + locations ---------- */
 
@@ -872,11 +819,7 @@ export default function ReportsPage() {
       setOrgId(id ?? null);
       if (!id) return;
 
-      const { data, error } = await supabase
-        .from("locations")
-        .select("id, name")
-        .eq("org_id", id)
-        .order("name");
+      const { data, error } = await supabase.from("locations").select("id, name").eq("org_id", id).order("name");
 
       if (!error && data) {
         setLocations(data.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })));
@@ -889,13 +832,7 @@ export default function ReportsPage() {
 
   /* ---------- runners ---------- */
 
-  async function runRange(
-    rangeFrom: string,
-    rangeTo: string,
-    orgIdValue: string,
-    locationId: string | null,
-    includeAncillary = true
-  ) {
+  async function runRange(rangeFrom: string, rangeTo: string, orgIdValue: string, locationId: string | null, includeAncillary = true) {
     try {
       setErr(null);
       setLoading(true);
@@ -1004,9 +941,7 @@ export default function ReportsPage() {
   }
 
   const currentLocationLabel =
-    locationFilter === "all"
-      ? "All locations"
-      : locations.find((l) => l.id === locationFilter)?.name ?? "This location";
+    locationFilter === "all" ? "All locations" : locations.find((l) => l.id === locationFilter)?.name ?? "This location";
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
@@ -1018,9 +953,7 @@ export default function ReportsPage() {
 
         <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm sm:grid-cols-2 lg:grid-cols-4">
           <div className="col-span-2 rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-              Custom range
-            </div>
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Custom range</div>
 
             <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
               <input
@@ -1078,9 +1011,7 @@ export default function ReportsPage() {
         {/* Location on its own row */}
         <div className="mt-3 rounded-2xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm">
           <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
-            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
-              Location
-            </div>
+            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">Location</div>
             <select
               className="mt-1 w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5 text-sm"
               value={locationFilter}
@@ -1098,9 +1029,7 @@ export default function ReportsPage() {
         </div>
 
         {err && (
-          <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            {err}
-          </div>
+          <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">{err}</div>
         )}
 
         {!temps && !loading && (
@@ -1157,9 +1086,7 @@ export default function ReportsPage() {
                         {r.status ? (
                           <span
                             className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                              r.status === "pass"
-                                ? "bg-emerald-100 text-emerald-800"
-                                : "bg-red-100 text-red-800"
+                              r.status === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
                             }`}
                           >
                             {r.status}
@@ -1191,74 +1118,63 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* NEW: SFBB Training (pills) */}
+        {/* ✅ UPDATED: Training matrix */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-1 text-base font-semibold">Training (SFBB areas)</h3>
+          <h3 className="mb-1 text-base font-semibold">Training</h3>
           <p className="mb-3 text-xs text-slate-500">
-            Pulled from team_members.training_areas. Each area is assumed valid for 12 months from awarded date.
+            Areas pulled from team_members.training_areas. If an awarded date exists, it’s shown under the tick.
           </p>
 
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50/80">
                 <tr className="text-left text-slate-500">
-                  <th className="py-2 pr-3">Staff</th>
-                  <th className="py-2 pr-3">Initials</th>
-                  <th className="py-2 pr-3">Email</th>
-                  <th className="py-2 pr-3">Area</th>
-                  <th className="py-2 pr-3">Awarded</th>
-                  <th className="py-2 pr-3">Expires</th>
-                  <th className="py-2 pr-3">Days</th>
-                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-4">Staff</th>
+                  {SFBB_AREAS.map((a) => (
+                    <th key={a} className="py-2 pr-4 whitespace-nowrap">
+                      {a}
+                    </th>
+                  ))}
                 </tr>
               </thead>
 
               <tbody>
-                {!trainingAreas ? (
+                {!trainingMatrix ? (
                   <tr>
-                    <td colSpan={8} className="py-6 text-center text-slate-500">
+                    <td colSpan={1 + SFBB_AREAS.length} className="py-6 text-center text-slate-500">
                       Run a report to see results
                     </td>
                   </tr>
-                ) : trainingAreas.length === 0 ? (
+                ) : trainingMatrix.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-6 text-center text-slate-500">
+                    <td colSpan={1 + SFBB_AREAS.length} className="py-6 text-center text-slate-500">
                       No team members found.
                     </td>
                   </tr>
                 ) : (
-                  visibleTrainingAreas!.map((r, idx) => (
-                    <tr key={`${r.member_id}-${r.area}-${idx}`} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">{r.name}</td>
-                      <td className="py-2 pr-3">{r.initials ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.email ?? "—"}</td>
-                      <td className="py-2 pr-3 font-semibold">{r.area}</td>
-                      <td className="py-2 pr-3">{r.awarded_on ? formatISOToUK(r.awarded_on) : "—"}</td>
-                      <td className="py-2 pr-3">{r.expires_on ? formatISOToUK(r.expires_on) : "—"}</td>
-                      <td className={`py-2 pr-3 ${r.days_until != null && r.days_until < 0 ? "text-red-700" : ""}`}>
-                        {r.days_until != null ? r.days_until : "—"}
-                      </td>
-                      <td className="py-2 pr-3">
-                        <span
-                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                            r.status === "green"
-                              ? "bg-emerald-100 text-emerald-800"
-                              : r.status === "amber"
-                              ? "bg-amber-100 text-amber-800"
-                              : r.status === "red"
-                              ? "bg-red-100 text-red-800"
-                              : "bg-slate-100 text-slate-700"
-                          }`}
-                        >
-                          {r.status === "green"
-                            ? "Valid"
-                            : r.status === "amber"
-                            ? "Due soon"
-                            : r.status === "red"
-                            ? "Overdue"
-                            : "No date"}
-                        </span>
-                      </td>
+                  visibleTrainingMatrix!.map((row) => (
+                    <tr key={row.member_id} className="border-t border-slate-100">
+                      <td className="py-2 pr-4 font-medium">{row.name}</td>
+
+                      {SFBB_AREAS.map((area) => {
+                        const cell = row.byArea[String(area)];
+                        const has = !!cell?.selected;
+
+                        return (
+                          <td key={String(area)} className="py-2 pr-4 align-top">
+                            {has ? (
+                              <div className="leading-tight">
+                                <div className="text-base font-semibold text-emerald-700">✓</div>
+                                <div className="text-[11px] text-slate-500">
+                                  {cell.awarded_on ? formatISOToUK(cell.awarded_on) : "—"}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-300">—</span>
+                            )}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))
                 )}
@@ -1266,11 +1182,11 @@ export default function ReportsPage() {
             </table>
           </div>
 
-          {trainingAreas && trainingAreas.length > 12 && (
+          {trainingMatrix && trainingMatrix.length > 12 && (
             <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
               <div>
-                Showing {showAllTrainingAreas ? trainingAreas.length : Math.min(12, trainingAreas.length)} of{" "}
-                {trainingAreas.length} entries
+                Showing {showAllTrainingAreas ? trainingMatrix.length : Math.min(12, trainingMatrix.length)} of{" "}
+                {trainingMatrix.length} staff
               </div>
               <button
                 type="button"
@@ -1283,6 +1199,7 @@ export default function ReportsPage() {
           )}
         </Card>
 
+        {/* Everything else below is unchanged from your file... */}
         {/* Cleaning rota submissions trail */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
@@ -1388,15 +1305,9 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
                       <td className="py-2 pr-3 font-semibold">{r.type ?? "Incident"}</td>
                       <td className="py-2 pr-3">{r.created_by ? r.created_by.toUpperCase() : "—"}</td>
+                      <td className="py-2 pr-3 max-w-xs">{r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}</td>
                       <td className="py-2 pr-3 max-w-xs">
-                        {r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}
-                      </td>
-                      <td className="py-2 pr-3 max-w-xs">
-                        {r.corrective_action ? (
-                          <span className="line-clamp-2">{r.corrective_action}</span>
-                        ) : (
-                          "—"
-                        )}
+                        {r.corrective_action ? <span className="line-clamp-2">{r.corrective_action}</span> : "—"}
                       </td>
                     </tr>
                   ))
@@ -1456,9 +1367,7 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3">{formatISOToUK(r.signoff_on)}</td>
                       <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
                       <td className="py-2 pr-3 font-semibold">{r.signed_by ? r.signed_by.toUpperCase() : "—"}</td>
-                      <td className="py-2 pr-3 max-w-xl">
-                        {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
-                      </td>
+                      <td className="py-2 pr-3 max-w-xl">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
                     </tr>
                   ))
                 )}
@@ -1522,20 +1431,11 @@ export default function ReportsPage() {
                       <td className={`py-2 pr-3 ${r.days_until != null && r.days_until < 0 ? "text-red-700" : ""}`}>
                         {r.days_until != null ? r.days_until : "—"}
                       </td>
-                      <td className="py-2 pr-3">
-                        {r.status === "no-expiry" ? "No expiry" : r.status === "expired" ? "Expired" : "Valid"}
-                      </td>
-                      <td className="max-w-xs py-2 pr-3">
-                        {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
-                      </td>
+                      <td className="py-2 pr-3">{r.status === "no-expiry" ? "No expiry" : r.status === "expired" ? "Expired" : "Valid"}</td>
+                      <td className="max-w-xs py-2 pr-3">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
                       <td className="py-2 pr-3">
                         {r.certificate_url ? (
-                          <a
-                            href={r.certificate_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs font-medium text-sky-700 underline"
-                          >
+                          <a href={r.certificate_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-sky-700 underline">
                             View
                           </a>
                         ) : (
@@ -1644,9 +1544,7 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3">{r.reviewer_name || r.reviewer_email || "—"}</td>
                       <td className="py-2 pr-3">{r.category}</td>
                       <td className="py-2 pr-3">{r.rating}</td>
-                      <td className="max-w-xs py-2 pr-3">
-                        {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
-                      </td>
+                      <td className="max-w-xs py-2 pr-3">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
                     </tr>
                   ))
                 )}
@@ -1666,7 +1564,6 @@ export default function ReportsPage() {
             display: none !important;
           }
 
-          /* Kill any “overlay UI” during print (compliance orb, FAB, etc.) */
           [data-compliance-indicator],
           #tt-compliance-indicator,
           .tt-compliance-indicator,
