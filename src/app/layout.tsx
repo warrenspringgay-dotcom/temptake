@@ -13,7 +13,9 @@ import { AuthProvider } from "@/components/AuthProvider";
 import Pwa from "@/components/Pwa";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import FabShell from "@/app/FabShell";
-import HeaderShell from "@/app/app/HeaderShell";
+
+// ✅ NEW: switches between launch-page header vs in-app header
+import HeaderSwitcher from "@/components/HeaderSwitcher";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -34,9 +36,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 {/* PWA install prompt etc (no children) */}
                 <Pwa />
 
-                {/* ✅ Wrap shell components in Suspense to satisfy useSearchParams() rules */}
+                {/* ✅ Keep Suspense to satisfy useSearchParams() rules */}
                 <Suspense fallback={null}>
-                  <HeaderShell />
+                  <HeaderSwitcher />
                 </Suspense>
 
                 <main className="mx-auto w-full px-3 sm:px-4 md:max-w-6xl">
