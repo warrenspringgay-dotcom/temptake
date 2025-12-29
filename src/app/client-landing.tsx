@@ -1,7 +1,7 @@
 // src/app/launch/page.tsx
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Script from "next/script";
 import Image from "next/image";
@@ -23,7 +23,8 @@ const fakeNotes = [
 /**
  * Update hrefs if your actual routes differ.
  * Keep these public (no auth required) so visitors can read before signing up.
- */const GUIDES = [
+ */
+const GUIDES = [
   {
     title: "Temperature logs (UK)",
     pill: "Temps",
@@ -61,34 +62,128 @@ const fakeNotes = [
   },
 ];
 
+function cls(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function openTallyWaitlist() {
+  // Tally embed script exposes window.Tally when loaded.
+  // But Tally can also open via data attributes.
+  // We keep this helper to support sticky CTA without duplicating attributes.
+  try {
+    (window as any)?.Tally?.openPopup?.("obb4vX", {
+      layout: "modal",
+      emojiText: "👋",
+      emojiAnimation: "wave",
+      autoClose: 0,
+    });
+  } catch {
+    // fallback: no-op
+  }
+}
+
 /* ---------------------------- MAIN PAGE ---------------------------- */
 
 export default function LaunchPage() {
   const [demoOpen, setDemoOpen] = useState(false);
+  const [showStickyCta, setShowStickyCta] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => {
+      // Show sticky CTA after the hero area
+      setShowStickyCta(window.scrollY > 260);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  const tallyAttrs = useMemo(
+    () => ({
+      "data-tally-open": "obb4vX",
+      "data-tally-layout": "modal",
+      "data-tally-emoji-text": "👋",
+      "data-tally-emoji-animation": "wave",
+      "data-tally-auto-close": "0",
+    }),
+    []
+  );
 
   return (
     <div className="fixed inset-0 z-20 overflow-y-auto overflow-x-hidden">
       {/* Tally embed script */}
       <Script src="https://tally.so/widgets/embed.js" async />
 
+      {/* Sticky CTA bar (conversion insurance) */}
+      <div
+        className={cls(
+          "pointer-events-none fixed left-0 top-0 z-40 w-full transition-all duration-200",
+          showStickyCta ? "translate-y-0 opacity-100" : "-translate-y-3 opacity-0"
+        )}
+      >
+        <div className="pointer-events-auto border-b border-white/10 bg-slate-950/75 backdrop-blur-md">
+          <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-2xl bg-emerald-500 text-[11px] font-bold text-slate-950">
+                TT
+              </div>
+              <div className="leading-tight">
+                <div className="text-[12px] font-semibold text-slate-50">
+                  TempTake early access
+                </div>
+                <div className="text-[11px] text-slate-300">
+                  Join the beta kitchens shaping the product.
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Link
+                href="/app"
+                className="hidden rounded-2xl border border-white/20 bg-white/5 px-4 py-2 text-[11px] font-medium text-slate-50 hover:bg-white/10 sm:inline-flex"
+              >
+                View demo
+              </Link>
+
+              {/* Primary CTA */}
+              <button
+                type="button"
+                {...tallyAttrs}
+                onClick={() => openTallyWaitlist()}
+                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-4 py-2 text-[11px] font-semibold text-slate-950 shadow-lg shadow-emerald-500/30 transition hover:brightness-105"
+              >
+                Join early access
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white">
-        {/* Top bar with login */}
+        {/* Top bar */}
         <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 pt-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-            <Link href="/dashboard" className="flex items-center gap-2">
+            {/* Marketing brand should go home, not to /dashboard */}
+            <Link href="/launch" className="flex items-center gap-2">
               <Image src="/logo.png" width={44} height={44} alt="TempTake" />
               <span className="font-semibold">TempTake</span>
             </Link>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* NEW: Guides link (public) */}
             <a
               href="#guides"
               className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-50 shadow-sm hover:bg-white/10"
             >
               Guides
             </a>
+
+            <Link
+              href="/pricing"
+              className="hidden items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-50 shadow-sm hover:bg-white/10 sm:inline-flex"
+            >
+              Pricing
+            </Link>
 
             <Link
               href="/login"
@@ -104,7 +199,7 @@ export default function LaunchPage() {
           <div className="md:w-1/2">
             <div className="inline-flex flex-wrap items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Early access for beta testers · Coming soon
+              Early access for beta kitchens
               <span className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
                 🎙 Voice entry
               </span>
@@ -116,66 +211,55 @@ export default function LaunchPage() {
             </h1>
 
             <p className="mt-4 max-w-xl text-sm text-slate-200 sm:text-base">
-              TempTake is your food hygiene compliance assistant. It replaces messy paper logs with simple daily routines for{" "}
+              TempTake replaces paper logs with simple daily routines for{" "}
               <span className="font-semibold">temperatures, cleaning and allergens</span>.
-              <span className="block mt-2 text-slate-200">
-                And when hands are full? Use{" "}
+              <span className="mt-2 block text-slate-200">
+                When hands are full, use{" "}
                 <span className="font-semibold text-emerald-200">voice entry</span>{" "}
-                to log checks faster without fighting a screen mid-service.
+                to log checks fast without fighting a screen mid-service.
               </span>
             </p>
 
+            {/* CTA hierarchy: ONE primary, ONE secondary */}
             <div className="mt-6 flex flex-wrap items-center gap-3">
-              {/* Tally modal trigger – hero CTA */}
               <button
                 type="button"
-                data-tally-open="obb4vX"
-                data-tally-layout="modal"
-                data-tally-emoji-text="👋"
-                data-tally-emoji-animation="wave"
-                data-tally-auto-close="0"
+                {...tallyAttrs}
+                onClick={() => openTallyWaitlist()}
                 className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 transition hover:brightness-105"
               >
-                Join the early access list
+                Join early access
               </button>
 
-              {/* View demo dashboard – goes to /app */}
               <Link
                 href="/app"
                 className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
               >
-                View demo dashboard
+                View demo
               </Link>
 
-              {/* Open staff interactions demo modal */}
+              {/* Tertiary: single “fun features” link, not another full CTA row */}
               <button
                 type="button"
                 onClick={() => setDemoOpen(true)}
                 className="inline-flex items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20"
               >
-                Leaderboard & the wall
+                See team features (leaderboard)
               </button>
-
-              {/* NEW: quick jump to guides */}
-              <a
-                href="#guides"
-                className="inline-flex items-center justify-center rounded-2xl border border-slate-700 bg-slate-900/40 px-4 py-2 text-[11px] font-medium text-slate-200 hover:bg-slate-800/40"
-              >
-                Read the guides
-              </a>
             </div>
 
+            {/* Tight, outcome-first facts (no “2026” self-sabotage) */}
             <dl className="mt-8 grid grid-cols-2 gap-4 text-xs text-slate-200 sm:text-sm md:max-w-md">
               <div>
                 <dt className="text-slate-400">Built for</dt>
                 <dd className="mt-0.5 font-semibold">
-                  Restaurants, bistros, pubs & takeaways
+                  Restaurants, pubs, bistros & takeaways
                 </dd>
               </div>
               <div>
-                <dt className="text-slate-400">What it covers</dt>
+                <dt className="text-slate-400">Covers</dt>
                 <dd className="mt-0.5 font-semibold">
-                  Temps • Cleaning • Allergens • Training • EHO admin
+                  Temps • Cleaning • Allergens • Training
                 </dd>
               </div>
               <div>
@@ -183,8 +267,10 @@ export default function LaunchPage() {
                 <dd className="mt-0.5 font-semibold">Tap, swipe, or voice</dd>
               </div>
               <div>
-                <dt className="text-slate-400">Launch</dt>
-                <dd className="mt-0.5 font-semibold">App Store & web, 2026</dd>
+                <dt className="text-slate-400">Availability</dt>
+                <dd className="mt-0.5 font-semibold">
+                  Beta kitchens now • iOS next
+                </dd>
               </div>
             </dl>
           </div>
@@ -257,12 +343,12 @@ export default function LaunchPage() {
           <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-12 md:py-16">
             <div className="max-w-2xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
-                Everything you need to ACE inspections,
-                <span className="text-emerald-300"> in one place.</span>
+                Inspection-ready records,
+                <span className="text-emerald-300"> without clipboard chaos.</span>
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                TempTake keeps daily checks simple and fast. No more chasing clipboards, half-filled log sheets,
-                or “we’ll do it later” turning into “we never did it”.
+                Daily checks stay simple and fast. No more half-filled sheets,
+                missing initials, or “we’ll do it later” turning into “we never did it”.
               </p>
             </div>
 
@@ -270,37 +356,37 @@ export default function LaunchPage() {
               <FeatureCard
                 title="Temperature logging"
                 pill="Fridges, freezers & hot hold"
-                description="One-tap logging with pre-set routines. Cuts staff time and keeps records inspection-ready."
+                description="One-tap routines. Cleaner records, less staff time, fewer missed checks."
               />
               <FeatureCard
                 title="Cleaning rota"
                 pill="Front & back of house"
-                description="Daily, weekly and monthly tasks on your phone. Swipe to complete and see what’s still open."
+                description="Daily/weekly/monthly tasks on mobile. Swipe to complete, see what’s open."
               />
               <FeatureCard
                 title="Allergen & training"
                 pill="Matrix & certificates"
-                description="Track allergy info and staff training so nothing quietly expires and bites you later."
+                description="Keep allergen info current and stop training quietly expiring."
               />
               <FeatureCard
                 title="Voice entry"
                 pill="Hands busy? No problem"
-                description="Log temperatures by speaking. Faster during service, fewer missed checks, and still fully auditable."
+                description="Speak checks during service. Auditable, timestamped, and fast."
               />
             </div>
           </div>
         </section>
 
-        {/* ----------------------- NEW: GUIDES SECTION ----------------------- */}
+        {/* ----------------------- GUIDES SECTION ----------------------- */}
         <section id="guides" className="border-t border-white/10 bg-slate-950">
           <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
             <div className="mb-6 max-w-3xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
-                Guides for your team,
-                <span className="text-emerald-300"> before they even sign up.</span>
+                Practical guides you can share with the team.
+                <span className="text-emerald-300"> No fluff.</span>
               </h2>
               <p className="mt-2 text-sm text-slate-300 sm:text-base">
-                Short, practical docs you can share with staff. No fluff, no “synergy”.
+                Useful even before you sign up. Built around UK expectations and real kitchen workflows.
               </p>
             </div>
 
@@ -321,11 +407,26 @@ export default function LaunchPage() {
                     </span>
                   </div>
                   <p className="mt-2 text-sm text-slate-300">{g.description}</p>
-                  <p className="mt-3 text-[11px] text-slate-500">
-                    Public guide · share with staff
-                  </p>
+                  <p className="mt-3 text-[11px] text-slate-500">Public guide · share with staff</p>
                 </Link>
               ))}
+            </div>
+
+            <div className="mt-8 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                {...tallyAttrs}
+                onClick={() => openTallyWaitlist()}
+                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
+              >
+                Join early access
+              </button>
+              <Link
+                href="/pricing"
+                className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
+              >
+                View pricing
+              </Link>
             </div>
           </div>
         </section>
@@ -385,6 +486,17 @@ export default function LaunchPage() {
                 <li>• How managers see what’s been missed.</li>
                 <li>• What your EHO will see during a visit.</li>
               </ul>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  {...tallyAttrs}
+                  onClick={() => openTallyWaitlist()}
+                  className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
+                >
+                  Join early access
+                </button>
+              </div>
             </div>
 
             <div className="md:w-1/2">
@@ -418,8 +530,8 @@ export default function LaunchPage() {
               </h2>
               <p className="mt-2 text-sm text-slate-300 sm:text-base">
                 During early access, we&apos;re working closely with a small group of kitchens.
-                When we launch publicly, pricing is banded by how many locations you run in
-                TempTake. No per-log or per-device nonsense.
+                When we launch publicly, pricing is banded by how many locations you run.
+                No per-log or per-device nonsense.
               </p>
             </div>
 
@@ -450,11 +562,8 @@ export default function LaunchPage() {
                 <div className="mt-5">
                   <button
                     type="button"
-                    data-tally-open="obb4vX"
-                    data-tally-layout="modal"
-                    data-tally-emoji-text="👋"
-                    data-tally-emoji-animation="wave"
-                    data-tally-auto-close="0"
+                    {...tallyAttrs}
+                    onClick={() => openTallyWaitlist()}
                     className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
                   >
                     Apply for early access
@@ -482,7 +591,7 @@ export default function LaunchPage() {
                 </ul>
 
                 <p className="mt-4 text-[11px] text-slate-500">
-                  Every band includes unlimited logs, staff and devices, plus all core modules:
+                  Every band includes unlimited logs, staff and devices, plus core modules:
                   temperatures, cleaning, allergens and basic training records.
                 </p>
 
@@ -516,18 +625,15 @@ export default function LaunchPage() {
 
                 <button
                   type="button"
-                  data-tally-open="obb4vX"
-                  data-tally-layout="modal"
-                  data-tally-emoji-text="👋"
-                  data-tally-emoji-animation="wave"
-                  data-tally-auto-close="0"
+                  {...tallyAttrs}
+                  onClick={() => openTallyWaitlist()}
                   className="mt-6 inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
                 >
-                  Join early access list
+                  Join early access
                 </button>
 
                 <p className="mt-2 text-[11px] text-slate-400">
-                  Powered by Tally. No spam, ever. We’ll only email you when TempTake is ready.
+                  Powered by Tally. No spam. We’ll only email you when TempTake is ready.
                 </p>
 
                 <p className="mt-4 text-[11px] text-slate-400">
@@ -571,11 +677,8 @@ export default function LaunchPage() {
               </a>
               <button
                 type="button"
-                data-tally-open="obb4vX"
-                data-tally-layout="modal"
-                data-tally-emoji-text="👋"
-                data-tally-emoji-animation="wave"
-                data-tally-auto-close="0"
+                {...tallyAttrs}
+                onClick={() => openTallyWaitlist()}
                 className="text-slate-300 hover:text-emerald-300"
               >
                 Join early access
@@ -715,7 +818,7 @@ function AppStoreFeatureBlocks() {
   return (
     <section className="border-t border-white/10 bg-slate-950">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 py-12 md:py-16">
-        {/* NEW: Voice block */}
+        {/* Voice block */}
         <div className="flex flex-col items-center gap-8 md:flex-row">
           <div className="md:w-1/2">
             <div className="relative mx-auto aspect-[4/3] w-full max-w-md overflow-hidden rounded-3xl border border-emerald-400/40 bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-900/60 shadow-[0_0_45px_rgba(16,185,129,0.45)]">
@@ -875,7 +978,7 @@ function AppStoreFeatureBlocks() {
 function StagedWall() {
   return (
     <section className="border-t border-white/10 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 py-24">
-      <div className="mb-14 mx-auto max-w-5xl px-4 text-center">
+      <div className="mx-auto mb-14 max-w-5xl px-4 text-center">
         <h2 className="mb-4 text-4xl font-extrabold text-white md:text-6xl">
           Chefs are already losing their minds
         </h2>
@@ -901,7 +1004,11 @@ function StagedWall() {
               “{note.message}”
             </p>
             <div className="mt-8 flex justify-end gap-1 text-2xl">
-              <span>🔥</span><span>🔥</span><span>🔥</span><span>🔥</span><span>🔥</span>
+              <span>🔥</span>
+              <span>🔥</span>
+              <span>🔥</span>
+              <span>🔥</span>
+              <span>🔥</span>
             </div>
 
             <div className="pointer-events-none absolute -inset-px rounded-3xl border border-emerald-400/20 blur-[2px]" />
@@ -1070,7 +1177,9 @@ function MiniLeaderRow({
   return (
     <div className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2 text-[11px] text-slate-200">
       <div className="flex items-center gap-2">
-        <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${badge}`}>
+        <span
+          className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${badge}`}
+        >
           {rank}
         </span>
         <div>

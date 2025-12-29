@@ -1,377 +1,29 @@
 // src/app/app/page.tsx
 import React from "react";
-import type { Metadata } from "next";
-import Link from "next/link";
-import Script from "next/script";
-export const metadata = {
-  title: "Food Safety Compliance Software for UK Kitchens | TempTake",
-  description:
-    "TempTake is a UK food hygiene compliance app for temperature logs, cleaning rotas and allergen records. Built for restaurants, pubs and takeaways.",
+
+type LogStatus = "pass" | "fail" | "watch";
+
+const DEMO_DATE = "Monday 29 December 2025";
+
+const DEMO_KPIS = {
+  tempsToday: 0,
+  cleaningDone: 0,
+  cleaningTotal: 33,
+  alerts: 0,
 };
 
-export default function AppDemoDashboardPage() {
-  return (
-    
-    <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">
-      {/* Top demo banner + back link */}
-      <header className="relative flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Demo only
-          </div>
-          <p className="text-xs text-slate-500">
-            This is a non-live preview of your TempTake dashboard. In the real
-            app this view uses your own kitchen, checks and staff.
-          </p>
-        </div>
-<Script src="https://tally.so/widgets/embed.js" async />
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-           <button
-                type="button"
-                data-tally-open="obb4vX"
-                data-tally-layout="modal"
-                data-tally-emoji-text="👋"
-                data-tally-emoji-animation="wave"
-                data-tally-auto-close="0"
-                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 transition hover:brightness-105"
-              >
-                Join the early access list
-              </button>
-          <Link
-            href="/pricing"
-            className="inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Read more &amp; pricing
-          </Link>
-        </div>
+const DEMO_WALL = [
+  { initials: "WS", date: "14-12-2025", text: "check out the guides", tone: "lav" },
+  { initials: "WS", date: "10-12-2025", text: "need bin bag", tone: "lav2" },
+  { initials: "WS", date: "24-11-2025", text: "Launching soon", tone: "cyan" },
+];
 
-        <Link
-          href="/"
-          className="absolute right-0 top-0 rounded-full bg-black/50 px-3 py-1 text-xs text-slate-50 shadow-sm backdrop-blur hover:bg-black/70"
-        >
-          ✕ Back
-        </Link>
-      </header>
-
-      {/* Date strip – mirrors live dashboard header */}
-      <section className="rounded-3xl border border-slate-200 bg-white/80 px-4 py-5 text-center shadow-sm">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-          Demo kitchen
-        </div>
-        <h1 className="mt-1 text-2xl font-semibold text-slate-900 sm:text-3xl">
-          Wednesday 10 December 2025
-        </h1>
-        <p className="mt-1 text-xs text-slate-500 sm:text-sm">
-          At-a-glance view of safety, cleaning and compliance – using example
-          data only.
-        </p>
-      </section>
-
-      {/* KPI row – mirrored layout */}
-      <section className="grid gap-4 md:grid-cols-3">
-        <KpiCard
-          label="Temperature logs today"
-          value="0"
-          tone="danger"
-          description="No temperatures logged yet today."
-        />
-        <KpiCard
-          label="Cleaning (today)"
-          value="0/5"
-          tone="highlight"
-          description="Some scheduled cleaning tasks still open."
-          icon="🧽"
-        />
-        <KpiCard
-          label="Alerts"
-          value="0"
-          tone="ok"
-          description="No training, allergen or temperature issues flagged."
-          icon="⚠️"
-        />
-      </section>
-
-      {/* Middle row – kitchen wall + employee of the month */}
-      <section className="grid gap-4 md:grid-cols-2">
-        {/* Kitchen wall – latest posts */}
-        <article className="flex flex-col rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm">
-          <header className="mb-3 flex items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900">
-                Kitchen wall – latest posts
-              </h2>
-              <p className="text-xs text-slate-500">
-                The last three notes pinned to the kitchen wall.
-              </p>
-            </div>
-            <Link
-              href="/demo-wall"
-              className="text-[11px] font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-800"
-            >
-              View wall
-            </Link>
-          </header>
-
-          <div className="flex flex-wrap gap-3">
-            <DemoNote
-              initials="WS"
-              bg="bg-violet-200"
-              date="2025-12-10"
-              text="Need bin bags"
-            />
-            <DemoNote
-              initials="WS"
-              bg="bg-cyan-200"
-              date="2025-11-24"
-              text="Launching soon"
-            />
-            <DemoNote
-              initials="ED"
-              bg="bg-amber-200"
-              date="2025-11-21"
-              text="Can anyone swap mondays shift"
-            />
-          </div>
-        </article>
-
-        {/* Employee of the month */}
-        <article className="flex flex-col rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-sm">
-          <header className="mb-3 flex items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold text-amber-900">
-                Employee of the month
-              </h2>
-              <p className="text-xs text-amber-800">
-                Based on completed cleaning tasks and temperature logs.
-              </p>
-            </div>
-            <span className="text-xl">🏆</span>
-          </header>
-
-          <div className="space-y-1 text-sm text-amber-900">
-            <div className="text-base font-semibold">Emma Dee</div>
-            <div className="text-xs text-amber-800">
-              Total points: <span className="font-semibold">105</span>
-            </div>
-            <div className="text-xs text-amber-800">
-              Cleaning tasks: <span className="font-semibold">63</span> · Temp
-              logs: <span className="font-semibold">42</span>
-            </div>
-            <p className="mt-2 text-xs text-amber-900/90">
-              In the real app this card updates automatically from your team’s
-              completions and leaderboard.
-            </p>
-          </div>
-
-          <div className="mt-4">
-            <Link
-              href=""
-              className="inline-flex items-center justify-center rounded-2xl bg-amber-700 px-4 py-1.5 text-xs font-semibold text-amber-50 shadow-sm hover:bg-amber-800"
-            >
-              View full leaderboard
-            </Link>
-          </div>
-        </article>
-      </section>
-
-      {/* Quick actions – mirrors bottom panel with subtle jump */}
-      <section className="rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm">
-        <h2 className="mb-3 text-sm font-semibold text-slate-900">
-          Quick actions
-        </h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <QuickAction icon="📋" label="Routines" />
-          <QuickAction icon="⚠️" label="Allergens" />
-          <QuickAction icon="🧽" label="Cleaning rota" />
-          <QuickAction icon="👥" label="Team & training" />
-          <QuickAction icon="📊" label="Reports" />
-          <QuickAction icon="📍" label="Locations & sites" />
-          <QuickAction icon="🧳" label="Manager view" />
-          <QuickAction icon="❓" label="Help & support" />
-        </div>
-      </section>
-
-      {/* Temperature logs – keep as before, for detail view */}
-      <section className="rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
-        <header className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-slate-900">
-            Temperature Logs (demo data)
-          </h2>
-          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600">
-            Example only
-          </span>
-        </header>
-
-        <div className="overflow-x-auto">
-          <table className="min-w-full border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
-                <th className="px-2 py-2 text-left">Time</th>
-                <th className="px-2 py-2 text-left">Initials</th>
-                <th className="px-2 py-2 text-left">Location</th>
-                <th className="px-2 py-2 text-left">Item</th>
-                <th className="px-2 py-2 text-left">Target</th>
-                <th className="px-2 py-2 text-left">Temp (°C)</th>
-                <th className="px-2 py-2 text-left">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {DEMO_LOGS.map((log) => (
-                <tr
-                  key={log.id}
-                  className="border-b border-slate-100 last:border-0"
-                >
-                  <td className="whitespace-nowrap px-2 py-2 text-slate-700">
-                    {log.time}
-                  </td>
-                  <td className="whitespace-nowrap px-2 py-2 text-slate-700">
-                    {log.initials}
-                  </td>
-                  <td className="whitespace-nowrap px-2 py-2 text-slate-700">
-                    {log.location}
-                  </td>
-                  <td className="whitespace-nowrap px-2 py-2 text-slate-700">
-                    {log.item}
-                  </td>
-                  <td className="whitespace-nowrap px-2 py-2 text-slate-500">
-                    {log.target}
-                  </td>
-                  <td className="whitespace-nowrap px-2 py-2 text-slate-900">
-                    {log.temp}
-                  </td>
-                  <td className="whitespace-nowrap px-2 py-2">
-                    <StatusPill status={log.status} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <p className="mt-3 text-[11px] text-slate-500">
-          These logs are example data only. In the real app, this table shows
-          live checks from your team with filters for date, location, equipment
-          and initials.
-        </p>
-      </section>
-
-      {/* Bottom note */}
-      <section className="rounded-2xl border border-dashed border-emerald-400/60 bg-emerald-50/50 px-4 py-3 text-[11px] text-emerald-800">
-        <p>
-          This dashboard mirrors the layout of your real TempTake view. To get a
-          live account for your own kitchen,{" "}
-          <Link
-            href="/launch#waitlist"
-            className="font-semibold underline underline-offset-2"
-          >
-            join the early access list
-          </Link>{" "}
-          and we&apos;ll be in touch.
-        </p>
-      </section>
-    </main>
-  );
-}
-
-/* ============ Helper components / demo data =========== */
-
-type KpiTone = "ok" | "danger" | "highlight";
-
-function KpiCard({
-  label,
-  value,
-  description,
-  tone,
-  icon,
-}: {
-  label: string;
-  value: string;
-  description: string;
-  tone: KpiTone;
-  icon?: string;
-}) {
-  const toneClasses =
-    tone === "ok"
-      ? "border-emerald-200 bg-emerald-50/80"
-      : tone === "danger"
-      ? "border-rose-200 bg-rose-50/80"
-      : "border-amber-200 bg-amber-50/80";
-
-  return (
-    <article
-      className={`flex h-full flex-col justify-between rounded-3xl border px-4 py-3 shadow-sm transition-transform duration-150 hover:-translate-y-0.5 hover:shadow-md ${toneClasses}`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-semibold text-slate-800">{label}</div>
-        {icon && <span className="text-lg">{icon}</span>}
-      </div>
-      <div className="mt-2 text-2xl font-semibold text-slate-900">{value}</div>
-      <p className="mt-2 text-[11px] text-slate-600">{description}</p>
-    </article>
-  );
-}
-
-function DemoNote({
-  initials,
-  bg,
-  date,
-  text,
-}: {
-  initials: string;
-  bg: string;
-  date: string;
-  text: string;
-}) {
-  return (
-    <div
-      className={`flex flex-col justify-between rounded-2xl px-3 py-2 text-xs text-slate-900 shadow-sm ${bg}`}
-    >
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">
-          {initials}
-        </span>
-        <span className="text-[10px] text-slate-700">{date}</span>
-      </div>
-      <p className="text-[11px] text-slate-900">{text}</p>
-    </div>
-  );
-}
-
-function QuickAction({ icon, label }: { icon: string; label: string }) {
-  return (
-    <button className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm transition-transform duration-150 hover:-translate-y-0.5 hover:shadow-md hover:bg-slate-50">
-      <div className="flex items-center gap-2">
-        <span className="text-base">{icon}</span>
-        <span className="font-medium">{label}</span>
-      </div>
-    </button>
-  );
-}
-
-type LogStatus = "pass" | "fail" | "borderline";
-
-function StatusPill({ status }: { status: LogStatus }) {
-  if (status === "pass") {
-    return (
-      <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-        pass
-      </span>
-    );
-  }
-  if (status === "borderline") {
-    return (
-      <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-        watch
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
-      check
-    </span>
-  );
-}
+const DEMO_EMPLOYEE = {
+  name: "Emma Dundon",
+  points: 109,
+  cleanings: 63,
+  temps: 46,
+};
 
 const DEMO_LOGS: {
   id: number;
@@ -390,7 +42,7 @@ const DEMO_LOGS: {
     location: "Freezer",
     item: "Under-counter freezer",
     target: "Frozen (≤ -18 °C)",
-    temp: "-18",
+    temp: "-18.0",
     status: "pass",
   },
   {
@@ -401,7 +53,7 @@ const DEMO_LOGS: {
     item: "Chicken curry (GN 1/1)",
     target: "Hot hold (≥ 63 °C)",
     temp: "62.0",
-    status: "borderline",
+    status: "watch",
   },
   {
     id: 3,
@@ -414,3 +66,351 @@ const DEMO_LOGS: {
     status: "fail",
   },
 ];
+
+function cls(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+export default function AppDemoDashboardPage() {
+  const cleaningProgress =
+    DEMO_KPIS.cleaningTotal === 0
+      ? 0
+      : Math.round((DEMO_KPIS.cleaningDone / DEMO_KPIS.cleaningTotal) * 100);
+
+  return (
+    <main className="mx-auto w-full px-3 sm:px-4 md:max-w-6xl">
+      {/* Page header */}
+      <section className="py-5 text-center sm:py-7">
+        <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
+          {DEMO_DATE}
+        </h1>
+        <p className="mt-1 text-sm text-slate-600">
+          Safety, cleaning and compliance at a glance.
+        </p>
+      </section>
+
+      {/* KPI cards row */}
+      <section className="grid gap-4 md:grid-cols-3">
+        {/* Temperature logs */}
+        <Card
+          tone="red"
+          title="Temperature Logs"
+          value={`${DEMO_KPIS.tempsToday}`}
+          subtitle="No temperatures logged yet today."
+          rightBadge={
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-red-200 text-red-900">
+              ✖
+            </span>
+          }
+          footerLeft={<span className="text-xs text-slate-600">Tap to log</span>}
+          footerRight={<span className="text-xs text-slate-500">Today</span>}
+        />
+
+        {/* Cleaning today */}
+        <Card
+          tone="pink"
+          title="Cleaning (Today)"
+          value={`${DEMO_KPIS.cleaningDone}/${DEMO_KPIS.cleaningTotal}`}
+          subtitle="Some scheduled cleaning tasks still open."
+          rightBadge={
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-amber-200 text-amber-900">
+              🧽
+            </span>
+          }
+          footerLeft={
+            <div className="w-full">
+              <div className="mb-2 flex items-center justify-between text-xs text-slate-600">
+                <span>Progress</span>
+                <span>{cleaningProgress}%</span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className="h-full rounded-full bg-amber-400"
+                  style={{ width: `${cleaningProgress}%` }}
+                />
+              </div>
+            </div>
+          }
+        />
+
+        {/* Alerts */}
+        <Card
+          tone="green"
+          title="Alerts"
+          value={`${DEMO_KPIS.alerts}`}
+          subtitle="No training, allergen or temperature issues flagged."
+          rightBadge={
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-200 text-emerald-900">
+              ✓
+            </span>
+          }
+          footerLeft={<span className="text-xs text-slate-600">View details</span>}
+          footerRight={<span className="text-xs text-slate-500">OK</span>}
+        />
+      </section>
+
+      {/* Kitchen wall + Employee of the month */}
+      <section className="mt-5 grid gap-4 md:grid-cols-2">
+        {/* Kitchen wall */}
+        <div className="rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold text-slate-900">Kitchen wall</h3>
+              <p className="text-xs text-slate-600">
+                Latest three notes from the team.
+              </p>
+            </div>
+            <button className="text-xs font-semibold text-amber-700 hover:text-amber-800">
+              View wall
+            </button>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-3">
+            {DEMO_WALL.map((n, i) => (
+              <WallNote
+                key={i}
+                initials={n.initials}
+                date={n.date}
+                text={n.text}
+                tone={n.tone}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Employee of the month */}
+        <div className="rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold text-amber-900">
+                Employee of the month
+              </h3>
+              <p className="text-xs text-amber-800">
+                Based on completed cleaning tasks and temperature logs this month.
+              </p>
+            </div>
+            <span className="text-2xl">🏆</span>
+          </div>
+
+          <div className="mt-4">
+            <div className="text-lg font-extrabold text-amber-950">
+              {DEMO_EMPLOYEE.name}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <Pill tone="amber">⭐ {DEMO_EMPLOYEE.points} points</Pill>
+              <Pill tone="amber">🧽 {DEMO_EMPLOYEE.cleanings} cleanings</Pill>
+              <Pill tone="amber">🌡 {DEMO_EMPLOYEE.temps} temps</Pill>
+            </div>
+
+            <button className="mt-4 inline-flex items-center justify-center rounded-2xl bg-amber-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-amber-700">
+              View full leaderboard
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Quick actions */}
+      <section className="mt-5 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm">
+        <h3 className="text-base font-bold text-slate-900">Quick actions</h3>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <QuickPill icon="📋" label="Routines" />
+          <QuickPill icon="⚠️" label="Allergens" />
+          <QuickPill icon="🧽" label="Cleaning rota" />
+          <QuickPill icon="👥" label="Team & training" />
+          <QuickPill icon="📊" label="Reports" />
+          <QuickPill icon="📍" label="Locations & sites" />
+          <QuickPill icon="🧳" label="Manager view" />
+          <QuickPill icon="❓" label="Help & support" />
+        </div>
+      </section>
+
+      {/* Optional: logs table (kept minimal, but consistent) */}
+      <section className="mt-5 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-base font-bold text-slate-900">
+            Temperature logs (demo)
+          </h3>
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-600">
+            Demo data
+          </span>
+        </div>
+
+        <div className="mt-3 overflow-x-auto">
+          <table className="min-w-full border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
+                <th className="px-2 py-2 text-left">Time</th>
+                <th className="px-2 py-2 text-left">Initials</th>
+                <th className="px-2 py-2 text-left">Location</th>
+                <th className="px-2 py-2 text-left">Item</th>
+                <th className="px-2 py-2 text-left">Target</th>
+                <th className="px-2 py-2 text-left">Temp (°C)</th>
+                <th className="px-2 py-2 text-left">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {DEMO_LOGS.map((log) => (
+                <tr key={log.id} className="border-b border-slate-100 last:border-0">
+                  <td className="whitespace-nowrap px-2 py-2 text-slate-700">
+                    {log.time}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-2 text-slate-700">
+                    {log.initials}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-2 text-slate-700">
+                    {log.location}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-2 text-slate-700">
+                    {log.item}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-2 text-slate-500">
+                    {log.target}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-2 font-semibold text-slate-900">
+                    {log.temp}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-2">
+                    <StatusPill status={log.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div className="h-12" />
+    </main>
+  );
+}
+
+/* ---------------- UI bits that match your screenshot ---------------- */
+
+function Card({
+  tone,
+  title,
+  value,
+  subtitle,
+  rightBadge,
+  footerLeft,
+  footerRight,
+}: {
+  tone: "red" | "pink" | "green";
+  title: string;
+  value: string;
+  subtitle: string;
+  rightBadge: React.ReactNode;
+  footerLeft?: React.ReactNode;
+  footerRight?: React.ReactNode;
+}) {
+  const toneWrap =
+    tone === "red"
+      ? "bg-red-50/90 border-red-200"
+      : tone === "pink"
+      ? "bg-rose-50/90 border-rose-200"
+      : "bg-emerald-50/90 border-emerald-200";
+
+  const toneBar =
+    tone === "red"
+      ? "bg-red-400"
+      : tone === "pink"
+      ? "bg-rose-400"
+      : "bg-emerald-400";
+
+  return (
+    <div className={cls("relative overflow-hidden rounded-3xl border p-4 shadow-sm", toneWrap)}>
+      {/* left color bar */}
+      <div className={cls("absolute left-0 top-0 h-full w-1.5", toneBar)} />
+
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.28em] text-slate-700">
+            {title}
+          </div>
+          <div className="mt-2 text-4xl font-extrabold text-slate-900">{value}</div>
+          <div className="mt-1 text-sm text-slate-600">{subtitle}</div>
+        </div>
+        {rightBadge}
+      </div>
+
+      <div className="mt-4 flex items-end justify-between gap-3">
+        <div className="flex-1">{footerLeft}</div>
+        {footerRight ? <div className="shrink-0">{footerRight}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function WallNote({
+  initials,
+  date,
+  text,
+  tone,
+}: {
+  initials: string;
+  date: string;
+  text: string;
+  tone: "lav" | "lav2" | "cyan";
+}) {
+  const bg =
+    tone === "lav"
+      ? "bg-violet-200"
+      : tone === "lav2"
+      ? "bg-fuchsia-200"
+      : "bg-cyan-200";
+
+  return (
+    <div className={cls("min-w-[150px] flex-1 rounded-2xl p-3 shadow-sm", bg)}>
+      <div className="flex items-center justify-between">
+        <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/70 text-sm font-extrabold text-slate-900">
+          {initials}
+        </span>
+        <span className="rounded-full bg-white/60 px-3 py-1 text-[11px] font-semibold text-slate-700">
+          {date}
+        </span>
+      </div>
+      <div className="mt-3 text-sm font-semibold text-slate-900">{text}</div>
+    </div>
+  );
+}
+
+function Pill({ children, tone }: { children: React.ReactNode; tone: "amber" }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-3 py-1 text-xs font-semibold text-amber-900">
+      {children}
+    </span>
+  );
+}
+
+function QuickPill({ icon, label }: { icon: string; label: string }) {
+  return (
+    <button className="flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50">
+      <span>{icon}</span>
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function StatusPill({ status }: { status: LogStatus }) {
+  if (status === "pass") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+        pass
+      </span>
+    );
+  }
+  if (status === "watch") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+        watch
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+        check
+      </span>
+    );
+}
