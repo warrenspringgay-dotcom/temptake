@@ -109,7 +109,7 @@ type TrainingAreaRow = {
   initials: string | null;
   email: string | null;
   area: string;
-  selected: boolean; // <-- IMPORTANT so we can show ticks even if no date
+  selected: boolean;
   awarded_on: string | null; // ISO date
   expires_on: string | null; // ISO date
   days_until: number | null;
@@ -184,7 +184,13 @@ type TrainingAreasValue =
   | undefined
   | string[]
   | Record<string, any>
-  | Array<{ area?: string; name?: string; awarded_on?: any; expires_on?: any; added_on?: any }>;
+  | Array<{
+      area?: string;
+      name?: string;
+      awarded_on?: any;
+      expires_on?: any;
+      added_on?: any;
+    }>;
 
 function normaliseTrainingAreas(
   val: TrainingAreasValue
@@ -1118,8 +1124,9 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* ✅ UPDATED: Training matrix */}
+        {/* ✅ MERGED: Training + Education in one card */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          {/* Training matrix */}
           <h3 className="mb-1 text-base font-semibold">Training</h3>
           <p className="mb-3 text-xs text-slate-500">
             Areas pulled from team_members.training_areas. If an awarded date exists, it’s shown under the tick.
@@ -1197,9 +1204,85 @@ export default function ReportsPage() {
               </button>
             </div>
           )}
+
+          {/* Divider */}
+          <div className="my-6 border-t border-slate-200" />
+
+          {/* Education table (moved here) */}
+          <h3 className="mb-3 text-base font-semibold">Staff Education / Qualifications</h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Initials</th>
+                  <th className="py-2 pr-3">Email</th>
+                  <th className="py-2 pr-3">Type</th>
+                  <th className="py-2 pr-3">Awarded</th>
+                  <th className="py-2 pr-3">Expires</th>
+                  <th className="py-2 pr-3">Days</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Notes</th>
+                  <th className="py-2 pr-3">Certificate</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {!education?.length ? (
+                  <tr>
+                    <td colSpan={10} className="py-6 text-center text-slate-500">
+                      No education / training records for this organisation.
+                    </td>
+                  </tr>
+                ) : (
+                  visibleEducation!.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">{r.staff_name}</td>
+                      <td className="py-2 pr-3">{r.staff_initials ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.staff_email ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.type ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.awarded_on ? formatISOToUK(r.awarded_on) : "—"}</td>
+                      <td className="py-2 pr-3">{r.expires_on ? formatISOToUK(r.expires_on) : "—"}</td>
+                      <td className={`py-2 pr-3 ${r.days_until != null && r.days_until < 0 ? "text-red-700" : ""}`}>
+                        {r.days_until != null ? r.days_until : "—"}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.status === "no-expiry" ? "No expiry" : r.status === "expired" ? "Expired" : "Valid"}
+                      </td>
+                      <td className="max-w-xs py-2 pr-3">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
+                      <td className="py-2 pr-3">
+                        {r.certificate_url ? (
+                          <a href={r.certificate_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-sky-700 underline">
+                            View
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {education && education.length > 10 && (
+            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
+              <div>
+                Showing {showAllEducation ? education.length : Math.min(10, education.length)} of {education.length} records
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllEducation((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllEducation ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
         </Card>
 
-        {/* Everything else below is unchanged from your file... */}
         {/* Cleaning rota submissions trail */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
@@ -1386,80 +1469,6 @@ export default function ReportsPage() {
                 className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
               >
                 {showAllSignoffs ? "Show first 10" : "View all"}
-              </button>
-            </div>
-          )}
-        </Card>
-
-        {/* Education */}
-        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-3 text-base font-semibold">Staff Education / Qualifications (all records)</h3>
-
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50/80">
-                <tr className="text-left text-slate-500">
-                  <th className="py-2 pr-3">Staff</th>
-                  <th className="py-2 pr-3">Initials</th>
-                  <th className="py-2 pr-3">Email</th>
-                  <th className="py-2 pr-3">Type</th>
-                  <th className="py-2 pr-3">Awarded</th>
-                  <th className="py-2 pr-3">Expires</th>
-                  <th className="py-2 pr-3">Days</th>
-                  <th className="py-2 pr-3">Status</th>
-                  <th className="py-2 pr-3">Notes</th>
-                  <th className="py-2 pr-3">Certificate</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {!education?.length ? (
-                  <tr>
-                    <td colSpan={10} className="py-6 text-center text-slate-500">
-                      No education / training records for this organisation.
-                    </td>
-                  </tr>
-                ) : (
-                  visibleEducation!.map((r) => (
-                    <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">{r.staff_name}</td>
-                      <td className="py-2 pr-3">{r.staff_initials ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.staff_email ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.type ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.awarded_on ? formatISOToUK(r.awarded_on) : "—"}</td>
-                      <td className="py-2 pr-3">{r.expires_on ? formatISOToUK(r.expires_on) : "—"}</td>
-                      <td className={`py-2 pr-3 ${r.days_until != null && r.days_until < 0 ? "text-red-700" : ""}`}>
-                        {r.days_until != null ? r.days_until : "—"}
-                      </td>
-                      <td className="py-2 pr-3">{r.status === "no-expiry" ? "No expiry" : r.status === "expired" ? "Expired" : "Valid"}</td>
-                      <td className="max-w-xs py-2 pr-3">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
-                      <td className="py-2 pr-3">
-                        {r.certificate_url ? (
-                          <a href={r.certificate_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-sky-700 underline">
-                            View
-                          </a>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {education && education.length > 10 && (
-            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
-              <div>
-                Showing {showAllEducation ? education.length : Math.min(10, education.length)} of {education.length} records
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAllEducation((v) => !v)}
-                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
-              >
-                {showAllEducation ? "Show first 10" : "View all"}
               </button>
             </div>
           )}

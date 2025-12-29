@@ -1,6 +1,8 @@
 import { MetadataRoute } from "next";
 
-const SITE_URL = "https://temptake.app";
+// Use the canonical public domain. Can be overridden via env for previews.
+const SITE_URL =
+  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, "") || "https://temptake.com";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date();
