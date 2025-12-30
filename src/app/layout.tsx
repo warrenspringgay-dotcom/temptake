@@ -14,7 +14,6 @@ import Pwa from "@/components/Pwa";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import FabShell from "@/app/FabShell";
 
-// ✅ NEW: switches between launch-page header vs in-app header
 import HeaderSwitcher from "@/components/HeaderSwitcher";
 
 export const dynamic = "force-dynamic";
@@ -33,10 +32,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <ToastProvider>
             <GlobalLoadingProvider>
               <AuthProvider>
-                {/* PWA install prompt etc (no children) */}
                 <Pwa />
 
-                {/* ✅ Keep Suspense to satisfy useSearchParams() rules */}
                 <Suspense fallback={null}>
                   <HeaderSwitcher />
                 </Suspense>
@@ -59,3 +56,4 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     </html>
   );
 }
+  `1Q`
