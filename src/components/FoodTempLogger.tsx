@@ -778,12 +778,8 @@ let reason: FourWeekBannerReason | null = null;
               </div>
 
               <div className="flex gap-2 shrink-0">
-                <Link
-                  href="/four-week-review"
-                  className="inline-flex items-center justify-center rounded-2xl bg-slate-900 px-3 py-2 text-xs font-extrabold text-white shadow-sm hover:bg-slate-800"
-                >
-                  View
-                </Link>
+               <Link href="/reports?range=4w">4 week review</Link>
+
 
                 <button
                   type="button"
