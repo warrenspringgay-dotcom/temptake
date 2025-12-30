@@ -27,7 +27,7 @@ const DEMO_WALL: WallNoteItem[] = [
 ];
 
 const DEMO_EMPLOYEE = {
-  name: "Emma Dundon",
+  name: "Emma Dee",
   points: 109,
   cleanings: 63,
   temps: 46,
