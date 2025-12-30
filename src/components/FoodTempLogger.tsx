@@ -61,6 +61,16 @@ type CleanRun = {
   done_by: string | null;
 };
 
+type FourWeekBannerState =
+  | { kind: "none" }
+  | {
+      kind: "show";
+      issues: number;
+      periodFrom: string;
+      periodTo: string;
+      reason: "overdue" | "month_end" | "issues";
+    };
+
 /* ---------- helpers ---------- */
 
 const isoToday = () => new Date().toISOString().slice(0, 10);
@@ -145,6 +155,24 @@ function isDueOn(t: CleanTask, ymd: string) {
 function clampPct(n: number) {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(100, n));
+}
+
+function daysBetween(aISO: string, bISO: string) {
+  const a = new Date(aISO);
+  const b = new Date(bISO);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 999999;
+  const a0 = new Date(a);
+  const b0 = new Date(b);
+  a0.setHours(0, 0, 0, 0);
+  b0.setHours(0, 0, 0, 0);
+  return Math.round((b0.getTime() - a0.getTime()) / 86400000);
+}
+
+function isLikelyMonthEnd(d = new Date()) {
+  // "First login after month end" heuristic:
+  // If it's within first 3 days of the month, treat as month end review time.
+  const day = d.getDate();
+  return day <= 3;
 }
 
 /* ---------- Small UI helpers ---------- */
@@ -320,11 +348,15 @@ export default function DashboardPage() {
   const [user, setUser] = React.useState<any | null>(null);
   const [authReady, setAuthReady] = React.useState(false);
 
+  // ✅ Four-week banner state
+  const [fourWeekBanner, setFourWeekBanner] = useState<FourWeekBannerState>({
+    kind: "none",
+  });
+
   React.useEffect(() => {
     let mounted = true;
 
     supabase.auth.getUser().then(({ data }: { data: { user: User | null } }) => {
-
       if (!mounted) return;
       setUser(data?.user ?? null);
       setAuthReady(true);
@@ -377,6 +409,7 @@ export default function DashboardPage() {
           loadTrainingAndAllergenKpi(orgId, cancelled),
           loadLeaderBoard(orgId, cancelled),
           loadWallPosts(orgId, cancelled),
+          loadFourWeekBanner(today, cancelled),
         ]);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load dashboard.");
@@ -510,10 +543,7 @@ export default function DashboardPage() {
 
     // Training
     try {
-      const { data } = await supabase
-        .from("team_members")
-        .select("*")
-        .eq("org_id", orgId);
+      const { data } = await supabase.from("team_members").select("*").eq("org_id", orgId);
 
       (data ?? []).forEach((r: any) => {
         const raw =
@@ -576,9 +606,7 @@ export default function DashboardPage() {
     try {
       const { data, error } = await supabase
         .from(WALL_TABLE)
-        .select(
-          "id, org_id, location_id, author_initials, message, color, created_at"
-        )
+        .select("id, org_id, location_id, author_initials, message, color, created_at")
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
         .limit(3);
@@ -589,8 +617,7 @@ export default function DashboardPage() {
       const mapped: WallPost[] =
         (data ?? []).map((r: any) => ({
           id: String(r.id),
-          initials:
-            r.author_initials ?? r.staff_initials ?? r.initials ?? "??",
+          initials: r.author_initials ?? r.staff_initials ?? r.initials ?? "??",
           message: r.message ?? "",
           created_at: r.created_at ?? new Date().toISOString(),
           colorClass: (r.color as string) || "bg-yellow-200",
@@ -600,6 +627,58 @@ export default function DashboardPage() {
     } catch (e) {
       console.error("Failed to load wall posts", e);
       if (!cancelled) setWallPosts([]);
+    }
+  }
+
+  // ✅ NEW: Four-week review banner logic
+  async function loadFourWeekBanner(todayISO: string, cancelled: boolean) {
+    try {
+      if (typeof window === "undefined") return;
+
+      const reviewedAtRaw = localStorage.getItem("tt_four_week_reviewed_at");
+      const lastReviewedISO = reviewedAtRaw ? toISODate(reviewedAtRaw) : null;
+
+      // fetch current summary (fast, and lets us show “issues found”)
+      const res = await fetch(`/four-week-review/summary?to=${encodeURIComponent(todayISO)}`, {
+        cache: "no-store",
+      });
+
+      if (!res.ok) return;
+      const payload = await res.json();
+
+      const issues = Number(payload?.issues ?? 0);
+      const periodFrom = String(payload?.summary?.period?.from ?? "");
+      const periodTo = String(payload?.summary?.period?.to ?? todayISO);
+
+      if (cancelled) return;
+
+      const overdue = !lastReviewedISO || daysBetween(lastReviewedISO, todayISO) >= 28;
+      const monthEnd = isLikelyMonthEnd(new Date());
+
+      // Show banner if:
+      // - overdue (28+ days since mark reviewed), OR
+      // - month-end window (first 3 days of month), OR
+      // - there are issues (so it’s useful, not naggy)
+      let reason: FourWeekBannerState["reason"] | null = null;
+      if (issues > 0) reason = "issues";
+      else if (overdue) reason = "overdue";
+      else if (monthEnd) reason = "month_end";
+
+      if (!reason) {
+        setFourWeekBanner({ kind: "none" });
+        return;
+      }
+
+      setFourWeekBanner({
+        kind: "show",
+        issues,
+        periodFrom,
+        periodTo,
+        reason,
+      });
+    } catch {
+      // keep quiet
+      setFourWeekBanner({ kind: "none" });
     }
   }
 
@@ -619,10 +698,8 @@ export default function DashboardPage() {
     const bits: string[] = [];
     if (kpi.tempFails7d > 0) bits.push(`${kpi.tempFails7d} failed temps (7d)`);
     if (kpi.trainingOver > 0) bits.push(`${kpi.trainingOver} training overdue`);
-    if (kpi.allergenOver > 0)
-      bits.push(`${kpi.allergenOver} allergen review overdue`);
-    if (!bits.length)
-      return "No training, allergen or temperature issues flagged.";
+    if (kpi.allergenOver > 0) bits.push(`${kpi.allergenOver} allergen review overdue`);
+    if (!bits.length) return "No training, allergen or temperature issues flagged.";
     return bits.join(" · ");
   })();
 
@@ -652,280 +729,294 @@ export default function DashboardPage() {
     ? "danger"
     : "ok";
 
+  const fourWeekBannerTone =
+    fourWeekBanner.kind === "show"
+      ? fourWeekBanner.issues > 0
+        ? "border-amber-200 bg-amber-50/90 text-amber-950"
+        : "border-slate-200 bg-white/80 text-slate-900"
+      : "";
+
   /* ---------- render ---------- */
-return (
-  <>
-    <WelcomeGate />
+  return (
+    <>
+      <WelcomeGate />
+      <OnboardingBanner />
 
-    <OnboardingBanner />
-  
-
-
-      <header className="text-center">
-        <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">
-          {headerDate}
-        </h1>
-        <p className="mt-0.5 text-xs sm:text-sm font-medium text-slate-500">
-          Safety, cleaning and compliance at a glance.
-        </p>
-      </header>
-
-      <section className="rounded-3xl border border-white/50 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur space-y-3">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 items-stretch">
-          <KpiTile
-            canHover={canHover}
-            title="Temperature logs"
-            icon={kpi.tempLogsToday === 0 ? "❌" : "✅"}
-            tone={tempTone}
-            big={kpi.tempLogsToday}
-            sub={
-              kpi.tempLogsToday === 0
-                ? "No temperatures logged yet today."
-                : "At least one temperature check recorded."
-            }
-            onClick={openTempModal}
-            footer={
-              <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
-                <span>Tap to log</span>
-                <span className="opacity-80">Today</span>
+      {/* ✅ Four-week review banner */}
+      {fourWeekBanner.kind === "show" && (
+        <div className="mx-auto w-full max-w-6xl px-3 sm:px-4 mt-3">
+          <div
+            className={cls(
+              "rounded-3xl border p-4 shadow-lg shadow-slate-900/5 backdrop-blur",
+              fourWeekBannerTone
+            )}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-sm font-extrabold">
+                  Four-week review ready
+                </div>
+                <div className="mt-1 text-xs font-medium opacity-90">
+                  Period:{" "}
+                  <span className="font-extrabold">
+                    {formatDDMMYYYY(fourWeekBanner.periodFrom) ?? "—"} →{" "}
+                    {formatDDMMYYYY(fourWeekBanner.periodTo) ?? "—"}
+                  </span>
+                  {" · "}
+                  Issues found:{" "}
+                  <span className="font-extrabold">{fourWeekBanner.issues}</span>
+                </div>
+                <div className="mt-1 text-[11px] font-medium opacity-80">
+                  {fourWeekBanner.reason === "issues"
+                    ? "Recurring issues detected. Fix the top items and you look like you run the place."
+                    : fourWeekBanner.reason === "overdue"
+                    ? "It’s been ~4 weeks since the last review. Time to sanity-check the diary."
+                    : "Month-end check-in. One quick review now saves pain later."}
+                </div>
               </div>
-            }
-          />
 
-          <KpiTile
-            canHover={canHover}
-            title="Cleaning (today)"
-            icon="🧽"
-            tone={cleaningTone}
-            big={
-              <span>
-                {kpi.cleaningDoneToday}/{kpi.cleaningDueToday}
-              </span>
-            }
-            sub={
-              kpi.cleaningDueToday === 0
-                ? "No cleaning tasks scheduled for today."
-                : kpi.cleaningDoneToday === kpi.cleaningDueToday
-                ? "All scheduled cleaning tasks completed."
-                : "Some scheduled cleaning tasks still open."
-            }
-            href="/cleaning-rota"
-            footer={
-              kpi.cleaningDueToday > 0 ? (
-                <div className="space-y-1">
+              <div className="flex gap-2 shrink-0">
+                <Link
+                  href="/four-week-review"
+                  className="inline-flex items-center justify-center rounded-2xl bg-slate-900 px-3 py-2 text-xs font-extrabold text-white shadow-sm hover:bg-slate-800"
+                >
+                  View
+                </Link>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem("tt_four_week_reviewed_at", new Date().toISOString());
+                    setFourWeekBanner({ kind: "none" });
+                  }}
+                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 text-xs font-extrabold text-slate-900 shadow-sm hover:bg-white"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="mx-auto w-full max-w-6xl px-3 sm:px-4 mt-4">
+        <header className="text-center">
+          <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">
+            {headerDate}
+          </h1>
+          <p className="mt-0.5 text-xs sm:text-sm font-medium text-slate-500">
+            Safety, cleaning and compliance at a glance.
+          </p>
+        </header>
+
+        <section className="mt-3 rounded-3xl border border-white/50 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur space-y-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 items-stretch">
+            <KpiTile
+              canHover={canHover}
+              title="Temperature logs"
+              icon={kpi.tempLogsToday === 0 ? "❌" : "✅"}
+              tone={tempTone}
+              big={kpi.tempLogsToday}
+              sub={
+                kpi.tempLogsToday === 0
+                  ? "No temperatures logged yet today."
+                  : "At least one temperature check recorded."
+              }
+              onClick={openTempModal}
+              footer={
+                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
+                  <span>Tap to log</span>
+                  <span className="opacity-80">Today</span>
+                </div>
+              }
+            />
+
+            <KpiTile
+              canHover={canHover}
+              title="Cleaning (today)"
+              icon="🧽"
+              tone={cleaningTone}
+              big={
+                <span>
+                  {kpi.cleaningDoneToday}/{kpi.cleaningDueToday}
+                </span>
+              }
+              sub={
+                kpi.cleaningDueToday === 0
+                  ? "No cleaning tasks scheduled for today."
+                  : kpi.cleaningDoneToday === kpi.cleaningDueToday
+                  ? "All scheduled cleaning tasks completed."
+                  : "Some scheduled cleaning tasks still open."
+              }
+              href="/cleaning-rota"
+              footer={
+                kpi.cleaningDueToday > 0 ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
+                      <span>Progress</span>
+                      <span>{Math.round(clampPct(cleaningPct))}%</span>
+                    </div>
+                    <ProgressBar pct={cleaningPct} tone={cleaningTone} />
+                  </div>
+                ) : (
                   <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
                     <span>Progress</span>
-                    <span>{Math.round(clampPct(cleaningPct))}%</span>
+                    <span>0%</span>
                   </div>
-                  <ProgressBar pct={cleaningPct} tone={cleaningTone} />
-                </div>
-              ) : (
+                )
+              }
+            />
+
+            <KpiTile
+              canHover={canHover}
+              title="Alerts"
+              icon={hasAnyKpiAlert ? "⚠️" : "✅"}
+              tone={alertsTone}
+              big={alertsCount}
+              sub={alertsSummary}
+              href="/reports"
+              footer={
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
-                  <span>Progress</span>
-                  <span>0%</span>
+                  <span>View details</span>
+                  <span className="opacity-80">{hasAnyKpiAlert ? "Now" : "OK"}</span>
                 </div>
-              )
-            }
-          />
+              }
+            />
+          </div>
 
-          <KpiTile
-            canHover={canHover}
-            title="Alerts"
-            icon={hasAnyKpiAlert ? "⚠️" : "✅"}
-            tone={alertsTone}
-            big={alertsCount}
-            sub={alertsSummary}
-            href="/reports"
-            footer={
-              <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
-                <span>View details</span>
-                <span className="opacity-80">
-                  {hasAnyKpiAlert ? "Now" : "OK"}
-                </span>
+          {err && (
+            <div className="mt-1 rounded-2xl border border-red-200 bg-red-50/90 px-3 py-2 text-xs font-semibold text-red-800">
+              {err}
+            </div>
+          )}
+        </section>
+
+        <section className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur flex flex-col">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-extrabold text-slate-900">Kitchen wall</h2>
+                <p className="text-[11px] font-medium text-slate-500">
+                  Latest three notes from the team.
+                </p>
               </div>
-            }
-          />
-        </div>
-
-        {err && (
-          <div className="mt-1 rounded-2xl border border-red-200 bg-red-50/90 px-3 py-2 text-xs font-semibold text-red-800">
-            {err}
-          </div>
-        )}
-      </section>
-
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur flex flex-col">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-extrabold text-slate-900">
-                Kitchen wall
-              </h2>
-              <p className="text-[11px] font-medium text-slate-500">
-                Latest three notes from the team.
-              </p>
+              <Link
+                href="/wall"
+                className="text-[11px] font-semibold text-amber-700 hover:text-amber-800 underline-offset-2 hover:underline"
+              >
+                View wall
+              </Link>
             </div>
-            <Link
-              href="/wall"
-              className="text-[11px] font-semibold text-amber-700 hover:text-amber-800 underline-offset-2 hover:underline"
-            >
-              View wall
-            </Link>
-          </div>
 
-          {wallPosts.length === 0 ? (
-            <div className="mt-1 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-xs text-slate-500 flex-1 flex items-center">
-              No posts yet. When the team adds messages on the wall, the latest
-              three will show here.
-            </div>
-          ) : (
-            <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {wallPosts.map((p, idx) => (
-                <motion.div
-                  key={p.id}
-                  className={cls(
-                    "flex flex-col justify-between rounded-2xl px-3 py-2 text-xs shadow-sm border border-slate-100",
-                    p.colorClass || "bg-yellow-200"
-                  )}
-                  initial={{ opacity: 0, y: 10, scale: 0.97 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{
-                    type: "spring",
-                    stiffness: 260,
-                    damping: 20,
-                    delay: idx * 0.05,
-                  }}
-                  whileHover={canHover ? { y: -3 } : undefined}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="text-base font-extrabold tracking-wide text-slate-900">
-                      {p.initials || "??"}
+            {wallPosts.length === 0 ? (
+              <div className="mt-1 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-xs text-slate-500 flex-1 flex items-center">
+                No posts yet. When the team adds messages on the wall, the latest three will show here.
+              </div>
+            ) : (
+              <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {wallPosts.map((p, idx) => (
+                  <motion.div
+                    key={p.id}
+                    className={cls(
+                      "flex flex-col justify-between rounded-2xl px-3 py-2 text-xs shadow-sm border border-slate-100",
+                      p.colorClass || "bg-yellow-200"
+                    )}
+                    initial={{ opacity: 0, y: 10, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{
+                      type: "spring",
+                      stiffness: 260,
+                      damping: 20,
+                      delay: idx * 0.05,
+                    }}
+                    whileHover={canHover ? { y: -3 } : undefined}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-base font-extrabold tracking-wide text-slate-900">
+                        {p.initials || "??"}
+                      </div>
+
+                      <span className="rounded-full bg-white/60 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                        {formatDDMMYYYY(p.created_at) ?? ""}
+                      </span>
                     </div>
 
-                    <span className="rounded-full bg-white/60 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
-                      {formatDDMMYYYY(p.created_at) ?? ""}
-                    </span>
-                  </div>
+                    <div className="text-[11px] font-medium text-slate-800 line-clamp-3">
+                      {p.message}
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </div>
 
-                  <div className="text-[11px] font-medium text-slate-800 line-clamp-3">
-                    {p.message}
-                  </div>
-                </motion.div>
-              ))}
+          <div className="rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-md shadow-amber-200/60 flex flex-col">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-extrabold text-amber-900">Employee of the month</h2>
+              <span className="text-xl" aria-hidden="true">
+                🏆
+              </span>
             </div>
-          )}
-        </div>
 
-        <div className="rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-md shadow-amber-200/60 flex flex-col">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-extrabold text-amber-900">
-              Employee of the month
-            </h2>
-            <span className="text-xl" aria-hidden="true">
-              🏆
-            </span>
-          </div>
+            {eom ? (
+              <>
+                <div className="text-lg font-extrabold text-amber-900 truncate">
+                  {eom.display_name}
+                </div>
 
-          {eom ? (
-            <>
-              <div className="text-lg font-extrabold text-amber-900 truncate">
-                {eom.display_name}
-              </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-extrabold text-amber-900 border border-amber-200/60">
+                    ⭐ {eom.points ?? 0} points
+                  </span>
+                  <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-amber-900 border border-amber-200/60">
+                    🧽 {eom.cleaning_count ?? 0} cleanings
+                  </span>
+                  <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-amber-900 border border-amber-200/60">
+                    🌡 {eom.temp_logs_count ?? 0} temps
+                  </span>
+                </div>
 
-              <div className="mt-2 flex flex-wrap gap-2">
-                <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-extrabold text-amber-900 border border-amber-200/60">
-                  ⭐ {eom.points ?? 0} points
-                </span>
-                <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-amber-900 border border-amber-200/60">
-                  🧽 {eom.cleaning_count ?? 0} cleanings
-                </span>
-                <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-amber-900 border border-amber-200/60">
-                  🌡 {eom.temp_logs_count ?? 0} temps
-                </span>
-              </div>
-
-              <p className="mt-3 text-[11px] font-medium text-amber-900/80">
-                Based on completed cleaning tasks and temperature logs this
-                month.
+                <p className="mt-3 text-[11px] font-medium text-amber-900/80">
+                  Based on completed cleaning tasks and temperature logs this month.
+                </p>
+              </>
+            ) : (
+              <p className="text-xs font-medium text-amber-900/80">
+                No leaderboard data yet. Once your team completes cleaning tasks and logs temperatures, the top performer will be highlighted here.
               </p>
-            </>
-          ) : (
-            <p className="text-xs font-medium text-amber-900/80">
-              No leaderboard data yet. Once your team completes cleaning tasks
-              and logs temperatures, the top performer will be highlighted here.
-            </p>
-          )}
+            )}
 
-          <div className="mt-3">
-            <Link
-              href="/leaderboard"
-              className="inline-flex items-center rounded-2xl bg-amber-600 px-3 py-1.5 text-xs font-extrabold text-white shadow-sm hover:bg-amber-700"
-            >
-              View full leaderboard
-            </Link>
+            <div className="mt-3">
+              <Link
+                href="/leaderboard"
+                className="inline-flex items-center rounded-2xl bg-amber-600 px-3 py-1.5 text-xs font-extrabold text-white shadow-sm hover:bg-amber-700"
+              >
+                View full leaderboard
+              </Link>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur space-y-3">
-        <h2 className="text-sm font-extrabold text-slate-900">Quick actions</h2>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <QuickLink
-            href="/routines"
-            label="Routines"
-            icon="📋"
-            canHover={canHover}
-          />
-          <QuickLink
-            href="/allergens"
-            label="Allergens"
-            icon="⚠️"
-            canHover={canHover}
-          />
-          <QuickLink
-            href="/cleaning-rota"
-            label="Cleaning rota"
-            icon="🧽"
-            canHover={canHover}
-          />
-          <QuickLink
-            href="/team"
-            label="Team & training"
-            icon="👥"
-            canHover={canHover}
-          />
-          <QuickLink
-            href="/reports"
-            label="Reports"
-            icon="📊"
-            canHover={canHover}
-          />
-          <QuickLink
-            href="/locations"
-            label="Locations & sites"
-            icon="📍"
-            canHover={canHover}
-          />
-          <QuickLink
-            href="/manager"
-            label="Manager view"
-            icon="💼"
-            canHover={canHover}
-          />
-          <QuickLink
-            href="/help"
-            label="Help & support"
-            icon="❓"
-            canHover={canHover}
-          />
-        </div>
-      </section>
+        <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur space-y-3">
+          <h2 className="text-sm font-extrabold text-slate-900">Quick actions</h2>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <QuickLink href="/routines" label="Routines" icon="📋" canHover={canHover} />
+            <QuickLink href="/allergens" label="Allergens" icon="⚠️" canHover={canHover} />
+            <QuickLink href="/cleaning-rota" label="Cleaning rota" icon="🧽" canHover={canHover} />
+            <QuickLink href="/team" label="Team & training" icon="👥" canHover={canHover} />
+            <QuickLink href="/reports" label="Reports" icon="📊" canHover={canHover} />
+            <QuickLink href="/locations" label="Locations & sites" icon="📍" canHover={canHover} />
+            <QuickLink href="/manager" label="Manager view" icon="💼" canHover={canHover} />
+            <QuickLink href="/help" label="Help & support" icon="❓" canHover={canHover} />
+          </div>
+        </section>
 
-      {loading && (
-        <p className="text-center text-[11px] font-medium text-slate-400">
-          Loading dashboard…
-        </p>
-      )}
+        {loading && (
+          <p className="text-center text-[11px] font-medium text-slate-400">
+            Loading dashboard…
+          </p>
+        )}
+      </div>
     </>
   );
 }
