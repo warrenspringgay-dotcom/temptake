@@ -659,7 +659,9 @@ export default function DashboardPage() {
       // - overdue (28+ days since mark reviewed), OR
       // - month-end window (first 3 days of month), OR
       // - there are issues (so it’s useful, not naggy)
-      let reason: FourWeekBannerState["reason"] | null = null;
+      type FourWeekBannerReason = "overdue" | "month_end" | "issues";
+let reason: FourWeekBannerReason | null = null;
+
       if (issues > 0) reason = "issues";
       else if (overdue) reason = "overdue";
       else if (monthEnd) reason = "month_end";
