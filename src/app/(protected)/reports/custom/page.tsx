@@ -3,102 +3,111 @@ import { getCustomReport } from "@/app/actions/reports";
 
 export const metadata = { title: "Custom Report – TempTake" };
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const PAGE = "max-w-[1100px] mx-auto px-3 sm:px-4 py-6";
+const CARD =
+  "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md";
+
+function pill(cls: string) {
+  return `inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${cls}`;
+}
 
 export default async function CustomReportPage() {
-  // last 30 days by default
-  const to = new Date();
-  const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  // If you previously expected an array, that was the bug.
+  // Now you get a structured object: { logs, totals, period }
+  const report = await getCustomReport({ limit: 200 });
 
-  const toISO = to.toISOString().slice(0, 10);
-  const fromISO = from.toISOString().slice(0, 10);
-
-  // get array of rows
-  const items = await getCustomReport({ from: fromISO, to: toISO, limit: 200 });
-
-  // simple counts you can expand later
-  const counts = {
-    total: items.length,
-    pass: items.filter((r: any) => r.status === "pass").length,
-    fail: items.filter((r: any) => r.status === "fail").length,
-  };
+  const items = report.logs;
 
   return (
-    <main className="p-4 space-y-6">
-      <h1 className="text-xl font-semibold">Custom Report</h1>
-
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <div className="text-sm text-gray-600">
-          Range: <span className="font-medium">{fromISO}</span> →{" "}
-          <span className="font-medium">{toISO}</span>
-        </div>
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <div className="rounded-lg border p-3">
-            <div className="text-xs text-gray-500">Total</div>
-            <div className="text-lg font-semibold">{counts.total}</div>
-          </div>
-          <div className="rounded-lg border p-3">
-            <div className="text-xs text-gray-500">Pass</div>
-            <div className="text-lg font-semibold">{counts.pass}</div>
-          </div>
-          <div className="rounded-lg border p-3">
-            <div className="text-xs text-gray-500">Fail</div>
-            <div className="text-lg font-semibold">{counts.fail}</div>
-          </div>
-        </div>
+    <div className={PAGE}>
+      <div className="mb-4">
+        <h1 className="text-2xl font-semibold tracking-tight">Custom Report</h1>
+        <p className="mt-1 text-sm text-gray-600">
+          Lightweight view of recent temperature logs.
+        </p>
       </div>
 
-      <div className="rounded-xl border bg-white p-4 shadow-sm overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="text-left text-gray-500">
-              <th className="py-2 pr-3">Date/Time</th>
-              <th className="py-2 pr-3">Location</th>
-              <th className="py-2 pr-3">Item</th>
-              <th className="py-2 pr-3">Temp (°C)</th>
-              <th className="py-2 pr-3">Target</th>
-              <th className="py-2 pr-3">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="py-6 text-center text-gray-500">
-                  No rows for this range.
-                </td>
+      <section className={`${CARD} p-5 sm:p-6`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className={pill("bg-black text-white")}>Summary</div>
+            <p className="mt-2 text-sm text-gray-700">
+              {report.period.from || report.period.to
+                ? `Period: ${report.period.from ?? "—"} to ${report.period.to ?? "—"}`
+                : "Period: latest logs"}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <span className={pill("bg-gray-900 text-white")}>
+              Total: {report.totals.total}
+            </span>
+            <span className={pill("bg-emerald-600 text-white")}>
+              Pass: {report.totals.pass}
+            </span>
+            <span className={pill("bg-red-600 text-white")}>
+              Fail: {report.totals.fails}
+            </span>
+            <span className={pill("bg-gray-100 text-gray-900")}>
+              Fail rate: {report.totals.failRatePct}%
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-5 overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-600">
+                <th className="py-2 pr-4">Date</th>
+                <th className="py-2 pr-4">Area</th>
+                <th className="py-2 pr-4">Item</th>
+                <th className="py-2 pr-4">Temp</th>
+                <th className="py-2 pr-4">Status</th>
+                <th className="py-2 pr-0">Staff</th>
               </tr>
-            ) : (
-              items.map((r: any) => (
-                <tr key={r.id} className="border-t">
-                  <td className="py-2 pr-3">
-                    {r.at?.slice?.(0, 16)?.replace("T", " ") ?? "—"}
-                  </td>
-                  <td className="py-2 pr-3">{r.area ?? r.location ?? "—"}</td>
-                  <td className="py-2 pr-3">{r.note ?? r.item ?? "—"}</td>
-                  <td className="py-2 pr-3">
-                    {r.temp_c != null ? Number(r.temp_c) : r.temp ?? "—"}
-                  </td>
-                  <td className="py-2 pr-3">{r.target_key ?? r.target ?? "—"}</td>
-                  <td className="py-2 pr-3">
-                    {r.status ? (
-                      <span
-                        className={
-                          r.status === "pass"
-                            ? "inline-flex rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-xs font-medium"
-                            : "inline-flex rounded-full bg-red-100 text-red-800 px-2 py-0.5 text-xs font-medium"
-                        }
-                      >
-                        {r.status}
+            </thead>
+            <tbody className="text-gray-800">
+              {items.map((r) => {
+                const ymd = (r.at ?? "").toString().slice(0, 10) || "—";
+                const status = String(r.status ?? "").toLowerCase();
+                const statusPill =
+                  status === "fail"
+                    ? "bg-red-600 text-white"
+                    : status === "pass"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-gray-100 text-gray-900";
+
+                return (
+                  <tr key={r.id} className="border-t border-gray-200/70">
+                    <td className="py-2 pr-4 whitespace-nowrap">{ymd}</td>
+                    <td className="py-2 pr-4">{r.area ?? "—"}</td>
+                    <td className="py-2 pr-4">{r.note ?? "—"}</td>
+                    <td className="py-2 pr-4 whitespace-nowrap">
+                      {r.temp_c == null ? "—" : `${r.temp_c}°C`}
+                    </td>
+                    <td className="py-2 pr-4">
+                      <span className={pill(statusPill)}>
+                        {status ? status.toUpperCase() : "—"}
                       </span>
-                    ) : (
-                      "—"
-                    )}
+                    </td>
+                    <td className="py-2 pr-0">{r.staff_initials ?? "—"}</td>
+                  </tr>
+                );
+              })}
+
+              {!items.length && (
+                <tr>
+                  <td className="py-6 text-gray-500" colSpan={6}>
+                    No logs found.
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </main>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
   );
 }
