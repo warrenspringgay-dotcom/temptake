@@ -1,138 +1,321 @@
 "use server";
 
+import { createClient } from "@supabase/supabase-js";
 import { getServerSupabase } from "@/lib/supabaseServer";
-import { requireUser } from "@/lib/requireUser";
-import { getOrgId } from "@/lib/org";
+import { getActiveOrgIdServer } from "@/lib/orgServer";
 
-/* =========================
-   Types
-========================= */
+/* ============================================================
+   Admin client (service role) for invites
+   – only used on the server in this file
+============================================================ */
+
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
+);
+
+/* ============================================================
+   Shared types
+============================================================ */
+
+export type TeamMemberInput = {
+  id?: string;
+  name: string;
+  initials: string;
+  role: string;
+  phone?: string | null;
+  email?: string | null;
+  active?: boolean;
+  notes?: string | null;
+  training_expires_on?: string | null;
+  allergen_review_due_on?: string | null;
+};
+
 export type TeamMember = {
   id?: string;
-  org_id?: string | null;
-  name: string;
-  role?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  notes?: string | null;
-  active: boolean;
+  org_id?: string;
   initials?: string | null;
+  name?: string | null;
+  role?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  active?: boolean | null;
+  notes?: string | null;
+  training_expires_on?: string | null;
+  allergen_review_due_on?: string | null;
 };
 
 export type TrainingRow = {
   id: string;
+  staff_id: string;
   type: string | null;
-  awarded_on: string | null; // yyyy-mm-dd
-  expires_on: string | null; // yyyy-mm-dd
-  certificate_url?: string | null;
-  notes?: string | null;
+  awarded_on: string | null;
+  expires_on: string | null;
 };
 
-/* =========================
-   Team members
-========================= */
+type TrainingInput = {
+  type: string;
+  awarded_on: string;
+  expires_on: string;
+};
 
-export async function listTeam(): Promise<TeamMember[]> {
-  await requireUser();
-  const orgId = await getOrgId();
+/* ============================================================
+   Helper: require the current user to be OWNER in active org
+============================================================ */
 
-  const sb = await getServerSupabase();
-  const { data, error } = await sb
+async function requireOwnerOrg() {
+  const supabase = await getServerSupabase();
+
+  const orgId = await getActiveOrgIdServer();
+  if (!orgId) {
+    throw new Error("No active organisation found.");
+  }
+
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
+
+  if (userErr || !user || !user.email) {
+    throw new Error("You must be signed in to manage the team.");
+  }
+
+  const { data: member, error: memberErr } = await supabase
+    .from("team_members")
+    .select("id, role")
+    .eq("org_id", orgId)
+    .eq("email", user.email)
+    .maybeSingle();
+
+  if (memberErr || !member) {
+    throw new Error("You are not a member of this organisation.");
+  }
+
+  if ((member.role ?? "").toLowerCase() !== "owner") {
+    throw new Error("Only organisation owners can manage the team.");
+  }
+
+  return { orgId, userId: user.id, memberId: member.id };
+}
+
+/* ============================================================
+   Core mutations (original API)
+============================================================ */
+
+export async function saveTeamMember(input: TeamMemberInput) {
+  const supabase = await getServerSupabase();
+  const { orgId } = await requireOwnerOrg();
+
+  if (!input.name?.trim()) {
+    throw new Error("Name is required");
+  }
+
+  const payload = {
+    initials: input.initials?.trim().toUpperCase() || null,
+    name: input.name.trim(),
+    role: input.role?.trim() || null,
+    phone: input.phone ?? null,
+    email: input.email ?? null,
+    active: input.active ?? true,
+    notes: input.notes ?? null,
+    training_expires_on: input.training_expires_on ?? null,
+    allergen_review_due_on: input.allergen_review_due_on ?? null,
+  };
+
+  if (input.id) {
+    // Update existing row, scoped by org
+    const { error } = await supabase
+      .from("team_members")
+      .update(payload)
+      .eq("id", input.id)
+      .eq("org_id", orgId);
+
+    if (error) throw new Error(error.message);
+  } else {
+    // Insert new row
+    const { error } = await supabase.from("team_members").insert({
+      ...payload,
+      org_id: orgId,
+    });
+
+    if (error) throw new Error(error.message);
+  }
+}
+
+export async function deleteTeamMember(id: string) {
+  const supabase = await getServerSupabase();
+  const { orgId } = await requireOwnerOrg();
+
+  const { error } = await supabase
+    .from("team_members")
+    .delete()
+    .eq("id", id)
+    .eq("org_id", orgId);
+
+  if (error) throw new Error(error.message);
+}
+
+/* ============================================================
+   Core queries (original API)
+============================================================ */
+
+export async function listTeamMembers(): Promise<TeamMember[]> {
+  const supabase = await getServerSupabase();
+  const orgId = await getActiveOrgIdServer();
+
+  if (!orgId) return [];
+
+  const { data, error } = await supabase
     .from("team_members")
     .select("*")
     .eq("org_id", orgId)
-    .order("created_at", { ascending: true });
+    .order("name", { ascending: true });
 
   if (error) throw new Error(error.message);
   return (data ?? []) as TeamMember[];
 }
 
-/** Create or update. Always pins org_id to caller’s org. */
-export async function upsertTeamMember(payload: Partial<TeamMember>) {
-  await requireUser();
-  const orgId = await getOrgId();
+/**
+ * Staff initials helper for FoodTempLogger etc.
+ * Returns a deduped, UPPERCASE list of initials for the active org.
+ */
+export async function listStaffInitials(): Promise<string[]> {
+  const supabase = await getServerSupabase();
 
-  const row: Partial<TeamMember> = {
-    id: payload.id,
-    org_id: orgId,
-    name: (payload.name ?? "").trim(),
-    role: payload.role ?? null,
-    email: payload.email ?? null,
-    phone: payload.phone ?? null,
-    notes: payload.notes ?? null,
-    active: payload.active ?? true,
-    initials: (payload.initials ?? "").trim() || null,
+  let orgId: string | null = null;
+  try {
+    orgId = await getActiveOrgIdServer();
+  } catch {
+    // ignore – will just fall back to no org filter
+  }
+
+  let query = supabase
+    .from("team_members")
+    .select("initials,name,email")
+    .order("name", { ascending: true });
+
+  if (orgId) {
+    query = query.eq("org_id", orgId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const vals = (data ?? []).map((r: any) => {
+    const fromInitials =
+      r.initials && String(r.initials).trim().toUpperCase();
+    const fromName =
+      !fromInitials && r.name
+        ? String(r.name).trim().slice(0, 1).toUpperCase()
+        : null;
+    const fromEmail =
+      !fromInitials && !fromName && r.email
+        ? String(r.email).trim().slice(0, 1).toUpperCase()
+        : null;
+
+    return fromInitials || fromName || fromEmail || null;
+  });
+
+  return Array.from(new Set(vals.filter(Boolean) as string[]));
+}
+
+/* ============================================================
+   New API used by TeamManager.tsx
+   (thin wrappers + training helpers)
+============================================================ */
+
+/** List team for the current org – used by TeamManager.tsx */
+export async function listTeam(): Promise<TeamMember[]> {
+  return listTeamMembers();
+}
+
+/** Upsert a member from the TeamManager form. */
+export async function upsertTeamMember(
+  input: Partial<TeamMember>
+): Promise<void> {
+  if (!input.name?.trim()) {
+    throw new Error("Name is required");
+  }
+
+  const payload: TeamMemberInput = {
+    id: input.id,
+    name: input.name.trim(),
+    initials: (input.initials ?? "").toString(),
+    role: (input.role ?? "").toString(),
+    phone: input.phone ?? null,
+    email: input.email ?? null,
+    active: input.active ?? true,
+    notes: input.notes ?? null,
+    training_expires_on: input.training_expires_on ?? null,
+    allergen_review_due_on: input.allergen_review_due_on ?? null,
   };
 
-  if (!row.name) throw new Error("Name is required");
-
-  const sb = await getServerSupabase();
-  const { error } = await sb.from("team_members").upsert(row).select("id").single();
-  if (error) throw new Error(error.message);
+  await saveTeamMember(payload);
 }
 
-export async function deleteTeamMember(id: string) {
-  await requireUser();
-  const orgId = await getOrgId();
+/**
+ * Ensure a staff row exists in the `staff` table for these initials,
+ * and return its *database id* (NOT the initials).
+ */
+export async function ensureStaffByInitials(
+  initials: string,
+  name: string
+): Promise<string> {
+  const supabase = await getServerSupabase();
+  const orgId = await getActiveOrgIdServer();
 
-  const sb = await getServerSupabase();
-  const { error } = await sb.from("team_members").delete().eq("id", id).eq("org_id", orgId);
-  if (error) throw new Error(error.message);
-}
+  if (!orgId) {
+    throw new Error("No active organisation found.");
+  }
 
-/* =========================
-   Staff + Trainings
-========================= */
+  const cleanInitials = initials.trim().toUpperCase();
+  const displayName = name?.trim() || cleanInitials;
 
-export async function ensureStaffByInitials(initials: string, fallbackName?: string): Promise<string> {
-  await requireUser();
-  const orgId = await getOrgId();
-
-  const ini = initials.trim().toUpperCase();
-  if (!ini) throw new Error("Missing initials");
-
-  const sb = await getServerSupabase();
-
-  const { data: existing, error: selErr } = await sb
+  // 1) Look up existing staff by org + initials
+  const { data: existing, error: findError } = await supabase
     .from("staff")
     .select("id")
     .eq("org_id", orgId)
-    .eq("initials", ini)
+    .eq("initials", cleanInitials)
     .maybeSingle();
 
-  if (selErr) throw new Error(selErr.message);
-  if (existing?.id) return existing.id as string;
+  if (findError) throw new Error(findError.message);
 
-  const { data: created, error: insErr } = await sb
+  if (existing?.id) {
+    return String(existing.id);
+  }
+
+  // 2) Create a new staff record
+  const { data: created, error: insertError } = await supabase
     .from("staff")
-    .insert({ org_id: orgId, initials: ini, name: fallbackName ?? ini })
+    .insert({
+      org_id: orgId,
+      initials: cleanInitials,
+      name: displayName,
+    })
     .select("id")
     .single();
 
-  if (insErr) throw new Error(insErr.message);
-  return created.id as string;
+  if (insertError) throw new Error(insertError.message);
+
+  return String(created.id);
 }
 
-export async function listTrainingsForStaff(staffId: string): Promise<TrainingRow[]> {
-  await requireUser();
-  const orgId = await getOrgId();
+/** List training records for a given staff id. */
+export async function listTrainingsForStaff(
+  staffId: string
+): Promise<TrainingRow[]> {
+  const supabase = await getServerSupabase();
 
-  const sb = await getServerSupabase();
-
-  // Ensure staff belongs to org
-  const { data: staff, error: staffErr } = await sb
-    .from("staff")
-    .select("id")
-    .eq("id", staffId)
-    .eq("org_id", orgId)
-    .maybeSingle();
-
-  if (staffErr) throw new Error(staffErr.message);
-  if (!staff?.id) throw new Error("Forbidden");
-
-  const { data, error } = await sb
+  const { data, error } = await supabase
     .from("trainings")
-    .select("id,type,awarded_on,expires_on,certificate_url,notes")
+    .select("id,staff_id,type,awarded_on,expires_on")
     .eq("staff_id", staffId)
     .order("awarded_on", { ascending: false });
 
@@ -140,27 +323,17 @@ export async function listTrainingsForStaff(staffId: string): Promise<TrainingRo
   return (data ?? []) as TrainingRow[];
 }
 
+/**
+ * Insert a training record for the given staff id.
+ * Expects a *real* staff.id (from `ensureStaffByInitials`).
+ */
 export async function insertTraining(
   staffId: string,
-  input: { type: string; awarded_on: string; expires_on: string }
-) {
-  await requireUser();
-  const orgId = await getOrgId();
+  input: TrainingInput
+): Promise<void> {
+  const supabase = await getServerSupabase();
 
-  const sb = await getServerSupabase();
-
-  // Ensure staff belongs to org
-  const { data: staff, error: staffErr } = await sb
-    .from("staff")
-    .select("id")
-    .eq("id", staffId)
-    .eq("org_id", orgId)
-    .maybeSingle();
-
-  if (staffErr) throw new Error(staffErr.message);
-  if (!staff?.id) throw new Error("Forbidden");
-
-  const { error } = await sb.from("trainings").insert({
+  const { error } = await supabase.from("trainings").insert({
     staff_id: staffId,
     type: input.type,
     awarded_on: input.awarded_on,
@@ -170,145 +343,74 @@ export async function insertTraining(
   if (error) throw new Error(error.message);
 }
 
-/* =========================
-   ✅ Staff initials list (for temp logger, etc.)
-========================= */
+/* ============================================================
+   Invite flow using Supabase Admin API
+   – creates auth user + sends invite email with password set
+============================================================ */
 
-/**
- * Returns a simple list of staff initials for the current org.
- * This exists because tempLogs.ts re-exports it.
- */
-export async function listStaffInitials(): Promise<string[]> {
-  await requireUser();
-  const orgId = await getOrgId();
-
-  const sb = await getServerSupabase();
-  const { data, error } = await sb
-    .from("staff")
-    .select("initials")
-    .eq("org_id", orgId)
-    .order("initials", { ascending: true });
-
-  if (error) throw new Error(error.message);
-
-  const initials = (data ?? [])
-    .map((r: any) => (r.initials ?? "").toString().trim().toUpperCase())
-    .filter(Boolean);
-
-  // de-dupe
-  return Array.from(new Set(initials));
-}
-
-/* =========================
-   Staff QC Reviews
-========================= */
-
-export type StaffQcReviewRow = {
-  id: string;
-  reviewed_on: string; // yyyy-mm-dd
-  score: number; // 1..5
-  notes: string | null;
-  manager_initials: string | null;
-  manager_name: string | null;
+export type InviteTeamMemberResult = {
+  ok: boolean;
+  message?: string;
 };
 
-export async function listStaffQcReviewsForStaff(staffId: string): Promise<StaffQcReviewRow[]> {
-  await requireUser();
-  const orgId = await getOrgId();
+export async function inviteTeamMemberServer(args: {
+  email: string;
+  role?: string;
+  name?: string;
+  initials?: string;
+}): Promise<InviteTeamMemberResult> {
+  const { orgId } = await requireOwnerOrg();
+  const db = await getServerSupabase();
 
-  const sb = await getServerSupabase();
+  const email = args.email.trim().toLowerCase();
+  if (!email) return { ok: false, message: "Email is required." };
 
-  // Ensure staff belongs to org
-  const { data: staff, error: staffErr } = await sb
-    .from("staff")
-    .select("id")
-    .eq("id", staffId)
-    .eq("org_id", orgId)
-    .maybeSingle();
+  const name = (args.name ?? "").trim() || email;
+  const role = (args.role ?? "staff").trim().toLowerCase() || "staff";
 
-  if (staffErr) throw new Error(staffErr.message);
-  if (!staff?.id) throw new Error("Forbidden");
+  const initialsRaw =
+    args.initials ||
+    name
+      .split(/[@\s.]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0])
+      .join("");
+  const initials = initialsRaw.toUpperCase().slice(0, 4);
 
-  const { data, error } = await sb
-    .from("staff_qc_reviews")
-    .select("id,reviewed_on,score,notes,manager:staff!staff_qc_reviews_manager_fkey(initials,name)")
-    .eq("org_id", orgId)
-    .eq("staff_id", staffId)
-    .order("reviewed_on", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(100);
-
-  if (error) throw new Error(error.message);
-
-  return (data ?? []).map((r: any) => ({
-    id: String(r.id),
-    reviewed_on: String(r.reviewed_on),
-    score: Number(r.score),
-    notes: r.notes ?? null,
-    manager_initials: r.manager?.initials ?? null,
-    manager_name: r.manager?.name ?? null,
-  })) as StaffQcReviewRow[];
-}
-
-export async function insertStaffQcReview(
-  staffId: string,
-  input: {
-    manager_initials: string;
-    reviewed_on: string; // yyyy-mm-dd
-    score: number; // 1..5
-    notes?: string | null;
-    location_id?: string | null;
-  }
-) {
-  await requireUser();
-  const orgId = await getOrgId();
-
-  const sb = await getServerSupabase();
-
-  // Ensure staff belongs to org
-  const { data: staff, error: staffErr } = await sb
-    .from("staff")
-    .select("id")
-    .eq("id", staffId)
-    .eq("org_id", orgId)
-    .maybeSingle();
-
-  if (staffErr) throw new Error(staffErr.message);
-  if (!staff?.id) throw new Error("Forbidden");
-
-  const managerId = await ensureStaffByInitials(
-    input.manager_initials,
-    input.manager_initials.trim().toUpperCase()
+  // 1) Create user + send invite email
+  const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(
+    email,
+    {
+      data: { name },
+    }
   );
 
-  const score = Number(input.score);
-  if (!Number.isFinite(score) || score < 1 || score > 5) {
-    throw new Error("Score must be between 1 and 5");
+  if (error) {
+    return { ok: false, message: error.message };
   }
 
-  const { error } = await sb.from("staff_qc_reviews").insert({
-    org_id: orgId,
-    staff_id: staffId,
-    manager_id: managerId,
-    location_id: input.location_id ?? null,
-    reviewed_on: input.reviewed_on,
-    score,
-    notes: (input.notes ?? null) as any,
-  });
+  const user = data?.user ?? null;
 
-  if (error) throw new Error(error.message);
-}
+  // 2) Upsert into team_members
+  const { error: tmErr } = await db.from("team_members").upsert(
+    {
+      org_id: orgId,
+      user_id: user?.id ?? null,
+      email,
+      name,
+      initials,
+      role,
+      active: true,
+    },
+    {
+      onConflict: "org_id,email",
+    }
+  );
 
-export async function deleteStaffQcReview(reviewId: string) {
-  await requireUser();
-  const orgId = await getOrgId();
+  if (tmErr) {
+    return { ok: false, message: tmErr.message };
+  }
 
-  const sb = await getServerSupabase();
-  const { error } = await sb
-    .from("staff_qc_reviews")
-    .delete()
-    .eq("id", reviewId)
-    .eq("org_id", orgId);
-
-  if (error) throw new Error(error.message);
+  return { ok: true };
 }
