@@ -67,21 +67,16 @@ export default function HeaderShell() {
           )}
         </div>
 
-        {/* Right side: org/location (desktop), but user menu always */}
+        {/* Desktop right: org/location + user menu */}
         {ready && user && (
-          <div className="flex items-center gap-2">
-            {/* Desktop-only org/location */}
-            <div className="hidden items-center gap-3 md:flex">
-              <OrgName />
-              <LocationSwitcher />
-            </div>
-
-            {/* ✅ UserMenu visible on mobile AND desktop */}
+          <div className="hidden items-center gap-3 md:flex">
+            <OrgName />
+            <LocationSwitcher />
             <UserMenu />
           </div>
         )}
 
-        {/* Mobile hamburger (nav only) */}
+        {/* Mobile: ONE hamburger that includes nav + account */}
         <div className="flex md:hidden">
           <MobileMenu />
         </div>

@@ -1,26 +1,25 @@
 // src/components/MobileMenu.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
+import Image from "next/image";
+import { usePathname, useRouter } from "next/navigation";
+
 import { supabase } from "@/lib/supabaseBrowser";
 import { useAuth } from "@/components/AuthProvider";
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import Image from "next/image";
 
 type Tab = {
   href: string;
   label: string;
   requiresManager?: boolean;
-  requiresPlan?: boolean; // needs active sub or trial
+  requiresPlan?: boolean;
 };
 
-const navLinks: Tab[] = [
+const APP_NAV: Tab[] = [
   { href: "/dashboard", label: "Dashboard" },
-
-  // plan-gated core app areas
   { href: "/routines", label: "Routines", requiresPlan: true },
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning rota", requiresPlan: true },
@@ -37,25 +36,36 @@ const navLinks: Tab[] = [
   { href: "/reports", label: "Reports", requiresPlan: true },
 ];
 
-const publicLinks: { href: string; label: string }[] = [
-  { href: "/login", label: "Sign in" },
-  { href: "/signup", label: "Create account" },
+const ACCOUNT_LINKS: { href: string; label: string }[] = [
+  { href: "/settings", label: "Settings" },
+  { href: "/locations", label: "Locations" },
+  { href: "/billing", label: "Billing & subscription" },
+  { href: "/guides", label: "Guides" },
+  { href: "/help", label: "Help & support" },
 ];
 
-const cn = (...parts: Array<string | false | null | undefined>) =>
-  parts.filter(Boolean).join(" ");
+function cls(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function isActive(pathname: string, href: string) {
+  if (href === "/") return pathname === "/";
+  return pathname === href || pathname.startsWith(href + "/");
+}
 
 export default function MobileMenu() {
-  const [open, setOpen] = useState(false);
-
-  // manager status (like NavTabs)
-  const [canSeeManager, setCanSeeManager] = useState(false);
-
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = usePathname() || "/";
   const { user, ready } = useAuth();
   const { hasValid } = useSubscriptionStatus();
 
+  const [open, setOpen] = useState(false);
+  const [canSeeManager, setCanSeeManager] = useState(false);
+
+  // close on route change
+  useEffect(() => setOpen(false), [pathname]);
+
+  // compute manager access (same idea as your existing gating)
   useEffect(() => {
     let cancelled = false;
 
@@ -100,42 +110,39 @@ export default function MobileMenu() {
     };
   }, [ready, user]);
 
-  // If auth not ready yet, don’t show anything to avoid logged-out flash
+  const navLinks = useMemo(() => {
+    if (!user) return [];
+    return APP_NAV.filter(
+      (l) =>
+        (!l.requiresManager || canSeeManager) &&
+        (!l.requiresPlan || hasValid)
+    );
+  }, [user, canSeeManager, hasValid]);
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    setOpen(false);
+    router.replace("/login");
+    router.refresh();
+  }
+
   if (!ready) return null;
-
-  // Logged in: apply manager + plan gating
-  const links: { href: string; label: string }[] = user
-    ? navLinks.filter(
-        (l) =>
-          (!l.requiresManager || canSeeManager) &&
-          (!l.requiresPlan || hasValid)
-      )
-    : publicLinks;
-
-  const headerText = user ? "Menu" : "Welcome";
 
   return (
     <>
-      {/* Hamburger button (mobile only) */}
+      {/* Hamburger button with logo (mobile only) */}
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50 md:hidden"
+        className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50"
         aria-label="Open menu"
       >
-        <Image
-          src="/logo.png"
-          alt=""
-          width={20}
-          height={20}
-          className="h-5 w-5"
-          priority
-        />
+        <Image src="/logo.png" alt="" width={22} height={22} className="h-5 w-5" />
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-50 md:hidden">
-          {/* Dim background – clicking closes menu */}
+        <div className="fixed inset-0 z-50">
+          {/* overlay */}
           <button
             type="button"
             className="absolute inset-0 bg-black/40"
@@ -143,64 +150,112 @@ export default function MobileMenu() {
             aria-label="Close menu"
           />
 
-          {/* Sheet */}
-          <div className="absolute right-2 top-2 w-[calc(100%-1rem)] max-w-xs overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                {headerText}
-              </span>
+          {/* sheet */}
+          <div className="absolute right-2 top-2 w-[calc(100%-1rem)] max-w-sm overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl">
+            {/* header */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <Image src="/logo.png" alt="" width={26} height={26} className="h-6 w-6" />
+                <div className="leading-tight">
+                  <div className="text-sm font-bold text-slate-900">TempTake</div>
+                  <div className="text-[11px] text-slate-500">
+                    {user ? (user.email ?? "Signed in") : "Welcome"}
+                  </div>
+                </div>
+              </div>
+
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-100"
+                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
               >
                 Close
               </button>
             </div>
 
-            {/* Nav links */}
-            <nav className="max-h-[70vh] overflow-y-auto px-1 py-2">
-              {links.map((link) => {
-                const active =
-                  pathname === link.href ||
-                  (pathname?.startsWith(link.href + "/") ?? false);
-
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    onClick={() => setOpen(false)}
-                    className={cn(
-                      "block rounded-xl px-3 py-2 text-sm",
-                      active
-                        ? "bg-slate-100 font-semibold text-slate-900"
-                        : "text-slate-800 hover:bg-slate-50"
-                    )}
-                  >
-                    {link.label}
-                  </Link>
-                );
-              })}
-            </nav>
-
-            {/* Footer: simple auth action only (account stuff lives in UserMenu) */}
-            <div className="border-t border-slate-200 bg-slate-50/80 px-4 py-2">
+            <div className="max-h-[75vh] overflow-y-auto p-2">
+              {/* Signed out */}
               {!user ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    router.push("/login");
-                  }}
-                  className="flex w-full items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-black"
-                >
-                  Sign in
-                </button>
-              ) : (
-                <div className="text-[11px] text-slate-600">
-                  Account options are under your initials button.
+                <div className="space-y-2 p-2">
+                  <Link
+                    href="/login"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center text-sm font-semibold text-slate-900 hover:bg-slate-50"
+                  >
+                    Sign in
+                  </Link>
+                  <Link
+                    href="/signup"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-2xl bg-black px-4 py-3 text-center text-sm font-semibold text-white hover:bg-slate-900"
+                  >
+                    Get started
+                  </Link>
                 </div>
+              ) : (
+                <>
+                  {/* NAV */}
+                  <div className="px-2 pt-2">
+                    <div className="px-2 pb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+                      Navigation
+                    </div>
+
+                    <div className="space-y-1">
+                      {navLinks.map((l) => (
+                        <Link
+                          key={l.href}
+                          href={l.href}
+                          onClick={() => setOpen(false)}
+                          className={cls(
+                            "block rounded-2xl px-4 py-3 text-sm font-medium",
+                            isActive(pathname, l.href)
+                              ? "bg-slate-100 text-slate-900"
+                              : "text-slate-800 hover:bg-slate-50"
+                          )}
+                        >
+                          {l.label}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="my-3 border-t border-slate-200" />
+
+                  {/* ACCOUNT */}
+                  <div className="px-2">
+                    <div className="px-2 pb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+                      Account
+                    </div>
+
+                    <div className="space-y-1">
+                      {ACCOUNT_LINKS.map((l) => (
+                        <Link
+                          key={l.href}
+                          href={l.href}
+                          onClick={() => setOpen(false)}
+                          className={cls(
+                            "block rounded-2xl px-4 py-3 text-sm font-medium",
+                            isActive(pathname, l.href)
+                              ? "bg-slate-100 text-slate-900"
+                              : "text-slate-800 hover:bg-slate-50"
+                          )}
+                        >
+                          {l.label}
+                        </Link>
+                      ))}
+                    </div>
+
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        onClick={signOut}
+                        className="w-full rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-semibold text-red-700 hover:bg-red-100"
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
