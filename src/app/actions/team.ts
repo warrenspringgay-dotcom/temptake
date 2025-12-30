@@ -27,8 +27,8 @@ export type TeamMember = {
 export type TrainingRow = {
   id: string;
   type: string | null;
-  awarded_on: string | null; // yyyy-mm-dd
-  expires_on: string | null; // yyyy-mm-dd
+  awarded_on: string | null;  // yyyy-mm-dd
+  expires_on: string | null;  // yyyy-mm-dd
   certificate_url?: string | null;
   notes?: string | null;
 };
@@ -181,30 +181,100 @@ export async function insertTraining(
 }
 
 /* =========================
-   Convenience exports
+   Setup banner support
 ========================= */
 
 /**
- * Used by other action modules that need an org-scoped list of staff initials.
- * Returns uppercased, deduped initials sorted A→Z.
+ * Returns which ACTIVE team members are missing training expiry setup.
+ * A member is "set" if:
+ * - has matching staff row by initials, AND
+ * - has at least one training row with a non-null expires_on
+ *
+ * This does NOT create staff rows (no side effects).
  */
-export async function listStaffInitials(): Promise<string[]> {
+export async function getTrainingSetupStatus(): Promise<{
+  totalActive: number;
+  missingCount: number;
+  missingInitials: string[];
+}> {
   const user = await requireUser();
   const orgId = getOrgIdFromUser(user);
-
   const sb = await getServerSupabase();
 
-  const { data, error } = await sb
-    .from('staff')
-    .select('initials')
+  // 1) Active team members (must have initials to map reliably)
+  const { data: members, error: memErr } = await sb
+    .from('team_members')
+    .select('initials,active')
     .eq('org_id', orgId)
-    .order('initials', { ascending: true });
+    .eq('active', true);
 
-  if (error) throw new Error(error.message);
+  if (memErr) throw new Error(memErr.message);
 
-  const vals = (data ?? [])
-    .map((r: any) => (r.initials ?? '').toString().trim().toUpperCase())
-    .filter((v: string) => v.length > 0);
+  const initials = (members ?? [])
+    .map((m: any) => String(m.initials ?? '').trim().toUpperCase())
+    .filter((x) => x.length > 0);
 
-  return Array.from(new Set(vals));
+  const uniqueInitials = Array.from(new Set(initials));
+  const totalActive = uniqueInitials.length;
+
+  if (totalActive === 0) {
+    return { totalActive: 0, missingCount: 0, missingInitials: [] };
+  }
+
+  // 2) Staff rows for those initials
+  const { data: staffRows, error: staffErr } = await sb
+    .from('staff')
+    .select('id,initials')
+    .eq('org_id', orgId)
+    .in('initials', uniqueInitials);
+
+  if (staffErr) throw new Error(staffErr.message);
+
+  const staffByInitials = new Map<string, string>();
+  (staffRows ?? []).forEach((s: any) => {
+    const ini = String(s.initials ?? '').trim().toUpperCase();
+    const id = String(s.id ?? '').trim();
+    if (ini && id) staffByInitials.set(ini, id);
+  });
+
+  // Any team initials with no staff record are missing setup
+  const initialsWithoutStaff = uniqueInitials.filter((ini) => !staffByInitials.has(ini));
+
+  // 3) Trainings that have expires_on (the thing your banner is complaining about)
+  const staffIds = Array.from(staffByInitials.values());
+  let trainedStaff = new Set<string>();
+
+  if (staffIds.length > 0) {
+    const { data: trainings, error: trErr } = await sb
+      .from('trainings')
+      .select('staff_id,expires_on')
+      .in('staff_id', staffIds)
+      .not('expires_on', 'is', null);
+
+    if (trErr) throw new Error(trErr.message);
+
+    trainedStaff = new Set(
+      (trainings ?? [])
+        .map((t: any) => String(t.staff_id ?? '').trim())
+        .filter(Boolean)
+    );
+  }
+
+  // Translate “trained staff ids” back to initials
+  const initialsWithExpiry = new Set<string>();
+  for (const [ini, staffId] of staffByInitials.entries()) {
+    if (trainedStaff.has(staffId)) initialsWithExpiry.add(ini);
+  }
+
+  const initialsMissingExpiry = uniqueInitials.filter((ini) => !initialsWithExpiry.has(ini));
+
+  // Combine both missing cases (no staff row OR no training expiry)
+  const missingSet = new Set<string>([...initialsWithoutStaff, ...initialsMissingExpiry]);
+
+  const missingInitials = Array.from(missingSet);
+  return {
+    totalActive,
+    missingCount: missingInitials.length,
+    missingInitials,
+  };
 }
