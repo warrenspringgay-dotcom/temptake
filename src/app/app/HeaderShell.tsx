@@ -42,7 +42,6 @@ export default function HeaderShell() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 backdrop-blur-md">
-      {/* ✅ full width on mobile, constrained on md+ */}
       <div className="flex h-14 w-full items-center gap-3 px-3 sm:px-4 md:mx-auto md:max-w-6xl md:gap-4">
         {/* Logo + brand */}
         <Link href="/dashboard" className="flex items-center gap-2">
@@ -59,7 +58,7 @@ export default function HeaderShell() {
           </span>
         </Link>
 
-        {/* Centre: nav tabs (desktop only, gated by auth + billing inside NavTabs) */}
+        {/* Centre: nav tabs (desktop only) */}
         <div className="flex flex-1 items-center justify-center md:justify-start">
           {!hideOnPublic && ready && user && (
             <nav className="hidden md:block">
@@ -68,16 +67,21 @@ export default function HeaderShell() {
           )}
         </div>
 
-        {/* Right side: desktop org/location/user */}
+        {/* Right side: org/location (desktop), but user menu always */}
         {ready && user && (
-          <div className="hidden items-center gap-3 md:flex">
-            <OrgName />
-            <LocationSwitcher />
+          <div className="flex items-center gap-2">
+            {/* Desktop-only org/location */}
+            <div className="hidden items-center gap-3 md:flex">
+              <OrgName />
+              <LocationSwitcher />
+            </div>
+
+            {/* ✅ UserMenu visible on mobile AND desktop */}
             <UserMenu />
           </div>
         )}
 
-        {/* Mobile hamburger / sheet */}
+        {/* Mobile hamburger (nav only) */}
         <div className="flex md:hidden">
           <MobileMenu />
         </div>

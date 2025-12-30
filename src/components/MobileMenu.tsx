@@ -13,22 +13,21 @@ import Image from "next/image";
 type Tab = {
   href: string;
   label: string;
-  icon?: React.ReactNode;
   requiresManager?: boolean;
   requiresPlan?: boolean; // needs active sub or trial
 };
 
-const authedLinks: Tab[] = [
+const navLinks: Tab[] = [
   { href: "/dashboard", label: "Dashboard" },
 
-  // plan-gated
+  // plan-gated core app areas
   { href: "/routines", label: "Routines", requiresPlan: true },
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning rota", requiresPlan: true },
   { href: "/food-hygiene", label: "Food hygiene", requiresPlan: true },
   {
     href: "/manager",
-    label: "Manager",
+    label: "Manager Dashboard",
     requiresManager: true,
     requiresPlan: true,
   },
@@ -36,19 +35,11 @@ const authedLinks: Tab[] = [
   { href: "/team", label: "Team", requiresPlan: true },
   { href: "/suppliers", label: "Suppliers", requiresPlan: true },
   { href: "/reports", label: "Reports", requiresPlan: true },
-
-  // account pages (ok without plan)
-  { href: "/locations", label: "Locations & sites" },
-  { href: "/billing", label: "Billing & subscription" },
-  { href: "/guides", label: "Guides" },
-  { href: "/settings", label: "Settings" },
-  { href: "/help", label: "Help & support" },
 ];
 
 const publicLinks: { href: string; label: string }[] = [
   { href: "/login", label: "Sign in" },
   { href: "/signup", label: "Create account" },
-  { href: "/help", label: "Help & support" },
 ];
 
 const cn = (...parts: Array<string | false | null | undefined>) =>
@@ -56,9 +47,8 @@ const cn = (...parts: Array<string | false | null | undefined>) =>
 
 export default function MobileMenu() {
   const [open, setOpen] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
 
-  // ✅ NEW: determine manager status from team_members (like NavTabs)
+  // manager status (like NavTabs)
   const [canSeeManager, setCanSeeManager] = useState(false);
 
   const router = useRouter();
@@ -110,60 +100,38 @@ export default function MobileMenu() {
     };
   }, [ready, user]);
 
-  async function handleSignOut() {
-    try {
-      setSigningOut(true);
-      await supabase.auth.signOut();
-      setOpen(false);
-      router.push("/login");
-      router.refresh?.();
-    } catch (e) {
-      console.error(e);
-      alert("Sign out failed. Please try again.");
-    } finally {
-      setSigningOut(false);
-    }
-  }
-
-  const name =
-    user?.user_metadata?.full_name ||
-    user?.user_metadata?.name ||
-    user?.email ||
-    "Account";
-
-  // If auth not ready yet, don’t show anything to avoid the “logged-out” flash
+  // If auth not ready yet, don’t show anything to avoid logged-out flash
   if (!ready) return null;
 
-  // When logged in, apply manager + plan gating
+  // Logged in: apply manager + plan gating
   const links: { href: string; label: string }[] = user
-    ? authedLinks.filter(
+    ? navLinks.filter(
         (l) =>
           (!l.requiresManager || canSeeManager) &&
           (!l.requiresPlan || hasValid)
       )
     : publicLinks;
 
+  const headerText = user ? "Menu" : "Welcome";
+
   return (
     <>
       {/* Hamburger button (mobile only) */}
-  
-
-<button
-  type="button"
-  onClick={() => setOpen(true)}
-  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50 md:hidden"
-  aria-label="Open menu"
->
-  <Image
-    src="/logo.png"
-    alt=""
-    width={20}
-    height={20}
-    className="h-5 w-5"
-    priority
-  />
-</button>
-
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50 md:hidden"
+        aria-label="Open menu"
+      >
+        <Image
+          src="/logo.png"
+          alt=""
+          width={20}
+          height={20}
+          className="h-5 w-5"
+          priority
+        />
+      </button>
 
       {open && (
         <div className="fixed inset-0 z-50 md:hidden">
@@ -176,11 +144,11 @@ export default function MobileMenu() {
           />
 
           {/* Sheet */}
-          <div className="absolute top-2 right-2 w-[calc(100%-1rem)] max-w-xs overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+          <div className="absolute right-2 top-2 w-[calc(100%-1rem)] max-w-xs overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2">
               <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Menu
+                {headerText}
               </span>
               <button
                 type="button"
@@ -191,16 +159,8 @@ export default function MobileMenu() {
               </button>
             </div>
 
-            {/* User info */}
-            <div className="border-b border-slate-100 px-4 py-3 text-xs text-slate-600">
-              <div className="font-semibold text-slate-900">{name}</div>
-              <div className="mt-0.5 text-[11px] text-slate-500">
-                Tap a section below to navigate.
-              </div>
-            </div>
-
             {/* Nav links */}
-            <nav className="max-h-[60vh] overflow-y-auto px-1 py-2">
+            <nav className="max-h-[70vh] overflow-y-auto px-1 py-2">
               {links.map((link) => {
                 const active =
                   pathname === link.href ||
@@ -224,18 +184,9 @@ export default function MobileMenu() {
               })}
             </nav>
 
-            {/* Sign out / sign in footer */}
+            {/* Footer: simple auth action only (account stuff lives in UserMenu) */}
             <div className="border-t border-slate-200 bg-slate-50/80 px-4 py-2">
-              {user ? (
-                <button
-                  type="button"
-                  onClick={handleSignOut}
-                  disabled={signingOut}
-                  className="flex w-full items-center justify-center rounded-xl bg-rose-500 px-3 py-2 text-sm font-medium text-white hover:bg-rose-600 disabled:opacity-60"
-                >
-                  {signingOut ? "Signing out…" : "Sign out"}
-                </button>
-              ) : (
+              {!user ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -246,6 +197,10 @@ export default function MobileMenu() {
                 >
                   Sign in
                 </button>
+              ) : (
+                <div className="text-[11px] text-slate-600">
+                  Account options are under your initials button.
+                </div>
               )}
             </div>
           </div>
