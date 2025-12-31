@@ -75,7 +75,10 @@ export async function provisionNewUserAction(input: {
 
     if (orgErr) {
       console.error("[provision] orgs insert failed:", orgErr);
-      return { ok: false, message: `Failed to create organisation: ${orgErr.message}` };
+      return {
+        ok: false,
+        message: `Failed to create organisation: ${orgErr.message}`,
+      };
     }
 
     if (!orgRow?.id) {
@@ -88,18 +91,16 @@ export async function provisionNewUserAction(input: {
 
     // 2) Profile
     console.log("[provision] Creating profile for user:", userId);
-    const { error: profErr } = await supabaseAdmin
-      .from("profiles")
-      .upsert(
-        {
-          id: userId,
-          email,
-          full_name: fullName,
-          org_id: orgId,
-          role: "owner",
-        },
-        { onConflict: "id" }
-      );
+    const { error: profErr } = await supabaseAdmin.from("profiles").upsert(
+      {
+        id: userId,
+        email,
+        full_name: fullName,
+        org_id: orgId,
+        role: "owner",
+      },
+      { onConflict: "id" }
+    );
 
     if (profErr) {
       console.error("[provision] profiles upsert failed:", profErr);
@@ -107,7 +108,7 @@ export async function provisionNewUserAction(input: {
     }
     console.log("[provision] Profile created");
 
-    // 3) Team member
+    // 3) Team member (✅ LINK USER)
     const initials = fullName
       .split(/\s+/)
       .slice(0, 2)
@@ -121,6 +122,7 @@ export async function provisionNewUserAction(input: {
       name: fullName,
       role: "owner",
       initials,
+      user_id: userId, // ✅ critical link
     });
 
     if (tmErr) {
@@ -147,12 +149,11 @@ export async function provisionNewUserAction(input: {
 
     console.log("[provision] ✅ Provision complete for user:", userId);
     return { ok: true };
-
   } catch (err) {
     console.error("[provision] Unexpected error:", err);
-    return { 
-      ok: false, 
-      message: `Provisioning error: ${err instanceof Error ? err.message : 'Unknown error'}` 
+    return {
+      ok: false,
+      message: `Provisioning error: ${err instanceof Error ? err.message : "Unknown error"}`,
     };
   }
 }
