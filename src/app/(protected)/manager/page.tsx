@@ -263,7 +263,7 @@ export default function ManagerDashboardPage() {
   const [showAllIncidents, setShowAllIncidents] = useState(false);
 
   /* =========================
-     Manager QC modal state (EDITED ONLY THIS PART)
+     Manager QC modal state
   ========================= */
   const [qcOpen, setQcOpen] = useState(false);
 
@@ -341,7 +341,6 @@ export default function ManagerDashboardPage() {
     if (!orgId || !locationId) return;
     setQcLoading(true);
     try {
-      // NOTE: these joins assume you applied the FK migration to team_members
       const { data, error } = await supabase
         .from("staff_qc_reviews")
         .select(
@@ -701,7 +700,8 @@ export default function ManagerDashboardPage() {
   const incidentsToRender = showAllIncidents ? incidentsToday : incidentsToday.slice(0, 10);
 
   return (
-    <>
+    // ✅ PAGE-LEVEL SCROLL CONTAINER (mobile-safe) without changing UI
+    <div className="h-[100dvh] overflow-y-auto overscroll-y-contain pb-28">
       {/* ✅ Header changed: only centered date */}
       <header className="py-2">
         <div className="text-center">
@@ -766,7 +766,7 @@ export default function ManagerDashboardPage() {
       </section>
 
       {/* Controls under KPIs */}
-      <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="flex flex-wrap items-center gap-2 justify-end">
           <div className="flex items-center gap-2">
             <button
@@ -834,7 +834,7 @@ export default function ManagerDashboardPage() {
       </section>
 
       {/* Cleaning by category table */}
-      <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Cleaning progress</div>
           <div className="mt-0.5 text-sm font-semibold text-slate-900">Tasks due by category</div>
@@ -873,7 +873,12 @@ export default function ManagerDashboardPage() {
                       <td className="px-3 py-2">{r.done}</td>
                       <td className="px-3 py-2">{r.total}</td>
                       <td className="px-3 py-2">
-                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                        <span
+                          className={cls(
+                            "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                            pill
+                          )}
+                        >
                           {pct}%
                         </span>
                       </td>
@@ -887,7 +892,7 @@ export default function ManagerDashboardPage() {
       </section>
 
       {/* Incidents table */}
-      <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Incidents</div>
           <div className="mt-0.5 text-sm font-semibold text-slate-900">Incident log & corrective actions</div>
@@ -930,11 +935,15 @@ export default function ManagerDashboardPage() {
           </table>
         </div>
 
-        <TableFooterToggle total={incidentsToday.length} showingAll={showAllIncidents} onToggle={() => setShowAllIncidents((v) => !v)} />
+        <TableFooterToggle
+          total={incidentsToday.length}
+          showingAll={showAllIncidents}
+          onToggle={() => setShowAllIncidents((v) => !v)}
+        />
       </section>
 
       {/* Activity */}
-      <section className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today&apos;s activity</div>
           <div className="mt-0.5 text-sm font-semibold text-slate-900">Temps + cleaning (category-based)</div>
@@ -1032,16 +1041,24 @@ export default function ManagerDashboardPage() {
               </table>
             </div>
 
-            <TableFooterToggle total={cleaningActivity.length} showingAll={showAllCleaning} onToggle={() => setShowAllCleaning((v) => !v)} />
+            <TableFooterToggle
+              total={cleaningActivity.length}
+              showingAll={showAllCleaning}
+              onToggle={() => setShowAllCleaning((v) => !v)}
+            />
           </div>
         </div>
       </section>
 
-      {/* Manager QC modal (still a popup; just team_members + logged in manager now) */}
+      {/* Manager QC modal */}
       {qcOpen && (
         <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setQcOpen(false)}>
           <div
-            className="mx-auto mt-16 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+            className={cls(
+              // ✅ make modal usable on mobile: constrain height + internal scroll
+              "mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur",
+              "max-h-[calc(100dvh-5rem)] overflow-y-auto"
+            )}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
@@ -1190,10 +1207,19 @@ export default function ManagerDashboardPage() {
                       return (
                         <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                           <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.manager ?? { initials: null, name: "—" })}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {tmLabel(r.staff ?? { initials: null, name: "—" })}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {tmLabel(r.manager ?? { initials: null, name: "—" })}
+                          </td>
                           <td className="px-3 py-2">
-                            <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                            <span
+                              className={cls(
+                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                                pill
+                              )}
+                            >
                               {r.score}/5
                             </span>
                           </td>
@@ -1219,6 +1245,6 @@ export default function ManagerDashboardPage() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
