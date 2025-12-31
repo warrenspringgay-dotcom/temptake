@@ -18,7 +18,7 @@ type Tab = {
   requiresPlan?: boolean; // needs active sub OR trial
 };
 
-const BASE_TABS: Tab[] = [
+const MANAGER_TABS: Tab[] = [
   { href: "/dashboard", label: "Dashboard" },
 
   { href: "/routines", label: "Routines", requiresPlan: true },
@@ -41,6 +41,20 @@ const BASE_TABS: Tab[] = [
   { href: "/reports", label: "Reports", requiresPlan: true },
 ];
 
+const STAFF_TABS: Tab[] = [
+  { href: "/staff", label: "Dashboard" },
+
+  { href: "/routines", label: "Routines", requiresPlan: true },
+  { href: "/allergens", label: "Allergens", requiresPlan: true },
+  { href: "/cleaning-rota", label: "Cleaning Rota", requiresPlan: true },
+  {
+    href: "/leaderboard",
+    label: "Leaderboard",
+    icon: <Trophy className="h-4 w-4 text-amber-500" />,
+    requiresPlan: true,
+  },
+];
+
 export default function NavTabs() {
   const pathname = usePathname();
   const { user, ready } = useAuth();
@@ -50,7 +64,8 @@ export default function NavTabs() {
   const hasValid = billing.hasValid;
   const billingLoading = billing.loading;
 
-  // manager role
+  // role
+  const [roleName, setRoleName] = useState<string | null>(null);
   const [canSeeManager, setCanSeeManager] = useState(false);
   const [roleLoading, setRoleLoading] = useState(true);
 
@@ -60,6 +75,7 @@ export default function NavTabs() {
     (async () => {
       if (!ready || !user) {
         if (!alive) return;
+        setRoleName(null);
         setCanSeeManager(false);
         setRoleLoading(false);
         return;
@@ -74,6 +90,7 @@ export default function NavTabs() {
         if (!alive) return;
 
         if (!orgId || !email) {
+          setRoleName(null);
           setCanSeeManager(false);
           setRoleLoading(false);
           return;
@@ -89,15 +106,20 @@ export default function NavTabs() {
         if (!alive) return;
 
         if (error || !data) {
+          setRoleName(null);
           setCanSeeManager(false);
           setRoleLoading(false);
           return;
         }
 
-        const role = (data.role ?? "").toLowerCase();
-        setCanSeeManager(role === "owner" || role === "manager" || role === "admin");
+        const role = (data.role ?? "").toLowerCase() || "staff";
+        setRoleName(role);
+
+        const isManager = role === "owner" || role === "manager" || role === "admin";
+        setCanSeeManager(isManager);
       } catch {
         if (!alive) return;
+        setRoleName(null);
         setCanSeeManager(false);
       } finally {
         if (!alive) return;
@@ -116,9 +138,17 @@ export default function NavTabs() {
   const billingResolved = !billingLoading && typeof hasValid === "boolean";
   const allowPlanTabs = billingResolved ? hasValid : true;
 
+  // Choose tab set by role (hide everything role-specific until role is known to avoid pop-in)
+  const baseTabs = useMemo(() => {
+    if (roleLoading) return null;
+    return canSeeManager ? MANAGER_TABS : STAFF_TABS;
+  }, [roleLoading, canSeeManager]);
+
   // ---- Apply gating rules to tabs ----
   const effectiveTabs = useMemo(() => {
-    return BASE_TABS.filter((t) => {
+    const tabs = baseTabs ?? (canSeeManager ? MANAGER_TABS : STAFF_TABS);
+
+    return tabs.filter((t) => {
       // Manager-only tab:
       // while role is still loading, hide it (prevents pop-in and accidental exposure)
       if (t.requiresManager) {
@@ -131,7 +161,7 @@ export default function NavTabs() {
 
       return true;
     });
-  }, [canSeeManager, roleLoading, allowPlanTabs]);
+  }, [baseTabs, canSeeManager, roleLoading, allowPlanTabs]);
 
   if (!ready || !user) return null;
 
