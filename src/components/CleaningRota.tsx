@@ -83,44 +83,63 @@ function isDueOn(task: Task, date: Date) {
   return false;
 }
 
-/** Tiny “confetti” overlay using framer-motion only (no deps). */
-function MiniConfetti({ show }: { show: boolean }) {
+/** Classic confetti overlay (no emojis) using framer-motion only. */
+function ClassicConfetti({ show }: { show: boolean }) {
   const pieces = useMemo(() => {
-    // Deterministic-ish so it doesn’t re-randomize mid-animation
-    const out = [];
-    for (let i = 0; i < 22; i++) out.push(i);
-    return out;
+    // Deterministic-ish list so it doesn't re-randomize mid-animation
+    return Array.from({ length: 34 }, (_, i) => i);
   }, []);
 
   if (!show) return null;
 
+  const colors = [
+    "bg-emerald-400",
+    "bg-amber-400",
+    "bg-sky-400",
+    "bg-rose-400",
+    "bg-indigo-400",
+    "bg-lime-400",
+  ];
+
   return (
     <div className="pointer-events-none fixed inset-0 z-[9999] overflow-hidden">
-      {pieces.map((i) => (
-        <motion.div
-          key={i}
-          className="absolute top-[-20px] text-xl"
-          initial={{
-            opacity: 0,
-            x: `${(i * 37) % 100}vw`,
-            y: -20,
-            rotate: 0,
-            scale: 0.9,
-          }}
-          animate={{
-            opacity: [0, 1, 1, 0],
-            y: ["-20px", "110vh"],
-            rotate: [0, 360 + i * 40],
-          }}
-          transition={{
-            duration: 1.6,
-            ease: "easeOut",
-            delay: (i % 7) * 0.03,
-          }}
-        >
-          {["✨", "🎉", "🟩", "🟨", "🟦"][i % 5]}
-        </motion.div>
-      ))}
+      {pieces.map((i) => {
+        const leftVw = (i * 17) % 100; // spread across viewport
+        const size = 6 + ((i * 3) % 8); // 6..13
+        const isStrip = i % 3 === 0;
+
+        return (
+          <motion.div
+            key={i}
+            className={[
+              "absolute top-[-20px]",
+              colors[i % colors.length],
+              "shadow-sm",
+              isStrip ? "rounded-sm" : "rounded-full",
+            ].join(" ")}
+            style={{
+              left: `${leftVw}vw`,
+              width: isStrip ? size + 6 : size,
+              height: isStrip ? size - 2 : size,
+            }}
+            initial={{
+              opacity: 0,
+              y: -20,
+              rotate: 0,
+            }}
+            animate={{
+              opacity: [0, 1, 1, 0],
+              y: ["-20px", "110vh"],
+              rotate: [0, 520 + i * 25],
+            }}
+            transition={{
+              duration: 1.55,
+              ease: "easeOut",
+              delay: (i % 10) * 0.02,
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -149,6 +168,10 @@ export default function CleaningRotaPage() {
   const [initials, setInitials] = useState<string>("");
 
   const [showConfetti, setShowConfetti] = useState(false);
+
+  // Prevent confetti on first load, and only allow it after a user action
+  const initializedRef = useRef(false);
+  const userActionRef = useRef(false);
   const prevAllDoneRef = useRef<boolean>(false);
 
   // --- deferral maps (fast lookups) ---
@@ -270,14 +293,23 @@ export default function CleaningRotaPage() {
     return done;
   }, [dueToday, runsByTask]);
 
-  // ✅ Confetti ONLY when transitioning into "all done"
+  // ✅ Confetti ONLY when transitioning into "all done" AND after user action
   useEffect(() => {
     const allDone = dueToday.length > 0 && doneCount === dueToday.length;
+
+    // First time we compute this after load, do NOT fire confetti.
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      prevAllDoneRef.current = allDone;
+      return;
+    }
+
     const wasAllDone = prevAllDoneRef.current;
 
-    if (!wasAllDone && allDone) {
+    if (!wasAllDone && allDone && userActionRef.current) {
       setShowConfetti(true);
-      window.setTimeout(() => setShowConfetti(false), 1700);
+      window.setTimeout(() => setShowConfetti(false), 1600);
+      userActionRef.current = false; // consume the action
     }
 
     prevAllDoneRef.current = allDone;
@@ -302,6 +334,8 @@ export default function CleaningRotaPage() {
 
   async function tickTask(taskId: string) {
     if (!orgId || !locationId) return;
+
+    userActionRef.current = true;
 
     const payload = {
       org_id: orgId,
@@ -339,6 +373,9 @@ export default function CleaningRotaPage() {
 
   async function undoTask(taskId: string) {
     if (!orgId || !locationId) return;
+
+    // Undo shouldn't ever cause confetti, but mark action anyway (harmless)
+    userActionRef.current = true;
 
     const { error } = await supabase
       .from("cleaning_task_runs")
@@ -398,6 +435,8 @@ export default function CleaningRotaPage() {
 
     const idsToDo = taskIds.filter((id) => !runsByTask.has(id));
     if (idsToDo.length === 0) return;
+
+    userActionRef.current = true;
 
     const nowIso = new Date().toISOString();
     const doneBy = initials?.trim() || null;
@@ -462,7 +501,7 @@ export default function CleaningRotaPage() {
 
   return (
     <div className={PAGE}>
-      <MiniConfetti show={showConfetti} />
+      <ClassicConfetti show={showConfetti} />
 
       <div className={`${CARD} p-4 sm:p-5`}>
         <div className="flex items-center justify-between gap-3">
@@ -612,12 +651,12 @@ export default function CleaningRotaPage() {
           })}
         </div>
       </div>
-<ManageCleaningTasksModal
-  open={manageOpen}
-  onClose={() => setManageOpen(false)}
-  onSaved={loadAll}
-/>
 
+      <ManageCleaningTasksModal
+        open={manageOpen}
+        onClose={() => setManageOpen(false)}
+        onSaved={loadAll}
+      />
     </div>
   );
 }
