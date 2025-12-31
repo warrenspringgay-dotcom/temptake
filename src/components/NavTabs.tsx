@@ -3,260 +3,161 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
+import { Trophy } from "lucide-react";
 import { supabase } from "@/lib/supabaseBrowser";
-import BrandLogo from "./BrandLogo";
-import { Menu } from "lucide-react";
-import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
+import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { useAuth } from "@/components/AuthProvider";
+import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 
-type Tab = { href: string; label: string };
-type AppRole = "owner" | "manager" | "staff" | "admin" | string | null;
+type Tab = {
+  href: string;
+  label: string;
+  icon?: React.ReactNode;
+  requiresManager?: boolean;
+  requiresPlan?: boolean; // needs active sub OR trial
+};
 
-function isManagerRole(role: AppRole) {
-  const r = (role ?? "").toString().toLowerCase();
-  return r === "owner" || r === "manager" || r === "admin";
-}
-
-function readRoleFromSession(session: Session | null): AppRole {
-  const user = session?.user;
-  const meta = (user?.user_metadata ?? {}) as Record<string, any>;
-  const appMeta = (user?.app_metadata ?? {}) as Record<string, any>;
-  return (meta.role as string | undefined) ?? (appMeta.role as string | undefined) ?? null;
-}
-
-// NOTE: "/" is marketing in HeaderSwitcher, so don't use it for app dashboard.
-const MANAGER_TABS: Tab[] = [
+const BASE_TABS: Tab[] = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/routines", label: "Routines" },
-  { href: "/allergens", label: "Allergens" },
-  { href: "/cleaning-rota", label: "Cleaning Rota" },
-  { href: "/manager", label: "Manager Dashboard" },
-  { href: "/leaderboard", label: "Leaderboard" },
-  { href: "/team", label: "Team" },
-  { href: "/suppliers", label: "Suppliers" },
-  { href: "/reports", label: "Reports" },
-];
 
-const STAFF_TABS: Tab[] = [
-  { href: "/staff", label: "Dashboard" },
-  { href: "/routines", label: "Routines" },
-  { href: "/allergens", label: "Allergens" },
-  { href: "/cleaning-rota", label: "Cleaning Rota" },
-  { href: "/leaderboard", label: "Leaderboard" },
+  { href: "/routines", label: "Routines", requiresPlan: true },
+  { href: "/allergens", label: "Allergens", requiresPlan: true },
+  { href: "/cleaning-rota", label: "Cleaning Rota", requiresPlan: true },
+  {
+    href: "/manager",
+    label: "Manager Dashboard",
+    requiresManager: true,
+    requiresPlan: true,
+  },
+  {
+    href: "/leaderboard",
+    label: "Leaderboard",
+    icon: <Trophy className="h-4 w-4 text-amber-500" />,
+    requiresPlan: true,
+  },
+  { href: "/team", label: "Team", requiresPlan: true },
+  { href: "/suppliers", label: "Suppliers", requiresPlan: true },
+  { href: "/reports", label: "Reports", requiresPlan: true },
 ];
 
 export default function NavTabs() {
   const pathname = usePathname();
-  const router = useRouter();
+  const { user, ready } = useAuth();
 
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [role, setRole] = useState<AppRole>(null);
-  const [roleReady, setRoleReady] = useState(false);
+  // billing
+  const billing = useSubscriptionStatus();
+  const hasValid = billing.hasValid;
+  const billingLoading = billing.loading;
 
-  const [open, setOpen] = useState(false);
-
-  const tabs = useMemo(() => {
-    // least privilege until role is known
-    if (!roleReady) return STAFF_TABS;
-    return isManagerRole(role) ? MANAGER_TABS : STAFF_TABS;
-  }, [role, roleReady]);
+  // manager role
+  const [canSeeManager, setCanSeeManager] = useState(false);
+  const [roleLoading, setRoleLoading] = useState(true);
 
   useEffect(() => {
-    let mounted = true;
+    let alive = true;
 
-    const resolveRole = async (session: Session | null): Promise<AppRole> => {
-      const sessionRole = readRoleFromSession(session);
-      if (sessionRole) return sessionRole;
-
-      const userId = session?.user?.id;
-      if (!userId) return null;
-
-      const { data: prof, error } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", userId)
-        .maybeSingle();
-
-      if (error) return null;
-      return (prof?.role as string | undefined) ?? null;
-    };
-
-    const load = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
-
-      const session = data.session;
-      setUserEmail(session?.user?.email ?? null);
-
-      const r = await resolveRole(session);
-      if (!mounted) return;
-
-      setRole(r);
-      setRoleReady(true);
-    };
-
-    load();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(
-      async (_evt: AuthChangeEvent, session: Session | null) => {
-        if (!mounted) return;
-
-        setUserEmail(session?.user?.email ?? null);
-
-        const r = await resolveRole(session);
-        if (!mounted) return;
-
-        setRole(r);
-        setRoleReady(true);
+    (async () => {
+      if (!ready || !user) {
+        if (!alive) return;
+        setCanSeeManager(false);
+        setRoleLoading(false);
+        return;
       }
-    );
+
+      setRoleLoading(true);
+
+      try {
+        const orgId = await getActiveOrgIdClient();
+        const email = user.email?.toLowerCase() ?? null;
+
+        if (!alive) return;
+
+        if (!orgId || !email) {
+          setCanSeeManager(false);
+          setRoleLoading(false);
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from("team_members")
+          .select("role,email")
+          .eq("org_id", orgId)
+          .eq("email", email)
+          .maybeSingle();
+
+        if (!alive) return;
+
+        if (error || !data) {
+          setCanSeeManager(false);
+          setRoleLoading(false);
+          return;
+        }
+
+        const role = (data.role ?? "").toLowerCase();
+        setCanSeeManager(role === "owner" || role === "manager" || role === "admin");
+      } catch {
+        if (!alive) return;
+        setCanSeeManager(false);
+      } finally {
+        if (!alive) return;
+        setRoleLoading(false);
+      }
+    })();
 
     return () => {
-      mounted = false;
-      subscription.unsubscribe();
+      alive = false;
     };
-  }, []);
+  }, [ready, user]);
 
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
+  // ✅ IMPORTANT:
+  // Treat billing as "unknown" until it has definitely resolved.
+  // While unknown, DO NOT hide plan tabs (prevents the "only dashboard" flash).
+  const billingResolved = !billingLoading && typeof hasValid === "boolean";
+  const allowPlanTabs = billingResolved ? hasValid : true;
 
-  const isActive = (href: string) =>
-    pathname === href || (href !== "/" && pathname.startsWith(href));
+  // ---- Apply gating rules to tabs ----
+  const effectiveTabs = useMemo(() => {
+    return BASE_TABS.filter((t) => {
+      // Manager-only tab:
+      // while role is still loading, hide it (prevents pop-in and accidental exposure)
+      if (t.requiresManager) {
+        if (roleLoading) return false;
+        if (!canSeeManager) return false;
+      }
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    router.replace("/login");
-    router.refresh();
-  };
+      // Plan-only tabs: only hide once billing has actually resolved
+      if (t.requiresPlan && !allowPlanTabs) return false;
 
-  const homeHref = isManagerRole(role) ? "/dashboard" : "/staff";
+      return true;
+    });
+  }, [canSeeManager, roleLoading, allowPlanTabs]);
+
+  if (!ready || !user) return null;
 
   return (
-    <>
-      {/* Top bar */}
-      <nav className="sticky top-0 z-40 flex items-center justify-between border-b bg-white px-3 py-2 shadow-sm md:px-4">
-        {/* Left: brand + hamburger (mobile) */}
-        <div className="flex items-center gap-2">
-          <button
-            className="mr-1 rounded-md p-2 hover:bg-gray-100 md:hidden"
-            aria-label="Open menu"
-            onClick={() => setOpen(true)}
-          >
-            <Menu className="h-5 w-5" />
-          </button>
+    <ul className="flex flex-nowrap items-center gap-1 min-w-max px-2">
+      {effectiveTabs.map((t) => {
+        const isActive =
+          pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
 
-          <Link href={homeHref} className="flex items-center gap-2">
-            <BrandLogo className="h-6 w-6" />
-            <span className="text-base font-semibold">TempTake</span>
-          </Link>
-        </div>
-
-        {/* Center: tabs (hidden on mobile) */}
-        <div className="hidden items-center gap-1 md:flex">
-          {tabs.map((t) => (
+        return (
+          <li key={t.href} className="shrink-0">
             <Link
-              key={t.href}
               href={t.href}
-              className={
-                "rounded-lg px-3 py-2 text-sm font-medium transition-colors " +
-                (isActive(t.href)
+              className={[
+                "inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors whitespace-nowrap",
+                isActive
                   ? "bg-black text-white"
-                  : "text-gray-700 hover:bg-gray-100")
-              }
+                  : "text-slate-700 hover:bg-gray-100 hover:text-black",
+              ].join(" ")}
             >
+              {t.icon && <span>{t.icon}</span>}
               {t.label}
             </Link>
-          ))}
-        </div>
-
-        {/* Right: auth */}
-        <div className="flex items-center gap-2">
-          {userEmail ? (
-            <>
-              <span className="hidden text-xs text-gray-500 sm:block">
-                {userEmail}
-              </span>
-              <button
-                onClick={signOut}
-                className="rounded-lg border px-2.5 py-1.5 text-xs hover:bg-gray-50"
-              >
-                Sign out
-              </button>
-            </>
-          ) : (
-            <Link
-              href="/login"
-              className="rounded-lg bg-black px-2.5 py-1.5 text-xs font-medium text-white hover:bg-gray-900"
-            >
-              Sign in
-            </Link>
-          )}
-        </div>
-      </nav>
-
-      {/* Mobile drawer */}
-      {open && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40 md:hidden"
-          onClick={() => setOpen(false)}
-          aria-hidden="true"
-        >
-          <div
-            className="absolute left-0 top-0 h-full w-[78%] max-w-[320px] bg-white shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-          >
-            <div className="border-b px-3 py-3">
-              <div className="flex items-center gap-2">
-                <BrandLogo className="h-6 w-6" />
-                <span className="text-base font-semibold">TempTake</span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1 p-2">
-              {tabs.map((t) => (
-                <Link
-                  key={t.href}
-                  href={t.href}
-                  className={
-                    "rounded-md px-3 py-2 text-sm " +
-                    (isActive(t.href)
-                      ? "bg-black text-white"
-                      : "text-gray-800 hover:bg-gray-100")
-                  }
-                >
-                  {t.label}
-                </Link>
-              ))}
-
-              <div className="mt-3 border-t pt-3">
-                {userEmail ? (
-                  <button
-                    onClick={signOut}
-                    className="w-full rounded-md border px-3 py-2 text-left text-sm hover:bg-gray-50"
-                  >
-                    Sign out
-                    <span className="block truncate text-xs text-gray-500">
-                      {userEmail}
-                    </span>
-                  </button>
-                ) : (
-                  <Link
-                    href="/login"
-                    className="block rounded-md bg-black px-3 py-2 text-center text-sm font-medium text-white hover:bg-gray-900"
-                  >
-                    Sign in
-                  </Link>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
