@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
@@ -23,8 +24,8 @@ type Task = {
   area: string | null;
   category: string | null;
   frequency: Frequency;
-  weekday: number | null; // 0-6 (Sun-Sat) or your convention
-  month_day: number | null; // 1-31
+  weekday: number | null;
+  month_day: number | null;
 };
 
 type Run = {
@@ -36,8 +37,8 @@ type Run = {
 
 type Deferral = {
   task_id: string;
-  from_on: string; // yyyy-mm-dd
-  to_on: string; // yyyy-mm-dd
+  from_on: string;
+  to_on: string;
 };
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
@@ -65,13 +66,11 @@ function addDays(d: Date, days: number) {
   return x;
 }
 
-// Your existing “is task due on a date” rules.
 function isDueOn(task: Task, date: Date) {
   if (task.frequency === "daily") return true;
 
   if (task.frequency === "weekly") {
     if (task.weekday === null || task.weekday === undefined) return false;
-    // Assuming DB uses 0=Sun..6=Sat
     return date.getDay() === task.weekday;
   }
 
@@ -85,10 +84,7 @@ function isDueOn(task: Task, date: Date) {
 
 /** Classic confetti overlay (no emojis) using framer-motion only. */
 function ClassicConfetti({ show }: { show: boolean }) {
-  const pieces = useMemo(() => {
-    // Deterministic-ish list so it doesn't re-randomize mid-animation
-    return Array.from({ length: 34 }, (_, i) => i);
-  }, []);
+  const pieces = useMemo(() => Array.from({ length: 34 }, (_, i) => i), []);
 
   if (!show) return null;
 
@@ -104,8 +100,8 @@ function ClassicConfetti({ show }: { show: boolean }) {
   return (
     <div className="pointer-events-none fixed inset-0 z-[9999] overflow-hidden">
       {pieces.map((i) => {
-        const leftVw = (i * 17) % 100; // spread across viewport
-        const size = 6 + ((i * 3) % 8); // 6..13
+        const leftVw = (i * 17) % 100;
+        const size = 6 + ((i * 3) % 8);
         const isStrip = i % 3 === 0;
 
         return (
@@ -122,11 +118,7 @@ function ClassicConfetti({ show }: { show: boolean }) {
               width: isStrip ? size + 6 : size,
               height: isStrip ? size - 2 : size,
             }}
-            initial={{
-              opacity: 0,
-              y: -20,
-              rotate: 0,
-            }}
+            initial={{ opacity: 0, y: -20, rotate: 0 }}
             animate={{
               opacity: [0, 1, 1, 0],
               y: ["-20px", "110vh"],
@@ -169,14 +161,16 @@ export default function CleaningRotaPage() {
 
   const [showConfetti, setShowConfetti] = useState(false);
 
+  // Collapsible categories (default expanded)
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
   // Prevent confetti on first load, and only allow it after a user action
   const initializedRef = useRef(false);
   const userActionRef = useRef(false);
   const prevAllDoneRef = useRef<boolean>(false);
 
-  // --- deferral maps (fast lookups) ---
   const deferralsFromMap = useMemo(() => {
-    const m = new Map<string, Set<string>>(); // dateIso -> set(taskId)
+    const m = new Map<string, Set<string>>();
     for (const d of deferrals) {
       if (!m.has(d.from_on)) m.set(d.from_on, new Set());
       m.get(d.from_on)!.add(d.task_id);
@@ -185,7 +179,7 @@ export default function CleaningRotaPage() {
   }, [deferrals]);
 
   const deferralsToMap = useMemo(() => {
-    const m = new Map<string, Set<string>>(); // dateIso -> set(taskId)
+    const m = new Map<string, Set<string>>();
     for (const d of deferrals) {
       if (!m.has(d.to_on)) m.set(d.to_on, new Set());
       m.get(d.to_on)!.add(d.task_id);
@@ -228,7 +222,6 @@ export default function CleaningRotaPage() {
         return;
       }
 
-      // 1) tasks
       const { data: tData, error: tErr } = await supabase
         .from("cleaning_tasks")
         .select("id,org_id,task,area,category,frequency,weekday,month_day")
@@ -238,7 +231,6 @@ export default function CleaningRotaPage() {
 
       if (tErr) throw tErr;
 
-      // 2) runs for today
       const { data: rData, error: rErr } = await supabase
         .from("cleaning_task_runs")
         .select("task_id,run_on,done_by,done_at")
@@ -248,7 +240,6 @@ export default function CleaningRotaPage() {
 
       if (rErr) throw rErr;
 
-      // 3) deferrals (only current week window: Mon..Sun)
       const weekStart = isoDate(startOfWeekMonday(today));
       const weekEnd = isoDate(endOfWeekSunday(today));
 
@@ -261,7 +252,6 @@ export default function CleaningRotaPage() {
         .lte("to_on", weekEnd);
 
       if (dErr) {
-        // eslint-disable-next-line no-console
         console.warn("[cleaning] deferrals fetch failed:", dErr.message);
       }
 
@@ -280,7 +270,6 @@ export default function CleaningRotaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // --- derived lists (today only) ---
   const dueToday = useMemo(() => {
     return tasks.filter((t) => isDueEffective(t, today));
   }, [tasks, today, deferralsFromMap, deferralsToMap]);
@@ -293,11 +282,9 @@ export default function CleaningRotaPage() {
     return done;
   }, [dueToday, runsByTask]);
 
-  // ✅ Confetti ONLY when transitioning into "all done" AND after user action
   useEffect(() => {
     const allDone = dueToday.length > 0 && doneCount === dueToday.length;
 
-    // First time we compute this after load, do NOT fire confetti.
     if (!initializedRef.current) {
       initializedRef.current = true;
       prevAllDoneRef.current = allDone;
@@ -309,7 +296,7 @@ export default function CleaningRotaPage() {
     if (!wasAllDone && allDone && userActionRef.current) {
       setShowConfetti(true);
       window.setTimeout(() => setShowConfetti(false), 1600);
-      userActionRef.current = false; // consume the action
+      userActionRef.current = false;
     }
 
     prevAllDoneRef.current = allDone;
@@ -331,6 +318,21 @@ export default function CleaningRotaPage() {
     }
     return ordered;
   }, [dueToday]);
+
+  // Ensure we have an explicit collapsed state for new categories (default expanded)
+  useEffect(() => {
+    setCollapsed((prev) => {
+      const next = { ...prev };
+      for (const [category] of groupedByCategory) {
+        if (typeof next[category] !== "boolean") next[category] = false;
+      }
+      return next;
+    });
+  }, [groupedByCategory]);
+
+  function toggleCategory(category: string) {
+    setCollapsed((prev) => ({ ...prev, [category]: !prev[category] }));
+  }
 
   async function tickTask(taskId: string) {
     if (!orgId || !locationId) return;
@@ -363,7 +365,6 @@ export default function CleaningRotaPage() {
       done_at: new Date().toISOString(),
     };
 
-    // ✅ Local state update only (no full reload)
     setRuns((prev) => {
       const next = prev.filter((r) => r.task_id !== taskId);
       next.push(row);
@@ -374,7 +375,6 @@ export default function CleaningRotaPage() {
   async function undoTask(taskId: string) {
     if (!orgId || !locationId) return;
 
-    // Undo shouldn't ever cause confetti, but mark action anyway (harmless)
     userActionRef.current = true;
 
     const { error } = await supabase
@@ -390,14 +390,11 @@ export default function CleaningRotaPage() {
       return;
     }
 
-    // ✅ Local state update only
     setRuns((prev) => prev.filter((r) => r.task_id !== taskId));
   }
 
-  // defer to tomorrow (this week only)
   async function deferToTomorrow(taskId: string) {
     if (!orgId || !locationId) return;
-
     if (runsByTask.has(taskId)) return;
 
     const weekEnd = endOfWeekSunday(today);
@@ -410,8 +407,6 @@ export default function CleaningRotaPage() {
       task_id: taskId,
       from_on: todayIso,
       to_on: tomorrowIso,
-      // NOTE: your DB error earlier shows created_by may not exist.
-      // We do not send it to avoid schema mismatch.
     };
 
     const { error } = await supabase
@@ -423,7 +418,6 @@ export default function CleaningRotaPage() {
       return;
     }
 
-    // ✅ Local state update only
     setDeferrals((prev) => [
       ...prev.filter((d) => !(d.task_id === taskId && d.from_on === todayIso)),
       { task_id: taskId, from_on: todayIso, to_on: tomorrowIso },
@@ -476,7 +470,6 @@ export default function CleaningRotaPage() {
             done_at: p.done_at,
           }));
 
-    // ✅ Single local state update instead of N reloads
     setRuns((prev) => {
       const keep = prev.filter((r) => !idsToDo.includes(r.task_id));
       return [...keep, ...returnedRuns];
@@ -552,100 +545,119 @@ export default function CleaningRotaPage() {
           {groupedByCategory.map(([category, list]) => {
             const catDone = list.filter((t) => runsByTask.has(t.id)).length;
             const open = list.length - catDone;
+            const isCollapsed = collapsed[category] ?? false;
 
             return (
               <div
                 key={category}
                 className="rounded-2xl border border-slate-200 bg-white p-3"
               >
+                {/* Collapsible header */}
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900">
-                      {category}
+                  <button
+                    type="button"
+                    onClick={() => toggleCategory(category)}
+                    className="flex w-full items-start gap-2 text-left"
+                    aria-expanded={!isCollapsed}
+                  >
+                    <span className="mt-0.5 text-slate-500">
+                      {isCollapsed ? (
+                        <ChevronRight className="h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4" />
+                      )}
+                    </span>
+
+                    <div className="flex-1">
+                      <div className="text-sm font-semibold text-slate-900">
+                        {category}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {catDone}/{list.length} complete · {open} open
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-500">
-                      {catDone}/{list.length} complete · {open} open
-                    </div>
-                  </div>
+                  </button>
 
                   <button
                     onClick={() => completeAllInCategory(list.map((t) => t.id))}
-                    className="rounded-full bg-emerald-100 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-200"
+                    className="shrink-0 rounded-full bg-emerald-100 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-200"
                   >
                     Complete all
                   </button>
                 </div>
 
-                <div className="mt-3 space-y-2">
-                  {list.map((t) => {
-                    const run = runsByTask.get(t.id);
-                    const done = !!run;
+                {!isCollapsed && (
+                  <div className="mt-3 space-y-2">
+                    {list.map((t) => {
+                      const run = runsByTask.get(t.id);
+                      const done = !!run;
 
-                    const deferredFromToday =
-                      deferralsFromMap.get(todayIso)?.has(t.id) ?? false;
+                      const deferredFromToday =
+                        deferralsFromMap.get(todayIso)?.has(t.id) ?? false;
 
-                    return (
-                      <motion.div
-                        key={t.id}
-                        className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
-                        initial={{ opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.15 }}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-slate-900">
-                              {t.task}
-                            </div>
-                            <div className="text-xs text-slate-500">
-                              {t.area ?? "—"} · {t.frequency}
-                            </div>
-
-                            {deferredFromToday && !done && (
-                              <div className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
-                                Deferred to tomorrow
+                      return (
+                        <motion.div
+                          key={t.id}
+                          className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.15 }}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-semibold text-slate-900">
+                                {t.task}
                               </div>
-                            )}
-
-                            {done && (
-                              <div className="mt-1 text-xs text-slate-500">
-                                Done by {run?.done_by || "—"}
+                              <div className="text-xs text-slate-500">
+                                {t.area ?? "—"} · {t.frequency}
                               </div>
-                            )}
-                          </div>
 
-                          <div className="flex items-center gap-2">
-                            {!done && (
-                              <button
-                                onClick={() => deferToTomorrow(t.id)}
-                                className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
-                                title="Move this task to tomorrow (this week only)"
-                              >
-                                Defer
-                              </button>
-                            )}
+                              {deferredFromToday && !done && (
+                                <div className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                                  Deferred to tomorrow
+                                </div>
+                              )}
 
-                            {!done ? (
-                              <button
-                                onClick={() => tickTask(t.id)}
-                                className="rounded-full bg-rose-100 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-200"
-                              >
-                                Tick
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => undoTask(t.id)}
-                                className="rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-200"
-                              >
-                                Undo
-                              </button>
-                            )}
+                              {done && (
+                                <div className="mt-1 text-xs text-slate-500">
+                                  Done by {run?.done_by || "—"}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {!done && (
+                                <button
+                                  onClick={() => deferToTomorrow(t.id)}
+                                  className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                                  title="Move this task to tomorrow (this week only)"
+                                >
+                                  Defer
+                                </button>
+                              )}
+
+                              {!done ? (
+                                <button
+                                  onClick={() => tickTask(t.id)}
+                                  className="rounded-full bg-rose-100 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-200"
+                                >
+                                  Tick
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => undoTask(t.id)}
+                                  className="rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-200"
+                                >
+                                  Undo
+                                </button>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-                </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}

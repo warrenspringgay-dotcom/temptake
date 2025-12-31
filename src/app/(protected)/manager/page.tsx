@@ -69,6 +69,20 @@ type CleaningIncident = {
 type IncidentSummary = { todayCount: number; last7Count: number };
 
 /* =========================
+   Day sign-offs (daily_signoffs)
+========================= */
+
+type SignoffRow = {
+  id: string;
+  signoff_on: string; // yyyy-mm-dd
+  signed_by: string | null;
+  notes: string | null;
+  created_at: string | null; // ISO datetime
+};
+
+type SignoffSummary = { todayCount: number };
+
+/* =========================
    Manager QC (staff_qc_reviews) using team_members
 ========================= */
 
@@ -263,6 +277,11 @@ export default function ManagerDashboardPage() {
   const [showAllTemps, setShowAllTemps] = useState(false);
   const [showAllCleaning, setShowAllCleaning] = useState(false);
   const [showAllIncidents, setShowAllIncidents] = useState(false);
+
+  /* ===== Day sign-offs ===== */
+  const [signoffsToday, setSignoffsToday] = useState<SignoffRow[]>([]);
+  const [signoffSummary, setSignoffSummary] = useState<SignoffSummary>({ todayCount: 0 });
+  const [showAllSignoffs, setShowAllSignoffs] = useState(false);
 
   /* ===== Manager QC ===== */
   const [qcOpen, setQcOpen] = useState(false);
@@ -530,6 +549,8 @@ export default function ManagerDashboardPage() {
         incidents7dRes,
 
         trainingsRes,
+
+        signoffsDayRes,
       ] = await Promise.all([
         supabase
           .from("food_temp_logs")
@@ -592,6 +613,15 @@ export default function ManagerDashboardPage() {
           .lte("happened_on", selectedDateISO),
 
         supabase.from("trainings").select("id, expires_on").eq("org_id", orgId).limit(5000),
+
+        supabase
+          .from("daily_signoffs")
+          .select("id, signoff_on, signed_by, notes, created_at, location_id")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("signoff_on", selectedDateISO)
+          .order("created_at", { ascending: false })
+          .limit(200),
       ]);
 
       const firstError =
@@ -602,7 +632,8 @@ export default function ManagerDashboardPage() {
         cleaningRunsDayRes.error ||
         incidentsDayRes.error ||
         incidents7dRes.error ||
-        trainingsRes.error;
+        trainingsRes.error ||
+        signoffsDayRes.error;
 
       if (firstError) throw firstError;
 
@@ -715,6 +746,19 @@ export default function ManagerDashboardPage() {
         last7Count: incidents7dRes.count ?? 0,
       });
 
+      // Sign-offs (selected day)
+      const soRows = ((signoffsDayRes.data as any[]) ?? []).map((r: any) => ({
+        id: String(r.id),
+        signoff_on: String(r.signoff_on),
+        signed_by: r.signed_by ? String(r.signed_by) : null,
+        notes: r.notes ? String(r.notes) : null,
+        created_at: r.created_at ? String(r.created_at) : null,
+      })) as SignoffRow[];
+
+      setSignoffsToday(soRows);
+      setSignoffSummary({ todayCount: soRows.length });
+      setShowAllSignoffs(false);
+
       setShowAllTemps(false);
       setShowAllCleaning(false);
       setShowAllIncidents(false);
@@ -744,6 +788,8 @@ export default function ManagerDashboardPage() {
   const incidentsToRender = showAllIncidents ? incidentsToday : incidentsToday.slice(0, 10);
 
   const qcToRender = showAllQc ? qcReviews : qcReviews.slice(0, 10);
+
+  const signoffsToRender = showAllSignoffs ? signoffsToday : signoffsToday.slice(0, 10);
 
   return (
     <>
@@ -777,7 +823,13 @@ export default function ManagerDashboardPage() {
             }
           />
 
-          <KpiTile title="Incidents" icon="⚠️" tone={incidentsTone} value={incidentSummary.todayCount} sub={`Last 7d: ${incidentSummary.last7Count}`} />
+          <KpiTile
+            title="Incidents"
+            icon="⚠️"
+            tone={incidentsTone}
+            value={incidentSummary.todayCount}
+            sub={`Last 7d: ${incidentSummary.last7Count}`}
+          />
 
           <KpiTile
             title="Training"
@@ -792,7 +844,13 @@ export default function ManagerDashboardPage() {
             }
           />
 
-          <KpiTile title="Cleaning completion" icon="✅" tone="neutral" value={`${cleaningDoneTotal}/${cleaningTotal}`} sub="Done / total (selected day)" />
+          <KpiTile
+            title="Cleaning completion"
+            icon="✅"
+            tone="neutral"
+            value={`${cleaningDoneTotal}/${cleaningTotal}`}
+            sub="Done / total (selected day)"
+          />
         </div>
       </section>
 
@@ -1067,6 +1125,54 @@ export default function ManagerDashboardPage() {
         </div>
       </section>
 
+      {/* ✅ Day sign-offs table (added after temps + cleaning tables) */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Day sign-offs</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Daily sign-offs for selected day · Total: {signoffSummary.todayCount}
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Time</th>
+                <th className="px-3 py-2">Signed by</th>
+                <th className="px-3 py-2">Notes / corrective actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signoffsToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                    No sign-offs logged for this day.
+                  </td>
+                </tr>
+              ) : (
+                signoffsToRender.map((r) => {
+                  const t = r.created_at ? formatTimeHM(new Date(r.created_at)) : null;
+                  return (
+                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 whitespace-nowrap">{r.signoff_on}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{t ?? "—"}</td>
+                      <td className="px-3 py-2 font-semibold whitespace-nowrap">
+                        {r.signed_by ? r.signed_by.toUpperCase() : "—"}
+                      </td>
+                      <td className="px-3 py-2 max-w-[28rem] truncate">{r.notes ?? "—"}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle total={signoffsToday.length} showingAll={showAllSignoffs} onToggle={() => setShowAllSignoffs((v) => !v)} />
+      </section>
+
       {/* ✅ Manager QC Summary table (back on main page) */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -1126,7 +1232,9 @@ export default function ManagerDashboardPage() {
                     <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                       <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.manager ?? { initials: null, name: "—" })}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {tmLabel(r.manager ?? { initials: null, name: "—" })}
+                      </td>
                       <td className="px-3 py-2">
                         <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
                           {r.score}/5
@@ -1148,7 +1256,9 @@ export default function ManagerDashboardPage() {
       {qcOpen && (
         <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setQcOpen(false)}>
           <div
-            className={cls("mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
+            className={cls(
+              "mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+            )}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
@@ -1296,7 +1406,9 @@ export default function ManagerDashboardPage() {
                         <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                           <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.manager ?? { initials: null, name: "—" })}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {tmLabel(r.manager ?? { initials: null, name: "—" })}
+                          </td>
                           <td className="px-3 py-2">
                             <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
                               {r.score}/5
