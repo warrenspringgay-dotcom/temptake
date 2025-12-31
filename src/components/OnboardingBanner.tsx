@@ -90,25 +90,35 @@ async function hasAnyTeamMember(orgId: string) {
 }
 
 /**
- * ✅ "Training exists" = at least one team member has a training expiry set.
- * This avoids relying on the separate trainings table (which may not be org-scoped).
+ * ✅ "Training exists" = at least one training record exists for this org.
+ * For YOUR schema, training/education is stored in public.trainings
+ * (prefer team_member_id, fallback staff_id legacy).
+ *
+ * Since the banner specifically says "expiry dates", we treat this as done
+ * when there's at least 1 training row WITH expires_on set.
  */
 async function hasAnyTrainingSet(orgId: string) {
-  const { data, error } = await supabase
-    .from("team_members")
-    .select("training_expires_at, training_expiry, expires_at")
+  // Prefer: team_member_id training rows with an expiry date
+  const qTeam = await supabase
+    .from("trainings")
+    .select("id", { count: "exact", head: true })
     .eq("org_id", orgId)
-    .limit(200);
+    .not("team_member_id", "is", null)
+    .not("expires_on", "is", null)
+    .limit(1);
 
-  if (error) return false;
+  if (!qTeam.error && (qTeam.count ?? 0) > 0) return true;
 
-  return (data ?? []).some((r: any) => {
-    return !!(
-      r?.training_expires_at ||
-      r?.training_expiry ||
-      r?.expires_at
-    );
-  });
+  // Fallback: any training rows with an expiry date (covers older rows linked to staff_id)
+  const qAny = await supabase
+    .from("trainings")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .not("expires_on", "is", null)
+    .limit(1);
+
+  if (qAny.error) return false;
+  return (qAny.count ?? 0) > 0;
 }
 
 export default function OnboardingBanner() {
@@ -222,7 +232,7 @@ export default function OnboardingBanner() {
               setStepDone(o, "allergens", true);
             }
 
-            // ✅ Team step is ONLY done when team exists AND training exists
+            // ✅ Team step is ONLY done when team exists AND training expiry exists
             if (hasTeam && hasTraining) {
               setTeamDone(true);
               setStepDone(o, "team", true);
