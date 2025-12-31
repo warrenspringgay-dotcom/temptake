@@ -27,25 +27,33 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <link rel="manifest" href="/manifest.webmanifest" />
       </head>
 
-      <body className="bg-gray-100 text-gray-900">
+      {/* 
+        Mobile scroll fix:
+        - Lock the app to the viewport height (100dvh handles mobile browser bars properly)
+        - Prevent body scrolling glitches with nested layouts
+        - Make <main> the scroll container so pages don’t render “off-screen”
+      */}
+      <body className="bg-gray-100 text-gray-900 h-[100dvh] overflow-hidden">
         <PHProvider>
           <ToastProvider>
             <GlobalLoadingProvider>
               <AuthProvider>
-                <Pwa />
+                <div className="flex h-full min-h-0 flex-col">
+                  <Pwa />
 
-                <Suspense fallback={null}>
-                  <HeaderSwitcher />
-                </Suspense>
+                  <Suspense fallback={null}>
+                    <HeaderSwitcher />
+                  </Suspense>
 
-                <main className="mx-auto w-full px-3 sm:px-4 md:max-w-6xl">
-                  {children}
-                </main>
+                  <main className="mx-auto w-full px-3 sm:px-4 md:max-w-6xl flex-1 min-h-0 overflow-y-auto">
+                    {children}
+                  </main>
 
-                <Suspense fallback={null}>
-                  <FabShell />
-                  <ServiceWorkerRegister />
-                </Suspense>
+                  <Suspense fallback={null}>
+                    <FabShell />
+                    <ServiceWorkerRegister />
+                  </Suspense>
+                </div>
               </AuthProvider>
             </GlobalLoadingProvider>
           </ToastProvider>
@@ -56,4 +64,3 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     </html>
   );
 }
-  `1Q`
