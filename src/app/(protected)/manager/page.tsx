@@ -70,7 +70,6 @@ type IncidentSummary = { todayCount: number; last7Count: number };
 
 /* =========================
    Manager QC (staff_qc_reviews) using team_members
-   IMPORTANT: staff_qc_reviews.staff_id/manager_id must reference team_members(id)
 ========================= */
 
 type TeamMemberOption = {
@@ -232,8 +231,6 @@ function TableFooterToggle({
   );
 }
 
-/* ===================================================================== */
-
 export default function ManagerDashboardPage() {
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
@@ -267,21 +264,21 @@ export default function ManagerDashboardPage() {
   const [showAllCleaning, setShowAllCleaning] = useState(false);
   const [showAllIncidents, setShowAllIncidents] = useState(false);
 
-  /* =========================
-     Manager QC modal state
-  ========================= */
+  /* ===== Manager QC ===== */
   const [qcOpen, setQcOpen] = useState(false);
-
   const [teamOptions, setTeamOptions] = useState<TeamMemberOption[]>([]);
   const [qcReviews, setQcReviews] = useState<StaffQcReviewRow[]>([]);
   const [qcLoading, setQcLoading] = useState(false);
   const [qcSaving, setQcSaving] = useState(false);
   const [showAllQc, setShowAllQc] = useState(false);
 
+  // ✅ summary table on main page
+  const [qcSummaryLoading, setQcSummaryLoading] = useState(false);
+
   const [managerTeamMember, setManagerTeamMember] = useState<TeamMemberOption | null>(null);
 
   const [qcForm, setQcForm] = useState({
-    staff_id: "", // team_members.id
+    staff_id: "",
     reviewed_on: nowISO,
     score: 3,
     notes: "",
@@ -377,6 +374,43 @@ export default function ManagerDashboardPage() {
     }
   }
 
+  // ✅ same data, but we show it on the main page without opening the modal
+  async function loadQcSummary() {
+    if (!orgId || !locationId) return;
+    setQcSummaryLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("staff_qc_reviews")
+        .select(
+          `
+          id,
+          reviewed_on,
+          score,
+          notes,
+          staff_id,
+          manager_id,
+          staff:team_members!staff_qc_reviews_staff_fkey(initials,name),
+          manager:team_members!staff_qc_reviews_manager_fkey(initials,name)
+        `
+        )
+        .eq("org_id", orgId)
+        .eq("location_id", locationId)
+        .order("reviewed_on", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+
+      // Keep qcReviews in sync so modal and summary match
+      setQcReviews(((data ?? []) as any[]) as StaffQcReviewRow[]);
+    } catch (e) {
+      console.error(e);
+      // don't wipe existing if it fails
+    } finally {
+      setQcSummaryLoading(false);
+    }
+  }
+
   async function addQcReview() {
     if (!orgId || !locationId) return;
     if (!qcForm.staff_id) return alert("Select staff.");
@@ -408,6 +442,7 @@ export default function ManagerDashboardPage() {
         notes: "",
       }));
 
+      await loadQcSummary();
       await loadQcReviews();
     } catch (e: any) {
       console.error(e);
@@ -424,6 +459,7 @@ export default function ManagerDashboardPage() {
     try {
       const { error } = await supabase.from("staff_qc_reviews").delete().eq("id", id).eq("org_id", orgId);
       if (error) throw error;
+      await loadQcSummary();
       await loadQcReviews();
     } catch (e: any) {
       console.error(e);
@@ -682,6 +718,9 @@ export default function ManagerDashboardPage() {
       setShowAllTemps(false);
       setShowAllCleaning(false);
       setShowAllIncidents(false);
+
+      // ✅ ensure summary table appears on main page
+      await loadQcSummary();
     } catch (e: any) {
       console.error(e);
       setErr(e?.message ?? "Failed to load manager dashboard.");
@@ -704,9 +743,10 @@ export default function ManagerDashboardPage() {
   const cleaningToRender = showAllCleaning ? cleaningActivity : cleaningActivity.slice(0, 10);
   const incidentsToRender = showAllIncidents ? incidentsToday : incidentsToday.slice(0, 10);
 
+  const qcToRender = showAllQc ? qcReviews : qcReviews.slice(0, 10);
+
   return (
     <>
-      {/* Header */}
       <header className="py-2">
         <div className="text-center">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today</div>
@@ -720,7 +760,6 @@ export default function ManagerDashboardPage() {
         </div>
       )}
 
-      {/* KPI cards */}
       <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <KpiTile
@@ -738,13 +777,7 @@ export default function ManagerDashboardPage() {
             }
           />
 
-          <KpiTile
-            title="Incidents"
-            icon="⚠️"
-            tone={incidentsTone}
-            value={incidentSummary.todayCount}
-            sub={`Last 7d: ${incidentSummary.last7Count}`}
-          />
+          <KpiTile title="Incidents" icon="⚠️" tone={incidentsTone} value={incidentSummary.todayCount} sub={`Last 7d: ${incidentSummary.last7Count}`} />
 
           <KpiTile
             title="Training"
@@ -759,17 +792,10 @@ export default function ManagerDashboardPage() {
             }
           />
 
-          <KpiTile
-            title="Cleaning completion"
-            icon="✅"
-            tone="neutral"
-            value={`${cleaningDoneTotal}/${cleaningTotal}`}
-            sub="Done / total (selected day)"
-          />
+          <KpiTile title="Cleaning completion" icon="✅" tone="neutral" value={`${cleaningDoneTotal}/${cleaningTotal}`} sub="Done / total (selected day)" />
         </div>
       </section>
 
-      {/* Controls under KPIs */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="flex flex-wrap items-center gap-2 justify-end">
           <div className="flex items-center gap-2">
@@ -877,12 +903,7 @@ export default function ManagerDashboardPage() {
                       <td className="px-3 py-2">{r.done}</td>
                       <td className="px-3 py-2">{r.total}</td>
                       <td className="px-3 py-2">
-                        <span
-                          className={cls(
-                            "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                            pill
-                          )}
-                        >
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
                           {pct}%
                         </span>
                       </td>
@@ -939,27 +960,19 @@ export default function ManagerDashboardPage() {
           </table>
         </div>
 
-        <TableFooterToggle
-          total={incidentsToday.length}
-          showingAll={showAllIncidents}
-          onToggle={() => setShowAllIncidents((v) => !v)}
-        />
+        <TableFooterToggle total={incidentsToday.length} showingAll={showAllIncidents} onToggle={() => setShowAllIncidents((v) => !v)} />
       </section>
 
-      {/* Activity (main page tables) */}
+      {/* Activity */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Today&apos;s activity
-          </div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today&apos;s activity</div>
           <div className="mt-0.5 text-sm font-semibold text-slate-900">Temps + cleaning (category-based)</div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
           <div>
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-              Temperature logs
-            </h3>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Temperature logs</h3>
 
             <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
@@ -1009,11 +1022,7 @@ export default function ManagerDashboardPage() {
               </table>
             </div>
 
-            <TableFooterToggle
-              total={todayTemps.length}
-              showingAll={showAllTemps}
-              onToggle={() => setShowAllTemps((v) => !v)}
-            />
+            <TableFooterToggle total={todayTemps.length} showingAll={showAllTemps} onToggle={() => setShowAllTemps((v) => !v)} />
           </div>
 
           <div>
@@ -1042,9 +1051,7 @@ export default function ManagerDashboardPage() {
                         <td className="px-3 py-2">{r.time ?? "—"}</td>
                         <td className="px-3 py-2">
                           <div className="font-semibold">{r.category}</div>
-                          {r.task ? (
-                            <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">{r.task}</div>
-                          ) : null}
+                          {r.task ? <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">{r.task}</div> : null}
                         </td>
                         <td className="px-3 py-2">{r.staff ?? "—"}</td>
                         <td className="px-3 py-2 max-w-[14rem] truncate">{r.notes ?? "—"}</td>
@@ -1055,24 +1062,93 @@ export default function ManagerDashboardPage() {
               </table>
             </div>
 
-            <TableFooterToggle
-              total={cleaningActivity.length}
-              showingAll={showAllCleaning}
-              onToggle={() => setShowAllCleaning((v) => !v)}
-            />
+            <TableFooterToggle total={cleaningActivity.length} showingAll={showAllCleaning} onToggle={() => setShowAllCleaning((v) => !v)} />
           </div>
         </div>
       </section>
 
-      {/* =========================
-          Manager QC modal (RESTORED)
-      ========================= */}
+      {/* ✅ Manager QC Summary table (back on main page) */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Manager QC</div>
+            <div className="mt-0.5 text-sm font-semibold text-slate-900">Recent QC reviews (selected location)</div>
+          </div>
+
+          <button
+            type="button"
+            onClick={async () => {
+              if (!orgId || !locationId) return;
+              setQcForm((f) => ({ ...f, reviewed_on: selectedDateISO || f.reviewed_on }));
+              setQcOpen(true);
+              await Promise.all([loadTeamOptions(), loadLoggedInManager(), loadQcReviews()]);
+            }}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            Open QC
+          </button>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Staff</th>
+                <th className="px-3 py-2">Manager</th>
+                <th className="px-3 py-2">Score</th>
+                <th className="px-3 py-2">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {qcSummaryLoading ? (
+                <tr>
+                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                    Loading…
+                  </td>
+                </tr>
+              ) : qcToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                    No QC reviews logged.
+                  </td>
+                </tr>
+              ) : (
+                qcToRender.map((r) => {
+                  const pill =
+                    r.score >= 4
+                      ? "bg-emerald-100 text-emerald-800"
+                      : r.score === 3
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-red-100 text-red-800";
+
+                  return (
+                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.manager ?? { initials: null, name: "—" })}</td>
+                      <td className="px-3 py-2">
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                          {r.score}/5
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
+      </section>
+
+      {/* ===== Modal (unchanged UI) ===== */}
       {qcOpen && (
         <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setQcOpen(false)}>
           <div
-            className={cls(
-              "mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
-            )}
+            className={cls("mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
@@ -1088,7 +1164,6 @@ export default function ManagerDashboardPage() {
               </button>
             </div>
 
-            {/* Add QC review */}
             <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
@@ -1183,7 +1258,6 @@ export default function ManagerDashboardPage() {
               </div>
             </div>
 
-            {/* QC table */}
             <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
                 <thead className="bg-slate-50">
@@ -1222,16 +1296,9 @@ export default function ManagerDashboardPage() {
                         <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                           <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {tmLabel(r.manager ?? { initials: null, name: "—" })}
-                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.manager ?? { initials: null, name: "—" })}</td>
                           <td className="px-3 py-2">
-                            <span
-                              className={cls(
-                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                                pill
-                              )}
-                            >
+                            <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
                               {r.score}/5
                             </span>
                           </td>

@@ -27,33 +27,27 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <link rel="manifest" href="/manifest.webmanifest" />
       </head>
 
-      {/* 
-        Mobile scroll fix:
-        - Lock the app to the viewport height (100dvh handles mobile browser bars properly)
-        - Prevent body scrolling glitches with nested layouts
-        - Make <main> the scroll container so pages don’t render “off-screen”
-      */}
-      <body className="bg-gray-100 text-gray-900 h-[100dvh] overflow-hidden">
+      {/* ✅ Let the viewport scroll (so scrollbar is at the far right) */}
+      <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
         <PHProvider>
           <ToastProvider>
             <GlobalLoadingProvider>
               <AuthProvider>
-                <div className="flex h-full min-h-0 flex-col">
-                  <Pwa />
+                <Pwa />
 
-                  <Suspense fallback={null}>
-                    <HeaderSwitcher />
-                  </Suspense>
+                <Suspense fallback={null}>
+                  <HeaderSwitcher />
+                </Suspense>
 
-                  <main className="mx-auto w-full px-3 sm:px-4 md:max-w-6xl flex-1 min-h-0 overflow-y-auto">
-                    {children}
-                  </main>
+                {/* Keep your max-width UI exactly the same, but don't make it the scroll container */}
+                <main className="w-full">
+                  <div className="mx-auto w-full px-3 sm:px-4 md:max-w-6xl">{children}</div>
+                </main>
 
-                  <Suspense fallback={null}>
-                    <FabShell />
-                    <ServiceWorkerRegister />
-                  </Suspense>
-                </div>
+                <Suspense fallback={null}>
+                  <FabShell />
+                  <ServiceWorkerRegister />
+                </Suspense>
               </AuthProvider>
             </GlobalLoadingProvider>
           </ToastProvider>
