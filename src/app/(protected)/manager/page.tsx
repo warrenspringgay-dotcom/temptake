@@ -180,7 +180,12 @@ function KpiTile({
   return (
     <motion.div
       whileHover={{ y: -3 }}
-      className={cls("relative rounded-2xl border p-4 shadow-sm overflow-hidden", "flex flex-col", KPI_HEIGHT, toneCls)}
+      className={cls(
+        "relative rounded-2xl border p-4 shadow-sm overflow-hidden",
+        "flex flex-col",
+        KPI_HEIGHT,
+        toneCls
+      )}
     >
       <div className={cls("absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80", accentCls)} />
       <div className="flex items-start justify-between gap-3">
@@ -701,7 +706,7 @@ export default function ManagerDashboardPage() {
 
   return (
     <>
-      {/* ✅ Header changed: only centered date */}
+      {/* Header */}
       <header className="py-2">
         <div className="text-center">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today</div>
@@ -832,7 +837,7 @@ export default function ManagerDashboardPage() {
         </div>
       </section>
 
-      {/* Cleaning by category table */}
+      {/* Cleaning progress */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Cleaning progress</div>
@@ -890,7 +895,7 @@ export default function ManagerDashboardPage() {
         </div>
       </section>
 
-      {/* Incidents table */}
+      {/* Incidents */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Incidents</div>
@@ -941,14 +946,8 @@ export default function ManagerDashboardPage() {
         />
       </section>
 
-      {/* Activity */}
-      {/*
-        Mobile layout fix:
-        - Add spacing so cards don't visually collide.
-        - Prevent grid children from forcing the section wider than the viewport.
-        - Clip any accidental horizontal overflow caused by tables.
-      */}
-      <section className="mt-4 w-full overflow-hidden rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+      {/* Activity (main page tables) */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
             Today&apos;s activity
@@ -956,8 +955,8 @@ export default function ManagerDashboardPage() {
           <div className="mt-0.5 text-sm font-semibold text-slate-900">Temps + cleaning (category-based)</div>
         </div>
 
-        <div className="grid min-w-0 gap-4 md:grid-cols-2">
-          <div className="min-w-0">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
             <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
               Temperature logs
             </h3>
@@ -1017,7 +1016,7 @@ export default function ManagerDashboardPage() {
             />
           </div>
 
-          <div className="min-w-0">
+          <div>
             <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Cleaning runs</h3>
 
             <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
@@ -1065,14 +1064,196 @@ export default function ManagerDashboardPage() {
         </div>
       </section>
 
-      {/* Manager QC modal (rest of your file continues unchanged below) */}
+      {/* =========================
+          Manager QC modal (RESTORED)
+      ========================= */}
       {qcOpen && (
         <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setQcOpen(false)}>
           <div
-            className="mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+            className={cls(
+              "mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+            )}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* ... your existing modal code ... */}
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold">Manager QC</div>
+                <div className="mt-0.5 text-xs text-slate-500">
+                  Manager is your logged-in team member. Staff list is team members.
+                </div>
+              </div>
+
+              <button onClick={() => setQcOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
+                ✕
+              </button>
+            </div>
+
+            {/* Add QC review */}
+            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
+              <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Manager</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">
+                    {managerTeamMember ? tmLabel(managerTeamMember) : "Not linked"}
+                  </div>
+                  {!managerTeamMember ? (
+                    <div className="mt-1 text-xs text-rose-700">
+                      Link this login by setting <span className="font-semibold">team_members.user_id</span>.
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Location</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">
+                    {locations.find((l) => l.id === locationId)?.name ?? "—"}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-4">
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Staff</label>
+                  <select
+                    value={qcForm.staff_id}
+                    onChange={(e) => setQcForm((f) => ({ ...f, staff_id: e.target.value }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    <option value="">Select…</option>
+                    {teamOptions.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {tmLabel(t)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Date</label>
+                  <input
+                    type="date"
+                    value={qcForm.reviewed_on}
+                    onChange={(e) => setQcForm((f) => ({ ...f, reviewed_on: e.target.value }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Score</label>
+                  <select
+                    value={qcForm.score}
+                    onChange={(e) => setQcForm((f) => ({ ...f, score: Number(e.target.value) }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <option key={n} value={n}>
+                        {n}/5
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Notes</label>
+                  <input
+                    value={qcForm.notes}
+                    onChange={(e) => setQcForm((f) => ({ ...f, notes: e.target.value }))}
+                    placeholder="Optional…"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setQcOpen(false)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={addQcReview}
+                  disabled={qcSaving || !orgId || !locationId || !managerTeamMember}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {qcSaving ? "Saving…" : "Add QC"}
+                </button>
+              </div>
+            </div>
+
+            {/* QC table */}
+            <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Manager</th>
+                    <th className="px-3 py-2">Score</th>
+                    <th className="px-3 py-2">Notes</th>
+                    <th className="px-3 py-2 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {qcLoading ? (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                        Loading…
+                      </td>
+                    </tr>
+                  ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                        No QC reviews logged.
+                      </td>
+                    </tr>
+                  ) : (
+                    (showAllQc ? qcReviews : qcReviews.slice(0, 10)).map((r) => {
+                      const pill =
+                        r.score >= 4
+                          ? "bg-emerald-100 text-emerald-800"
+                          : r.score === 3
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-red-100 text-red-800";
+
+                      return (
+                        <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                          <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {tmLabel(r.manager ?? { initials: null, name: "—" })}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={cls(
+                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                                pill
+                              )}
+                            >
+                              {r.score}/5
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 max-w-[18rem] truncate">{r.notes ?? "—"}</td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              type="button"
+                              onClick={() => deleteQcReview(r.id)}
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
           </div>
         </div>
       )}
