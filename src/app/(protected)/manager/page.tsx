@@ -333,7 +333,7 @@ export default function ManagerDashboardPage() {
   });
   const [showAllSignoffs, setShowAllSignoffs] = useState(false);
 
-  // Sign-off modal state
+  // ✅ Sign-off modal state
   const [signoffOpen, setSignoffOpen] = useState(false);
   const [signoffInitials, setSignoffInitials] = useState("");
   const [signoffNotes, setSignoffNotes] = useState("");
@@ -347,7 +347,7 @@ export default function ManagerDashboardPage() {
   const [qcSaving, setQcSaving] = useState(false);
   const [showAllQc, setShowAllQc] = useState(false);
 
-  // summary table on main page
+  // ✅ summary table on main page
   const [qcSummaryLoading, setQcSummaryLoading] = useState(false);
 
   const [managerTeamMember, setManagerTeamMember] =
@@ -360,7 +360,7 @@ export default function ManagerDashboardPage() {
     notes: "",
   });
 
-  /* ===== Individual staff assessment modal (VIEW STAFF) ===== */
+  /* ===== Individual staff assessment modal (NEW) ===== */
   const [staffAssessOpen, setStaffAssessOpen] = useState(false);
   const [staffAssessLoading, setStaffAssessLoading] = useState(false);
   const [staffAssessErr, setStaffAssessErr] = useState<string | null>(null);
@@ -589,7 +589,7 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
-  // Load team + logged in member as soon as we have orgId
+  // ✅ Load team + logged in member as soon as we have orgId (no UI changes)
   useEffect(() => {
     if (!orgId) return;
     void loadTeamOptions();
@@ -597,7 +597,7 @@ export default function ManagerDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
-  // Auto-populate signoff initials when signoff modal opens
+  // ✅ Auto-populate signoff initials when signoff modal opens (NO UI change)
   useEffect(() => {
     if (!signoffOpen) return;
     if (signoffInitials.trim()) return;
@@ -605,6 +605,32 @@ export default function ManagerDashboardPage() {
     const ini = managerTeamMember?.initials?.trim().toUpperCase() ?? "";
     if (ini) setSignoffInitials(ini);
   }, [signoffOpen, managerTeamMember, signoffInitials]);
+
+  // ✅ Staff assessment modal toggle: Ctrl+Shift+A (no new UI)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase() ?? "";
+      const isTyping =
+        tag === "input" ||
+        tag === "textarea" ||
+        (target as any)?.isContentEditable;
+
+      if (isTyping) return;
+
+      const key = e.key?.toLowerCase();
+      const hit = (e.ctrlKey || e.metaKey) && e.shiftKey && key === "a";
+      if (!hit) return;
+
+      e.preventDefault();
+      setStaffAssessOpen((v) => !v);
+      setStaffAssessErr(null);
+      setStaffAssess(null);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     if (!orgId || !locationId) return;
@@ -860,6 +886,7 @@ export default function ManagerDashboardPage() {
         last7Count: incidents7dRes.count ?? 0,
       });
 
+      // Sign-offs (selected day)
       const soRows = ((signoffsDayRes.data as any[]) ?? []).map((r: any) => ({
         id: String(r.id),
         signoff_on: String(r.signoff_on),
@@ -917,6 +944,7 @@ export default function ManagerDashboardPage() {
     ? signoffsToday
     : signoffsToday.slice(0, 10);
 
+  // ✅ Sign-off eligibility + status
   const cleaningAllDone =
     cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
   const alreadySignedOff = signoffsToday.length > 0;
@@ -965,10 +993,12 @@ export default function ManagerDashboardPage() {
           : null,
       };
 
+      // Update UI immediately
       setSignoffsToday((prev) => [row, ...prev]);
       setSignoffSummary((prev) => ({ ...prev, todayCount: prev.todayCount + 1 }));
       setShowAllSignoffs(false);
 
+      // Reset + close
       setSignoffInitials("");
       setSignoffNotes("");
       setSignoffOpen(false);
@@ -980,7 +1010,7 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  // Load staff assessment
+  // ✅ Load staff assessment (NEW)
   async function loadStaffAssessment(staffId: string, days: number) {
     if (!orgId || !locationId) return;
 
@@ -1005,6 +1035,7 @@ export default function ManagerDashboardPage() {
       const startIsoDate = isoDate(start);
       const endIsoDate = isoDate(end);
 
+      // QC last 30 days window
       const qcStart = new Date(selectedDateISO);
       qcStart.setHours(0, 0, 0, 0);
       qcStart.setDate(qcStart.getDate() - 29);
@@ -1104,28 +1135,938 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  // OPEN staff modal from QC (this is what you wanted)
-  function openStaffAssessmentFromQc() {
-    if (!qcForm.staff_id) {
-      setStaffAssessErr("Select a staff member first.");
-      setStaffAssessOpen(true);
-      return;
-    }
-    setStaffAssessErr(null);
-    setStaffAssessStaffId(qcForm.staff_id);
-    setStaffAssessDays(7);
-    setStaffAssess(null);
-    setStaffAssessOpen(true);
-    void loadStaffAssessment(qcForm.staff_id, 7);
-  }
-
   return (
     <>
-      {/* ... YOUR EXISTING PAGE UI ABOVE HERE ... */}
-      {/* I am not touching the main page layout in this snippet response. */}
-      {/* Keep everything you already have. */}
+      <header className="py-2">
+        <div className="text-center">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Today
+          </div>
+          <h1 className="mt-1 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+            {centeredDate}
+          </h1>
+        </div>
+      </header>
 
-      {/* ===== QC modal (only change: View staff button) ===== */}
+      {err && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+          {err}
+        </div>
+      )}
+
+      <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <KpiTile
+            title="Temps"
+            icon="🌡"
+            tone={tempsTone}
+            value={tempsSummary.today}
+            sub={
+              <>
+                Fails (7d):{" "}
+                <span
+                  className={cls(
+                    "font-semibold",
+                    tempsSummary.fails7d > 0 && "text-red-700"
+                  )}
+                >
+                  {tempsSummary.fails7d}
+                </span>
+              </>
+            }
+          />
+
+          <KpiTile
+            title="Incidents"
+            icon="⚠️"
+            tone={incidentsTone}
+            value={incidentSummary.todayCount}
+            sub={`Last 7d: ${incidentSummary.last7Count}`}
+          />
+
+          <KpiTile
+            title="Training"
+            icon="🎓"
+            tone={trainingTone}
+            value={trainingExpired}
+            sub={
+              <>
+                Due soon (30d):{" "}
+                <span
+                  className={cls(
+                    "font-semibold",
+                    trainingDueSoon > 0 && "text-amber-700"
+                  )}
+                >
+                  {trainingDueSoon}
+                </span>
+              </>
+            }
+          />
+
+          <KpiTile
+            title="Cleaning completion"
+            icon="✅"
+            tone="neutral"
+            value={`${cleaningDoneTotal}/${cleaningTotal}`}
+            sub="Done / total (selected day)"
+          />
+        </div>
+      </section>
+
+      {/* ✅ Prompt banner when eligible */}
+      {cleaningAllDone && !alreadySignedOff && (
+        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          <div className="font-semibold">All cleaning tasks are complete.</div>
+          <div className="text-emerald-800/90">
+            Sign off the day to lock in your compliance record.
+          </div>
+        </div>
+      )}
+
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedDateISO((d) => addDaysISO(d, -1))}
+              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              title="Previous day"
+            >
+              ←
+            </button>
+
+            <input
+              type="date"
+              value={selectedDateISO}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSelectedDateISO(e.target.value)
+              }
+              className="h-9 rounded-xl border border-slate-300 bg-white/90 px-3 text-sm shadow-sm"
+            />
+
+            <button
+              type="button"
+              onClick={() => setSelectedDateISO((d) => addDaysISO(d, +1))}
+              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              title="Next day"
+            >
+              →
+            </button>
+          </div>
+
+          <select
+            value={locationId ?? ""}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+              setLocationId(e.target.value || null)
+            }
+            disabled={locationLoading}
+            className="h-9 rounded-xl border border-slate-300 bg-white/90 px-3 text-sm shadow-sm"
+          >
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+
+          {/* ✅ Sign off button */}
+          <button
+            type="button"
+            onClick={() => setSignoffOpen(true)}
+            disabled={
+              !cleaningAllDone ||
+              alreadySignedOff ||
+              loading ||
+              !orgId ||
+              !locationId
+            }
+            className={cls(
+              "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm disabled:opacity-60",
+              alreadySignedOff
+                ? "border border-slate-200 bg-white text-slate-600"
+                : "bg-indigo-600 text-white hover:bg-indigo-700"
+            )}
+            title={
+              alreadySignedOff
+                ? "Already signed off"
+                : cleaningAllDone
+                ? "Sign off the day"
+                : "Complete all cleaning tasks first"
+            }
+          >
+            {alreadySignedOff ? "Day signed off" : "Sign off day"}
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
+              if (!orgId || !locationId) return;
+              setQcForm((f) => ({
+                ...f,
+                reviewed_on: selectedDateISO || f.reviewed_on,
+              }));
+              setQcOpen(true);
+              await Promise.all([
+                loadTeamOptions(),
+                loadLoggedInManager(),
+                loadQcReviews(),
+              ]);
+            }}
+            disabled={loading || !orgId || !locationId}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+          >
+            Manager QC
+          </button>
+
+          <button
+            type="button"
+            onClick={refreshAll}
+            disabled={loading || !orgId || !locationId}
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+          >
+            {loading ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
+      </section>
+
+      {/* Cleaning progress */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Cleaning progress
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Tasks due by category
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Category</th>
+                <th className="px-3 py-2">Completed</th>
+                <th className="px-3 py-2">Total</th>
+                <th className="px-3 py-2">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cleaningCategoryProgress.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={4}
+                    className="px-3 py-4 text-center text-slate-500"
+                  >
+                    No cleaning tasks due (or none loaded).
+                  </td>
+                </tr>
+              ) : (
+                cleaningCategoryProgress.map((r) => {
+                  const pct =
+                    r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
+                  const pill =
+                    pct === 100
+                      ? "bg-emerald-100 text-emerald-800"
+                      : pct >= 50
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-red-100 text-red-800";
+
+                  return (
+                    <tr
+                      key={r.category}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
+                      <td className="px-3 py-2 font-semibold">{r.category}</td>
+                      <td className="px-3 py-2">{r.done}</td>
+                      <td className="px-3 py-2">{r.total}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={cls(
+                            "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                            pill
+                          )}
+                        >
+                          {pct}%
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Incidents */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Incidents
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Incident log & corrective actions
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Time</th>
+                <th className="px-3 py-2">Type</th>
+                <th className="px-3 py-2">By</th>
+                <th className="px-3 py-2">Details</th>
+                <th className="px-3 py-2">Corrective</th>
+              </tr>
+            </thead>
+            <tbody>
+              {incidentsToRender.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-3 py-4 text-center text-slate-500"
+                  >
+                    No incidents logged.
+                  </td>
+                </tr>
+              ) : (
+                incidentsToRender.map((r) => (
+                  <tr
+                    key={r.id}
+                    className="border-t border-slate-100 text-slate-800"
+                  >
+                    <td className="px-3 py-2">
+                      {r.created_at
+                        ? new Date(r.created_at).toLocaleTimeString("en-GB", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : "—"}
+                    </td>
+                    <td className="px-3 py-2 font-semibold">
+                      {r.type ?? "Incident"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {r.created_by?.toUpperCase() ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">
+                      {r.details ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">
+                      {r.corrective_action ?? "—"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle
+          total={incidentsToday.length}
+          showingAll={showAllIncidents}
+          onToggle={() => setShowAllIncidents((v) => !v)}
+        />
+      </section>
+
+      {/* Activity */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Today&apos;s activity
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Temps + cleaning (category-based)
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Temperature logs
+            </h3>
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Area</th>
+                    <th className="px-3 py-2">Item</th>
+                    <th className="px-3 py-2">Temp</th>
+                    <th className="px-3 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tempsToRender.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="px-3 py-4 text-center text-slate-500"
+                      >
+                        No temperature logs.
+                      </td>
+                    </tr>
+                  ) : (
+                    tempsToRender.map((r) => (
+                      <tr
+                        key={r.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
+                        <td className="px-3 py-2">{r.time}</td>
+                        <td className="px-3 py-2">{r.staff}</td>
+                        <td className="px-3 py-2">{r.area}</td>
+                        <td className="px-3 py-2">{r.item}</td>
+                        <td className="px-3 py-2">
+                          {r.temp_c != null ? `${r.temp_c}°C` : "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {r.status ? (
+                            <span
+                              className={cls(
+                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                                r.status === "pass"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-red-100 text-red-800"
+                              )}
+                            >
+                              {r.status}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <TableFooterToggle
+              total={todayTemps.length}
+              showingAll={showAllTemps}
+              onToggle={() => setShowAllTemps((v) => !v)}
+            />
+          </div>
+
+          <div>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Cleaning runs
+            </h3>
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cleaningToRender.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={4}
+                        className="px-3 py-4 text-center text-slate-500"
+                      >
+                        No cleaning tasks completed.
+                      </td>
+                    </tr>
+                  ) : (
+                    cleaningToRender.map((r) => (
+                      <tr
+                        key={r.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
+                        <td className="px-3 py-2">{r.time ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          <div className="font-semibold">{r.category}</div>
+                          {r.task ? (
+                            <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">
+                              {r.task}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2">{r.staff ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[14rem] truncate">
+                          {r.notes ?? "—"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <TableFooterToggle
+              total={cleaningActivity.length}
+              showingAll={showAllCleaning}
+              onToggle={() => setShowAllCleaning((v) => !v)}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* Day sign-offs table */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Day sign-offs
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Daily sign-offs for selected day · Total: {signoffSummary.todayCount}
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Time</th>
+                <th className="px-3 py-2">Signed by</th>
+                <th className="px-3 py-2">Notes / corrective actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signoffsToRender.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={4}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
+                    No sign-offs logged for this day.
+                  </td>
+                </tr>
+              ) : (
+                signoffsToRender.map((r) => {
+                  const t = r.created_at
+                    ? formatTimeHM(new Date(r.created_at))
+                    : null;
+                  return (
+                    <tr
+                      key={r.id}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {r.signoff_on}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {t ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 font-semibold whitespace-nowrap">
+                        {r.signed_by ? r.signed_by.toUpperCase() : "—"}
+                      </td>
+                      <td className="px-3 py-2 max-w-[28rem] truncate">
+                        {r.notes ?? "—"}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle
+          total={signoffsToday.length}
+          showingAll={showAllSignoffs}
+          onToggle={() => setShowAllSignoffs((v) => !v)}
+        />
+      </section>
+
+      {/* ===== Manager QC Summary table (unchanged) ===== */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+              Manager QC
+            </div>
+            <div className="mt-0.5 text-sm font-semibold text-slate-900">
+              Recent QC reviews (selected location)
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={async () => {
+              if (!orgId || !locationId) return;
+              setQcForm((f) => ({
+                ...f,
+                reviewed_on: selectedDateISO || f.reviewed_on,
+              }));
+              setQcOpen(true);
+              await Promise.all([
+                loadTeamOptions(),
+                loadLoggedInManager(),
+                loadQcReviews(),
+              ]);
+            }}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            Open QC
+          </button>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Staff</th>
+                <th className="px-3 py-2">Manager</th>
+                <th className="px-3 py-2">Score</th>
+                <th className="px-3 py-2">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {qcSummaryLoading ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
+                    Loading…
+                  </td>
+                </tr>
+              ) : qcToRender.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
+                    No QC reviews logged.
+                  </td>
+                </tr>
+              ) : (
+                qcToRender.map((r) => {
+                  const pill =
+                    r.score >= 4
+                      ? "bg-emerald-100 text-emerald-800"
+                      : r.score === 3
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-red-100 text-red-800";
+
+                  return (
+                    <tr
+                      key={r.id}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {r.reviewed_on}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {tmLabel(r.staff ?? { initials: null, name: "—" })}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {tmLabel(r.manager ?? { initials: null, name: "—" })}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={cls(
+                            "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                            pill
+                          )}
+                        >
+                          {r.score}/5
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 max-w-[24rem] truncate">
+                        {r.notes ?? "—"}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle
+          total={qcReviews.length}
+          showingAll={showAllQc}
+          onToggle={() => setShowAllQc((v) => !v)}
+        />
+      </section>
+
+      {/* ✅ Sign-off modal */}
+      {signoffOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setSignoffOpen(false)}
+        >
+          <div
+            className={cls(
+              "mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold">Sign off day</div>
+                <div className="mt-0.5 text-xs text-slate-500">
+                  {selectedDateISO} ·{" "}
+                  {locations.find((l) => l.id === locationId)?.name ?? "—"}
+                </div>
+              </div>
+              <button
+                onClick={() => setSignoffOpen(false)}
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {!cleaningAllDone && (
+              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                You can’t sign off until all cleaning tasks due today are
+                completed.
+              </div>
+            )}
+
+            {alreadySignedOff && (
+              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                This day is already signed off.
+              </div>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Initials
+                </label>
+                <input
+                  value={signoffInitials}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setSignoffInitials(e.target.value.toUpperCase())
+                  }
+                  placeholder="WS"
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Notes (optional)
+                </label>
+                <input
+                  value={signoffNotes}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setSignoffNotes(e.target.value)
+                  }
+                  placeholder="Any corrective actions / comments…"
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSignoffOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={createDaySignoff}
+                disabled={!cleaningAllDone || alreadySignedOff || signoffSaving}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {signoffSaving ? "Signing…" : "Sign off"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ Individual staff assessment modal (NEW) - Ctrl+Shift+A */}
+      {staffAssessOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setStaffAssessOpen(false)}
+        >
+          <div
+            className={cls(
+              "mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold">
+                  Individual staff assessment
+                </div>
+                <div className="mt-0.5 text-xs text-slate-500">
+                  Open/close with Ctrl+Shift+A. No buttons added. No layout
+                  changes.
+                </div>
+              </div>
+              <button
+                onClick={() => setStaffAssessOpen(false)}
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {staffAssessErr && (
+              <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                {staffAssessErr}
+              </div>
+            )}
+
+            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Staff
+                  </label>
+                  <select
+                    value={staffAssessStaffId}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                      setStaffAssessStaffId(e.target.value);
+                      setStaffAssess(null);
+                      setStaffAssessErr(null);
+                    }}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    <option value="">Select…</option>
+                    {teamOptions.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {tmLabel(t)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Range
+                  </label>
+                  <select
+                    value={staffAssessDays}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                      setStaffAssessDays(Number(e.target.value));
+                      setStaffAssess(null);
+                      setStaffAssessErr(null);
+                    }}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    <option value={7}>Last 7 days</option>
+                    <option value={14}>Last 14 days</option>
+                    <option value={30}>Last 30 days</option>
+                  </select>
+                </div>
+
+                <div className="flex items-end justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!staffAssessStaffId)
+                        return setStaffAssessErr("Select a staff member.");
+                      await loadStaffAssessment(staffAssessStaffId, staffAssessDays);
+                    }}
+                    disabled={staffAssessLoading || !staffAssessStaffId}
+                    className="h-10 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
+                  >
+                    {staffAssessLoading ? "Loading…" : "Load"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <KpiTile
+                title="Cleaning runs"
+                icon="🧼"
+                tone="neutral"
+                value={staffAssess?.cleaningRuns ?? "—"}
+                sub={
+                  staffAssess
+                    ? `Completed in last ${staffAssess.rangeDays}d`
+                    : "Select staff + load"
+                }
+              />
+              <KpiTile
+                title="Temp logs"
+                icon="🌡"
+                tone="neutral"
+                value={staffAssess?.tempLogs ?? "—"}
+                sub={
+                  staffAssess
+                    ? `Recorded in last ${staffAssess.rangeDays}d`
+                    : "—"
+                }
+              />
+              <KpiTile
+                title="Temp fails"
+                icon="🚫"
+                tone={staffAssess && staffAssess.tempFails > 0 ? "danger" : "ok"}
+                value={staffAssess?.tempFails ?? "—"}
+                sub={
+                  staffAssess
+                    ? `Fails in last ${staffAssess.rangeDays}d`
+                    : "—"
+                }
+              />
+              <KpiTile
+                title="Incidents"
+                icon="⚠️"
+                tone={staffAssess && staffAssess.incidents > 0 ? "warn" : "ok"}
+                value={staffAssess?.incidents ?? "—"}
+                sub={
+                  staffAssess
+                    ? `Logged in last ${staffAssess.rangeDays}d`
+                    : "—"
+                }
+              />
+              <KpiTile
+                title="QC avg (30d)"
+                icon="📋"
+                tone="neutral"
+                value={
+                  staffAssess
+                    ? staffAssess.qcAvg30d != null
+                      ? `${staffAssess.qcAvg30d}/5`
+                      : "—"
+                    : "—"
+                }
+                sub={
+                  staffAssess
+                    ? `Based on ${staffAssess.qcCount30d} reviews`
+                    : "—"
+                }
+              />
+              <KpiTile
+                title="Staff"
+                icon="👤"
+                tone="neutral"
+                value={staffAssess?.staffLabel ?? "—"}
+                sub="Selected team member"
+              />
+            </div>
+
+            <div className="mt-4 text-xs text-slate-500">
+              Note: this uses initials across logs (done_by, staff_initials,
+              created_by). If you switch to IDs everywhere later, this becomes
+              rock-solid.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== QC modal remains below (unchanged) ===== */}
       {qcOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/30"
@@ -1248,7 +2189,6 @@ export default function ManagerDashboardPage() {
                 </div>
               </div>
 
-              {/* ✅ ONLY ADDITION: View staff button */}
               <div className="mt-3 flex items-center justify-end gap-2">
                 <button
                   type="button"
@@ -1257,15 +2197,6 @@ export default function ManagerDashboardPage() {
                 >
                   Close
                 </button>
-
-                <button
-                  type="button"
-                  onClick={openStaffAssessmentFromQc}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-                >
-                  View staff
-                </button>
-
                 <button
                   type="button"
                   onClick={addQcReview}
@@ -1277,188 +2208,98 @@ export default function ManagerDashboardPage() {
               </div>
             </div>
 
-            {/* ... your QC table stays unchanged below ... */}
+            <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Manager</th>
+                    <th className="px-3 py-2">Score</th>
+                    <th className="px-3 py-2">Notes</th>
+                    <th className="px-3 py-2 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {qcLoading ? (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="px-3 py-6 text-center text-slate-500"
+                      >
+                        Loading…
+                      </td>
+                    </tr>
+                  ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="px-3 py-6 text-center text-slate-500"
+                      >
+                        No QC reviews logged.
+                      </td>
+                    </tr>
+                  ) : (
+                    (showAllQc ? qcReviews : qcReviews.slice(0, 10)).map((r) => {
+                      const pill =
+                        r.score >= 4
+                          ? "bg-emerald-100 text-emerald-800"
+                          : r.score === 3
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-red-100 text-red-800";
+
+                      return (
+                        <tr
+                          key={r.id}
+                          className="border-t border-slate-100 text-slate-800"
+                        >
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {r.reviewed_on}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {tmLabel(r.staff ?? { initials: null, name: "—" })}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {tmLabel(r.manager ?? { initials: null, name: "—" })}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={cls(
+                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                                pill
+                              )}
+                            >
+                              {r.score}/5
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 max-w-[18rem] truncate">
+                            {r.notes ?? "—"}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              type="button"
+                              onClick={() => deleteQcReview(r.id)}
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <TableFooterToggle
+              total={qcReviews.length}
+              showingAll={showAllQc}
+              onToggle={() => setShowAllQc((v) => !v)}
+            />
           </div>
         </div>
       )}
-
-      {/* ✅ Individual staff assessment modal (this is the “view staff” modal) */}
-      {staffAssessOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setStaffAssessOpen(false)}
-        >
-          <div
-            className={cls(
-              "mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
-            )}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-base font-semibold">
-                  Individual staff assessment
-                </div>
-                <div className="mt-0.5 text-xs text-slate-500">
-                  Manager view of one person’s performance.
-                </div>
-              </div>
-              <button
-                onClick={() => setStaffAssessOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </div>
-
-            {staffAssessErr && (
-              <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                {staffAssessErr}
-              </div>
-            )}
-
-            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
-              <div className="grid gap-3 md:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Staff
-                  </label>
-                  <select
-                    value={staffAssessStaffId}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
-                      const id = e.target.value;
-                      setStaffAssessStaffId(id);
-                      setStaffAssess(null);
-                      setStaffAssessErr(null);
-                      if (id) void loadStaffAssessment(id, staffAssessDays);
-                    }}
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    <option value="">Select…</option>
-                    {teamOptions.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {tmLabel(t)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Range
-                  </label>
-                  <select
-                    value={staffAssessDays}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
-                      const days = Number(e.target.value);
-                      setStaffAssessDays(days);
-                      setStaffAssess(null);
-                      setStaffAssessErr(null);
-                      if (staffAssessStaffId) void loadStaffAssessment(staffAssessStaffId, days);
-                    }}
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    <option value={7}>Last 7 days</option>
-                    <option value={14}>Last 14 days</option>
-                    <option value={30}>Last 30 days</option>
-                  </select>
-                </div>
-
-                <div className="flex items-end justify-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!staffAssessStaffId) {
-                        setStaffAssessErr("Select a staff member.");
-                        return;
-                      }
-                      void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
-                    }}
-                    disabled={staffAssessLoading || !staffAssessStaffId}
-                    className="h-10 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
-                  >
-                    {staffAssessLoading ? "Loading…" : "Refresh"}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <KpiTile
-                title="Cleaning runs"
-                icon="🧼"
-                tone="neutral"
-                value={staffAssess?.cleaningRuns ?? "—"}
-                sub={
-                  staffAssess
-                    ? `Completed in last ${staffAssess.rangeDays}d`
-                    : "Select staff"
-                }
-              />
-              <KpiTile
-                title="Temp logs"
-                icon="🌡"
-                tone="neutral"
-                value={staffAssess?.tempLogs ?? "—"}
-                sub={
-                  staffAssess
-                    ? `Recorded in last ${staffAssess.rangeDays}d`
-                    : "—"
-                }
-              />
-              <KpiTile
-                title="Temp fails"
-                icon="🚫"
-                tone={staffAssess && staffAssess.tempFails > 0 ? "danger" : "ok"}
-                value={staffAssess?.tempFails ?? "—"}
-                sub={
-                  staffAssess
-                    ? `Fails in last ${staffAssess.rangeDays}d`
-                    : "—"
-                }
-              />
-              <KpiTile
-                title="Incidents"
-                icon="⚠️"
-                tone={staffAssess && staffAssess.incidents > 0 ? "warn" : "ok"}
-                value={staffAssess?.incidents ?? "—"}
-                sub={
-                  staffAssess
-                    ? `Logged in last ${staffAssess.rangeDays}d`
-                    : "—"
-                }
-              />
-              <KpiTile
-                title="QC avg (30d)"
-                icon="📋"
-                tone="neutral"
-                value={
-                  staffAssess
-                    ? staffAssess.qcAvg30d != null
-                      ? `${staffAssess.qcAvg30d}/5`
-                      : "—"
-                    : "—"
-                }
-                sub={
-                  staffAssess
-                    ? `Based on ${staffAssess.qcCount30d} reviews`
-                    : "—"
-                }
-              />
-              <KpiTile
-                title="Staff"
-                icon="👤"
-                tone="neutral"
-                value={staffAssess?.staffLabel ?? "—"}
-                sub="Selected team member"
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Signoff modal etc stays as you already have it */}
     </>
   );
 }
