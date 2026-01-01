@@ -1889,17 +1889,16 @@ export default function ManagerDashboardPage() {
 
       {/* ✅ Individual staff assessment modal (opened by button) */}
       {staffAssessOpen && (
-         <div
-    className="fixed inset-0 z-50 bg-black/30 p-3 sm:p-4"
-    onClick={() => setStaffAssessOpen(false)}
+      <div
+  className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
+  onClick={() => setStaffAssessOpen(false)}
+>
+  <div
+    className={cls(
+      "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+    )}
+    onClick={(e) => e.stopPropagation()}
   >
-    <div
-      className={cls(
-        "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur",
-        "max-h-[calc(100dvh-3rem)] overflow-y-auto overscroll-contain"
-      )}
-      onClick={(e) => e.stopPropagation()}
-    >
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <div className="text-base font-semibold">
@@ -2068,249 +2067,227 @@ export default function ManagerDashboardPage() {
       )}
 
       {/* ===== QC modal remains below (unchanged) ===== */}
-      {qcOpen && (
-       <div
-    className="fixed inset-0 z-50 bg-black/30 p-3 sm:p-4"
+     {/* ===== QC modal remains below (unchanged) ===== */}
+{qcOpen && (
+  <div
+    className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
     onClick={() => setQcOpen(false)}
   >
     <div
       className={cls(
-        "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur",
-        "max-h-[calc(100dvh-3rem)] overflow-y-auto overscroll-contain"
+        "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
       )}
       onClick={(e) => e.stopPropagation()}
     >
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-base font-semibold">Manager QC</div>
-                <div className="mt-0.5 text-xs text-slate-500">
-                  Manager is your logged-in team member. Staff list is team
-                  members.
-                </div>
-              </div>
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <div className="text-base font-semibold">Manager QC</div>
+          <div className="mt-0.5 text-xs text-slate-500">
+            Manager is your logged-in team member. Staff list is team members.
+          </div>
+        </div>
 
-              <button
-                onClick={() => setQcOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-              >
-                ✕
-              </button>
+        <button
+          onClick={() => setQcOpen(false)}
+          className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
+        <div className="mb-3 grid gap-2 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Manager
             </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
-              <div className="mb-3 grid gap-2 sm:grid-cols-2">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                    Manager
-                  </div>
-                  <div className="mt-1 text-sm font-semibold text-slate-900">
-                    {managerTeamMember
-                      ? tmLabel(managerTeamMember)
-                      : "Not linked"}
-                  </div>
-                  {!managerTeamMember ? (
-                    <div className="mt-1 text-xs text-rose-700">
-                      Link this login by setting{" "}
-                      <span className="font-semibold">team_members.user_id</span>.
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                    Location
-                  </div>
-                  <div className="mt-1 text-sm font-semibold text-slate-900">
-                    {locations.find((l) => l.id === locationId)?.name ?? "—"}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-4">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Staff
-                  </label>
-                  <select
-                    value={qcForm.staff_id}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                      setQcForm((f) => ({ ...f, staff_id: e.target.value }))
-                    }
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    <option value="">Select…</option>
-                    {teamOptions.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {tmLabel(t)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Date
-                  </label>
-                  <input
-                    type="date"
-                    value={qcForm.reviewed_on}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setQcForm((f) => ({ ...f, reviewed_on: e.target.value }))
-                    }
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Score
-                  </label>
-                  <select
-                    value={qcForm.score}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                      setQcForm((f) => ({ ...f, score: Number(e.target.value) }))
-                    }
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <option key={n} value={n}>
-                        {n}/5
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Notes
-                  </label>
-                  <input
-                    value={qcForm.notes}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setQcForm((f) => ({ ...f, notes: e.target.value }))
-                    }
-                    placeholder="Optional…"
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setQcOpen(false)}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Close
-                </button>
-                <button
-                  type="button"
-                  onClick={addQcReview}
-                  disabled={
-                    qcSaving || !orgId || !locationId || !managerTeamMember
-                  }
-                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-                >
-                  {qcSaving ? "Saving…" : "Add QC"}
-                </button>
-              </div>
+            <div className="mt-1 text-sm font-semibold text-slate-900">
+              {managerTeamMember ? tmLabel(managerTeamMember) : "Not linked"}
             </div>
+            {!managerTeamMember ? (
+              <div className="mt-1 text-xs text-rose-700">
+                Link this login by setting{" "}
+                <span className="font-semibold">team_members.user_id</span>.
+              </div>
+            ) : null}
+          </div>
 
-            <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-500">
-                    <th className="px-3 py-2">Date</th>
-                    <th className="px-3 py-2">Staff</th>
-                    <th className="px-3 py-2">Manager</th>
-                    <th className="px-3 py-2">Score</th>
-                    <th className="px-3 py-2">Notes</th>
-                    <th className="px-3 py-2 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {qcLoading ? (
-                    <tr>
-                      <td
-                        colSpan={6}
-                        className="px-3 py-6 text-center text-slate-500"
-                      >
-                        Loading…
-                      </td>
-                    </tr>
-                  ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length ===
-                    0 ? (
-                    <tr>
-                      <td
-                        colSpan={6}
-                        className="px-3 py-6 text-center text-slate-500"
-                      >
-                        No QC reviews logged.
-                      </td>
-                    </tr>
-                  ) : (
-                    (showAllQc ? qcReviews : qcReviews.slice(0, 10)).map((r) => {
-                      const pill =
-                        r.score >= 4
-                          ? "bg-emerald-100 text-emerald-800"
-                          : r.score === 3
-                          ? "bg-amber-100 text-amber-800"
-                          : "bg-red-100 text-red-800";
-
-                      return (
-                        <tr
-                          key={r.id}
-                          className="border-t border-slate-100 text-slate-800"
-                        >
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {r.reviewed_on}
-                          </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {tmLabel(r.staff ?? { initials: null, name: "—" })}
-                          </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {tmLabel(
-                              r.manager ?? { initials: null, name: "—" }
-                            )}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span
-                              className={cls(
-                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                                pill
-                              )}
-                            >
-                              {r.score}/5
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 max-w-[18rem] truncate">
-                            {r.notes ?? "—"}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <button
-                              type="button"
-                              onClick={() => deleteQcReview(r.id)}
-                              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Location
             </div>
+            <div className="mt-1 text-sm font-semibold text-slate-900">
+              {locations.find((l) => l.id === locationId)?.name ?? "—"}
+            </div>
+          </div>
+        </div>
 
-            <TableFooterToggle
-              total={qcReviews.length}
-              showingAll={showAllQc}
-              onToggle={() => setShowAllQc((v) => !v)}
+        <div className="grid gap-3 md:grid-cols-4">
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Staff</label>
+            <select
+              value={qcForm.staff_id}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                setQcForm((f) => ({ ...f, staff_id: e.target.value }))
+              }
+              className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+            >
+              <option value="">Select…</option>
+              {teamOptions.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {tmLabel(t)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Date</label>
+            <input
+              type="date"
+              value={qcForm.reviewed_on}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setQcForm((f) => ({ ...f, reviewed_on: e.target.value }))
+              }
+              className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Score</label>
+            <select
+              value={qcForm.score}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                setQcForm((f) => ({ ...f, score: Number(e.target.value) }))
+              }
+              className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n}/5
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Notes</label>
+            <input
+              value={qcForm.notes}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setQcForm((f) => ({ ...f, notes: e.target.value }))
+              }
+              placeholder="Optional…"
+              className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
             />
           </div>
         </div>
-      )}
+
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setQcOpen(false)}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={addQcReview}
+            disabled={qcSaving || !orgId || !locationId || !managerTeamMember}
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+          >
+            {qcSaving ? "Saving…" : "Add QC"}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+        <table className="min-w-full text-xs">
+          <thead className="bg-slate-50">
+            <tr className="text-left text-slate-500">
+              <th className="px-3 py-2">Date</th>
+              <th className="px-3 py-2">Staff</th>
+              <th className="px-3 py-2">Manager</th>
+              <th className="px-3 py-2">Score</th>
+              <th className="px-3 py-2">Notes</th>
+              <th className="px-3 py-2 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {qcLoading ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                  Loading…
+                </td>
+              </tr>
+            ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                  No QC reviews logged.
+                </td>
+              </tr>
+            ) : (
+              (showAllQc ? qcReviews : qcReviews.slice(0, 10)).map((r) => {
+                const pill =
+                  r.score >= 4
+                    ? "bg-emerald-100 text-emerald-800"
+                    : r.score === 3
+                    ? "bg-amber-100 text-amber-800"
+                    : "bg-red-100 text-red-800";
+
+                return (
+                  <tr
+                    key={r.id}
+                    className="border-t border-slate-100 text-slate-800"
+                  >
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {r.reviewed_on}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {tmLabel(r.staff ?? { initials: null, name: "—" })}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {tmLabel(r.manager ?? { initials: null, name: "—" })}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={cls(
+                          "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                          pill
+                        )}
+                      >
+                        {r.score}/5
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">
+                      {r.notes ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => deleteQcReview(r.id)}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <TableFooterToggle
+        total={qcReviews.length}
+        showingAll={showAllQc}
+        onToggle={() => setShowAllQc((v) => !v)}
+      />
+    </div>
+  </div>
+)}
     </>
   );
 }
