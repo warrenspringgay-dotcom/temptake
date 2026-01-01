@@ -106,7 +106,16 @@ type StaffQcReviewRow = {
   manager?: { initials: string | null; name: string | null } | null;
 };
 
-const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEKDAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
 const MONTHS = [
   "January",
   "February",
@@ -137,7 +146,8 @@ function formatTimeHM(d: Date | null | undefined): string | null {
   return `${hours}:${mins}`;
 }
 
-const cls = (...p: Array<string | false | null | undefined>) => p.filter(Boolean).join(" ");
+const cls = (...p: Array<string | false | null | undefined>) =>
+  p.filter(Boolean).join(" ");
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 const addDaysISO = (ymd: string, delta: number) => {
@@ -200,11 +210,20 @@ function KpiTile({
         toneCls
       )}
     >
-      <div className={cls("absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80", accentCls)} />
+      <div
+        className={cls(
+          "absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80",
+          accentCls
+        )}
+      />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-700/90">{title}</div>
-          <div className="mt-2 text-3xl font-extrabold text-slate-900 leading-none">{value}</div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-700/90">
+            {title}
+          </div>
+          <div className="mt-2 text-3xl font-extrabold text-slate-900 leading-none">
+            {value}
+          </div>
         </div>
         {icon ? (
           <div className="shrink-0 text-lg opacity-90" aria-hidden="true">
@@ -213,7 +232,9 @@ function KpiTile({
         ) : null}
       </div>
 
-      <div className="mt-auto pt-3 text-[11px] font-medium text-slate-600">{sub}</div>
+      <div className="mt-auto pt-3 text-[11px] font-medium text-slate-600">
+        {sub}
+      </div>
     </motion.div>
   );
 }
@@ -232,7 +253,8 @@ function TableFooterToggle({
   return (
     <div className="mt-2 flex items-center justify-between text-xs">
       <div className="text-slate-500">
-        Showing {showingAll ? total : 10} of <span className="font-semibold">{total}</span>
+        Showing {showingAll ? total : 10} of{" "}
+        <span className="font-semibold">{total}</span>
       </div>
       <button
         type="button"
@@ -262,13 +284,23 @@ export default function ManagerDashboardPage() {
 
   const [selectedDateISO, setSelectedDateISO] = useState<string>(nowISO);
 
-  const [tempsSummary, setTempsSummary] = useState<TempSummary>({ today: 0, fails7d: 0 });
+  const [tempsSummary, setTempsSummary] = useState<TempSummary>({
+    today: 0,
+    fails7d: 0,
+  });
   const [todayTemps, setTodayTemps] = useState<TodayTempRow[]>([]);
 
-  const [cleaningCategoryProgress, setCleaningCategoryProgress] = useState<CleaningCategoryProgressRow[]>([]);
-  const [cleaningActivity, setCleaningActivity] = useState<CleaningActivityRow[]>([]);
+  const [cleaningCategoryProgress, setCleaningCategoryProgress] = useState<
+    CleaningCategoryProgressRow[]
+  >([]);
+  const [cleaningActivity, setCleaningActivity] = useState<
+    CleaningActivityRow[]
+  >([]);
 
-  const [incidentSummary, setIncidentSummary] = useState<IncidentSummary>({ todayCount: 0, last7Count: 0 });
+  const [incidentSummary, setIncidentSummary] = useState<IncidentSummary>({
+    todayCount: 0,
+    last7Count: 0,
+  });
   const [incidentsToday, setIncidentsToday] = useState<CleaningIncident[]>([]);
 
   const [trainingDueSoon, setTrainingDueSoon] = useState(0);
@@ -280,8 +312,16 @@ export default function ManagerDashboardPage() {
 
   /* ===== Day sign-offs ===== */
   const [signoffsToday, setSignoffsToday] = useState<SignoffRow[]>([]);
-  const [signoffSummary, setSignoffSummary] = useState<SignoffSummary>({ todayCount: 0 });
+  const [signoffSummary, setSignoffSummary] = useState<SignoffSummary>({
+    todayCount: 0,
+  });
   const [showAllSignoffs, setShowAllSignoffs] = useState(false);
+
+  // ✅ Sign-off modal state (new)
+  const [signoffOpen, setSignoffOpen] = useState(false);
+  const [signoffInitials, setSignoffInitials] = useState("");
+  const [signoffNotes, setSignoffNotes] = useState("");
+  const [signoffSaving, setSignoffSaving] = useState(false);
 
   /* ===== Manager QC ===== */
   const [qcOpen, setQcOpen] = useState(false);
@@ -294,7 +334,8 @@ export default function ManagerDashboardPage() {
   // ✅ summary table on main page
   const [qcSummaryLoading, setQcSummaryLoading] = useState(false);
 
-  const [managerTeamMember, setManagerTeamMember] = useState<TeamMemberOption | null>(null);
+  const [managerTeamMember, setManagerTeamMember] =
+    useState<TeamMemberOption | null>(null);
 
   const [qcForm, setQcForm] = useState({
     staff_id: "",
@@ -393,7 +434,6 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  // ✅ same data, but we show it on the main page without opening the modal
   async function loadQcSummary() {
     if (!orgId || !locationId) return;
     setQcSummaryLoading(true);
@@ -419,12 +459,9 @@ export default function ManagerDashboardPage() {
         .limit(50);
 
       if (error) throw error;
-
-      // Keep qcReviews in sync so modal and summary match
       setQcReviews(((data ?? []) as any[]) as StaffQcReviewRow[]);
     } catch (e) {
       console.error(e);
-      // don't wipe existing if it fails
     } finally {
       setQcSummaryLoading(false);
     }
@@ -433,11 +470,15 @@ export default function ManagerDashboardPage() {
   async function addQcReview() {
     if (!orgId || !locationId) return;
     if (!qcForm.staff_id) return alert("Select staff.");
-    if (!managerTeamMember?.id) return alert("Your login is not linked to a team member (team_members.user_id).");
+    if (!managerTeamMember?.id)
+      return alert(
+        "Your login is not linked to a team member (team_members.user_id)."
+      );
     if (!qcForm.reviewed_on) return alert("Select date.");
 
     const score = Number(qcForm.score);
-    if (!Number.isFinite(score) || score < 1 || score > 5) return alert("Score must be 1–5.");
+    if (!Number.isFinite(score) || score < 1 || score > 5)
+      return alert("Score must be 1–5.");
 
     setQcSaving(true);
     try {
@@ -476,7 +517,11 @@ export default function ManagerDashboardPage() {
     if (!confirm("Delete this QC review?")) return;
 
     try {
-      const { error } = await supabase.from("staff_qc_reviews").delete().eq("id", id).eq("org_id", orgId);
+      const { error } = await supabase
+        .from("staff_qc_reviews")
+        .delete()
+        .eq("id", id)
+        .eq("org_id", orgId);
       if (error) throw error;
       await loadQcSummary();
       await loadQcReviews();
@@ -494,10 +539,18 @@ export default function ManagerDashboardPage() {
 
       setLocationLoading(true);
       try {
-        const { data, error } = await supabase.from("locations").select("id,name").eq("org_id", oId).order("name");
+        const { data, error } = await supabase
+          .from("locations")
+          .select("id,name")
+          .eq("org_id", oId)
+          .order("name");
         if (error) throw error;
 
-        const locs = data?.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })) ?? [];
+        const locs =
+          data?.map((r: any) => ({
+            id: String(r.id),
+            name: r.name ?? "Unnamed",
+          })) ?? [];
         setLocations(locs);
 
         const activeLoc = await getActiveLocationIdClient();
@@ -597,7 +650,9 @@ export default function ManagerDashboardPage() {
 
         supabase
           .from("cleaning_incidents")
-          .select("id,happened_on,type,details,corrective_action,preventive_action,created_by,created_at")
+          .select(
+            "id,happened_on,type,details,corrective_action,preventive_action,created_by,created_at"
+          )
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .eq("happened_on", selectedDateISO)
@@ -645,7 +700,11 @@ export default function ManagerDashboardPage() {
       const tempsData: any[] = (tempsListRes.data as any[]) ?? [];
       setTodayTemps(
         tempsData.map((r) => {
-          const ts = r.at ? new Date(r.at) : r.created_at ? new Date(r.created_at) : null;
+          const ts = r.at
+            ? new Date(r.at)
+            : r.created_at
+            ? new Date(r.created_at)
+            : null;
           return {
             id: String(r.id),
             time: formatTimeHM(ts) ?? "—",
@@ -676,7 +735,8 @@ export default function ManagerDashboardPage() {
       const tasksRaw: any[] = (cleaningTasksRes.data as any[]) ?? [];
       const tasks: CleaningTask[] = tasksRaw.map((t) => ({
         id: String(t.id),
-        frequency: (String(t.frequency ?? "daily").toLowerCase() as any) ?? "daily",
+        frequency:
+          (String(t.frequency ?? "daily").toLowerCase() as any) ?? "daily",
         category: t.category ?? null,
         task: t.task ?? null,
         weekday: t.weekday != null ? Number(t.weekday) : null,
@@ -686,7 +746,8 @@ export default function ManagerDashboardPage() {
       const taskById = new Map<string, CleaningTask>();
       for (const t of tasks) taskById.set(t.id, t);
 
-      const runsRaw: CleaningTaskRun[] = ((cleaningRunsDayRes.data as any[]) ?? []).map((r: any) => ({
+      const runsRaw: CleaningTaskRun[] = ((cleaningRunsDayRes.data as any[]) ??
+        []).map((r: any) => ({
         id: String(r.id),
         org_id: String(r.org_id),
         task_id: String(r.task_id),
@@ -710,7 +771,11 @@ export default function ManagerDashboardPage() {
 
       setCleaningCategoryProgress(
         Array.from(byCat.entries())
-          .map(([category, v]) => ({ category, done: v.done, total: v.total }))
+          .map(([category, v]) => ({
+            category,
+            done: v.done,
+            total: v.total,
+          }))
           .sort((a, b) => a.category.localeCompare(b.category))
       );
 
@@ -734,8 +799,12 @@ export default function ManagerDashboardPage() {
         happened_on: String(r.happened_on),
         type: r.type ? String(r.type) : null,
         details: r.details ? String(r.details) : null,
-        corrective_action: r.corrective_action ? String(r.corrective_action) : null,
-        preventive_action: r.preventive_action ? String(r.preventive_action) : null,
+        corrective_action: r.corrective_action
+          ? String(r.corrective_action)
+          : null,
+        preventive_action: r.preventive_action
+          ? String(r.preventive_action)
+          : null,
         created_by: r.created_by ? String(r.created_by) : null,
         created_at: r.created_at ? String(r.created_at) : null,
       })) as CleaningIncident[];
@@ -763,7 +832,6 @@ export default function ManagerDashboardPage() {
       setShowAllCleaning(false);
       setShowAllIncidents(false);
 
-      // ✅ ensure summary table appears on main page
       await loadQcSummary();
     } catch (e: any) {
       console.error(e);
@@ -775,28 +843,108 @@ export default function ManagerDashboardPage() {
 
   const centeredDate = formatPrettyDate(new Date(selectedDateISO));
 
-  const tempsTone: "neutral" | "ok" | "warn" | "danger" = tempsSummary.fails7d > 0 ? "danger" : "ok";
-  const incidentsTone: "neutral" | "ok" | "warn" | "danger" = incidentSummary.todayCount > 0 ? "warn" : "ok";
+  const tempsTone: "neutral" | "ok" | "warn" | "danger" =
+    tempsSummary.fails7d > 0 ? "danger" : "ok";
+  const incidentsTone: "neutral" | "ok" | "warn" | "danger" =
+    incidentSummary.todayCount > 0 ? "warn" : "ok";
   const trainingTone: "neutral" | "ok" | "warn" | "danger" =
     trainingExpired > 0 ? "danger" : trainingDueSoon > 0 ? "warn" : "ok";
 
-  const cleaningDoneTotal = cleaningCategoryProgress.reduce((a, r) => a + r.done, 0);
-  const cleaningTotal = cleaningCategoryProgress.reduce((a, r) => a + r.total, 0);
+  const cleaningDoneTotal = cleaningCategoryProgress.reduce(
+    (a, r) => a + r.done,
+    0
+  );
+  const cleaningTotal = cleaningCategoryProgress.reduce(
+    (a, r) => a + r.total,
+    0
+  );
 
   const tempsToRender = showAllTemps ? todayTemps : todayTemps.slice(0, 10);
-  const cleaningToRender = showAllCleaning ? cleaningActivity : cleaningActivity.slice(0, 10);
-  const incidentsToRender = showAllIncidents ? incidentsToday : incidentsToday.slice(0, 10);
+  const cleaningToRender = showAllCleaning
+    ? cleaningActivity
+    : cleaningActivity.slice(0, 10);
+  const incidentsToRender = showAllIncidents
+    ? incidentsToday
+    : incidentsToday.slice(0, 10);
 
   const qcToRender = showAllQc ? qcReviews : qcReviews.slice(0, 10);
 
-  const signoffsToRender = showAllSignoffs ? signoffsToday : signoffsToday.slice(0, 10);
+  const signoffsToRender = showAllSignoffs
+    ? signoffsToday
+    : signoffsToday.slice(0, 10);
+
+  // ✅ Sign-off eligibility + status
+  const cleaningAllDone =
+    cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
+  const alreadySignedOff = signoffsToday.length > 0;
+
+  async function createDaySignoff() {
+    if (!orgId || !locationId) return;
+
+    if (!cleaningAllDone) {
+      alert("Finish all cleaning tasks due today before signing off.");
+      return;
+    }
+
+    const initials = signoffInitials.trim().toUpperCase();
+    if (!initials) {
+      alert("Enter initials to sign off.");
+      return;
+    }
+
+    setSignoffSaving(true);
+    try {
+      const payload = {
+        org_id: orgId,
+        location_id: locationId,
+        signoff_on: selectedDateISO,
+        signed_by: initials,
+        notes: signoffNotes.trim() || null,
+      };
+
+      const { data, error } = await supabase
+        .from("daily_signoffs")
+        .insert(payload)
+        .select("id, signoff_on, signed_by, notes, created_at")
+        .single();
+
+      if (error) throw error;
+
+      const row: SignoffRow = {
+        id: String((data as any).id),
+        signoff_on: String((data as any).signoff_on),
+        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+        notes: (data as any).notes ? String((data as any).notes) : null,
+        created_at: (data as any).created_at ? String((data as any).created_at) : null,
+      };
+
+      // Update UI immediately
+      setSignoffsToday((prev) => [row, ...prev]);
+      setSignoffSummary((prev) => ({ ...prev, todayCount: prev.todayCount + 1 }));
+      setShowAllSignoffs(false);
+
+      // Reset + close
+      setSignoffInitials("");
+      setSignoffNotes("");
+      setSignoffOpen(false);
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "Failed to sign off the day.");
+    } finally {
+      setSignoffSaving(false);
+    }
+  }
 
   return (
     <>
       <header className="py-2">
         <div className="text-center">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today</div>
-          <h1 className="mt-1 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">{centeredDate}</h1>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Today
+          </div>
+          <h1 className="mt-1 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+            {centeredDate}
+          </h1>
         </div>
       </header>
 
@@ -816,7 +964,12 @@ export default function ManagerDashboardPage() {
             sub={
               <>
                 Fails (7d):{" "}
-                <span className={cls("font-semibold", tempsSummary.fails7d > 0 && "text-red-700")}>
+                <span
+                  className={cls(
+                    "font-semibold",
+                    tempsSummary.fails7d > 0 && "text-red-700"
+                  )}
+                >
                   {tempsSummary.fails7d}
                 </span>
               </>
@@ -839,7 +992,14 @@ export default function ManagerDashboardPage() {
             sub={
               <>
                 Due soon (30d):{" "}
-                <span className={cls("font-semibold", trainingDueSoon > 0 && "text-amber-700")}>{trainingDueSoon}</span>
+                <span
+                  className={cls(
+                    "font-semibold",
+                    trainingDueSoon > 0 && "text-amber-700"
+                  )}
+                >
+                  {trainingDueSoon}
+                </span>
               </>
             }
           />
@@ -853,6 +1013,16 @@ export default function ManagerDashboardPage() {
           />
         </div>
       </section>
+
+      {/* ✅ Prompt banner when eligible */}
+      {cleaningAllDone && !alreadySignedOff && (
+        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          <div className="font-semibold">All cleaning tasks are complete.</div>
+          <div className="text-emerald-800/90">
+            Sign off the day to lock in your compliance record.
+          </div>
+        </div>
+      )}
 
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="flex flex-wrap items-center gap-2 justify-end">
@@ -869,7 +1039,9 @@ export default function ManagerDashboardPage() {
             <input
               type="date"
               value={selectedDateISO}
-              onChange={(e) => setSelectedDateISO(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSelectedDateISO(e.target.value)
+              }
               className="h-9 rounded-xl border border-slate-300 bg-white/90 px-3 text-sm shadow-sm"
             />
 
@@ -885,7 +1057,9 @@ export default function ManagerDashboardPage() {
 
           <select
             value={locationId ?? ""}
-            onChange={(e) => setLocationId(e.target.value || null)}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+              setLocationId(e.target.value || null)
+            }
             disabled={locationLoading}
             className="h-9 rounded-xl border border-slate-300 bg-white/90 px-3 text-sm shadow-sm"
           >
@@ -895,6 +1069,28 @@ export default function ManagerDashboardPage() {
               </option>
             ))}
           </select>
+
+          {/* ✅ Sign off button (new) */}
+          <button
+            type="button"
+            onClick={() => setSignoffOpen(true)}
+            disabled={!cleaningAllDone || alreadySignedOff || loading || !orgId || !locationId}
+            className={cls(
+              "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm disabled:opacity-60",
+              alreadySignedOff
+                ? "border border-slate-200 bg-white text-slate-600"
+                : "bg-indigo-600 text-white hover:bg-indigo-700"
+            )}
+            title={
+              alreadySignedOff
+                ? "Already signed off"
+                : cleaningAllDone
+                ? "Sign off the day"
+                : "Complete all cleaning tasks first"
+            }
+          >
+            {alreadySignedOff ? "Day signed off" : "Sign off day"}
+          </button>
 
           <button
             type="button"
@@ -924,8 +1120,12 @@ export default function ManagerDashboardPage() {
       {/* Cleaning progress */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Cleaning progress</div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">Tasks due by category</div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Cleaning progress
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Tasks due by category
+          </div>
         </div>
 
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
@@ -961,7 +1161,12 @@ export default function ManagerDashboardPage() {
                       <td className="px-3 py-2">{r.done}</td>
                       <td className="px-3 py-2">{r.total}</td>
                       <td className="px-3 py-2">
-                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                        <span
+                          className={cls(
+                            "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                            pill
+                          )}
+                        >
                           {pct}%
                         </span>
                       </td>
@@ -977,8 +1182,12 @@ export default function ManagerDashboardPage() {
       {/* Incidents */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Incidents</div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">Incident log & corrective actions</div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Incidents
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Incident log & corrective actions
+          </div>
         </div>
 
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
@@ -1004,7 +1213,10 @@ export default function ManagerDashboardPage() {
                   <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                     <td className="px-3 py-2">
                       {r.created_at
-                        ? new Date(r.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+                        ? new Date(r.created_at).toLocaleTimeString("en-GB", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
                         : "—"}
                     </td>
                     <td className="px-3 py-2 font-semibold">{r.type ?? "Incident"}</td>
@@ -1018,19 +1230,29 @@ export default function ManagerDashboardPage() {
           </table>
         </div>
 
-        <TableFooterToggle total={incidentsToday.length} showingAll={showAllIncidents} onToggle={() => setShowAllIncidents((v) => !v)} />
+        <TableFooterToggle
+          total={incidentsToday.length}
+          showingAll={showAllIncidents}
+          onToggle={() => setShowAllIncidents((v) => !v)}
+        />
       </section>
 
       {/* Activity */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today&apos;s activity</div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">Temps + cleaning (category-based)</div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Today&apos;s activity
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Temps + cleaning (category-based)
+          </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
           <div>
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Temperature logs</h3>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Temperature logs
+            </h3>
 
             <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
@@ -1058,13 +1280,17 @@ export default function ManagerDashboardPage() {
                         <td className="px-3 py-2">{r.staff}</td>
                         <td className="px-3 py-2">{r.area}</td>
                         <td className="px-3 py-2">{r.item}</td>
-                        <td className="px-3 py-2">{r.temp_c != null ? `${r.temp_c}°C` : "—"}</td>
+                        <td className="px-3 py-2">
+                          {r.temp_c != null ? `${r.temp_c}°C` : "—"}
+                        </td>
                         <td className="px-3 py-2">
                           {r.status ? (
                             <span
                               className={cls(
                                 "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                                r.status === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
+                                r.status === "pass"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-red-100 text-red-800"
                               )}
                             >
                               {r.status}
@@ -1080,11 +1306,17 @@ export default function ManagerDashboardPage() {
               </table>
             </div>
 
-            <TableFooterToggle total={todayTemps.length} showingAll={showAllTemps} onToggle={() => setShowAllTemps((v) => !v)} />
+            <TableFooterToggle
+              total={todayTemps.length}
+              showingAll={showAllTemps}
+              onToggle={() => setShowAllTemps((v) => !v)}
+            />
           </div>
 
           <div>
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Cleaning runs</h3>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Cleaning runs
+            </h3>
 
             <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
@@ -1109,10 +1341,16 @@ export default function ManagerDashboardPage() {
                         <td className="px-3 py-2">{r.time ?? "—"}</td>
                         <td className="px-3 py-2">
                           <div className="font-semibold">{r.category}</div>
-                          {r.task ? <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">{r.task}</div> : null}
+                          {r.task ? (
+                            <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">
+                              {r.task}
+                            </div>
+                          ) : null}
                         </td>
                         <td className="px-3 py-2">{r.staff ?? "—"}</td>
-                        <td className="px-3 py-2 max-w-[14rem] truncate">{r.notes ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[14rem] truncate">
+                          {r.notes ?? "—"}
+                        </td>
                       </tr>
                     ))
                   )}
@@ -1120,15 +1358,21 @@ export default function ManagerDashboardPage() {
               </table>
             </div>
 
-            <TableFooterToggle total={cleaningActivity.length} showingAll={showAllCleaning} onToggle={() => setShowAllCleaning((v) => !v)} />
+            <TableFooterToggle
+              total={cleaningActivity.length}
+              showingAll={showAllCleaning}
+              onToggle={() => setShowAllCleaning((v) => !v)}
+            />
           </div>
         </div>
       </section>
 
-      {/* ✅ Day sign-offs table (added after temps + cleaning tables) */}
+      {/* Day sign-offs table */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Day sign-offs</div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Day sign-offs
+          </div>
           <div className="mt-0.5 text-sm font-semibold text-slate-900">
             Daily sign-offs for selected day · Total: {signoffSummary.todayCount}
           </div>
@@ -1161,7 +1405,9 @@ export default function ManagerDashboardPage() {
                       <td className="px-3 py-2 font-semibold whitespace-nowrap">
                         {r.signed_by ? r.signed_by.toUpperCase() : "—"}
                       </td>
-                      <td className="px-3 py-2 max-w-[28rem] truncate">{r.notes ?? "—"}</td>
+                      <td className="px-3 py-2 max-w-[28rem] truncate">
+                        {r.notes ?? "—"}
+                      </td>
                     </tr>
                   );
                 })
@@ -1170,15 +1416,23 @@ export default function ManagerDashboardPage() {
           </table>
         </div>
 
-        <TableFooterToggle total={signoffsToday.length} showingAll={showAllSignoffs} onToggle={() => setShowAllSignoffs((v) => !v)} />
+        <TableFooterToggle
+          total={signoffsToday.length}
+          showingAll={showAllSignoffs}
+          onToggle={() => setShowAllSignoffs((v) => !v)}
+        />
       </section>
 
-      {/* ✅ Manager QC Summary table (back on main page) */}
+      {/* ===== Manager QC Summary table (unchanged) ===== */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Manager QC</div>
-            <div className="mt-0.5 text-sm font-semibold text-slate-900">Recent QC reviews (selected location)</div>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+              Manager QC
+            </div>
+            <div className="mt-0.5 text-sm font-semibold text-slate-900">
+              Recent QC reviews (selected location)
+            </div>
           </div>
 
           <button
@@ -1231,12 +1485,19 @@ export default function ManagerDashboardPage() {
                   return (
                     <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                       <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {tmLabel(r.staff ?? { initials: null, name: "—" })}
+                      </td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         {tmLabel(r.manager ?? { initials: null, name: "—" })}
                       </td>
                       <td className="px-3 py-2">
-                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                        <span
+                          className={cls(
+                            "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                            pill
+                          )}
+                        >
                           {r.score}/5
                         </span>
                       </td>
@@ -1249,10 +1510,99 @@ export default function ManagerDashboardPage() {
           </table>
         </div>
 
-        <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
+        <TableFooterToggle
+          total={qcReviews.length}
+          showingAll={showAllQc}
+          onToggle={() => setShowAllQc((v) => !v)}
+        />
       </section>
 
-      {/* ===== Modal (unchanged UI) ===== */}
+      {/* ✅ Sign-off modal (new) */}
+      {signoffOpen && (
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
+          <div
+            className={cls(
+              "mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold">Sign off day</div>
+                <div className="mt-0.5 text-xs text-slate-500">
+                  {selectedDateISO} · {locations.find((l) => l.id === locationId)?.name ?? "—"}
+                </div>
+              </div>
+              <button
+                onClick={() => setSignoffOpen(false)}
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {!cleaningAllDone && (
+              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                You can’t sign off until all cleaning tasks due today are completed.
+              </div>
+            )}
+
+            {alreadySignedOff && (
+              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                This day is already signed off.
+              </div>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">Initials</label>
+                <input
+                  value={signoffInitials}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setSignoffInitials(e.target.value.toUpperCase())
+                  }
+                  placeholder="WS"
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
+                <input
+                  value={signoffNotes}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setSignoffNotes(e.target.value)
+                  }
+                  placeholder="Any corrective actions / comments…"
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSignoffOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={createDaySignoff}
+                disabled={!cleaningAllDone || alreadySignedOff || signoffSaving}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {signoffSaving ? "Signing…" : "Sign off"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== QC modal remains below (unchanged from your previous version) ===== */}
       {qcOpen && (
         <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setQcOpen(false)}>
           <div
@@ -1269,7 +1619,10 @@ export default function ManagerDashboardPage() {
                 </div>
               </div>
 
-              <button onClick={() => setQcOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
+              <button
+                onClick={() => setQcOpen(false)}
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+              >
                 ✕
               </button>
             </div>
@@ -1277,19 +1630,24 @@ export default function ManagerDashboardPage() {
             <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Manager</div>
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+                    Manager
+                  </div>
                   <div className="mt-1 text-sm font-semibold text-slate-900">
                     {managerTeamMember ? tmLabel(managerTeamMember) : "Not linked"}
                   </div>
                   {!managerTeamMember ? (
                     <div className="mt-1 text-xs text-rose-700">
-                      Link this login by setting <span className="font-semibold">team_members.user_id</span>.
+                      Link this login by setting{" "}
+                      <span className="font-semibold">team_members.user_id</span>.
                     </div>
                   ) : null}
                 </div>
 
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Location</div>
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+                    Location
+                  </div>
                   <div className="mt-1 text-sm font-semibold text-slate-900">
                     {locations.find((l) => l.id === locationId)?.name ?? "—"}
                   </div>
@@ -1301,7 +1659,9 @@ export default function ManagerDashboardPage() {
                   <label className="mb-1 block text-xs text-slate-500">Staff</label>
                   <select
                     value={qcForm.staff_id}
-                    onChange={(e) => setQcForm((f) => ({ ...f, staff_id: e.target.value }))}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                      setQcForm((f) => ({ ...f, staff_id: e.target.value }))
+                    }
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                   >
                     <option value="">Select…</option>
@@ -1318,7 +1678,9 @@ export default function ManagerDashboardPage() {
                   <input
                     type="date"
                     value={qcForm.reviewed_on}
-                    onChange={(e) => setQcForm((f) => ({ ...f, reviewed_on: e.target.value }))}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setQcForm((f) => ({ ...f, reviewed_on: e.target.value }))
+                    }
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                   />
                 </div>
@@ -1327,7 +1689,9 @@ export default function ManagerDashboardPage() {
                   <label className="mb-1 block text-xs text-slate-500">Score</label>
                   <select
                     value={qcForm.score}
-                    onChange={(e) => setQcForm((f) => ({ ...f, score: Number(e.target.value) }))}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                      setQcForm((f) => ({ ...f, score: Number(e.target.value) }))
+                    }
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                   >
                     {[1, 2, 3, 4, 5].map((n) => (
@@ -1342,7 +1706,9 @@ export default function ManagerDashboardPage() {
                   <label className="mb-1 block text-xs text-slate-500">Notes</label>
                   <input
                     value={qcForm.notes}
-                    onChange={(e) => setQcForm((f) => ({ ...f, notes: e.target.value }))}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setQcForm((f) => ({ ...f, notes: e.target.value }))
+                    }
                     placeholder="Optional…"
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                   />
@@ -1405,12 +1771,19 @@ export default function ManagerDashboardPage() {
                       return (
                         <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                           <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {tmLabel(r.staff ?? { initials: null, name: "—" })}
+                          </td>
                           <td className="px-3 py-2 whitespace-nowrap">
                             {tmLabel(r.manager ?? { initials: null, name: "—" })}
                           </td>
                           <td className="px-3 py-2">
-                            <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                            <span
+                              className={cls(
+                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                                pill
+                              )}
+                            >
                               {r.score}/5
                             </span>
                           </td>
@@ -1432,7 +1805,11 @@ export default function ManagerDashboardPage() {
               </table>
             </div>
 
-            <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
+            <TableFooterToggle
+              total={qcReviews.length}
+              showingAll={showAllQc}
+              onToggle={() => setShowAllQc((v) => !v)}
+            />
           </div>
         </div>
       )}
