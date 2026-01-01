@@ -116,6 +116,18 @@ type TrainingAreaRow = {
   status: TrainingAreaStatus;
 };
 
+// Unified incidents row used by the UI table (includes temp failures too)
+type UnifiedIncidentRow = {
+  id: string;
+  happened_on: string | null; // yyyy-mm-dd
+  created_at: string | null; // ISO datetime
+  type: string | null;
+  created_by: string | null;
+  details: string | null;
+  corrective_action: string | null;
+  source: "incident" | "temp_fail";
+};
+
 /* ===================== Date helpers ===================== */
 
 function safeDate(val: any): Date | null {
@@ -192,16 +204,94 @@ type TrainingAreasValue =
       added_on?: any;
     }>;
 
+function normaliseKey(raw: string): string {
+  return raw
+    .toLowerCase()
+    .trim()
+    .replaceAll("&", "and")
+    .replace(/[^a-z0-9]+/g, ""); // strip spaces/hyphens etc
+}
+
+// Accept the messy real world. Humans will not stop being humans.
+function canonicalAreaName(raw: string): (typeof SFBB_AREAS)[number] | null {
+  const k = normaliseKey(raw);
+
+  const map: Record<string, (typeof SFBB_AREAS)[number]> = {
+    // Cross contamination variants
+    crosscontamination: "Cross-contamination",
+    crosscontam: "Cross-contamination",
+    crosscontaminationtraining: "Cross-contamination",
+    crosscontaminationandhygiene: "Cross-contamination",
+    crosscontaminationand: "Cross-contamination",
+    crosscontaminationcontrol: "Cross-contamination",
+    crosscontaminationprevention: "Cross-contamination",
+
+    // Cleaning
+    cleaning: "Cleaning",
+    clean: "Cleaning",
+    hygiene: "Cleaning",
+    sanitation: "Cleaning",
+
+    // Chilling
+    chilling: "Chilling",
+    chill: "Chilling",
+    refrigeration: "Chilling",
+    fridge: "Chilling",
+    freezer: "Chilling",
+
+    // Cooking
+    cooking: "Cooking",
+    cook: "Cooking",
+    hot: "Cooking",
+    hotholding: "Cooking",
+    reheating: "Cooking",
+
+    // Allergens
+    allergens: "Allergens",
+    allergen: "Allergens",
+    allergy: "Allergens",
+    allergycontrol: "Allergens",
+
+    // Management
+    management: "Management",
+    manager: "Management",
+    supervisory: "Management",
+    supervision: "Management",
+    admin: "Management",
+  };
+
+  // direct map hit
+  if (map[k]) return map[k];
+
+  // looser contains matching for common shortened labels like "cross-contam"
+  if (k.includes("cross") && k.includes("contam")) return "Cross-contamination";
+  if (k.includes("clean")) return "Cleaning";
+  if (k.includes("chill") || k.includes("fridge") || k.includes("freez")) return "Chilling";
+  if (k.includes("cook") || k.includes("hot") || k.includes("reheat")) return "Cooking";
+  if (k.includes("allerg")) return "Allergens";
+  if (k.includes("manage") || k.includes("supervis")) return "Management";
+
+  return null;
+}
+
 function normaliseTrainingAreas(
   val: TrainingAreasValue
 ): Record<string, { awarded_on?: string; expires_on?: string }> {
   const out: Record<string, { awarded_on?: string; expires_on?: string }> = {};
-
   if (!val) return out;
+
+  const setArea = (areaRaw: string, awarded: any, expires: any) => {
+    const canon = canonicalAreaName(String(areaRaw ?? "").trim());
+    if (!canon) return;
+    out[canon] = {
+      awarded_on: awarded ? toISODate(awarded) : undefined,
+      expires_on: expires ? toISODate(expires) : undefined,
+    };
+  };
 
   // Array<string>
   if (Array.isArray(val) && val.every((x) => typeof x === "string")) {
-    for (const area of val as string[]) out[String(area)] = {};
+    for (const area of val as string[]) setArea(area, null, null);
     return out;
   }
 
@@ -214,10 +304,7 @@ function normaliseTrainingAreas(
       const awarded = item?.awarded_on ?? item?.added_on ?? null;
       const expires = item?.expires_on ?? null;
 
-      out[area] = {
-        awarded_on: awarded ? toISODate(awarded) : undefined,
-        expires_on: expires ? toISODate(expires) : undefined,
-      };
+      setArea(area, awarded, expires);
     }
     return out;
   }
@@ -225,12 +312,9 @@ function normaliseTrainingAreas(
   // Object map
   if (typeof val === "object") {
     for (const [area, meta] of Object.entries(val as Record<string, any>)) {
-      const awarded = meta?.awarded_on ?? meta?.added_on ?? null;
-      const expires = meta?.expires_on ?? null;
-      out[String(area)] = {
-        awarded_on: awarded ? toISODate(awarded) : undefined,
-        expires_on: expires ? toISODate(expires) : undefined,
-      };
+      const awarded = (meta as any)?.awarded_on ?? (meta as any)?.added_on ?? null;
+      const expires = (meta as any)?.expires_on ?? null;
+      setArea(String(area), awarded, expires);
     }
     return out;
   }
@@ -358,6 +442,99 @@ async function fetchTemps(
     target_key: r.target_key ?? null,
     status: r.status ?? null,
   }));
+}
+
+async function fetchTempFailuresUnified(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<UnifiedIncidentRow[]> {
+  const fromStart = new Date(`${fromISO}T00:00:00.000Z`).toISOString();
+  const toEnd = new Date(`${toISO}T23:59:59.999Z`).toISOString();
+
+  let q = supabase
+    .from("food_temp_logs")
+    .select("id, at, area, note, temp_c, target_key, status, staff_initials, location_id")
+    .eq("org_id", orgId)
+    .eq("status", "fail")
+    .gte("at", fromStart)
+    .lte("at", toEnd)
+    .order("at", { ascending: false })
+    .limit(3000);
+
+  if (locationId) q = q.eq("location_id", locationId);
+
+  const { data: failLogs, error: failErr } = await q;
+  if (failErr) throw failErr;
+
+  const logs = (failLogs ?? []) as any[];
+  if (!logs.length) return [];
+
+  const ids = logs.map((r) => String(r.id));
+
+  // Pull corrective actions for those logs (if any)
+  let caQ = supabase
+    .from("food_temp_corrective_actions")
+    .select("id, temp_log_id, action, recheck_temp_c, recheck_at, recheck_status, recorded_by, created_at, location_id")
+    .eq("org_id", orgId)
+    .in("temp_log_id", ids)
+    .limit(5000);
+
+  if (locationId) caQ = caQ.eq("location_id", locationId);
+
+  const { data: caRows, error: caErr } = await caQ;
+  if (caErr) throw caErr;
+
+  const byLog = new Map<string, any>();
+  for (const row of (caRows ?? []) as any[]) {
+    // if multiple, keep the latest
+    const key = String(row.temp_log_id);
+    const existing = byLog.get(key);
+    if (!existing) {
+      byLog.set(key, row);
+      continue;
+    }
+    const a = safeDate(existing.created_at)?.getTime() ?? 0;
+    const b = safeDate(row.created_at)?.getTime() ?? 0;
+    if (b >= a) byLog.set(key, row);
+  }
+
+  const out: UnifiedIncidentRow[] = logs.map((l) => {
+    const ca = byLog.get(String(l.id)) ?? null;
+
+    const atISO = l.at ? String(l.at) : null;
+    const happened_on = toISODate(atISO ?? new Date().toISOString());
+
+    const tempVal = l.temp_c != null ? `${Number(l.temp_c)}°C` : "—";
+    const target = l.target_key ? String(l.target_key) : "—";
+
+    const details = `${l.area ?? "—"} • ${l.note ?? "—"} • ${tempVal} (target ${target})`;
+
+    let corrective = ca?.action ? String(ca.action) : null;
+
+    // Add recheck summary if present
+    if (ca?.recheck_temp_c != null) {
+      const reT = `${Number(ca.recheck_temp_c)}°C`;
+      const reAt = ca.recheck_at ? formatTimeHM(String(ca.recheck_at)) : "—";
+      const reStatus = ca.recheck_status ? String(ca.recheck_status) : "—";
+      const suffix = `Re-check: ${reT} (${reStatus}) at ${reAt}`;
+      corrective = corrective ? `${corrective} • ${suffix}` : suffix;
+    }
+
+    return {
+      id: `temp_fail_${String(l.id)}`,
+      happened_on,
+      created_at: atISO,
+      type: "Temp failure",
+      created_by: (ca?.recorded_by ?? l.staff_initials ?? null) ? String(ca?.recorded_by ?? l.staff_initials) : null,
+      details,
+      corrective_action: corrective,
+      source: "temp_fail",
+    };
+  });
+
+  return out;
 }
 
 async function fetchCleaningCount(
@@ -784,7 +961,9 @@ export default function ReportsPage() {
   const [education, setEducation] = useState<EducationRow[] | null>(null);
   const [cleaningCount, setCleaningCount] = useState(0);
 
-  const [incidents, setIncidents] = useState<IncidentRow[] | null>(null);
+  // unified incidents include cleaning incidents + temp failures
+  const [incidents, setIncidents] = useState<UnifiedIncidentRow[] | null>(null);
+
   const [signoffs, setSignoffs] = useState<SignoffRow[] | null>(null);
   const [cleaningRuns, setCleaningRuns] = useState<CleaningRunRow[] | null>(null);
 
@@ -897,11 +1076,12 @@ export default function ReportsPage() {
       setErr(null);
       setLoading(true);
 
-      const [t, cleanCount, reviews, inc, so, cr] = await Promise.all([
+      const [t, cleanCount, reviews, inc, tempFails, so, cr] = await Promise.all([
         fetchTemps(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningCount(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchStaffReviews(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchIncidentsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
+        fetchTempFailuresUnified(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchSignoffsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningRunsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
       ]);
@@ -909,7 +1089,28 @@ export default function ReportsPage() {
       setTemps(t);
       setCleaningCount(cleanCount);
       setStaffReviews(reviews);
-      setIncidents(inc);
+
+      // merge incidents + temp failures into one table, newest first
+      const unified: UnifiedIncidentRow[] = [
+        ...(inc ?? []).map((r) => ({
+          id: String(r.id),
+          happened_on: r.happened_on ?? null,
+          created_at: r.created_at ?? null,
+          type: r.type ?? "Incident",
+          created_by: r.created_by ?? null,
+          details: r.details ?? null,
+          corrective_action: r.corrective_action ?? null,
+          source: "incident" as const,
+        })),
+        ...(tempFails ?? []),
+      ].sort((a, b) => {
+        const aT = safeDate(a.created_at)?.getTime() ?? safeDate(a.happened_on)?.getTime() ?? 0;
+        const bT = safeDate(b.created_at)?.getTime() ?? safeDate(b.happened_on)?.getTime() ?? 0;
+        return bT - aT;
+      });
+
+      setIncidents(unified);
+
       setSignoffs(so);
       setCleaningRuns(cr);
 
@@ -1460,7 +1661,7 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Incidents */}
+        {/* Incidents (now includes temp failures too) */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Incidents & corrective actions {incidents ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
@@ -1496,11 +1697,24 @@ export default function ReportsPage() {
                     <tr key={r.id} className="border-t border-slate-100">
                       <td className="py-2 pr-3">{r.happened_on ? formatISOToUK(r.happened_on) : "—"}</td>
                       <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
-                      <td className="py-2 pr-3 font-semibold">{r.type ?? "Incident"}</td>
+                      <td className="py-2 pr-3 font-semibold">
+                        {r.type ?? "Incident"}
+                        {r.source === "temp_fail" ? (
+                          <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
+                            temp
+                          </span>
+                        ) : null}
+                      </td>
                       <td className="py-2 pr-3">{r.created_by ? r.created_by.toUpperCase() : "—"}</td>
                       <td className="py-2 pr-3 max-w-xs">{r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}</td>
                       <td className="py-2 pr-3 max-w-xs">
-                        {r.corrective_action ? <span className="line-clamp-2">{r.corrective_action}</span> : "—"}
+                        {r.corrective_action ? (
+                          <span className="line-clamp-2">{r.corrective_action}</span>
+                        ) : r.source === "temp_fail" ? (
+                          <span className="text-red-700">Missing (recommended)</span>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                     </tr>
                   ))
