@@ -1889,16 +1889,17 @@ export default function ManagerDashboardPage() {
 
       {/* ✅ Individual staff assessment modal (opened by button) */}
       {staffAssessOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setStaffAssessOpen(false)}
-        >
-          <div
-            className={cls(
-              "mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
-            )}
-            onClick={(e) => e.stopPropagation()}
-          >
+         <div
+    className="fixed inset-0 z-50 bg-black/30 p-3 sm:p-4"
+    onClick={() => setStaffAssessOpen(false)}
+  >
+    <div
+      className={cls(
+        "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur",
+        "max-h-[calc(100dvh-3rem)] overflow-y-auto overscroll-contain"
+      )}
+      onClick={(e) => e.stopPropagation()}
+    >
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <div className="text-base font-semibold">
@@ -2068,16 +2069,17 @@ export default function ManagerDashboardPage() {
 
       {/* ===== QC modal remains below (unchanged) ===== */}
       {qcOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setQcOpen(false)}
-        >
-          <div
-            className={cls(
-              "mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
-            )}
-            onClick={(e) => e.stopPropagation()}
-          >
+       <div
+    className="fixed inset-0 z-50 bg-black/30 p-3 sm:p-4"
+    onClick={() => setQcOpen(false)}
+  >
+    <div
+      className={cls(
+        "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur",
+        "max-h-[calc(100dvh-3rem)] overflow-y-auto overscroll-contain"
+      )}
+      onClick={(e) => e.stopPropagation()}
+    >
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <div className="text-base font-semibold">Manager QC</div>
