@@ -309,9 +309,9 @@ export default function ManagerDashboardPage() {
   const [cleaningCategoryProgress, setCleaningCategoryProgress] = useState<
     CleaningCategoryProgressRow[]
   >([]);
-  const [cleaningActivity, setCleaningActivity] = useState<
-    CleaningActivityRow[]
-  >([]);
+  const [cleaningActivity, setCleaningActivity] = useState<CleaningActivityRow[]>(
+    []
+  );
 
   const [incidentSummary, setIncidentSummary] = useState<IncidentSummary>({
     todayCount: 0,
@@ -360,7 +360,7 @@ export default function ManagerDashboardPage() {
     notes: "",
   });
 
-  /* ===== Individual staff assessment modal (NEW) ===== */
+  /* ===== Individual staff assessment modal ===== */
   const [staffAssessOpen, setStaffAssessOpen] = useState(false);
   const [staffAssessLoading, setStaffAssessLoading] = useState(false);
   const [staffAssessErr, setStaffAssessErr] = useState<string | null>(null);
@@ -416,7 +416,9 @@ export default function ManagerDashboardPage() {
         .maybeSingle();
 
       if (error) throw error;
-      setManagerTeamMember((data as TeamMemberOption) ?? null);
+
+      // safest cast (maybeSingle can return null)
+      setManagerTeamMember((data as TeamMemberOption) || null);
     } catch (e) {
       console.error(e);
       setManagerTeamMember(null);
@@ -605,32 +607,6 @@ export default function ManagerDashboardPage() {
     const ini = managerTeamMember?.initials?.trim().toUpperCase() ?? "";
     if (ini) setSignoffInitials(ini);
   }, [signoffOpen, managerTeamMember, signoffInitials]);
-
-  // ✅ Staff assessment modal toggle: Ctrl+Shift+A (no new UI)
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase() ?? "";
-      const isTyping =
-        tag === "input" ||
-        tag === "textarea" ||
-        (target as any)?.isContentEditable;
-
-      if (isTyping) return;
-
-      const key = e.key?.toLowerCase();
-      const hit = (e.ctrlKey || e.metaKey) && e.shiftKey && key === "a";
-      if (!hit) return;
-
-      e.preventDefault();
-      setStaffAssessOpen((v) => !v);
-      setStaffAssessErr(null);
-      setStaffAssess(null);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
 
   useEffect(() => {
     if (!orgId || !locationId) return;
@@ -995,7 +971,10 @@ export default function ManagerDashboardPage() {
 
       // Update UI immediately
       setSignoffsToday((prev) => [row, ...prev]);
-      setSignoffSummary((prev) => ({ ...prev, todayCount: prev.todayCount + 1 }));
+      setSignoffSummary((prev) => ({
+        ...prev,
+        todayCount: prev.todayCount + 1,
+      }));
       setShowAllSignoffs(false);
 
       // Reset + close
@@ -1010,7 +989,7 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  // ✅ Load staff assessment (NEW)
+  // ✅ Load staff assessment
   async function loadStaffAssessment(staffId: string, days: number) {
     if (!orgId || !locationId) return;
 
@@ -1296,6 +1275,25 @@ export default function ManagerDashboardPage() {
             }
           >
             {alreadySignedOff ? "Day signed off" : "Sign off day"}
+          </button>
+
+          {/* ✅ NEW: Staff assessment button (top row, near other buttons) */}
+          <button
+            type="button"
+            onClick={async () => {
+              setStaffAssessErr(null);
+              setStaffAssess(null);
+              setStaffAssessStaffId("");
+              setStaffAssessDays(7);
+              setStaffAssessOpen(true);
+
+              // ensure staff dropdown is populated
+              await loadTeamOptions();
+            }}
+            disabled={loading || !orgId}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+          >
+            Staff assessment
           </button>
 
           <button
@@ -1889,7 +1887,7 @@ export default function ManagerDashboardPage() {
         </div>
       )}
 
-      {/* ✅ Individual staff assessment modal (NEW) - Ctrl+Shift+A */}
+      {/* ✅ Individual staff assessment modal (opened by button) */}
       {staffAssessOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/30"
@@ -1907,8 +1905,7 @@ export default function ManagerDashboardPage() {
                   Individual staff assessment
                 </div>
                 <div className="mt-0.5 text-xs text-slate-500">
-                  Open/close with Ctrl+Shift+A. No buttons added. No layout
-                  changes.
+                  Manager view of individual performance.
                 </div>
               </div>
               <button
@@ -1975,7 +1972,10 @@ export default function ManagerDashboardPage() {
                     onClick={async () => {
                       if (!staffAssessStaffId)
                         return setStaffAssessErr("Select a staff member.");
-                      await loadStaffAssessment(staffAssessStaffId, staffAssessDays);
+                      await loadStaffAssessment(
+                        staffAssessStaffId,
+                        staffAssessDays
+                      );
                     }}
                     disabled={staffAssessLoading || !staffAssessStaffId}
                     className="h-10 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
@@ -2102,7 +2102,9 @@ export default function ManagerDashboardPage() {
                     Manager
                   </div>
                   <div className="mt-1 text-sm font-semibold text-slate-900">
-                    {managerTeamMember ? tmLabel(managerTeamMember) : "Not linked"}
+                    {managerTeamMember
+                      ? tmLabel(managerTeamMember)
+                      : "Not linked"}
                   </div>
                   {!managerTeamMember ? (
                     <div className="mt-1 text-xs text-rose-700">
@@ -2144,7 +2146,9 @@ export default function ManagerDashboardPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Date</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Date
+                  </label>
                   <input
                     type="date"
                     value={qcForm.reviewed_on}
@@ -2200,7 +2204,9 @@ export default function ManagerDashboardPage() {
                 <button
                   type="button"
                   onClick={addQcReview}
-                  disabled={qcSaving || !orgId || !locationId || !managerTeamMember}
+                  disabled={
+                    qcSaving || !orgId || !locationId || !managerTeamMember
+                  }
                   className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
                 >
                   {qcSaving ? "Saving…" : "Add QC"}
@@ -2230,7 +2236,8 @@ export default function ManagerDashboardPage() {
                         Loading…
                       </td>
                     </tr>
-                  ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length === 0 ? (
+                  ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length ===
+                    0 ? (
                     <tr>
                       <td
                         colSpan={6}
@@ -2260,7 +2267,9 @@ export default function ManagerDashboardPage() {
                             {tmLabel(r.staff ?? { initials: null, name: "—" })}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
-                            {tmLabel(r.manager ?? { initials: null, name: "—" })}
+                            {tmLabel(
+                              r.manager ?? { initials: null, name: "—" }
+                            )}
                           </td>
                           <td className="px-3 py-2">
                             <span
