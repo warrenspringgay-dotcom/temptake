@@ -41,6 +41,14 @@ type Deferral = {
   to_on: string;
 };
 
+type DaySignoff = {
+  id: string;
+  signoff_on: string;
+  signed_by: string | null;
+  notes: string | null;
+  created_at: string | null;
+};
+
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 
 function startOfWeekMonday(d: Date) {
@@ -169,6 +177,13 @@ export default function CleaningRotaPage() {
   const userActionRef = useRef(false);
   const prevAllDoneRef = useRef<boolean>(false);
 
+  // ===== Day sign-off (daily_signoffs) =====
+  const [signoff, setSignoff] = useState<DaySignoff | null>(null);
+  const [signoffOpen, setSignoffOpen] = useState(false);
+  const [signoffInitials, setSignoffInitials] = useState("");
+  const [signoffNotes, setSignoffNotes] = useState("");
+  const [signoffSaving, setSignoffSaving] = useState(false);
+
   const deferralsFromMap = useMemo(() => {
     const m = new Map<string, Set<string>>();
     for (const d of deferrals) {
@@ -204,6 +219,37 @@ export default function CleaningRotaPage() {
     return m;
   }, [runs]);
 
+  async function loadSignoff(oid: string, lid: string) {
+    const { data, error } = await supabase
+      .from("daily_signoffs")
+      .select("id, signoff_on, signed_by, notes, created_at")
+      .eq("org_id", oid)
+      .eq("location_id", lid)
+      .eq("signoff_on", todayIso)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[cleaning] signoff fetch failed:", error.message);
+      setSignoff(null);
+      return;
+    }
+
+    if (!data) {
+      setSignoff(null);
+      return;
+    }
+
+    setSignoff({
+      id: String((data as any).id),
+      signoff_on: String((data as any).signoff_on),
+      signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+      notes: (data as any).notes ? String((data as any).notes) : null,
+      created_at: (data as any).created_at ? String((data as any).created_at) : null,
+    });
+  }
+
   async function loadAll() {
     setLoading(true);
     setErr(null);
@@ -218,6 +264,7 @@ export default function CleaningRotaPage() {
         setTasks([]);
         setRuns([]);
         setDeferrals([]);
+        setSignoff(null);
         setLoading(false);
         return;
       }
@@ -258,6 +305,9 @@ export default function CleaningRotaPage() {
       setTasks((tData ?? []) as Task[]);
       setRuns((rData ?? []) as Run[]);
       setDeferrals(((dData ?? []) as Deferral[]) || []);
+
+      // load signoff for today
+      await loadSignoff(oid, lid);
     } catch (e: any) {
       setErr(e?.message ?? "Something went wrong");
     } finally {
@@ -282,9 +332,11 @@ export default function CleaningRotaPage() {
     return done;
   }, [dueToday, runsByTask]);
 
-  useEffect(() => {
-    const allDone = dueToday.length > 0 && doneCount === dueToday.length;
+  const allDone = useMemo(() => {
+    return dueToday.length > 0 && doneCount === dueToday.length;
+  }, [dueToday.length, doneCount]);
 
+  useEffect(() => {
     if (!initializedRef.current) {
       initializedRef.current = true;
       prevAllDoneRef.current = allDone;
@@ -293,14 +345,23 @@ export default function CleaningRotaPage() {
 
     const wasAllDone = prevAllDoneRef.current;
 
+    // confetti on transition to all done (user action only)
     if (!wasAllDone && allDone && userActionRef.current) {
       setShowConfetti(true);
       window.setTimeout(() => setShowConfetti(false), 1600);
+
+      // auto-open signoff prompt if not already signed off
+      if (!signoff) {
+        setSignoffInitials((prev) => (prev.trim() ? prev : initials.trim().toUpperCase()));
+        setSignoffNotes("");
+        setSignoffOpen(true);
+      }
+
       userActionRef.current = false;
     }
 
     prevAllDoneRef.current = allDone;
-  }, [doneCount, dueToday.length]);
+  }, [allDone, initials, signoff]);
 
   const groupedByCategory = useMemo(() => {
     const m = new Map<string, Task[]>();
@@ -476,6 +537,58 @@ export default function CleaningRotaPage() {
     });
   }
 
+  async function createSignoff() {
+    if (!orgId || !locationId) return;
+
+    if (!allDone) {
+      alert("Complete all cleaning tasks due today before signing off.");
+      return;
+    }
+    if (signoff) return;
+
+    const ini = signoffInitials.trim().toUpperCase();
+    if (!ini) {
+      alert("Enter initials to sign off.");
+      return;
+    }
+
+    setSignoffSaving(true);
+    try {
+      const payload = {
+        org_id: orgId,
+        location_id: locationId,
+        signoff_on: todayIso,
+        signed_by: ini,
+        notes: signoffNotes.trim() || null,
+      };
+
+      const { data, error } = await supabase
+        .from("daily_signoffs")
+        .insert(payload)
+        .select("id, signoff_on, signed_by, notes, created_at")
+        .single();
+
+      if (error) throw error;
+
+      setSignoff({
+        id: String((data as any).id),
+        signoff_on: String((data as any).signoff_on),
+        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+        notes: (data as any).notes ? String((data as any).notes) : null,
+        created_at: (data as any).created_at ? String((data as any).created_at) : null,
+      });
+
+      setSignoffOpen(false);
+      setSignoffNotes("");
+      // keep initials in state for convenience
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "Failed to sign off the day.");
+    } finally {
+      setSignoffSaving(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className={PAGE}>
@@ -513,6 +626,35 @@ export default function CleaningRotaPage() {
               Manage tasks
             </button>
 
+            {/* ✅ Sign off button (new) */}
+            <button
+              onClick={() => {
+                setSignoffInitials((prev) =>
+                  prev.trim() ? prev : initials.trim().toUpperCase()
+                );
+                setSignoffNotes("");
+                setSignoffOpen(true);
+              }}
+              disabled={!allDone || !!signoff}
+              className={[
+                "rounded-full px-3 py-2 text-xs font-semibold",
+                signoff
+                  ? "bg-slate-200 text-slate-700"
+                  : !allDone
+                  ? "bg-slate-200 text-slate-700 opacity-70"
+                  : "bg-emerald-600 text-white hover:bg-emerald-700",
+              ].join(" ")}
+              title={
+                signoff
+                  ? "Day signed off"
+                  : allDone
+                  ? "Sign off the day"
+                  : "Complete all tasks first"
+              }
+            >
+              {signoff ? "Day signed off" : "Sign off day"}
+            </button>
+
             <div className="hidden sm:flex items-center gap-2">
               <span className="text-xs text-slate-500">Initials</span>
               <input
@@ -540,6 +682,13 @@ export default function CleaningRotaPage() {
           Tip: On phones you can swipe a task card left to complete and right to
           undo, or just use the Tick / Undo buttons.
         </div>
+
+        {/* Optional hint banner when all done but not signed off */}
+        {allDone && !signoff && (
+          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+            All cleaning tasks are complete. Sign off the day to lock it in.
+          </div>
+        )}
 
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           {groupedByCategory.map(([category, list]) => {
@@ -669,6 +818,86 @@ export default function CleaningRotaPage() {
         onClose={() => setManageOpen(false)}
         onSaved={loadAll}
       />
+
+      {/* ✅ Sign-off modal (new) */}
+      {signoffOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setSignoffOpen(false)}
+        >
+          <div
+            className="mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold">Sign off day</div>
+                <div className="mt-0.5 text-xs text-slate-500">{todayIso}</div>
+              </div>
+              <button
+                onClick={() => setSignoffOpen(false)}
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {signoff && (
+              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                This day is already signed off.
+              </div>
+            )}
+
+            {!allDone && !signoff && (
+              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                You can’t sign off until all cleaning tasks due today are completed.
+              </div>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">Initials</label>
+                <input
+                  value={signoffInitials}
+                  onChange={(e) => setSignoffInitials(e.target.value.toUpperCase())}
+                  placeholder="WS"
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
+                <input
+                  value={signoffNotes}
+                  onChange={(e) => setSignoffNotes(e.target.value)}
+                  placeholder="Any corrective actions / comments…"
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSignoffOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={createSignoff}
+                disabled={!allDone || !!signoff || signoffSaving}
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {signoffSaving ? "Signing…" : "Sign off"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
