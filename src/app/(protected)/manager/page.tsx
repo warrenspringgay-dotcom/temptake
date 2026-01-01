@@ -1,7 +1,7 @@
 // src/app/(protected)/manager/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -367,6 +367,22 @@ export default function ManagerDashboardPage() {
   const [staffAssessStaffId, setStaffAssessStaffId] = useState<string>("");
   const [staffAssessDays, setStaffAssessDays] = useState<number>(7);
   const [staffAssess, setStaffAssess] = useState<StaffAssessment | null>(null);
+
+  // Auto-load staff assessment when staff/range/date changes (no UI changes)
+  const lastStaffAssessKeyRef = useRef<string>("");
+
+  useEffect(() => {
+    if (!staffAssessOpen) return;
+    if (!orgId || !locationId) return;
+    if (!staffAssessStaffId) return;
+
+    const key = `${staffAssessStaffId}|${staffAssessDays}|${selectedDateISO}|${locationId}`;
+    if (lastStaffAssessKeyRef.current === key) return;
+    lastStaffAssessKeyRef.current = key;
+
+    void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffAssessOpen, staffAssessStaffId, staffAssessDays, selectedDateISO, orgId, locationId]);
 
   function tmLabel(t: { initials: string | null; name: string | null }) {
     const ini = (t.initials ?? "").toString().trim().toUpperCase();
@@ -1286,6 +1302,7 @@ export default function ManagerDashboardPage() {
               setStaffAssessStaffId("");
               setStaffAssessDays(7);
               setStaffAssessOpen(true);
+              lastStaffAssessKeyRef.current = "";
 
               // ensure staff dropdown is populated
               await loadTeamOptions();
