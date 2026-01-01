@@ -77,6 +77,10 @@ function inferStatus(
   return "pass";
 }
 
+/** TS-safe sort comparator (noImplicitAny) */
+type HasPosition = { position: number };
+const byPosition = (a: HasPosition, b: HasPosition) => a.position - b.position;
+
 /* ===================== Daily sign-off modal + logic ===================== */
 
 type DailySignoffRow = {
@@ -131,9 +135,7 @@ function SignoffModal({
           <div className="text-xl font-extrabold leading-tight">{dateLabel}</div>
         </div>
 
-        {/* ✅ this wrapper was missing in your paste */}
         <div className="p-5 space-y-4">
-          {/* SFBB statement */}
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 space-y-1">
             <div className="font-semibold text-slate-900">Daily diary sign-off</div>
             <div>
@@ -207,6 +209,158 @@ function prettyDateLabel(ymd: string) {
   return `${weekday} ${day} ${month} ${year}`;
 }
 
+/* ===================== Corrective action modal + logic ===================== */
+
+type CorrectiveDraft = {
+  open: boolean;
+  tempLogId: string | null;
+  org_id: string | null;
+  location_id: string | null;
+
+  staff_initials: string;
+  area: string;
+  item: string;
+  target_key: string;
+  temp_c: number | null;
+};
+
+function CorrectiveModal({
+  open,
+  saving,
+  draft,
+  action,
+  recheckEnabled,
+  recheckTemp,
+  onClose,
+  onSave,
+  setAction,
+  setRecheckEnabled,
+  setRecheckTemp,
+}: {
+  open: boolean;
+  saving: boolean;
+  draft: CorrectiveDraft;
+  action: string;
+  recheckEnabled: boolean;
+  recheckTemp: string;
+  onClose: () => void;
+  onSave: () => void;
+  setAction: (v: string) => void;
+  setRecheckEnabled: (v: boolean) => void;
+  setRecheckTemp: (v: string) => void;
+}) {
+  if (!open) return null;
+
+  const tempLabel =
+    draft.temp_c == null || !Number.isFinite(draft.temp_c)
+      ? "—"
+      : `${draft.temp_c}°C`;
+
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-3">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+        onClick={onClose}
+        aria-label="Close corrective action modal"
+      />
+
+      <div className="relative w-full max-w-[520px] overflow-hidden rounded-3xl border border-white/30 bg-white shadow-2xl">
+        <div className="bg-slate-900 px-5 py-4 text-white">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] opacity-80">
+            Corrective action
+          </div>
+          <div className="text-xl font-extrabold leading-tight">
+            Failed temperature recorded
+          </div>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-800 space-y-1">
+            <div className="font-semibold text-red-900">Details</div>
+            <div>
+              <span className="font-semibold">Area:</span>{" "}
+              {draft.area || "—"}
+            </div>
+            <div>
+              <span className="font-semibold">Item:</span>{" "}
+              {draft.item || "—"}
+            </div>
+            <div>
+              <span className="font-semibold">Target:</span>{" "}
+              {draft.target_key || "—"}
+            </div>
+            <div>
+              <span className="font-semibold">Temp:</span> {tempLabel}
+            </div>
+            <div>
+              <span className="font-semibold">Initials:</span>{" "}
+              {draft.staff_initials || "—"}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-sm font-semibold text-slate-900">
+              What corrective action did you take?
+            </div>
+            <textarea
+              value={action}
+              onChange={(e) => setAction(e.target.value)}
+              className="mt-2 w-full min-h-[120px] rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+              placeholder="e.g. moved food to working fridge, adjusted thermostat, discarded batch, called engineer..."
+              maxLength={1500}
+            />
+          </div>
+
+          <label className="flex items-center gap-2 text-sm text-slate-800">
+            <input
+              type="checkbox"
+              checked={recheckEnabled}
+              onChange={(e) => setRecheckEnabled(e.target.checked)}
+            />
+            Record a re-check temperature now (optional)
+          </label>
+
+          {recheckEnabled && (
+            <div>
+              <div className="text-sm font-semibold text-slate-900">
+                Re-check temperature (°C)
+              </div>
+              <input
+                value={recheckTemp}
+                onChange={(e) => setRecheckTemp(e.target.value)}
+                className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+                placeholder="e.g. 3.2"
+                inputMode="decimal"
+              />
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              Close
+            </button>
+
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={saving || !action.trim()}
+              className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {saving ? "Saving..." : "Save action"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ======================================================================= */
 
 export default function TempFab() {
@@ -265,6 +419,96 @@ export default function TempFab() {
     () => prettyDateLabel(signoffDateISO),
     [signoffDateISO]
   );
+
+  // ✅ Corrective action state (FAB-only logging)
+  const [corrective, setCorrective] = useState<CorrectiveDraft>({
+    open: false,
+    tempLogId: null,
+    org_id: null,
+    location_id: null,
+    staff_initials: "",
+    area: "",
+    item: "",
+    target_key: "",
+    temp_c: null,
+  });
+  const [correctiveSaving, setCorrectiveSaving] = useState(false);
+  const [correctiveAction, setCorrectiveAction] = useState("");
+  const [correctiveRecheckEnabled, setCorrectiveRecheckEnabled] = useState(true);
+  const [correctiveRecheckTemp, setCorrectiveRecheckTemp] = useState("");
+
+  function closeCorrective() {
+    setCorrective((c) => ({ ...c, open: false }));
+  }
+
+  async function saveCorrective() {
+    if (!corrective.tempLogId || !corrective.org_id) return;
+
+    const action = correctiveAction.trim();
+    if (!action) return;
+
+    const preset = (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
+      corrective.target_key
+    ];
+
+    const reTemp = correctiveRecheckEnabled
+      ? Number(correctiveRecheckTemp)
+      : NaN;
+
+    const recheck_temp_c =
+      correctiveRecheckEnabled && Number.isFinite(reTemp) ? reTemp : null;
+
+    const recheck_status =
+      recheck_temp_c != null ? inferStatus(recheck_temp_c, preset) : null;
+
+    setCorrectiveSaving(true);
+    try {
+      const payload = {
+        org_id: corrective.org_id,
+        location_id: corrective.location_id,
+        temp_log_id: corrective.tempLogId,
+        action,
+        recheck_temp_c,
+        recheck_at: recheck_temp_c != null ? new Date().toISOString() : null,
+        recheck_status,
+        recorded_by: corrective.staff_initials
+          ? corrective.staff_initials.toUpperCase()
+          : null,
+      };
+
+      const { error } = await supabase
+        .from("food_temp_corrective_actions")
+        .insert(payload);
+
+      if (error) throw error;
+
+      addToast({ title: "Corrective action saved", type: "success" });
+      posthog.capture("temp_corrective_saved", {
+        source: "fab_quick",
+        recheck: recheck_temp_c != null,
+        recheck_status,
+      });
+
+      closeCorrective();
+      setCorrectiveAction("");
+      setCorrectiveRecheckEnabled(true);
+      setCorrectiveRecheckTemp("");
+
+      // nudge reports/other pages to refresh if they listen
+      try {
+        window.dispatchEvent(new Event("tt-temps-changed"));
+      } catch {}
+    } catch (e: any) {
+      console.error(e);
+      addToast({
+        title: "Could not save corrective action",
+        message: e?.message ?? "Something went wrong.",
+        type: "error",
+      });
+    } finally {
+      setCorrectiveSaving(false);
+    }
+  }
 
   // ✅ Voice hook must be top-level (not inside useEffect)
   const { supported: voiceSupported, listening, start, stop } = useVoiceTempEntry(
@@ -832,7 +1076,13 @@ export default function TempFab() {
       status,
     };
 
-    const { error } = await supabase.from("food_temp_logs").insert(payload);
+    // ✅ Return inserted log id so corrective action can link properly
+    const { data: inserted, error } = await supabase
+      .from("food_temp_logs")
+      .insert(payload)
+      .select("id")
+      .single();
+
     if (error) {
       addToast({
         title: "Save failed",
@@ -859,6 +1109,30 @@ export default function TempFab() {
 
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
     await refreshEntriesToday();
+
+    // ✅ If FAIL, open corrective action modal (don’t close everything and pretend it’s fine)
+    if (status === "fail" && inserted?.id) {
+      const staffIni = (form.staff_initials || "").toUpperCase().trim();
+      setCorrective({
+        open: true,
+        tempLogId: String(inserted.id),
+        org_id,
+        location_id,
+        staff_initials: staffIni,
+        area: form.location || "",
+        item: form.item || "",
+        target_key: form.target_key || "",
+        temp_c: tempNum,
+      });
+      setCorrectiveAction("");
+      setCorrectiveRecheckEnabled(true);
+      setCorrectiveRecheckTemp("");
+      // keep temp modal open or close it? minimal disruption: close temp modal so user focuses on corrective modal
+      setOpen(false);
+      setShowMenu(false);
+      return;
+    }
+
     setOpen(false);
   }
 
@@ -950,7 +1224,7 @@ export default function TempFab() {
       setShowPicker(false);
       setRunRoutine({
         ...filled,
-        items: filled.items.sort((a, b) => a.position - b.position),
+        items: filled.items.sort(byPosition),
       });
     } catch (e: any) {
       addToast({
@@ -1099,6 +1373,21 @@ export default function TempFab() {
         onSave={saveDaySignoff}
         setInitials={setSignoffInitials}
         setNotes={setSignoffNotes}
+      />
+
+      {/* ✅ Corrective action modal (opens only after FAIL) */}
+      <CorrectiveModal
+        open={corrective.open}
+        saving={correctiveSaving}
+        draft={corrective}
+        action={correctiveAction}
+        recheckEnabled={correctiveRecheckEnabled}
+        recheckTemp={correctiveRecheckTemp}
+        onClose={closeCorrective}
+        onSave={saveCorrective}
+        setAction={setCorrectiveAction}
+        setRecheckEnabled={setCorrectiveRecheckEnabled}
+        setRecheckTemp={setCorrectiveRecheckTemp}
       />
 
       {/* Routine picker modal */}
