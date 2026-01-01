@@ -106,6 +106,22 @@ type StaffQcReviewRow = {
   manager?: { initials: string | null; name: string | null } | null;
 };
 
+/* =========================
+   Individual staff assessment modal
+========================= */
+
+type StaffAssessment = {
+  staffId: string;
+  staffLabel: string;
+  rangeDays: number;
+  cleaningRuns: number;
+  tempLogs: number;
+  tempFails: number;
+  incidents: number;
+  qcAvg30d: number | null;
+  qcCount30d: number;
+};
+
 const WEEKDAYS = [
   "Sunday",
   "Monday",
@@ -317,7 +333,7 @@ export default function ManagerDashboardPage() {
   });
   const [showAllSignoffs, setShowAllSignoffs] = useState(false);
 
-  // ✅ Sign-off modal state (new)
+  // ✅ Sign-off modal state
   const [signoffOpen, setSignoffOpen] = useState(false);
   const [signoffInitials, setSignoffInitials] = useState("");
   const [signoffNotes, setSignoffNotes] = useState("");
@@ -343,6 +359,14 @@ export default function ManagerDashboardPage() {
     score: 3,
     notes: "",
   });
+
+  /* ===== Individual staff assessment modal (NEW) ===== */
+  const [staffAssessOpen, setStaffAssessOpen] = useState(false);
+  const [staffAssessLoading, setStaffAssessLoading] = useState(false);
+  const [staffAssessErr, setStaffAssessErr] = useState<string | null>(null);
+  const [staffAssessStaffId, setStaffAssessStaffId] = useState<string>("");
+  const [staffAssessDays, setStaffAssessDays] = useState<number>(7);
+  const [staffAssess, setStaffAssess] = useState<StaffAssessment | null>(null);
 
   function tmLabel(t: { initials: string | null; name: string | null }) {
     const ini = (t.initials ?? "").toString().trim().toUpperCase();
@@ -565,6 +589,49 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
+  // ✅ Load team + logged in member as soon as we have orgId (no UI changes)
+  useEffect(() => {
+    if (!orgId) return;
+    void loadTeamOptions();
+    void loadLoggedInManager();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId]);
+
+  // ✅ Auto-populate signoff initials when signoff modal opens (NO UI change)
+  useEffect(() => {
+    if (!signoffOpen) return;
+    if (signoffInitials.trim()) return;
+
+    const ini = managerTeamMember?.initials?.trim().toUpperCase() ?? "";
+    if (ini) setSignoffInitials(ini);
+  }, [signoffOpen, managerTeamMember, signoffInitials]);
+
+  // ✅ Staff assessment modal toggle: Ctrl+Shift+A (no new UI)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase() ?? "";
+      const isTyping =
+        tag === "input" ||
+        tag === "textarea" ||
+        (target as any)?.isContentEditable;
+
+      if (isTyping) return;
+
+      const key = e.key?.toLowerCase();
+      const hit = (e.ctrlKey || e.metaKey) && e.shiftKey && key === "a";
+      if (!hit) return;
+
+      e.preventDefault();
+      setStaffAssessOpen((v) => !v);
+      setStaffAssessErr(null);
+      setStaffAssess(null);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   useEffect(() => {
     if (!orgId || !locationId) return;
     refreshAll();
@@ -667,7 +734,11 @@ export default function ManagerDashboardPage() {
           .gte("happened_on", isoDate(sevenDaysAgo))
           .lte("happened_on", selectedDateISO),
 
-        supabase.from("trainings").select("id, expires_on").eq("org_id", orgId).limit(5000),
+        supabase
+          .from("trainings")
+          .select("id, expires_on")
+          .eq("org_id", orgId)
+          .limit(5000),
 
         supabase
           .from("daily_signoffs")
@@ -913,9 +984,13 @@ export default function ManagerDashboardPage() {
       const row: SignoffRow = {
         id: String((data as any).id),
         signoff_on: String((data as any).signoff_on),
-        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+        signed_by: (data as any).signed_by
+          ? String((data as any).signed_by)
+          : null,
         notes: (data as any).notes ? String((data as any).notes) : null,
-        created_at: (data as any).created_at ? String((data as any).created_at) : null,
+        created_at: (data as any).created_at
+          ? String((data as any).created_at)
+          : null,
       };
 
       // Update UI immediately
@@ -932,6 +1007,131 @@ export default function ManagerDashboardPage() {
       alert(e?.message ?? "Failed to sign off the day.");
     } finally {
       setSignoffSaving(false);
+    }
+  }
+
+  // ✅ Load staff assessment (NEW)
+  async function loadStaffAssessment(staffId: string, days: number) {
+    if (!orgId || !locationId) return;
+
+    const staff = teamOptions.find((t) => t.id === staffId) ?? null;
+    const initials = (staff?.initials ?? "").toString().trim().toUpperCase();
+
+    setStaffAssessLoading(true);
+    setStaffAssessErr(null);
+    setStaffAssess(null);
+
+    try {
+      if (!staff) throw new Error("Select a staff member.");
+      if (!initials) throw new Error("Selected staff member has no initials.");
+
+      const end = new Date(selectedDateISO);
+      end.setHours(23, 59, 59, 999);
+
+      const start = new Date(selectedDateISO);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - (days - 1));
+
+      const startIsoDate = isoDate(start);
+      const endIsoDate = isoDate(end);
+
+      // QC last 30 days window
+      const qcStart = new Date(selectedDateISO);
+      qcStart.setHours(0, 0, 0, 0);
+      qcStart.setDate(qcStart.getDate() - 29);
+      const qcStartIso = isoDate(qcStart);
+
+      const [
+        cleaningRunsRes,
+        tempLogsRes,
+        tempFailsRes,
+        incidentsRes,
+        qcRes,
+      ] = await Promise.all([
+        supabase
+          .from("cleaning_task_runs")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("done_by", initials)
+          .gte("run_on", startIsoDate)
+          .lte("run_on", endIsoDate),
+
+        supabase
+          .from("food_temp_logs")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("staff_initials", initials)
+          .gte("at", start.toISOString())
+          .lte("at", end.toISOString()),
+
+        supabase
+          .from("food_temp_logs")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("staff_initials", initials)
+          .eq("status", "fail")
+          .gte("at", start.toISOString())
+          .lte("at", end.toISOString()),
+
+        supabase
+          .from("cleaning_incidents")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("created_by", initials)
+          .gte("happened_on", startIsoDate)
+          .lte("happened_on", endIsoDate),
+
+        supabase
+          .from("staff_qc_reviews")
+          .select("score, reviewed_on")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("staff_id", staffId)
+          .gte("reviewed_on", qcStartIso)
+          .lte("reviewed_on", selectedDateISO)
+          .limit(500),
+      ]);
+
+      const firstErr =
+        cleaningRunsRes.error ||
+        tempLogsRes.error ||
+        tempFailsRes.error ||
+        incidentsRes.error ||
+        qcRes.error;
+
+      if (firstErr) throw firstErr;
+
+      const qcRows = (qcRes.data ?? []) as Array<{ score: number }>;
+      const qcCount30d = qcRows.length;
+      const qcAvg30d =
+        qcCount30d > 0
+          ? Math.round(
+              (qcRows.reduce((a, r) => a + Number(r.score || 0), 0) /
+                qcCount30d) *
+                10
+            ) / 10
+          : null;
+
+      setStaffAssess({
+        staffId,
+        staffLabel: tmLabel({ initials: staff.initials, name: staff.name }),
+        rangeDays: days,
+        cleaningRuns: cleaningRunsRes.count ?? 0,
+        tempLogs: tempLogsRes.count ?? 0,
+        tempFails: tempFailsRes.count ?? 0,
+        incidents: incidentsRes.count ?? 0,
+        qcAvg30d,
+        qcCount30d,
+      });
+    } catch (e: any) {
+      console.error(e);
+      setStaffAssessErr(e?.message ?? "Failed to load staff assessment.");
+    } finally {
+      setStaffAssessLoading(false);
     }
   }
 
@@ -1070,11 +1270,17 @@ export default function ManagerDashboardPage() {
             ))}
           </select>
 
-          {/* ✅ Sign off button (new) */}
+          {/* ✅ Sign off button */}
           <button
             type="button"
             onClick={() => setSignoffOpen(true)}
-            disabled={!cleaningAllDone || alreadySignedOff || loading || !orgId || !locationId}
+            disabled={
+              !cleaningAllDone ||
+              alreadySignedOff ||
+              loading ||
+              !orgId ||
+              !locationId
+            }
             className={cls(
               "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm disabled:opacity-60",
               alreadySignedOff
@@ -1096,9 +1302,16 @@ export default function ManagerDashboardPage() {
             type="button"
             onClick={async () => {
               if (!orgId || !locationId) return;
-              setQcForm((f) => ({ ...f, reviewed_on: selectedDateISO || f.reviewed_on }));
+              setQcForm((f) => ({
+                ...f,
+                reviewed_on: selectedDateISO || f.reviewed_on,
+              }));
               setQcOpen(true);
-              await Promise.all([loadTeamOptions(), loadLoggedInManager(), loadQcReviews()]);
+              await Promise.all([
+                loadTeamOptions(),
+                loadLoggedInManager(),
+                loadQcReviews(),
+              ]);
             }}
             disabled={loading || !orgId || !locationId}
             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
@@ -1141,13 +1354,17 @@ export default function ManagerDashboardPage() {
             <tbody>
               {cleaningCategoryProgress.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                  <td
+                    colSpan={4}
+                    className="px-3 py-4 text-center text-slate-500"
+                  >
                     No cleaning tasks due (or none loaded).
                   </td>
                 </tr>
               ) : (
                 cleaningCategoryProgress.map((r) => {
-                  const pct = r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
+                  const pct =
+                    r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
                   const pill =
                     pct === 100
                       ? "bg-emerald-100 text-emerald-800"
@@ -1156,7 +1373,10 @@ export default function ManagerDashboardPage() {
                       : "bg-red-100 text-red-800";
 
                   return (
-                    <tr key={r.category} className="border-t border-slate-100 text-slate-800">
+                    <tr
+                      key={r.category}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
                       <td className="px-3 py-2 font-semibold">{r.category}</td>
                       <td className="px-3 py-2">{r.done}</td>
                       <td className="px-3 py-2">{r.total}</td>
@@ -1204,13 +1424,19 @@ export default function ManagerDashboardPage() {
             <tbody>
               {incidentsToRender.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-4 text-center text-slate-500">
+                  <td
+                    colSpan={5}
+                    className="px-3 py-4 text-center text-slate-500"
+                  >
                     No incidents logged.
                   </td>
                 </tr>
               ) : (
                 incidentsToRender.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                  <tr
+                    key={r.id}
+                    className="border-t border-slate-100 text-slate-800"
+                  >
                     <td className="px-3 py-2">
                       {r.created_at
                         ? new Date(r.created_at).toLocaleTimeString("en-GB", {
@@ -1219,10 +1445,18 @@ export default function ManagerDashboardPage() {
                           })
                         : "—"}
                     </td>
-                    <td className="px-3 py-2 font-semibold">{r.type ?? "Incident"}</td>
-                    <td className="px-3 py-2">{r.created_by?.toUpperCase() ?? "—"}</td>
-                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.details ?? "—"}</td>
-                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.corrective_action ?? "—"}</td>
+                    <td className="px-3 py-2 font-semibold">
+                      {r.type ?? "Incident"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {r.created_by?.toUpperCase() ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">
+                      {r.details ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">
+                      {r.corrective_action ?? "—"}
+                    </td>
                   </tr>
                 ))
               )}
@@ -1269,13 +1503,19 @@ export default function ManagerDashboardPage() {
                 <tbody>
                   {tempsToRender.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
+                      <td
+                        colSpan={6}
+                        className="px-3 py-4 text-center text-slate-500"
+                      >
                         No temperature logs.
                       </td>
                     </tr>
                   ) : (
                     tempsToRender.map((r) => (
-                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <tr
+                        key={r.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
                         <td className="px-3 py-2">{r.time}</td>
                         <td className="px-3 py-2">{r.staff}</td>
                         <td className="px-3 py-2">{r.area}</td>
@@ -1331,13 +1571,19 @@ export default function ManagerDashboardPage() {
                 <tbody>
                   {cleaningToRender.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                      <td
+                        colSpan={4}
+                        className="px-3 py-4 text-center text-slate-500"
+                      >
                         No cleaning tasks completed.
                       </td>
                     </tr>
                   ) : (
                     cleaningToRender.map((r) => (
-                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <tr
+                        key={r.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
                         <td className="px-3 py-2">{r.time ?? "—"}</td>
                         <td className="px-3 py-2">
                           <div className="font-semibold">{r.category}</div>
@@ -1391,17 +1637,29 @@ export default function ManagerDashboardPage() {
             <tbody>
               {signoffsToRender.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                  <td
+                    colSpan={4}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
                     No sign-offs logged for this day.
                   </td>
                 </tr>
               ) : (
                 signoffsToRender.map((r) => {
-                  const t = r.created_at ? formatTimeHM(new Date(r.created_at)) : null;
+                  const t = r.created_at
+                    ? formatTimeHM(new Date(r.created_at))
+                    : null;
                   return (
-                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap">{r.signoff_on}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{t ?? "—"}</td>
+                    <tr
+                      key={r.id}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {r.signoff_on}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {t ?? "—"}
+                      </td>
                       <td className="px-3 py-2 font-semibold whitespace-nowrap">
                         {r.signed_by ? r.signed_by.toUpperCase() : "—"}
                       </td>
@@ -1439,9 +1697,16 @@ export default function ManagerDashboardPage() {
             type="button"
             onClick={async () => {
               if (!orgId || !locationId) return;
-              setQcForm((f) => ({ ...f, reviewed_on: selectedDateISO || f.reviewed_on }));
+              setQcForm((f) => ({
+                ...f,
+                reviewed_on: selectedDateISO || f.reviewed_on,
+              }));
               setQcOpen(true);
-              await Promise.all([loadTeamOptions(), loadLoggedInManager(), loadQcReviews()]);
+              await Promise.all([
+                loadTeamOptions(),
+                loadLoggedInManager(),
+                loadQcReviews(),
+              ]);
             }}
             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
           >
@@ -1463,13 +1728,19 @@ export default function ManagerDashboardPage() {
             <tbody>
               {qcSummaryLoading ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                  <td
+                    colSpan={5}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
                     Loading…
                   </td>
                 </tr>
               ) : qcToRender.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                  <td
+                    colSpan={5}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
                     No QC reviews logged.
                   </td>
                 </tr>
@@ -1483,8 +1754,13 @@ export default function ManagerDashboardPage() {
                       : "bg-red-100 text-red-800";
 
                   return (
-                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
+                    <tr
+                      key={r.id}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {r.reviewed_on}
+                      </td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         {tmLabel(r.staff ?? { initials: null, name: "—" })}
                       </td>
@@ -1501,7 +1777,9 @@ export default function ManagerDashboardPage() {
                           {r.score}/5
                         </span>
                       </td>
-                      <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
+                      <td className="px-3 py-2 max-w-[24rem] truncate">
+                        {r.notes ?? "—"}
+                      </td>
                     </tr>
                   );
                 })
@@ -1517,9 +1795,12 @@ export default function ManagerDashboardPage() {
         />
       </section>
 
-      {/* ✅ Sign-off modal (new) */}
+      {/* ✅ Sign-off modal */}
       {signoffOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setSignoffOpen(false)}
+        >
           <div
             className={cls(
               "mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
@@ -1530,7 +1811,8 @@ export default function ManagerDashboardPage() {
               <div>
                 <div className="text-base font-semibold">Sign off day</div>
                 <div className="mt-0.5 text-xs text-slate-500">
-                  {selectedDateISO} · {locations.find((l) => l.id === locationId)?.name ?? "—"}
+                  {selectedDateISO} ·{" "}
+                  {locations.find((l) => l.id === locationId)?.name ?? "—"}
                 </div>
               </div>
               <button
@@ -1544,7 +1826,8 @@ export default function ManagerDashboardPage() {
 
             {!cleaningAllDone && (
               <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                You can’t sign off until all cleaning tasks due today are completed.
+                You can’t sign off until all cleaning tasks due today are
+                completed.
               </div>
             )}
 
@@ -1556,7 +1839,9 @@ export default function ManagerDashboardPage() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Initials</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Initials
+                </label>
                 <input
                   value={signoffInitials}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
@@ -1568,7 +1853,9 @@ export default function ManagerDashboardPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Notes (optional)
+                </label>
                 <input
                   value={signoffNotes}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
@@ -1602,9 +1889,189 @@ export default function ManagerDashboardPage() {
         </div>
       )}
 
-      {/* ===== QC modal remains below (unchanged from your previous version) ===== */}
+      {/* ✅ Individual staff assessment modal (NEW) - Ctrl+Shift+A */}
+      {staffAssessOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setStaffAssessOpen(false)}
+        >
+          <div
+            className={cls(
+              "mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold">
+                  Individual staff assessment
+                </div>
+                <div className="mt-0.5 text-xs text-slate-500">
+                  Open/close with Ctrl+Shift+A. No buttons added. No layout
+                  changes.
+                </div>
+              </div>
+              <button
+                onClick={() => setStaffAssessOpen(false)}
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {staffAssessErr && (
+              <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                {staffAssessErr}
+              </div>
+            )}
+
+            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Staff
+                  </label>
+                  <select
+                    value={staffAssessStaffId}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                      setStaffAssessStaffId(e.target.value);
+                      setStaffAssess(null);
+                      setStaffAssessErr(null);
+                    }}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    <option value="">Select…</option>
+                    {teamOptions.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {tmLabel(t)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Range
+                  </label>
+                  <select
+                    value={staffAssessDays}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                      setStaffAssessDays(Number(e.target.value));
+                      setStaffAssess(null);
+                      setStaffAssessErr(null);
+                    }}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    <option value={7}>Last 7 days</option>
+                    <option value={14}>Last 14 days</option>
+                    <option value={30}>Last 30 days</option>
+                  </select>
+                </div>
+
+                <div className="flex items-end justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!staffAssessStaffId)
+                        return setStaffAssessErr("Select a staff member.");
+                      await loadStaffAssessment(staffAssessStaffId, staffAssessDays);
+                    }}
+                    disabled={staffAssessLoading || !staffAssessStaffId}
+                    className="h-10 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
+                  >
+                    {staffAssessLoading ? "Loading…" : "Load"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <KpiTile
+                title="Cleaning runs"
+                icon="🧼"
+                tone="neutral"
+                value={staffAssess?.cleaningRuns ?? "—"}
+                sub={
+                  staffAssess
+                    ? `Completed in last ${staffAssess.rangeDays}d`
+                    : "Select staff + load"
+                }
+              />
+              <KpiTile
+                title="Temp logs"
+                icon="🌡"
+                tone="neutral"
+                value={staffAssess?.tempLogs ?? "—"}
+                sub={
+                  staffAssess
+                    ? `Recorded in last ${staffAssess.rangeDays}d`
+                    : "—"
+                }
+              />
+              <KpiTile
+                title="Temp fails"
+                icon="🚫"
+                tone={staffAssess && staffAssess.tempFails > 0 ? "danger" : "ok"}
+                value={staffAssess?.tempFails ?? "—"}
+                sub={
+                  staffAssess
+                    ? `Fails in last ${staffAssess.rangeDays}d`
+                    : "—"
+                }
+              />
+              <KpiTile
+                title="Incidents"
+                icon="⚠️"
+                tone={staffAssess && staffAssess.incidents > 0 ? "warn" : "ok"}
+                value={staffAssess?.incidents ?? "—"}
+                sub={
+                  staffAssess
+                    ? `Logged in last ${staffAssess.rangeDays}d`
+                    : "—"
+                }
+              />
+              <KpiTile
+                title="QC avg (30d)"
+                icon="📋"
+                tone="neutral"
+                value={
+                  staffAssess
+                    ? staffAssess.qcAvg30d != null
+                      ? `${staffAssess.qcAvg30d}/5`
+                      : "—"
+                    : "—"
+                }
+                sub={
+                  staffAssess
+                    ? `Based on ${staffAssess.qcCount30d} reviews`
+                    : "—"
+                }
+              />
+              <KpiTile
+                title="Staff"
+                icon="👤"
+                tone="neutral"
+                value={staffAssess?.staffLabel ?? "—"}
+                sub="Selected team member"
+              />
+            </div>
+
+            <div className="mt-4 text-xs text-slate-500">
+              Note: this uses initials across logs (done_by, staff_initials,
+              created_by). If you switch to IDs everywhere later, this becomes
+              rock-solid.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== QC modal remains below (unchanged) ===== */}
       {qcOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setQcOpen(false)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setQcOpen(false)}
+        >
           <div
             className={cls(
               "mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
@@ -1615,7 +2082,8 @@ export default function ManagerDashboardPage() {
               <div>
                 <div className="text-base font-semibold">Manager QC</div>
                 <div className="mt-0.5 text-xs text-slate-500">
-                  Manager is your logged-in team member. Staff list is team members.
+                  Manager is your logged-in team member. Staff list is team
+                  members.
                 </div>
               </div>
 
@@ -1656,7 +2124,9 @@ export default function ManagerDashboardPage() {
 
               <div className="grid gap-3 md:grid-cols-4">
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Staff</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Staff
+                  </label>
                   <select
                     value={qcForm.staff_id}
                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
@@ -1686,7 +2156,9 @@ export default function ManagerDashboardPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Score</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Score
+                  </label>
                   <select
                     value={qcForm.score}
                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
@@ -1703,7 +2175,9 @@ export default function ManagerDashboardPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Notes</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Notes
+                  </label>
                   <input
                     value={qcForm.notes}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
@@ -1749,13 +2223,19 @@ export default function ManagerDashboardPage() {
                 <tbody>
                   {qcLoading ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                      <td
+                        colSpan={6}
+                        className="px-3 py-6 text-center text-slate-500"
+                      >
                         Loading…
                       </td>
                     </tr>
                   ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                      <td
+                        colSpan={6}
+                        className="px-3 py-6 text-center text-slate-500"
+                      >
                         No QC reviews logged.
                       </td>
                     </tr>
@@ -1769,8 +2249,13 @@ export default function ManagerDashboardPage() {
                           : "bg-red-100 text-red-800";
 
                       return (
-                        <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                          <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
+                        <tr
+                          key={r.id}
+                          className="border-t border-slate-100 text-slate-800"
+                        >
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {r.reviewed_on}
+                          </td>
                           <td className="px-3 py-2 whitespace-nowrap">
                             {tmLabel(r.staff ?? { initials: null, name: "—" })}
                           </td>
@@ -1787,7 +2272,9 @@ export default function ManagerDashboardPage() {
                               {r.score}/5
                             </span>
                           </td>
-                          <td className="px-3 py-2 max-w-[18rem] truncate">{r.notes ?? "—"}</td>
+                          <td className="px-3 py-2 max-w-[18rem] truncate">
+                            {r.notes ?? "—"}
+                          </td>
                           <td className="px-3 py-2 text-right">
                             <button
                               type="button"
