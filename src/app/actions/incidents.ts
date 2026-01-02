@@ -1,4 +1,3 @@
-// src/app/actions/incidents.ts
 "use server";
 
 import { revalidatePath } from "next/cache";
@@ -6,55 +5,102 @@ import { getServerSupabase } from "@/lib/supabaseServer";
 import { requireUser } from "@/lib/requireUser";
 import { getActiveOrgIdServer } from "@/lib/orgServer";
 
-export type NewIncident = {
-  happenedOn: string; // yyyy-mm-dd
-  locationId: string | null;
-  type: string;
-  details: string;
-  correctiveAction?: string;
-  preventiveAction?: string;
-  createdByInitials: string; // e.g. WS
-};
-
 type Result = { ok: true } | { ok: false; message: string };
 
-export async function logIncident(payload: NewIncident): Promise<Result> {
+export type IncidentPayload = {
+  // org
+  org_id?: string | null;
+  orgId?: string | null;
+
+  // location
+  location_id?: string | null;
+  locationId?: string | null;
+
+  // date
+  happened_on?: string | null; // YYYY-MM-DD
+  happenedOn?: string | null;  // YYYY-MM-DD
+
+  // incident core
+  type?: string | null;
+  details?: string | null;
+
+  // actions (DB columns)
+  immediate_action?: string | null;
+  immediateAction?: string | null;
+
+  preventive_action?: string | null;
+  preventiveAction?: string | null;
+
+  // legacy/client fields (map to DB columns)
+  corrective_action?: string | null;
+  correctiveAction?: string | null;
+
+  // initials / author (many aliases because humans)
+  created_by?: string | null;
+  createdBy?: string | null;
+  createdByInitials?: string | null;
+};
+
+function clean(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  return s ? s : null;
+}
+
+/**
+ * Inserts into public.incidents.
+ */
+export async function createIncident(payload: IncidentPayload): Promise<Result> {
   try {
-    // Auth required
     await requireUser();
-
     const supabase = await getServerSupabase();
-    const orgId = await getActiveOrgIdServer();
 
-    const happened_on = (payload.happenedOn ?? "").trim();
-    const location_id = payload.locationId ?? null;
-    const type = (payload.type ?? "").trim();
-    const details = (payload.details ?? "").trim();
-    const corrective_action = (payload.correctiveAction ?? "").trim() || null;
-    const preventive_action = (payload.preventiveAction ?? "").trim() || null;
-    const created_by = (payload.createdByInitials ?? "").trim().toUpperCase();
+    const orgId =
+      clean(payload.org_id) ??
+      clean(payload.orgId) ??
+      (await getActiveOrgIdServer());
 
-    if (!happened_on) return { ok: false, message: "Date is required." };
-    if (!type) return { ok: false, message: "Type is required." };
-    if (!details) return { ok: false, message: "Details are required." };
-    if (!created_by) return { ok: false, message: "Initials are required." };
+    const locationId = clean(payload.location_id) ?? clean(payload.locationId);
+
+    const happenedOn =
+      clean(payload.happened_on) ??
+      clean(payload.happenedOn) ??
+      new Date().toISOString().slice(0, 10);
+
+    // Map any "corrective" field into immediate_action if immediate_action not provided.
+    const immediate =
+      clean(payload.immediate_action) ??
+      clean(payload.immediateAction) ??
+      clean(payload.corrective_action) ??
+      clean(payload.correctiveAction);
+
+    const preventive =
+      clean(payload.preventive_action) ?? clean(payload.preventiveAction);
+
+    const createdBy =
+      clean(payload.created_by) ??
+      clean(payload.createdBy) ??
+      clean(payload.createdByInitials);
+
+    if (!locationId) {
+      return { ok: false, message: "Location is required." };
+    }
 
     const insertRow = {
-      org_id: orgId,
-      location_id,
-      happened_on,
-      type,
-      details,
-      corrective_action,
-      preventive_action,
-      created_by,
+      org_id: String(orgId),
+      location_id: String(locationId),
+      happened_on: happenedOn,
+      type: clean(payload.type),
+      details: clean(payload.details),
+      immediate_action: immediate,
+      preventive_action: preventive,
+      created_by: createdBy,
     };
 
-    const { error } = await supabase.from("cleaning_incidents").insert(insertRow);
+    const { error } = await supabase.from("incidents").insert(insertRow);
 
     if (error) return { ok: false, message: error.message };
 
-    // Refresh UI pages that show incidents
     revalidatePath("/manager");
     revalidatePath("/reports");
     revalidatePath("/staff");
@@ -63,4 +109,11 @@ export async function logIncident(payload: NewIncident): Promise<Result> {
   } catch (e: any) {
     return { ok: false, message: e?.message ?? "Failed to log incident." };
   }
+}
+
+/**
+ * Backwards-compatible alias.
+ */
+export async function logIncident(payload: IncidentPayload): Promise<Result> {
+  return createIncident(payload);
 }

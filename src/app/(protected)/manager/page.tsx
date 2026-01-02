@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
+import IncidentModal from "@/components/IncidentModal";
 
 type LocationOption = { id: string; name: string };
 
@@ -1297,6 +1298,15 @@ const [incidentOpen, setIncidentOpen] = useState(false);
 >
   Log incident
 </button>
+<IncidentModal
+  open={incidentOpen}
+  onClose={() => setIncidentOpen(false)}
+  orgId={orgId!}
+  locationId={locationId!}
+  defaultDate={selectedDateISO}
+  defaultInitials={managerTeamMember?.initials ?? ""}
+  onSaved={refreshAll}
+/>
 
           <button
             type="button"
