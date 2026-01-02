@@ -47,11 +47,11 @@ type StaffReviewRow = {
   staff_name: string;
   staff_initials: string | null;
   location_name: string | null;
-  reviewer_name: string | null;
-  reviewer_email: string | null;
+  reviewer: string | null;
   rating: number;
   notes: string | null;
 };
+
 
 
 type EducationRow = {
@@ -826,19 +826,17 @@ async function fetchStaffReviews(
 ): Promise<StaffReviewRow[]> {
   let query = supabase
     .from("staff_qc_reviews")
-    .select(
-      `
-      id,
-      reviewed_on,
-      created_at,
-          rating,
-      notes,
-      reviewer_name,
-      reviewer_email,
-      staff:staff_id ( name, initials ),
-      location:location_id ( name )
-    `
-    )
+.select(`
+  id,
+  reviewed_on,
+  created_at,
+  rating,
+  notes,
+  staff:staff_id ( name, initials ),
+  manager:manager_id ( name, initials ),
+  location:location_id ( name )
+`)
+
     .eq("org_id", orgId)
     .gte("reviewed_on", fromISO)
     .lte("reviewed_on", toISO)
@@ -850,19 +848,18 @@ async function fetchStaffReviews(
   const { data, error } = await query;
   if (error) throw error;
 
-  return (data ?? []).map((r: any) => ({
-    id: String(r.id),
-    reviewed_on: toISODate(r.reviewed_on),
-    created_at: r.created_at ?? null,
-    staff_name: r.staff?.name ?? "—",
-    staff_initials: r.staff?.initials ?? null,
-    location_name: r.location?.name ?? null,
-    reviewer_name: r.reviewer_name ?? null,
-    reviewer_email: r.reviewer_email ?? null,
-  
-    rating: Number(r.rating ?? 0),
-    notes: r.notes ?? null,
-  }));
+ return (data ?? []).map((r: any) => ({
+  id: r.id,
+  reviewed_on: toISODate(r.reviewed_on),
+  created_at: r.created_at ?? null,
+  staff_name: r.staff?.name ?? "—",
+  staff_initials: r.staff?.initials ?? null,
+  location_name: r.location?.name ?? "—",
+  reviewer: r.manager?.initials ?? r.manager?.name ?? "—",
+  rating: Number(r.rating),
+  notes: r.notes ?? null,
+}));
+
 }
 
 async function fetchEducation(orgId: string): Promise<EducationRow[]> {
@@ -1873,7 +1870,7 @@ export default function ReportsPage() {
                         {r.staff_initials ? ` (${r.staff_initials})` : ""}
                       </td>
                       <td className="py-2 pr-3">{r.location_name ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.reviewer_name || r.reviewer_email || "—"}</td>
+                      <td className="py-2 pr-3">{r.reviewer  }</td>
                       
                       <td className="py-2 pr-3">{r.rating}</td>
                       <td className="max-w-xs py-2 pr-3">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
