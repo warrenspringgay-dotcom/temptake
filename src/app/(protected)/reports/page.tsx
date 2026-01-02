@@ -42,17 +42,17 @@ type AllergenRow = {
 
 type StaffReviewRow = {
   id: string;
-  reviewed_on: string; // ISO yyyy-mm-dd
-  created_at: string | null; // ISO datetime
+  reviewed_on: string;
+  created_at: string | null;
   staff_name: string;
   staff_initials: string | null;
   location_name: string | null;
   reviewer_name: string | null;
   reviewer_email: string | null;
-  category: string;
   rating: number;
   notes: string | null;
 };
+
 
 type EducationRow = {
   id: string;
@@ -831,8 +831,7 @@ async function fetchStaffReviews(
       id,
       reviewed_on,
       created_at,
-      category,
-      rating,
+          rating,
       notes,
       reviewer_name,
       reviewer_email,
@@ -860,7 +859,7 @@ async function fetchStaffReviews(
     location_name: r.location?.name ?? null,
     reviewer_name: r.reviewer_name ?? null,
     reviewer_email: r.reviewer_email ?? null,
-    category: r.category ?? "—",
+  
     rating: Number(r.rating ?? 0),
     notes: r.notes ?? null,
   }));
@@ -1875,7 +1874,7 @@ export default function ReportsPage() {
                       </td>
                       <td className="py-2 pr-3">{r.location_name ?? "—"}</td>
                       <td className="py-2 pr-3">{r.reviewer_name || r.reviewer_email || "—"}</td>
-                      <td className="py-2 pr-3">{r.category}</td>
+                      
                       <td className="py-2 pr-3">{r.rating}</td>
                       <td className="max-w-xs py-2 pr-3">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
                     </tr>
