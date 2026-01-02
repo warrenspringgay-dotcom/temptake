@@ -825,7 +825,7 @@ async function fetchStaffReviews(
   locationId: string | null
 ): Promise<StaffReviewRow[]> {
   let query = supabase
-    .from("staff_reviews")
+    .from("staff_qc_reviews")
     .select(
       `
       id,
