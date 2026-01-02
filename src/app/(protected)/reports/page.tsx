@@ -42,7 +42,7 @@ type AllergenRow = {
 
 type StaffReviewRow = {
   id: string;
-  review_date: string; // ISO yyyy-mm-dd
+  reviewed_on: string; // ISO yyyy-mm-dd
   created_at: string | null; // ISO datetime
   staff_name: string;
   staff_initials: string | null;
@@ -829,7 +829,7 @@ async function fetchStaffReviews(
     .select(
       `
       id,
-      review_date,
+      reviewed_on,
       created_at,
       category,
       rating,
@@ -841,9 +841,9 @@ async function fetchStaffReviews(
     `
     )
     .eq("org_id", orgId)
-    .gte("review_date", fromISO)
-    .lte("review_date", toISO)
-    .order("review_date", { ascending: false })
+    .gte("reviewed_on", fromISO)
+    .lte("reviewed_on", toISO)
+    .order("reviewed_on", { ascending: false })
     .order("created_at", { ascending: false });
 
   if (locationId) query = query.eq("location_id", locationId);
@@ -853,7 +853,7 @@ async function fetchStaffReviews(
 
   return (data ?? []).map((r: any) => ({
     id: String(r.id),
-    review_date: toISODate(r.review_date),
+    reviewed_on: toISODate(r.reviewed_on),
     created_at: r.created_at ?? null,
     staff_name: r.staff?.name ?? "—",
     staff_initials: r.staff?.initials ?? null,
@@ -1867,7 +1867,7 @@ export default function ReportsPage() {
                 ) : (
                   staffReviews.map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">{formatISOToUK(r.review_date)}</td>
+                      <td className="py-2 pr-3">{formatISOToUK(r.reviewed_on)}</td>
                       <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
                       <td className="py-2 pr-3">
                         {r.staff_name}
