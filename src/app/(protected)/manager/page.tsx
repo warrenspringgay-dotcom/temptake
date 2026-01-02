@@ -11,6 +11,16 @@ import IncidentModal from "@/components/IncidentModal";
 type LocationOption = { id: string; name: string };
 
 type TempSummary = { today: number; fails7d: number };
+type UnifiedIncidentRow = {
+  id: string;
+  happened_on: string | null;
+  created_at: string | null;
+  type: string | null;
+  created_by: string | null;
+  details: string | null;
+  corrective_action: string | null;
+  source: "incident" | "temp_fail";
+};
 
 type TodayTempRow = {
   id: string;
@@ -155,6 +165,99 @@ function formatPrettyDate(d: Date) {
   const year = d.getFullYear();
   return `${wd} ${day} ${month} ${year}`;
 }
+
+function safeDate(val: any): Date | null {
+  if (!val) return null;
+  const d = new Date(val);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function toISODate(val: any): string {
+  const d = safeDate(val) ?? new Date();
+  return d.toISOString().slice(0, 10);
+}
+
+async function fetchTempFailuresUnifiedForDay(
+  orgId: string,
+  locationId: string,
+  dayISO: string
+): Promise<UnifiedIncidentRow[]> {
+  const fromStart = new Date(`${dayISO}T00:00:00.000Z`).toISOString();
+  const toEnd = new Date(`${dayISO}T23:59:59.999Z`).toISOString();
+
+  const { data: failLogs, error: failErr } = await supabase
+    .from("food_temp_logs")
+    .select("id, at, area, note, temp_c, target_key, status, staff_initials, location_id")
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .eq("status", "fail")
+    .gte("at", fromStart)
+    .lte("at", toEnd)
+    .order("at", { ascending: false })
+    .limit(2000);
+
+  if (failErr) throw failErr;
+
+  const logs = (failLogs ?? []) as any[];
+  if (!logs.length) return [];
+
+  const ids = logs.map((r) => String(r.id));
+
+  const { data: caRows, error: caErr } = await supabase
+    .from("food_temp_corrective_actions")
+    .select("temp_log_id, action, recheck_temp_c, recheck_at, recheck_status, recorded_by, created_at, location_id")
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .in("temp_log_id", ids)
+    .limit(5000);
+
+  if (caErr) throw caErr;
+
+  const byLog = new Map<string, any>();
+  for (const row of (caRows ?? []) as any[]) {
+    const key = String(row.temp_log_id);
+    const existing = byLog.get(key);
+    if (!existing) byLog.set(key, row);
+    else {
+      const a = safeDate(existing.created_at)?.getTime() ?? 0;
+      const b = safeDate(row.created_at)?.getTime() ?? 0;
+      if (b >= a) byLog.set(key, row);
+    }
+  }
+
+  return logs.map((l) => {
+    const ca = byLog.get(String(l.id)) ?? null;
+
+    const atISO = l.at ? String(l.at) : null;
+    const happened_on = toISODate(atISO);
+
+    const tempVal = l.temp_c != null ? `${Number(l.temp_c)}°C` : "—";
+    const target = l.target_key ? String(l.target_key) : "—";
+    const details = `${l.area ?? "—"} • ${l.note ?? "—"} • ${tempVal} (target ${target})`;
+
+    let corrective = ca?.action ? String(ca.action) : null;
+
+    if (ca?.recheck_temp_c != null) {
+      const reT = `${Number(ca.recheck_temp_c)}°C`;
+      const reAt = ca.recheck_at ? new Date(String(ca.recheck_at)).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "—";
+      const reStatus = ca.recheck_status ? String(ca.recheck_status) : "—";
+      const suffix = `Re-check: ${reT} (${reStatus}) at ${reAt}`;
+      corrective = corrective ? `${corrective} • ${suffix}` : suffix;
+    }
+
+    return {
+      id: `temp_fail_${String(l.id)}`,
+      happened_on,
+      created_at: atISO,
+      type: "Temp failure",
+      created_by: (ca?.recorded_by ?? l.staff_initials ?? null) ? String(ca?.recorded_by ?? l.staff_initials) : null,
+      details,
+      corrective_action: corrective,
+      source: "temp_fail",
+    };
+  });
+}
+
 
 function formatTimeHM(d: Date | null | undefined): string | null {
   if (!d) return null;
@@ -414,6 +517,53 @@ const [incidentOpen, setIncidentOpen] = useState(false);
       setTeamOptions([]);
     }
   }
+
+async function fetchStaffQcReviewsAsStaffReviews(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<StaffQcReviewRow[]> {
+
+  let q = supabase
+    .from("staff_qc_reviews")
+    .select(`
+      id,
+      reviewed_on,
+      created_at,
+      score,
+      notes,
+      location:location_id ( name ),
+      staff:team_members!staff_qc_reviews_staff_fkey ( name, initials ),
+      manager:team_members!staff_qc_reviews_manager_fkey ( name, email, initials )
+    `)
+    .eq("org_id", orgId)
+    .gte("reviewed_on", fromISO)
+    .lte("reviewed_on", toISO)
+    .order("reviewed_on", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(3000);
+
+  if (locationId) q = q.eq("location_id", locationId);
+
+  const { data, error } = await q;
+  if (error) throw error;
+
+  return (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    review_date: toISODate(r.reviewed_on),
+    created_at: r.created_at ?? null,
+    staff_name: r.staff?.name ?? "—",
+    staff_initials: r.staff?.initials ?? null,
+    location_name: r.location?.name ?? null,
+    reviewer_name: r.manager?.name ?? (r.manager?.initials ?? null),
+    reviewer_email: r.manager?.email ?? null,
+    category: "QC",
+    rating: Number(r.score ?? 0),
+    notes: r.notes ?? null,
+  }));
+}
+
 
   async function loadLoggedInManager() {
     if (!orgId) return;
@@ -861,26 +1011,35 @@ const [incidentOpen, setIncidentOpen] = useState(false);
         })
       );
 
-      const incDay = ((incidentsDayRes.data as any[]) ?? []).map((r: any) => ({
-        id: String(r.id),
-        happened_on: String(r.happened_on),
-        type: r.type ? String(r.type) : null,
-        details: r.details ? String(r.details) : null,
-        corrective_action: r.corrective_action
-          ? String(r.corrective_action)
-          : null,
-        preventive_action: r.preventive_action
-          ? String(r.preventive_action)
-          : null,
-        created_by: r.created_by ? String(r.created_by) : null,
-        created_at: r.created_at ? String(r.created_at) : null,
-      })) as CleaningIncident[];
+  const cleaningIncidents: UnifiedIncidentRow[] =
+  ((incidentsDayRes.data as any[]) ?? []).map((r: any) => ({
+    id: String(r.id),
+    happened_on: r.happened_on ? String(r.happened_on) : null,
+    created_at: r.created_at ? String(r.created_at) : null,
+    type: r.type ? String(r.type) : "Incident",
+    created_by: r.created_by ? String(r.created_by) : null,
+    details: r.details ? String(r.details) : null,
+    corrective_action: r.corrective_action ? String(r.corrective_action) : null,
+    source: "incident" as const,
+  }));
 
-      setIncidentsToday(incDay);
-      setIncidentSummary({
-        todayCount: incDay.length,
-        last7Count: incidents7dRes.count ?? 0,
-      });
+const tempFails = await fetchTempFailuresUnifiedForDay(orgId, locationId, selectedDateISO);
+
+const unified = [...cleaningIncidents, ...tempFails].sort((a, b) => {
+  const aT = safeDate(a.created_at)?.getTime() ?? safeDate(a.happened_on)?.getTime() ?? 0;
+  const bT = safeDate(b.created_at)?.getTime() ?? safeDate(b.happened_on)?.getTime() ?? 0;
+  return bT - aT;
+});
+
+// If you want to keep your existing state name, store in incidentsToday
+setIncidentsToday(unified as any);
+
+// KPI counts
+setIncidentSummary({
+  todayCount: unified.length,
+  last7Count: incidents7dRes.count ?? 0, // still counts cleaning_incidents only unless you change it
+});
+
 
       // Sign-offs (selected day)
       const soRows = ((signoffsDayRes.data as any[]) ?? []).map((r: any) => ({
