@@ -1664,7 +1664,7 @@ export default function ReportsPage() {
         {/* Incidents (now includes temp failures too) */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
-            Incidents & corrective actions {incidents ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+            Failures & corrective actions {incidents ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
 
           <div className="overflow-x-auto">
