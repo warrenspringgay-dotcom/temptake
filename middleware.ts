@@ -3,34 +3,27 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
 const PUBLIC_PATHS = new Set<string>([
-   "/", // home
+  "/",
   "/login",
   "/signup",
-  "/pricing",
-  "/reset-password",
-  "/help",
-  "/guides",
-  "/guides/",
-  "/client-launch",
-  "/launch",
-  "/demo-wall",
-
-  "/app", // demo dashboard (public)
+  "/auth/callback",
 ]);
 
-export async function middleware(req: NextRequest) {
-  const { pathname, search } = req.nextUrl;
-
-  if (
-    pathname.startsWith("/guides/")||
+function isStaticAsset(pathname: string) {
+  return (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/assets") ||
     pathname.match(/\.(ico|png|jpg|jpeg|gif|webp|svg|css|js|txt|map|woff2?)$/)
-  ) {
-    return NextResponse.next();
-  }
+  );
+}
 
+export async function middleware(req: NextRequest) {
+  const { pathname, search } = req.nextUrl;
+
+  if (isStaticAsset(pathname)) return NextResponse.next();
+
+  // Create response first so Supabase can write refreshed cookies onto it
   const res = NextResponse.next();
 
   const supabase = createServerClient(
@@ -38,19 +31,19 @@ export async function middleware(req: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return req.cookies.get(name)?.value;
+        getAll() {
+          return req.cookies.getAll();
         },
-        set(name: string, value: string, options: any) {
-          res.cookies.set({ name, value, ...options });
-        },
-        remove(name: string, options: any) {
-          res.cookies.set({ name, value: "", ...options, maxAge: 0 });
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            res.cookies.set(name, value, options);
+          });
         },
       },
     }
   );
 
+  // This both reads session AND refreshes cookies when needed
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -65,7 +58,7 @@ export async function middleware(req: NextRequest) {
   }
 
   if (session && (pathname === "/login" || pathname === "/signup")) {
-    const target = req.nextUrl.searchParams.get("redirect") || "/dashboard";
+    const target = req.nextUrl.searchParams.get("redirect") || "/";
     const url = req.nextUrl.clone();
     url.pathname = target;
     url.search = "";
