@@ -1,4 +1,4 @@
-// src/app/staff/page.tsx
+// src/app/(protected)/staff/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -80,7 +80,7 @@ export default function StaffDashboardPage() {
   >([]);
   const [showAllCorrectives, setShowAllCorrectives] = useState(false);
 
-  // ✅ Incident modal state (NEW)
+  // ✅ Incident modal state
   const [incidentOpen, setIncidentOpen] = useState(false);
   const [incidentSaving, setIncidentSaving] = useState(false);
   const [incidentDate, setIncidentDate] = useState<string>(isoDate(new Date()));
@@ -112,7 +112,7 @@ export default function StaffDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, locationId]);
 
-  // Auto-fill initials when opening incident modal (NEW)
+  // Auto-fill initials when opening incident modal
   useEffect(() => {
     if (!incidentOpen) return;
     if (incidentInitials.trim()) return;
@@ -129,9 +129,7 @@ export default function StaffDashboardPage() {
         data: { user },
         error: userErr,
       } = await supabase.auth.getUser();
-      if (userErr || !user) {
-        throw new Error("Not logged in.");
-      }
+      if (userErr || !user) throw new Error("Not logged in.");
 
       // 1) Find current team member record by user_id
       const { data: tm, error: tmErr } = await supabase
@@ -323,6 +321,7 @@ export default function StaffDashboardPage() {
     }
   }
 
+  // ✅ FIXED: async + no stray code after it
   async function submitIncident() {
     if (!orgId) return;
 
@@ -332,22 +331,22 @@ export default function StaffDashboardPage() {
     if (!incidentDetails.trim()) return alert("Details are required.");
 
     const effectiveLocationId = locationId ?? me?.location_id ?? null;
+    if (!effectiveLocationId) return alert("No location selected.");
 
     setIncidentSaving(true);
     try {
       const res = await logIncident({
-        happenedOn: incidentDate,
-        locationId: effectiveLocationId,
+        happened_on: incidentDate,
+        location_id: effectiveLocationId,
         type: incidentType.trim(),
         details: incidentDetails.trim(),
-        correctiveAction: incidentCorrective.trim() || undefined,
-        preventiveAction: incidentPreventive.trim() || undefined,
-        createdByInitials: initials,
+        immediate_action: incidentCorrective.trim() || null,
+        preventive_action: incidentPreventive.trim() || null,
+        created_by: initials,
       });
 
       if (!res.ok) throw new Error(res.message);
 
-      // reset + close
       setIncidentDetails("");
       setIncidentCorrective("");
       setIncidentPreventive("");
@@ -563,7 +562,6 @@ export default function StaffDashboardPage() {
       </section>
 
       <div className="mt-4 flex items-center justify-end gap-2">
-        {/* ✅ NEW: incident entry for staff */}
         <button
           type="button"
           onClick={() => {
@@ -596,7 +594,7 @@ export default function StaffDashboardPage() {
         </button>
       </div>
 
-      {/* ✅ Incident modal (NEW) */}
+      {/* ✅ Incident modal */}
       {incidentOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
@@ -636,7 +634,9 @@ export default function StaffDashboardPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Initials</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Initials
+                </label>
                 <input
                   value={incidentInitials}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
@@ -667,7 +667,9 @@ export default function StaffDashboardPage() {
               </div>
 
               <div className="sm:col-span-2">
-                <label className="mb-1 block text-xs text-slate-500">Details</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Details
+                </label>
                 <textarea
                   value={incidentDetails}
                   onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
@@ -727,8 +729,6 @@ export default function StaffDashboardPage() {
             </div>
           </div>
         </div>
-
-        
       )}
     </div>
   );

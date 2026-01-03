@@ -1,119 +1,78 @@
+// src/app/actions/incidents.ts
 "use server";
 
-import { revalidatePath } from "next/cache";
-import { getServerSupabase } from "@/lib/supabaseServer";
-import { requireUser } from "@/lib/requireUser";
-import { getActiveOrgIdServer } from "@/lib/orgServer";
-
-type Result = { ok: true } | { ok: false; message: string };
+import { getServerSupabaseAction } from "@/lib/supabaseServer";
 
 export type IncidentPayload = {
-  // org
-  org_id?: string | null;
-  orgId?: string | null;
-
-  // location
-  location_id?: string | null;
-  locationId?: string | null;
-
-  // date
-  happened_on?: string | null; // YYYY-MM-DD
-  happenedOn?: string | null;  // YYYY-MM-DD
-
-  // incident core
+  happened_on: string; // YYYY-MM-DD
+  location_id: string; // required (your table is NOT NULL)
   type?: string | null;
   details?: string | null;
-
-  // actions (DB columns)
   immediate_action?: string | null;
-  immediateAction?: string | null;
-
   preventive_action?: string | null;
-  preventiveAction?: string | null;
-
-  // legacy/client fields (map to DB columns)
-  corrective_action?: string | null;
-  correctiveAction?: string | null;
-
-  // initials / author (many aliases because humans)
-  created_by?: string | null;
-  createdBy?: string | null;
-  createdByInitials?: string | null;
+  created_by?: string | null; // initials
 };
 
-function clean(v: unknown): string | null {
-  if (v === undefined || v === null) return null;
-  const s = String(v).trim();
-  return s ? s : null;
-}
-
-/**
- * Inserts into public.incidents.
- */
-export async function createIncident(payload: IncidentPayload): Promise<Result> {
+export async function logIncident(payload: IncidentPayload): Promise<{
+  ok: boolean;
+  id?: string;
+  message?: string;
+}> {
   try {
-    await requireUser();
-    const supabase = await getServerSupabase();
+    const supabase = await getServerSupabaseAction();
 
-    const orgId =
-      clean(payload.org_id) ??
-      clean(payload.orgId) ??
-      (await getActiveOrgIdServer());
+    // If you're using profiles/org_id with RLS, this must pass RLS
+    const { data, error } = await supabase.from("incidents").insert(payload).select("id").single();
 
-    const locationId = clean(payload.location_id) ?? clean(payload.locationId);
-
-    const happenedOn =
-      clean(payload.happened_on) ??
-      clean(payload.happenedOn) ??
-      new Date().toISOString().slice(0, 10);
-
-    // Map any "corrective" field into immediate_action if immediate_action not provided.
-    const immediate =
-      clean(payload.immediate_action) ??
-      clean(payload.immediateAction) ??
-      clean(payload.corrective_action) ??
-      clean(payload.correctiveAction);
-
-    const preventive =
-      clean(payload.preventive_action) ?? clean(payload.preventiveAction);
-
-    const createdBy =
-      clean(payload.created_by) ??
-      clean(payload.createdBy) ??
-      clean(payload.createdByInitials);
-
-    if (!locationId) {
-      return { ok: false, message: "Location is required." };
+    if (error) {
+      return { ok: false, message: error.message };
     }
 
-    const insertRow = {
-      org_id: String(orgId),
-      location_id: String(locationId),
-      happened_on: happenedOn,
-      type: clean(payload.type),
-      details: clean(payload.details),
-      immediate_action: immediate,
-      preventive_action: preventive,
-      created_by: createdBy,
-    };
-
-    const { error } = await supabase.from("incidents").insert(insertRow);
-
-    if (error) return { ok: false, message: error.message };
-
-    revalidatePath("/manager");
-    revalidatePath("/reports");
-    revalidatePath("/staff");
-
-    return { ok: true };
+    return { ok: true, id: data?.id };
   } catch (e: any) {
     return { ok: false, message: e?.message ?? "Failed to log incident." };
   }
 }
 
-/**
- * Backwards-compatible alias.
- */
-export async function logIncident(payload: IncidentPayload): Promise<Result> {
-  return createIncident(payload);
+export async function listIncidents(args: {
+  location_id: string;
+  from?: string; // YYYY-MM-DD
+  to?: string; // YYYY-MM-DD
+  limit?: number;
+}): Promise<{
+  ok: boolean;
+  rows: Array<{
+    id: string;
+    happened_on: string;
+    type: string | null;
+    details: string | null;
+    immediate_action: string | null;
+    preventive_action: string | null;
+    created_by: string | null;
+    created_at: string;
+  }>;
+  message?: string;
+}> {
+  try {
+    const supabase = await getServerSupabaseAction();
+
+    let q = supabase
+      .from("incidents")
+      .select("id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at")
+      .eq("location_id", args.location_id)
+      .order("happened_on", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (args.from) q = q.gte("happened_on", args.from);
+    if (args.to) q = q.lte("happened_on", args.to);
+
+    q = q.limit(args.limit ?? 200);
+
+    const { data, error } = await q;
+    if (error) return { ok: false, rows: [], message: error.message };
+
+    return { ok: true, rows: (data ?? []) as any };
+  } catch (e: any) {
+    return { ok: false, rows: [], message: e?.message ?? "Failed to load incidents." };
+  }
 }
