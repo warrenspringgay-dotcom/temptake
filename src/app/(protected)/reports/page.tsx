@@ -1848,9 +1848,9 @@ export default function ReportsPage() {
                   <th className="py-2 pr-3">Staff</th>
                   <th className="py-2 pr-3">Location</th>
                   <th className="py-2 pr-3">Reviewer</th>
-                  <th className="py-2 pr-3">Category</th>
                   <th className="py-2 pr-3">Rating</th>
                   <th className="py-2 pr-3">Notes</th>
+                  
                 </tr>
               </thead>
               <tbody>
