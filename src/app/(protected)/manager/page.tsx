@@ -11,6 +11,16 @@ import IncidentModal from "@/components/IncidentModal";
 type LocationOption = { id: string; name: string };
 
 type TempSummary = { today: number; fails7d: number };
+type UnifiedIncidentRow = {
+  id: string;
+  happened_on: string | null;
+  created_at: string | null;
+  type: string | null;
+  created_by: string | null;
+  details: string | null;
+  corrective_action: string | null;
+  source: "incident" | "temp_fail";
+};
 
 type TodayTempRow = {
   id: string;
@@ -56,30 +66,22 @@ type CleaningCategoryProgressRow = {
   total: number;
 };
 
-type IncidentSummary = { todayCount: number; last7Count: number };
-
-/** REAL INCIDENTS (public.incidents) */
-type RealIncidentRow = {
+type CleaningIncident = {
   id: string;
-  happened_on: string; // yyyy-mm-dd
-  created_at: string | null; // ISO datetime
+  happened_on: string;
   type: string | null;
   details: string | null;
-  immediate_action: string | null;
+  corrective_action: string | null;
   preventive_action: string | null;
   created_by: string | null;
+  created_at: string | null;
 };
 
-/** TEMP FAILS (food_temp_logs + corrective actions) */
-type TempFailRow = {
-  id: string; // temp_fail_<uuid>
-  happened_on: string; // yyyy-mm-dd
-  created_at: string | null; // ISO datetime (at)
-  type: string;
-  created_by: string | null;
-  details: string | null;
-  corrective_action: string | null;
-};
+type IncidentSummary = { todayCount: number; last7Count: number };
+
+/* =========================
+   Day sign-offs (daily_signoffs)
+========================= */
 
 type SignoffRow = {
   id: string;
@@ -90,6 +92,10 @@ type SignoffRow = {
 };
 
 type SignoffSummary = { todayCount: number };
+
+/* =========================
+   Manager QC (staff_qc_reviews) using team_members
+========================= */
 
 type TeamMemberOption = {
   id: string;
@@ -110,6 +116,10 @@ type StaffQcReviewRow = {
   staff?: { initials: string | null; name: string | null } | null;
   manager?: { initials: string | null; name: string | null } | null;
 };
+
+/* =========================
+   Individual staff assessment modal
+========================= */
 
 type StaffAssessment = {
   staffId: string;
@@ -167,6 +177,88 @@ function toISODate(val: any): string {
   return d.toISOString().slice(0, 10);
 }
 
+async function fetchTempFailuresUnifiedForDay(
+  orgId: string,
+  locationId: string,
+  dayISO: string
+): Promise<UnifiedIncidentRow[]> {
+  const fromStart = new Date(`${dayISO}T00:00:00.000Z`).toISOString();
+  const toEnd = new Date(`${dayISO}T23:59:59.999Z`).toISOString();
+
+  const { data: failLogs, error: failErr } = await supabase
+    .from("food_temp_logs")
+    .select("id, at, area, note, temp_c, target_key, status, staff_initials, location_id")
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .eq("status", "fail")
+    .gte("at", fromStart)
+    .lte("at", toEnd)
+    .order("at", { ascending: false })
+    .limit(2000);
+
+  if (failErr) throw failErr;
+
+  const logs = (failLogs ?? []) as any[];
+  if (!logs.length) return [];
+
+  const ids = logs.map((r) => String(r.id));
+
+  const { data: caRows, error: caErr } = await supabase
+    .from("food_temp_corrective_actions")
+    .select("temp_log_id, action, recheck_temp_c, recheck_at, recheck_status, recorded_by, created_at, location_id")
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .in("temp_log_id", ids)
+    .limit(5000);
+
+  if (caErr) throw caErr;
+
+  const byLog = new Map<string, any>();
+  for (const row of (caRows ?? []) as any[]) {
+    const key = String(row.temp_log_id);
+    const existing = byLog.get(key);
+    if (!existing) byLog.set(key, row);
+    else {
+      const a = safeDate(existing.created_at)?.getTime() ?? 0;
+      const b = safeDate(row.created_at)?.getTime() ?? 0;
+      if (b >= a) byLog.set(key, row);
+    }
+  }
+
+  return logs.map((l) => {
+    const ca = byLog.get(String(l.id)) ?? null;
+
+    const atISO = l.at ? String(l.at) : null;
+    const happened_on = toISODate(atISO);
+
+    const tempVal = l.temp_c != null ? `${Number(l.temp_c)}°C` : "—";
+    const target = l.target_key ? String(l.target_key) : "—";
+    const details = `${l.area ?? "—"} • ${l.note ?? "—"} • ${tempVal} (target ${target})`;
+
+    let corrective = ca?.action ? String(ca.action) : null;
+
+    if (ca?.recheck_temp_c != null) {
+      const reT = `${Number(ca.recheck_temp_c)}°C`;
+      const reAt = ca.recheck_at ? new Date(String(ca.recheck_at)).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "—";
+      const reStatus = ca.recheck_status ? String(ca.recheck_status) : "—";
+      const suffix = `Re-check: ${reT} (${reStatus}) at ${reAt}`;
+      corrective = corrective ? `${corrective} • ${suffix}` : suffix;
+    }
+
+    return {
+      id: `temp_fail_${String(l.id)}`,
+      happened_on,
+      created_at: atISO,
+      type: "Temp failure",
+      created_by: (ca?.recorded_by ?? l.staff_initials ?? null) ? String(ca?.recorded_by ?? l.staff_initials) : null,
+      details,
+      corrective_action: corrective,
+      source: "temp_fail",
+    };
+  });
+}
+
+
 function formatTimeHM(d: Date | null | undefined): string | null {
   if (!d) return null;
   const hours = String(d.getHours()).padStart(2, "0");
@@ -178,7 +270,6 @@ const cls = (...p: Array<string | false | null | undefined>) =>
   p.filter(Boolean).join(" ");
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
-
 const addDaysISO = (ymd: string, delta: number) => {
   const d = new Date(ymd);
   d.setDate(d.getDate() + delta);
@@ -296,98 +387,6 @@ function TableFooterToggle({
   );
 }
 
-/** Fetch temp failures for a single day (selected day) */
-async function fetchTempFailuresForDay(
-  orgId: string,
-  locationId: string,
-  dayISO: string
-): Promise<TempFailRow[]> {
-  const fromStart = new Date(`${dayISO}T00:00:00.000Z`).toISOString();
-  const toEnd = new Date(`${dayISO}T23:59:59.999Z`).toISOString();
-
-  const { data: failLogs, error: failErr } = await supabase
-    .from("food_temp_logs")
-    .select(
-      "id, at, area, note, temp_c, target_key, status, staff_initials, location_id"
-    )
-    .eq("org_id", orgId)
-    .eq("location_id", locationId)
-    .eq("status", "fail")
-    .gte("at", fromStart)
-    .lte("at", toEnd)
-    .order("at", { ascending: false })
-    .limit(2000);
-
-  if (failErr) throw failErr;
-
-  const logs = (failLogs ?? []) as any[];
-  if (!logs.length) return [];
-
-  const ids = logs.map((r) => String(r.id));
-
-  const { data: caRows, error: caErr } = await supabase
-    .from("food_temp_corrective_actions")
-    .select(
-      "temp_log_id, action, recheck_temp_c, recheck_at, recheck_status, recorded_by, created_at, location_id"
-    )
-    .eq("org_id", orgId)
-    .eq("location_id", locationId)
-    .in("temp_log_id", ids)
-    .limit(5000);
-
-  if (caErr) throw caErr;
-
-  const byLog = new Map<string, any>();
-  for (const row of (caRows ?? []) as any[]) {
-    const key = String(row.temp_log_id);
-    const existing = byLog.get(key);
-    if (!existing) byLog.set(key, row);
-    else {
-      const a = safeDate(existing.created_at)?.getTime() ?? 0;
-      const b = safeDate(row.created_at)?.getTime() ?? 0;
-      if (b >= a) byLog.set(key, row);
-    }
-  }
-
-  return logs.map((l) => {
-    const ca = byLog.get(String(l.id)) ?? null;
-
-    const atISO = l.at ? String(l.at) : null;
-    const happened_on = toISODate(atISO);
-
-    const tempVal = l.temp_c != null ? `${Number(l.temp_c)}°C` : "—";
-    const target = l.target_key ? String(l.target_key) : "—";
-    const details = `${l.area ?? "—"} • ${l.note ?? "—"} • ${tempVal} (target ${target})`;
-
-    let corrective = ca?.action ? String(ca.action) : null;
-
-    if (ca?.recheck_temp_c != null) {
-      const reT = `${Number(ca.recheck_temp_c)}°C`;
-      const reAt = ca?.recheck_at
-        ? new Date(String(ca.recheck_at)).toLocaleTimeString("en-GB", {
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        : "—";
-      const reStatus = ca?.recheck_status ? String(ca.recheck_status) : "—";
-      const suffix = `Re-check: ${reT} (${reStatus}) at ${reAt}`;
-      corrective = corrective ? `${corrective} • ${suffix}` : suffix;
-    }
-
-    return {
-      id: `temp_fail_${String(l.id)}`,
-      happened_on,
-      created_at: atISO,
-      type: "Temp failure",
-      created_by: (ca?.recorded_by ?? l.staff_initials ?? null)
-        ? String(ca?.recorded_by ?? l.staff_initials)
-        : null,
-      details,
-      corrective_action: corrective,
-    };
-  });
-}
-
 export default function ManagerDashboardPage() {
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
@@ -418,23 +417,18 @@ export default function ManagerDashboardPage() {
     []
   );
 
-  /** REAL incidents (historical) */
   const [incidentSummary, setIncidentSummary] = useState<IncidentSummary>({
     todayCount: 0,
     last7Count: 0,
   });
-  const [incidentsHistory, setIncidentsHistory] = useState<RealIncidentRow[]>([]);
-  const [showAllIncidents, setShowAllIncidents] = useState(false);
-
-  /** Temp-fail “incidents” (selected day only, near temp logs) */
-  const [tempFailsDay, setTempFailsDay] = useState<TempFailRow[]>([]);
-  const [showAllTempFails, setShowAllTempFails] = useState(false);
+  const [incidentsToday, setIncidentsToday] = useState<CleaningIncident[]>([]);
 
   const [trainingDueSoon, setTrainingDueSoon] = useState(0);
   const [trainingExpired, setTrainingExpired] = useState(0);
 
   const [showAllTemps, setShowAllTemps] = useState(false);
   const [showAllCleaning, setShowAllCleaning] = useState(false);
+  const [showAllIncidents, setShowAllIncidents] = useState(false);
 
   /* ===== Day sign-offs ===== */
   const [signoffsToday, setSignoffsToday] = useState<SignoffRow[]>([]);
@@ -478,7 +472,8 @@ export default function ManagerDashboardPage() {
   const [staffAssessDays, setStaffAssessDays] = useState<number>(7);
   const [staffAssess, setStaffAssess] = useState<StaffAssessment | null>(null);
 
-  const [incidentOpen, setIncidentOpen] = useState(false);
+const [incidentOpen, setIncidentOpen] = useState(false);
+
 
   // Auto-load staff assessment when staff/range/date changes (no UI changes)
   const lastStaffAssessKeyRef = useRef<string>("");
@@ -494,14 +489,7 @@ export default function ManagerDashboardPage() {
 
     void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    staffAssessOpen,
-    staffAssessStaffId,
-    staffAssessDays,
-    selectedDateISO,
-    orgId,
-    locationId,
-  ]);
+  }, [staffAssessOpen, staffAssessStaffId, staffAssessDays, selectedDateISO, orgId, locationId]);
 
   function tmLabel(t: { initials: string | null; name: string | null }) {
     const ini = (t.initials ?? "").toString().trim().toUpperCase();
@@ -530,6 +518,52 @@ export default function ManagerDashboardPage() {
     }
   }
 
+async function fetchStaffQcReviewsAsStaffReviews(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<StaffReviewRow[]> {
+  let q = supabase
+    .from("staff_qc_reviews")
+    .select(`
+      id,
+      reviewed_on,
+      created_at,
+      score,
+      notes,
+      location:location_id ( name ),
+      staff:team_members!staff_qc_reviews_staff_fkey ( name, initials ),
+      manager:team_members!staff_qc_reviews_manager_fkey ( name, email, initials )
+    `)
+    .eq("org_id", orgId)
+    .gte("reviewed_on", fromISO)
+    .lte("reviewed_on", toISO)
+    .order("reviewed_on", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(3000);
+
+  if (locationId) q = q.eq("location_id", locationId);
+
+  const { data, error } = await q;
+  if (error) throw error;
+
+  return (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    review_date: toISODate(r.reviewed_on),
+    created_at: r.created_at ?? null,
+    staff_name: r.staff?.name ?? "—",
+    staff_initials: r.staff?.initials ?? null,
+    location_name: r.location?.name ?? null,
+    reviewer_name: r.manager?.name ?? (r.manager?.initials ?? null),
+    reviewer_email: r.manager?.email ?? null,
+    category: "QC",
+    rating: Number(r.score ?? 0),
+    notes: r.notes ?? null,
+  }));
+}
+
+
   async function loadLoggedInManager() {
     if (!orgId) return;
     try {
@@ -552,6 +586,7 @@ export default function ManagerDashboardPage() {
 
       if (error) throw error;
 
+      // safest cast (maybeSingle can return null)
       setManagerTeamMember((data as TeamMemberOption) || null);
     } catch (e) {
       console.error(e);
@@ -725,7 +760,7 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
-  // ✅ Load team + logged in member as soon as we have orgId
+  // ✅ Load team + logged in member as soon as we have orgId (no UI changes)
   useEffect(() => {
     if (!orgId) return;
     void loadTeamOptions();
@@ -762,12 +797,6 @@ export default function ManagerDashboardPage() {
       const sevenDaysAgo = new Date(d0);
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-      // incidents history window (90 days, matching reports “instant audit” style)
-      const ninetyDaysAgo = new Date(d0);
-      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 89);
-      const from90 = isoDate(ninetyDaysAgo);
-      const to90 = selectedDateISO;
-
       const trainingBase = new Date(nowISO);
       trainingBase.setHours(0, 0, 0, 0);
       const thirtyDaysAhead = new Date(trainingBase);
@@ -781,12 +810,11 @@ export default function ManagerDashboardPage() {
         cleaningTasksRes,
         cleaningRunsDayRes,
 
-        // REAL incidents (public.incidents)
-        incidentsTodayCountRes,
-        incidents7dCountRes,
-        incidentsHistoryRes,
+        incidentsDayRes,
+        incidents7dRes,
 
         trainingsRes,
+
         signoffsDayRes,
       ] = await Promise.all([
         supabase
@@ -832,36 +860,24 @@ export default function ManagerDashboardPage() {
           .order("done_at", { ascending: false })
           .limit(5000),
 
-        // REAL incidents today count
         supabase
-          .from("incidents")
-          .select("id", { count: "exact", head: true })
+          .from("cleaning_incidents")
+          .select(
+            "id,happened_on,type,details,corrective_action,preventive_action,created_by,created_at"
+          )
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .eq("happened_on", selectedDateISO),
+          .eq("happened_on", selectedDateISO)
+          .order("created_at", { ascending: false })
+          .limit(500),
 
-        // REAL incidents last 7 days count
         supabase
-          .from("incidents")
+          .from("cleaning_incidents")
           .select("id", { count: "exact", head: true })
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .gte("happened_on", isoDate(sevenDaysAgo))
           .lte("happened_on", selectedDateISO),
-
-        // REAL incidents history (last 90 days)
-        supabase
-          .from("incidents")
-          .select(
-            "id, happened_on, type, details, immediate_action, preventive_action, created_by, created_at"
-          )
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .gte("happened_on", from90)
-          .lte("happened_on", to90)
-          .order("happened_on", { ascending: false })
-          .order("created_at", { ascending: false })
-          .limit(3000),
 
         supabase
           .from("trainings")
@@ -885,9 +901,8 @@ export default function ManagerDashboardPage() {
         tempsListRes.error ||
         cleaningTasksRes.error ||
         cleaningRunsDayRes.error ||
-        incidentsTodayCountRes.error ||
-        incidents7dCountRes.error ||
-        incidentsHistoryRes.error ||
+        incidentsDayRes.error ||
+        incidents7dRes.error ||
         trainingsRes.error ||
         signoffsDayRes.error;
 
@@ -918,7 +933,6 @@ export default function ManagerDashboardPage() {
         })
       );
 
-      // training
       const tRows: any[] = (trainingsRes.data as any[]) ?? [];
       let expired = 0;
       let dueSoon = 0;
@@ -934,7 +948,6 @@ export default function ManagerDashboardPage() {
       setTrainingExpired(expired);
       setTrainingDueSoon(dueSoon);
 
-      // cleaning
       const tasksRaw: any[] = (cleaningTasksRes.data as any[]) ?? [];
       const tasks: CleaningTask[] = tasksRaw.map((t) => ({
         id: String(t.id),
@@ -997,31 +1010,35 @@ export default function ManagerDashboardPage() {
         })
       );
 
-      // REAL incidents history
-      const incRows = ((incidentsHistoryRes.data as any[]) ?? []).map((r: any) => ({
-        id: String(r.id),
-        happened_on: String(r.happened_on),
-        created_at: r.created_at ? String(r.created_at) : null,
-        type: r.type ? String(r.type) : null,
-        details: r.details ? String(r.details) : null,
-        immediate_action: r.immediate_action ? String(r.immediate_action) : null,
-        preventive_action: r.preventive_action ? String(r.preventive_action) : null,
-        created_by: r.created_by ? String(r.created_by) : null,
-      })) as RealIncidentRow[];
+  const cleaningIncidents: UnifiedIncidentRow[] =
+  ((incidentsDayRes.data as any[]) ?? []).map((r: any) => ({
+    id: String(r.id),
+    happened_on: r.happened_on ? String(r.happened_on) : null,
+    created_at: r.created_at ? String(r.created_at) : null,
+    type: r.type ? String(r.type) : "Incident",
+    created_by: r.created_by ? String(r.created_by) : null,
+    details: r.details ? String(r.details) : null,
+    corrective_action: r.corrective_action ? String(r.corrective_action) : null,
+    source: "incident" as const,
+  }));
 
-      setIncidentsHistory(incRows);
-      setShowAllIncidents(false);
+const tempFails = await fetchTempFailuresUnifiedForDay(orgId, locationId, selectedDateISO);
 
-      // KPI (REAL incidents only)
-      setIncidentSummary({
-        todayCount: incidentsTodayCountRes.count ?? 0,
-        last7Count: incidents7dCountRes.count ?? 0,
-      });
+const unified = [...cleaningIncidents, ...tempFails].sort((a, b) => {
+  const aT = safeDate(a.created_at)?.getTime() ?? safeDate(a.happened_on)?.getTime() ?? 0;
+  const bT = safeDate(b.created_at)?.getTime() ?? safeDate(b.happened_on)?.getTime() ?? 0;
+  return bT - aT;
+});
 
-      // temp fails (selected day only, near temp log table)
-      const fails = await fetchTempFailuresForDay(orgId, locationId, selectedDateISO);
-      setTempFailsDay(fails);
-      setShowAllTempFails(false);
+// If you want to keep your existing state name, store in incidentsToday
+setIncidentsToday(unified as any);
+
+// KPI counts
+setIncidentSummary({
+  todayCount: unified.length,
+  last7Count: incidents7dRes.count ?? 0, // still counts cleaning_incidents only unless you change it
+});
+
 
       // Sign-offs (selected day)
       const soRows = ((signoffsDayRes.data as any[]) ?? []).map((r: any) => ({
@@ -1038,6 +1055,7 @@ export default function ManagerDashboardPage() {
 
       setShowAllTemps(false);
       setShowAllCleaning(false);
+      setShowAllIncidents(false);
 
       await loadQcSummary();
     } catch (e: any) {
@@ -1057,21 +1075,32 @@ export default function ManagerDashboardPage() {
   const trainingTone: "neutral" | "ok" | "warn" | "danger" =
     trainingExpired > 0 ? "danger" : trainingDueSoon > 0 ? "warn" : "ok";
 
-  const cleaningDoneTotal = cleaningCategoryProgress.reduce((a, r) => a + r.done, 0);
-  const cleaningTotal = cleaningCategoryProgress.reduce((a, r) => a + r.total, 0);
+  const cleaningDoneTotal = cleaningCategoryProgress.reduce(
+    (a, r) => a + r.done,
+    0
+  );
+  const cleaningTotal = cleaningCategoryProgress.reduce(
+    (a, r) => a + r.total,
+    0
+  );
 
   const tempsToRender = showAllTemps ? todayTemps : todayTemps.slice(0, 10);
-  const cleaningToRender = showAllCleaning ? cleaningActivity : cleaningActivity.slice(0, 10);
-
-  const incidentsToRender = showAllIncidents ? incidentsHistory : incidentsHistory.slice(0, 10);
-  const tempFailsToRender = showAllTempFails ? tempFailsDay : tempFailsDay.slice(0, 10);
+  const cleaningToRender = showAllCleaning
+    ? cleaningActivity
+    : cleaningActivity.slice(0, 10);
+  const incidentsToRender = showAllIncidents
+    ? incidentsToday
+    : incidentsToday.slice(0, 10);
 
   const qcToRender = showAllQc ? qcReviews : qcReviews.slice(0, 10);
 
-  const signoffsToRender = showAllSignoffs ? signoffsToday : signoffsToday.slice(0, 10);
+  const signoffsToRender = showAllSignoffs
+    ? signoffsToday
+    : signoffsToday.slice(0, 10);
 
   // ✅ Sign-off eligibility + status
-  const cleaningAllDone = cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
+  const cleaningAllDone =
+    cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
   const alreadySignedOff = signoffsToday.length > 0;
 
   async function createDaySignoff() {
@@ -1109,15 +1138,24 @@ export default function ManagerDashboardPage() {
       const row: SignoffRow = {
         id: String((data as any).id),
         signoff_on: String((data as any).signoff_on),
-        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+        signed_by: (data as any).signed_by
+          ? String((data as any).signed_by)
+          : null,
         notes: (data as any).notes ? String((data as any).notes) : null,
-        created_at: (data as any).created_at ? String((data as any).created_at) : null,
+        created_at: (data as any).created_at
+          ? String((data as any).created_at)
+          : null,
       };
 
+      // Update UI immediately
       setSignoffsToday((prev) => [row, ...prev]);
-      setSignoffSummary((prev) => ({ ...prev, todayCount: prev.todayCount + 1 }));
+      setSignoffSummary((prev) => ({
+        ...prev,
+        todayCount: prev.todayCount + 1,
+      }));
       setShowAllSignoffs(false);
 
+      // Reset + close
       setSignoffInitials("");
       setSignoffNotes("");
       setSignoffOpen(false);
@@ -1129,7 +1167,7 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  // ✅ Load staff assessment (still uses cleaning_incidents previously, but your “real” incidents table is separate now)
+  // ✅ Load staff assessment
   async function loadStaffAssessment(staffId: string, days: number) {
     if (!orgId || !locationId) return;
 
@@ -1154,67 +1192,72 @@ export default function ManagerDashboardPage() {
       const startIsoDate = isoDate(start);
       const endIsoDate = isoDate(end);
 
+      // QC last 30 days window
       const qcStart = new Date(selectedDateISO);
       qcStart.setHours(0, 0, 0, 0);
       qcStart.setDate(qcStart.getDate() - 29);
       const qcStartIso = isoDate(qcStart);
 
-      const [cleaningRunsRes, tempLogsRes, tempFailsRes, realIncidentsRes, qcRes] =
-        await Promise.all([
-          supabase
-            .from("cleaning_task_runs")
-            .select("id", { count: "exact", head: true })
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .eq("done_by", initials)
-            .gte("run_on", startIsoDate)
-            .lte("run_on", endIsoDate),
+      const [
+        cleaningRunsRes,
+        tempLogsRes,
+        tempFailsRes,
+        incidentsRes,
+        qcRes,
+      ] = await Promise.all([
+        supabase
+          .from("cleaning_task_runs")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("done_by", initials)
+          .gte("run_on", startIsoDate)
+          .lte("run_on", endIsoDate),
 
-          supabase
-            .from("food_temp_logs")
-            .select("id", { count: "exact", head: true })
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .eq("staff_initials", initials)
-            .gte("at", start.toISOString())
-            .lte("at", end.toISOString()),
+        supabase
+          .from("food_temp_logs")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("staff_initials", initials)
+          .gte("at", start.toISOString())
+          .lte("at", end.toISOString()),
 
-          supabase
-            .from("food_temp_logs")
-            .select("id", { count: "exact", head: true })
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .eq("staff_initials", initials)
-            .eq("status", "fail")
-            .gte("at", start.toISOString())
-            .lte("at", end.toISOString()),
+        supabase
+          .from("food_temp_logs")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("staff_initials", initials)
+          .eq("status", "fail")
+          .gte("at", start.toISOString())
+          .lte("at", end.toISOString()),
 
-          // count REAL incidents created by this user initials in public.incidents
-          supabase
-            .from("incidents")
-            .select("id", { count: "exact", head: true })
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .eq("created_by", initials)
-            .gte("happened_on", startIsoDate)
-            .lte("happened_on", endIsoDate),
+        supabase
+          .from("cleaning_incidents")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("created_by", initials)
+          .gte("happened_on", startIsoDate)
+          .lte("happened_on", endIsoDate),
 
-          supabase
-            .from("staff_qc_reviews")
-            .select("score, reviewed_on")
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .eq("staff_id", staffId)
-            .gte("reviewed_on", qcStartIso)
-            .lte("reviewed_on", selectedDateISO)
-            .limit(500),
-        ]);
+        supabase
+          .from("staff_qc_reviews")
+          .select("score, reviewed_on")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("staff_id", staffId)
+          .gte("reviewed_on", qcStartIso)
+          .lte("reviewed_on", selectedDateISO)
+          .limit(500),
+      ]);
 
       const firstErr =
         cleaningRunsRes.error ||
         tempLogsRes.error ||
         tempFailsRes.error ||
-        realIncidentsRes.error ||
+        incidentsRes.error ||
         qcRes.error;
 
       if (firstErr) throw firstErr;
@@ -1224,7 +1267,9 @@ export default function ManagerDashboardPage() {
       const qcAvg30d =
         qcCount30d > 0
           ? Math.round(
-              (qcRows.reduce((a, r) => a + Number(r.score || 0), 0) / qcCount30d) * 10
+              (qcRows.reduce((a, r) => a + Number(r.score || 0), 0) /
+                qcCount30d) *
+                10
             ) / 10
           : null;
 
@@ -1235,7 +1280,7 @@ export default function ManagerDashboardPage() {
         cleaningRuns: cleaningRunsRes.count ?? 0,
         tempLogs: tempLogsRes.count ?? 0,
         tempFails: tempFailsRes.count ?? 0,
-        incidents: realIncidentsRes.count ?? 0,
+        incidents: incidentsRes.count ?? 0,
         qcAvg30d,
         qcCount30d,
       });
@@ -1326,6 +1371,7 @@ export default function ManagerDashboardPage() {
         </div>
       </section>
 
+      {/* ✅ Prompt banner when eligible */}
       {cleaningAllDone && !alreadySignedOff && (
         <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
           <div className="font-semibold">All cleaning tasks are complete.</div>
@@ -1381,6 +1427,9 @@ export default function ManagerDashboardPage() {
             ))}
           </select>
 
+          
+
+          {/* ✅ NEW: Staff assessment button (top row, near other buttons) */}
           <button
             type="button"
             onClick={async () => {
@@ -1390,6 +1439,8 @@ export default function ManagerDashboardPage() {
               setStaffAssessDays(7);
               setStaffAssessOpen(true);
               lastStaffAssessKeyRef.current = "";
+
+              // ensure staff dropdown is populated
               await loadTeamOptions();
             }}
             disabled={loading || !orgId}
@@ -1397,44 +1448,55 @@ export default function ManagerDashboardPage() {
           >
             Staff assessment
           </button>
-
-          <button
-            type="button"
-            onClick={() => setIncidentOpen(true)}
-            disabled={loading || !orgId || !locationId}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
-          >
-            Log incident
-          </button>
-
-          <IncidentModal
-            open={incidentOpen}
-            onClose={() => setIncidentOpen(false)}
-            orgId={orgId!}
-            locationId={locationId!}
-            defaultDate={selectedDateISO}
-            defaultInitials={managerTeamMember?.initials ?? ""}
-            onSaved={refreshAll}
-          />
+<button
+  type="button"
+  onClick={() => setIncidentOpen(true)}
+  disabled={loading || !orgId || !locationId}
+  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+>
+  Log incident
+</button>
+<IncidentModal
+  open={incidentOpen}
+  onClose={() => setIncidentOpen(false)}
+  orgId={orgId!}
+  locationId={locationId!}
+  defaultDate={selectedDateISO}
+  defaultInitials={managerTeamMember?.initials ?? ""}
+  onSaved={refreshAll}
+/>
 
           <button
             type="button"
             onClick={async () => {
               if (!orgId || !locationId) return;
-              setQcForm((f) => ({ ...f, reviewed_on: selectedDateISO || f.reviewed_on }));
+              setQcForm((f) => ({
+                ...f,
+                reviewed_on: selectedDateISO || f.reviewed_on,
+              }));
               setQcOpen(true);
-              await Promise.all([loadTeamOptions(), loadLoggedInManager(), loadQcReviews()]);
+              await Promise.all([
+                loadTeamOptions(),
+                loadLoggedInManager(),
+                loadQcReviews(),
+              ]);
             }}
             disabled={loading || !orgId || !locationId}
             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
           >
             Manager QC
           </button>
-
+{/* ✅ Sign off button */}
           <button
             type="button"
             onClick={() => setSignoffOpen(true)}
-            disabled={!cleaningAllDone || alreadySignedOff || loading || !orgId || !locationId}
+            disabled={
+              !cleaningAllDone ||
+              alreadySignedOff ||
+              loading ||
+              !orgId ||
+              !locationId
+            }
             className={cls(
               "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm disabled:opacity-60",
               alreadySignedOff
@@ -1451,7 +1513,6 @@ export default function ManagerDashboardPage() {
           >
             {alreadySignedOff ? "Day signed off" : "Sign off day"}
           </button>
-
           <button
             type="button"
             onClick={refreshAll}
@@ -1487,13 +1548,17 @@ export default function ManagerDashboardPage() {
             <tbody>
               {cleaningCategoryProgress.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                  <td
+                    colSpan={4}
+                    className="px-3 py-4 text-center text-slate-500"
+                  >
                     No cleaning tasks due (or none loaded).
                   </td>
                 </tr>
               ) : (
                 cleaningCategoryProgress.map((r) => {
-                  const pct = r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
+                  const pct =
+                    r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
                   const pill =
                     pct === 100
                       ? "bg-emerald-100 text-emerald-800"
@@ -1502,7 +1567,10 @@ export default function ManagerDashboardPage() {
                       : "bg-red-100 text-red-800";
 
                   return (
-                    <tr key={r.category} className="border-t border-slate-100 text-slate-800">
+                    <tr
+                      key={r.category}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
                       <td className="px-3 py-2 font-semibold">{r.category}</td>
                       <td className="px-3 py-2">{r.done}</td>
                       <td className="px-3 py-2">{r.total}</td>
@@ -1525,14 +1593,14 @@ export default function ManagerDashboardPage() {
         </div>
       </section>
 
-      {/* REAL Incidents (public.incidents) */}
+      {/* Incidents */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
             Incidents
           </div>
           <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Incident log & actions (last 90 days)
+            Incident log & corrective actions
           </div>
         </div>
 
@@ -1540,27 +1608,30 @@ export default function ManagerDashboardPage() {
           <table className="min-w-full text-xs">
             <thead className="bg-slate-50">
               <tr className="text-left text-slate-500">
-                <th className="px-3 py-2">Date</th>
                 <th className="px-3 py-2">Time</th>
                 <th className="px-3 py-2">Type</th>
                 <th className="px-3 py-2">By</th>
                 <th className="px-3 py-2">Details</th>
-                <th className="px-3 py-2">Immediate</th>
-                <th className="px-3 py-2">Preventive</th>
+                <th className="px-3 py-2">Corrective</th>
               </tr>
             </thead>
             <tbody>
               {incidentsToRender.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
-                    No incidents logged (in the last 90 days).
+                  <td
+                    colSpan={5}
+                    className="px-3 py-4 text-center text-slate-500"
+                  >
+                    No incidents logged.
                   </td>
                 </tr>
               ) : (
                 incidentsToRender.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                    <td className="px-3 py-2 whitespace-nowrap">{r.happened_on}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">
+                  <tr
+                    key={r.id}
+                    className="border-t border-slate-100 text-slate-800"
+                  >
+                    <td className="px-3 py-2">
                       {r.created_at
                         ? new Date(r.created_at).toLocaleTimeString("en-GB", {
                             hour: "2-digit",
@@ -1568,11 +1639,18 @@ export default function ManagerDashboardPage() {
                           })
                         : "—"}
                     </td>
-                    <td className="px-3 py-2 font-semibold whitespace-nowrap">{r.type ?? "Incident"}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{r.created_by?.toUpperCase() ?? "—"}</td>
-                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.details ?? "—"}</td>
-                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.immediate_action ?? "—"}</td>
-                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.preventive_action ?? "—"}</td>
+                    <td className="px-3 py-2 font-semibold">
+                      {r.type ?? "Incident"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {r.created_by?.toUpperCase() ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">
+                      {r.details ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">
+                      {r.corrective_action ?? "—"}
+                    </td>
                   </tr>
                 ))
               )}
@@ -1581,7 +1659,7 @@ export default function ManagerDashboardPage() {
         </div>
 
         <TableFooterToggle
-          total={incidentsHistory.length}
+          total={incidentsToday.length}
           showingAll={showAllIncidents}
           onToggle={() => setShowAllIncidents((v) => !v)}
         />
@@ -1619,18 +1697,26 @@ export default function ManagerDashboardPage() {
                 <tbody>
                   {tempsToRender.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
+                      <td
+                        colSpan={6}
+                        className="px-3 py-4 text-center text-slate-500"
+                      >
                         No temperature logs.
                       </td>
                     </tr>
                   ) : (
                     tempsToRender.map((r) => (
-                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <tr
+                        key={r.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
                         <td className="px-3 py-2">{r.time}</td>
                         <td className="px-3 py-2">{r.staff}</td>
                         <td className="px-3 py-2">{r.area}</td>
                         <td className="px-3 py-2">{r.item}</td>
-                        <td className="px-3 py-2">{r.temp_c != null ? `${r.temp_c}°C` : "—"}</td>
+                        <td className="px-3 py-2">
+                          {r.temp_c != null ? `${r.temp_c}°C` : "—"}
+                        </td>
                         <td className="px-3 py-2">
                           {r.status ? (
                             <span
@@ -1659,59 +1745,6 @@ export default function ManagerDashboardPage() {
               showingAll={showAllTemps}
               onToggle={() => setShowAllTemps((v) => !v)}
             />
-
-            {/* TEMP FAILS table (near temp logs, as requested) */}
-            <h3 className="mt-4 mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-              Temp incidents (fails)
-            </h3>
-
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-500">
-                    <th className="px-3 py-2">Time</th>
-                    <th className="px-3 py-2">By</th>
-                    <th className="px-3 py-2">Details</th>
-                    <th className="px-3 py-2">Corrective</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tempFailsToRender.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
-                        No temp failures for this day.
-                      </td>
-                    </tr>
-                  ) : (
-                    tempFailsToRender.map((r) => (
-                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {r.created_at
-                            ? new Date(r.created_at).toLocaleTimeString("en-GB", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
-                            : "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {r.created_by?.toUpperCase() ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 max-w-[18rem] truncate">{r.details ?? "—"}</td>
-                        <td className="px-3 py-2 max-w-[18rem] truncate">
-                          {r.corrective_action ?? "—"}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <TableFooterToggle
-              total={tempFailsDay.length}
-              showingAll={showAllTempFails}
-              onToggle={() => setShowAllTempFails((v) => !v)}
-            />
           </div>
 
           <div>
@@ -1732,13 +1765,19 @@ export default function ManagerDashboardPage() {
                 <tbody>
                   {cleaningToRender.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                      <td
+                        colSpan={4}
+                        className="px-3 py-4 text-center text-slate-500"
+                      >
                         No cleaning tasks completed.
                       </td>
                     </tr>
                   ) : (
                     cleaningToRender.map((r) => (
-                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <tr
+                        key={r.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
                         <td className="px-3 py-2">{r.time ?? "—"}</td>
                         <td className="px-3 py-2">
                           <div className="font-semibold">{r.category}</div>
@@ -1749,7 +1788,9 @@ export default function ManagerDashboardPage() {
                           ) : null}
                         </td>
                         <td className="px-3 py-2">{r.staff ?? "—"}</td>
-                        <td className="px-3 py-2 max-w-[14rem] truncate">{r.notes ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[14rem] truncate">
+                          {r.notes ?? "—"}
+                        </td>
                       </tr>
                     ))
                   )}
@@ -1790,21 +1831,35 @@ export default function ManagerDashboardPage() {
             <tbody>
               {signoffsToRender.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                  <td
+                    colSpan={4}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
                     No sign-offs logged for this day.
                   </td>
                 </tr>
               ) : (
                 signoffsToRender.map((r) => {
-                  const t = r.created_at ? formatTimeHM(new Date(r.created_at)) : null;
+                  const t = r.created_at
+                    ? formatTimeHM(new Date(r.created_at))
+                    : null;
                   return (
-                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap">{r.signoff_on}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{t ?? "—"}</td>
+                    <tr
+                      key={r.id}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {r.signoff_on}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {t ?? "—"}
+                      </td>
                       <td className="px-3 py-2 font-semibold whitespace-nowrap">
                         {r.signed_by ? r.signed_by.toUpperCase() : "—"}
                       </td>
-                      <td className="px-3 py-2 max-w-[28rem] truncate">{r.notes ?? "—"}</td>
+                      <td className="px-3 py-2 max-w-[28rem] truncate">
+                        {r.notes ?? "—"}
+                      </td>
                     </tr>
                   );
                 })
@@ -1836,9 +1891,16 @@ export default function ManagerDashboardPage() {
             type="button"
             onClick={async () => {
               if (!orgId || !locationId) return;
-              setQcForm((f) => ({ ...f, reviewed_on: selectedDateISO || f.reviewed_on }));
+              setQcForm((f) => ({
+                ...f,
+                reviewed_on: selectedDateISO || f.reviewed_on,
+              }));
               setQcOpen(true);
-              await Promise.all([loadTeamOptions(), loadLoggedInManager(), loadQcReviews()]);
+              await Promise.all([
+                loadTeamOptions(),
+                loadLoggedInManager(),
+                loadQcReviews(),
+              ]);
             }}
             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
           >
@@ -1860,13 +1922,19 @@ export default function ManagerDashboardPage() {
             <tbody>
               {qcSummaryLoading ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                  <td
+                    colSpan={5}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
                     Loading…
                   </td>
                 </tr>
               ) : qcToRender.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                  <td
+                    colSpan={5}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
                     No QC reviews logged.
                   </td>
                 </tr>
@@ -1880,8 +1948,13 @@ export default function ManagerDashboardPage() {
                       : "bg-red-100 text-red-800";
 
                   return (
-                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
+                    <tr
+                      key={r.id}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {r.reviewed_on}
+                      </td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         {tmLabel(r.staff ?? { initials: null, name: "—" })}
                       </td>
@@ -1898,7 +1971,9 @@ export default function ManagerDashboardPage() {
                           {r.score}/5
                         </span>
                       </td>
-                      <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
+                      <td className="px-3 py-2 max-w-[24rem] truncate">
+                        {r.notes ?? "—"}
+                      </td>
                     </tr>
                   );
                 })
@@ -1916,7 +1991,10 @@ export default function ManagerDashboardPage() {
 
       {/* ✅ Sign-off modal */}
       {signoffOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setSignoffOpen(false)}
+        >
           <div
             className={cls(
               "mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
@@ -1927,7 +2005,8 @@ export default function ManagerDashboardPage() {
               <div>
                 <div className="text-base font-semibold">Sign off day</div>
                 <div className="mt-0.5 text-xs text-slate-500">
-                  {selectedDateISO} · {locations.find((l) => l.id === locationId)?.name ?? "—"}
+                  {selectedDateISO} ·{" "}
+                  {locations.find((l) => l.id === locationId)?.name ?? "—"}
                 </div>
               </div>
               <button
@@ -1941,7 +2020,8 @@ export default function ManagerDashboardPage() {
 
             {!cleaningAllDone && (
               <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                You can’t sign off until all cleaning tasks due today are completed.
+                You can’t sign off until all cleaning tasks due today are
+                completed.
               </div>
             )}
 
@@ -1953,7 +2033,9 @@ export default function ManagerDashboardPage() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Initials</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Initials
+                </label>
                 <input
                   value={signoffInitials}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
@@ -1965,10 +2047,14 @@ export default function ManagerDashboardPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Notes (optional)
+                </label>
                 <input
                   value={signoffNotes}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSignoffNotes(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setSignoffNotes(e.target.value)
+                  }
                   placeholder="Any corrective actions / comments…"
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                 />
@@ -1997,21 +2083,23 @@ export default function ManagerDashboardPage() {
         </div>
       )}
 
-      {/* ✅ Individual staff assessment modal (unchanged) */}
+      {/* ✅ Individual staff assessment modal (opened by button) */}
       {staffAssessOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
-          onClick={() => setStaffAssessOpen(false)}
-        >
-          <div
-            className={cls(
-              "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
-            )}
-            onClick={(e) => e.stopPropagation()}
-          >
+      <div
+  className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
+  onClick={() => setStaffAssessOpen(false)}
+>
+  <div
+    className={cls(
+      "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+    )}
+    onClick={(e) => e.stopPropagation()}
+  >
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <div className="text-base font-semibold">Individual staff assessment</div>
+                <div className="text-base font-semibold">
+                  Individual staff assessment
+                </div>
                 <div className="mt-0.5 text-xs text-slate-500">
                   Manager view of individual performance.
                 </div>
@@ -2034,7 +2122,9 @@ export default function ManagerDashboardPage() {
             <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
               <div className="grid gap-3 md:grid-cols-3">
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Staff</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Staff
+                  </label>
                   <select
                     value={staffAssessStaffId}
                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -2054,7 +2144,9 @@ export default function ManagerDashboardPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Range</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Range
+                  </label>
                   <select
                     value={staffAssessDays}
                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -2074,8 +2166,12 @@ export default function ManagerDashboardPage() {
                   <button
                     type="button"
                     onClick={async () => {
-                      if (!staffAssessStaffId) return setStaffAssessErr("Select a staff member.");
-                      await loadStaffAssessment(staffAssessStaffId, staffAssessDays);
+                      if (!staffAssessStaffId)
+                        return setStaffAssessErr("Select a staff member.");
+                      await loadStaffAssessment(
+                        staffAssessStaffId,
+                        staffAssessDays
+                      );
                     }}
                     disabled={staffAssessLoading || !staffAssessStaffId}
                     className="h-10 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
@@ -2092,28 +2188,44 @@ export default function ManagerDashboardPage() {
                 icon="🧼"
                 tone="neutral"
                 value={staffAssess?.cleaningRuns ?? "—"}
-                sub={staffAssess ? `Completed in last ${staffAssess.rangeDays}d` : "Select staff + load"}
+                sub={
+                  staffAssess
+                    ? `Completed in last ${staffAssess.rangeDays}d`
+                    : "Select staff + load"
+                }
               />
               <KpiTile
                 title="Temp logs"
                 icon="🌡"
                 tone="neutral"
                 value={staffAssess?.tempLogs ?? "—"}
-                sub={staffAssess ? `Recorded in last ${staffAssess.rangeDays}d` : "—"}
+                sub={
+                  staffAssess
+                    ? `Recorded in last ${staffAssess.rangeDays}d`
+                    : "—"
+                }
               />
               <KpiTile
                 title="Temp fails"
                 icon="🚫"
                 tone={staffAssess && staffAssess.tempFails > 0 ? "danger" : "ok"}
                 value={staffAssess?.tempFails ?? "—"}
-                sub={staffAssess ? `Fails in last ${staffAssess.rangeDays}d` : "—"}
+                sub={
+                  staffAssess
+                    ? `Fails in last ${staffAssess.rangeDays}d`
+                    : "—"
+                }
               />
               <KpiTile
                 title="Incidents"
                 icon="⚠️"
                 tone={staffAssess && staffAssess.incidents > 0 ? "warn" : "ok"}
                 value={staffAssess?.incidents ?? "—"}
-                sub={staffAssess ? `Logged in last ${staffAssess.rangeDays}d` : "—"}
+                sub={
+                  staffAssess
+                    ? `Logged in last ${staffAssess.rangeDays}d`
+                    : "—"
+                }
               />
               <KpiTile
                 title="QC avg (30d)"
@@ -2126,7 +2238,11 @@ export default function ManagerDashboardPage() {
                       : "—"
                     : "—"
                 }
-                sub={staffAssess ? `Based on ${staffAssess.qcCount30d} reviews` : "—"}
+                sub={
+                  staffAssess
+                    ? `Based on ${staffAssess.qcCount30d} reviews`
+                    : "—"
+                }
               />
               <KpiTile
                 title="Staff"
@@ -2138,226 +2254,236 @@ export default function ManagerDashboardPage() {
             </div>
 
             <div className="mt-4 text-xs text-slate-500">
-              Note: this uses initials across logs (done_by, staff_initials, created_by).
+              Note: this uses initials across logs (done_by, staff_initials,
+              created_by). If you switch to IDs everywhere later, this becomes
+              rock-solid.
             </div>
           </div>
         </div>
       )}
 
-      {/* ===== QC modal (unchanged) ===== */}
-      {qcOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
+      {/* ===== QC modal remains below (unchanged) ===== */}
+     {/* ===== QC modal remains below (unchanged) ===== */}
+{qcOpen && (
+  <div
+    className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
+    onClick={() => setQcOpen(false)}
+  >
+    <div
+      className={cls(
+        "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+      )}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <div className="text-base font-semibold">Manager QC</div>
+          <div className="mt-0.5 text-xs text-slate-500">
+            Manager is your logged-in team member. Staff list is team members.
+          </div>
+        </div>
+
+        <button
           onClick={() => setQcOpen(false)}
+          className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
         >
-          <div
-            className={cls(
-              "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
-            )}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-base font-semibold">Manager QC</div>
-                <div className="mt-0.5 text-xs text-slate-500">
-                  Manager is your logged-in team member. Staff list is team members.
-                </div>
-              </div>
+          ✕
+        </button>
+      </div>
 
-              <button
-                onClick={() => setQcOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-              >
-                ✕
-              </button>
+      <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
+        <div className="mb-3 grid gap-2 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Manager
             </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
-              <div className="mb-3 grid gap-2 sm:grid-cols-2">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                    Manager
-                  </div>
-                  <div className="mt-1 text-sm font-semibold text-slate-900">
-                    {managerTeamMember ? tmLabel(managerTeamMember) : "Not linked"}
-                  </div>
-                  {!managerTeamMember ? (
-                    <div className="mt-1 text-xs text-rose-700">
-                      Link this login by setting{" "}
-                      <span className="font-semibold">team_members.user_id</span>.
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                    Location
-                  </div>
-                  <div className="mt-1 text-sm font-semibold text-slate-900">
-                    {locations.find((l) => l.id === locationId)?.name ?? "—"}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-4">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Staff</label>
-                  <select
-                    value={qcForm.staff_id}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                      setQcForm((f) => ({ ...f, staff_id: e.target.value }))
-                    }
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    <option value="">Select…</option>
-                    {teamOptions.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {tmLabel(t)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Date</label>
-                  <input
-                    type="date"
-                    value={qcForm.reviewed_on}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setQcForm((f) => ({ ...f, reviewed_on: e.target.value }))
-                    }
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Score</label>
-                  <select
-                    value={qcForm.score}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                      setQcForm((f) => ({ ...f, score: Number(e.target.value) }))
-                    }
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <option key={n} value={n}>
-                        {n}/5
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Notes</label>
-                  <input
-                    value={qcForm.notes}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setQcForm((f) => ({ ...f, notes: e.target.value }))
-                    }
-                    placeholder="Optional…"
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setQcOpen(false)}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Close
-                </button>
-                <button
-                  type="button"
-                  onClick={addQcReview}
-                  disabled={qcSaving || !orgId || !locationId || !managerTeamMember}
-                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-                >
-                  {qcSaving ? "Saving…" : "Add QC"}
-                </button>
-              </div>
+            <div className="mt-1 text-sm font-semibold text-slate-900">
+              {managerTeamMember ? tmLabel(managerTeamMember) : "Not linked"}
             </div>
+            {!managerTeamMember ? (
+              <div className="mt-1 text-xs text-rose-700">
+                Link this login by setting{" "}
+                <span className="font-semibold">team_members.user_id</span>.
+              </div>
+            ) : null}
+          </div>
 
-            <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-500">
-                    <th className="px-3 py-2">Date</th>
-                    <th className="px-3 py-2">Staff</th>
-                    <th className="px-3 py-2">Manager</th>
-                    <th className="px-3 py-2">Score</th>
-                    <th className="px-3 py-2">Notes</th>
-                    <th className="px-3 py-2 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {qcLoading ? (
-                    <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
-                        Loading…
-                      </td>
-                    </tr>
-                  ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
-                        No QC reviews logged.
-                      </td>
-                    </tr>
-                  ) : (
-                    (showAllQc ? qcReviews : qcReviews.slice(0, 10)).map((r) => {
-                      const pill =
-                        r.score >= 4
-                          ? "bg-emerald-100 text-emerald-800"
-                          : r.score === 3
-                          ? "bg-amber-100 text-amber-800"
-                          : "bg-red-100 text-red-800";
-
-                      return (
-                        <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                          <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {tmLabel(r.staff ?? { initials: null, name: "—" })}
-                          </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {tmLabel(r.manager ?? { initials: null, name: "—" })}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span
-                              className={cls(
-                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                                pill
-                              )}
-                            >
-                              {r.score}/5
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 max-w-[18rem] truncate">{r.notes ?? "—"}</td>
-                          <td className="px-3 py-2 text-right">
-                            <button
-                              type="button"
-                              onClick={() => deleteQcReview(r.id)}
-                              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Location
             </div>
+            <div className="mt-1 text-sm font-semibold text-slate-900">
+              {locations.find((l) => l.id === locationId)?.name ?? "—"}
+            </div>
+          </div>
+        </div>
 
-            <TableFooterToggle
-              total={qcReviews.length}
-              showingAll={showAllQc}
-              onToggle={() => setShowAllQc((v) => !v)}
+        <div className="grid gap-3 md:grid-cols-4">
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Staff</label>
+            <select
+              value={qcForm.staff_id}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                setQcForm((f) => ({ ...f, staff_id: e.target.value }))
+              }
+              className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+            >
+              <option value="">Select…</option>
+              {teamOptions.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {tmLabel(t)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Date</label>
+            <input
+              type="date"
+              value={qcForm.reviewed_on}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setQcForm((f) => ({ ...f, reviewed_on: e.target.value }))
+              }
+              className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Score</label>
+            <select
+              value={qcForm.score}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                setQcForm((f) => ({ ...f, score: Number(e.target.value) }))
+              }
+              className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n}/5
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Notes</label>
+            <input
+              value={qcForm.notes}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setQcForm((f) => ({ ...f, notes: e.target.value }))
+              }
+              placeholder="Optional…"
+              className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
             />
           </div>
         </div>
-      )}
+
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setQcOpen(false)}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={addQcReview}
+            disabled={qcSaving || !orgId || !locationId || !managerTeamMember}
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+          >
+            {qcSaving ? "Saving…" : "Add QC"}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+        <table className="min-w-full text-xs">
+          <thead className="bg-slate-50">
+            <tr className="text-left text-slate-500">
+              <th className="px-3 py-2">Date</th>
+              <th className="px-3 py-2">Staff</th>
+              <th className="px-3 py-2">Manager</th>
+              <th className="px-3 py-2">Score</th>
+              <th className="px-3 py-2">Notes</th>
+              <th className="px-3 py-2 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {qcLoading ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                  Loading…
+                </td>
+              </tr>
+            ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                  No QC reviews logged.
+                </td>
+              </tr>
+            ) : (
+              (showAllQc ? qcReviews : qcReviews.slice(0, 10)).map((r) => {
+                const pill =
+                  r.score >= 4
+                    ? "bg-emerald-100 text-emerald-800"
+                    : r.score === 3
+                    ? "bg-amber-100 text-amber-800"
+                    : "bg-red-100 text-red-800";
+
+                return (
+                  <tr
+                    key={r.id}
+                    className="border-t border-slate-100 text-slate-800"
+                  >
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {r.reviewed_on}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {tmLabel(r.staff ?? { initials: null, name: "—" })}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {tmLabel(r.manager ?? { initials: null, name: "—" })}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={cls(
+                          "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                          pill
+                        )}
+                      >
+                        {r.score}/5
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">
+                      {r.notes ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => deleteQcReview(r.id)}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <TableFooterToggle
+        total={qcReviews.length}
+        showingAll={showAllQc}
+        onToggle={() => setShowAllQc((v) => !v)}
+      />
+    </div>
+  </div>
+)}
     </>
   );
 }
