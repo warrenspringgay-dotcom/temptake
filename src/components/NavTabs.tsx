@@ -16,171 +16,173 @@ type Tab = {
   label: string;
   icon?: React.ReactNode;
   requiresManager?: boolean;
-  requiresStaff?: boolean;
-  requiresPlan?: boolean;
+  requiresStaffOnly?: boolean;
+  requiresPlan?: boolean; // needs active sub OR trial
 };
 
-const MANAGER_TABS: Tab[] = [
+const TABS: Tab[] = [
   { href: "/dashboard", label: "Dashboard" },
+
+  // Staff-only dashboard (only show to non-managers)
+  { href: "/staff", label: "Staff", requiresStaffOnly: true, requiresPlan: true },
+
   { href: "/routines", label: "Routines", requiresPlan: true },
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning Rota", requiresPlan: true },
+
   {
     href: "/manager",
     label: "Manager Dashboard",
     requiresManager: true,
     requiresPlan: true,
   },
+
   {
     href: "/leaderboard",
     label: "Leaderboard",
     icon: <Trophy className="h-4 w-4 text-amber-500" />,
     requiresPlan: true,
   },
+
   { href: "/team", label: "Team", requiresPlan: true },
   { href: "/suppliers", label: "Suppliers", requiresPlan: true },
   { href: "/reports", label: "Reports", requiresPlan: true },
 ];
-
-const STAFF_TABS: Tab[] = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/staff", label: "Staff", requiresStaff: true, requiresPlan: true },
-  { href: "/routines", label: "Routines", requiresPlan: true },
-  { href: "/allergens", label: "Allergens", requiresPlan: true },
-  { href: "/cleaning-rota", label: "Cleaning Rota", requiresPlan: true },
-  {
-    href: "/leaderboard",
-    label: "Leaderboard",
-    icon: <Trophy className="h-4 w-4 text-amber-500" />,
-    requiresPlan: true,
-  },
-  { href: "/team", label: "Team", requiresPlan: true },
-  { href: "/suppliers", label: "Suppliers", requiresPlan: true },
-  { href: "/reports", label: "Reports", requiresPlan: true },
-];
-
-function cls(...parts: Array<string | false | null | undefined>) {
-  return parts.filter(Boolean).join(" ");
-}
-
-function isActive(pathname: string, href: string) {
-  if (href === "/") return pathname === "/";
-  return pathname === href || pathname.startsWith(href + "/");
-}
-
-type RoleFlags = {
-  canSeeManager: boolean;
-  canSeeStaff: boolean;
-};
-
-async function getRoleFlags(userEmail: string): Promise<RoleFlags> {
-  const orgId = await getActiveOrgIdClient();
-  if (!orgId) return { canSeeManager: false, canSeeStaff: false };
-
-  const email = userEmail.toLowerCase();
-
-  // Assumption based on your existing patterns: role stored on team_members
-  const { data, error } = await supabase
-    .from("team_members")
-    .select("role")
-    .eq("org_id", orgId)
-    .eq("email", email)
-    .maybeSingle();
-
-  if (error || !data) return { canSeeManager: false, canSeeStaff: false };
-
-  const role = (data.role ?? "").toLowerCase();
-
-  const isManager = role === "manager" || role === "owner";
-  const isStaff = role === "staff";
-
-  return {
-    canSeeManager: isManager,
-    canSeeStaff: isStaff,
-  };
-}
 
 export default function NavTabs() {
-  const pathname = usePathname() || "/";
+  const pathname = usePathname();
   const { user, ready } = useAuth();
 
-  const { hasValid, loading: billingLoading } = useSubscriptionStatus();
+  // Billing
+  const billing = useSubscriptionStatus();
+  const hasValid = billing.hasValid;
+  const billingLoading = billing.loading;
 
-  const [roleFlags, setRoleFlags] = useState<RoleFlags>({
-    canSeeManager: false,
-    canSeeStaff: false,
-  });
+  // Role
+  const [roleName, setRoleName] = useState<string | null>(null);
+  const [isManager, setIsManager] = useState(false);
   const [roleLoading, setRoleLoading] = useState(true);
 
   useEffect(() => {
     let alive = true;
 
     (async () => {
-      if (!ready || !user?.email) {
+      if (!ready || !user) {
         if (!alive) return;
-        setRoleFlags({ canSeeManager: false, canSeeStaff: false });
+        setRoleName(null);
+        setIsManager(false);
         setRoleLoading(false);
         return;
       }
 
       setRoleLoading(true);
-      const flags = await getRoleFlags(user.email);
-      if (!alive) return;
-      setRoleFlags(flags);
-      setRoleLoading(false);
+
+      try {
+        const orgId = await getActiveOrgIdClient();
+        const email = user.email?.toLowerCase() ?? null;
+
+        if (!alive) return;
+
+        if (!orgId || !email) {
+          setRoleName(null);
+          setIsManager(false);
+          setRoleLoading(false);
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from("team_members")
+          .select("role,email")
+          .eq("org_id", orgId)
+          .eq("email", email)
+          .maybeSingle();
+
+        if (!alive) return;
+
+        if (error || !data) {
+          setRoleName(null);
+          setIsManager(false);
+          setRoleLoading(false);
+          return;
+        }
+
+        const role = (data.role ?? "").toLowerCase() || "staff";
+        setRoleName(role);
+
+        const managerLike = role === "owner" || role === "manager" || role === "admin";
+        setIsManager(managerLike);
+      } catch {
+        if (!alive) return;
+        setRoleName(null);
+        setIsManager(false);
+      } finally {
+        if (!alive) return;
+        setRoleLoading(false);
+      }
     })();
 
     return () => {
       alive = false;
     };
-  }, [ready, user?.email]);
+  }, [ready, user]);
 
-  const baseTabs = roleFlags.canSeeManager ? MANAGER_TABS : STAFF_TABS;
+  // Billing resolved means we trust hasValid.
+  const billingResolved = !billingLoading && typeof hasValid === "boolean";
+  const planOK = billingResolved ? !!hasValid : true; // unknown => don’t punish the UI
 
-  const effectiveTabs = useMemo(() => {
-    const allowPlanTabs = billingLoading ? true : hasValid;
+  // Build visible tabs by role (DO NOT hide plan tabs, only redirect them)
+  const visibleTabs = useMemo(() => {
+    // While role is loading, don’t show role-sensitive tabs (prevents pop-in)
+    const roleKnown = !roleLoading;
 
-    return baseTabs.filter((t) => {
-      if (t.requiresManager && !roleFlags.canSeeManager) return false;
-      if (t.requiresStaff && !roleFlags.canSeeStaff) return false;
-      if (t.requiresPlan && !allowPlanTabs) return false;
+    return TABS.filter((t) => {
+      if (t.requiresManager) {
+        if (!roleKnown) return false;
+        return isManager;
+      }
+
+      if (t.requiresStaffOnly) {
+        if (!roleKnown) return false;
+        return !isManager; // staff-only means NOT manager-like
+      }
+
       return true;
     });
-  }, [baseTabs, roleFlags, hasValid, billingLoading]);
+  }, [roleLoading, isManager]);
 
-  // ✅ MOBILE: tabs hidden, they live in MobileMenu
-  // ✅ DESKTOP: single-line, no wrap, scroll if needed
+  // No auth, no nav
+  if (!ready || !user) return null;
+
   return (
-    <nav className="hidden md:block">
-      <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap">
-        {effectiveTabs.map((tab) => {
-          const active = isActive(pathname, tab.href);
+    <ul className="flex flex-nowrap items-center gap-1 min-w-max px-2 overflow-x-auto">
+      {visibleTabs.map((t) => {
+        const active =
+          pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
 
-          return (
+        const locked = !!t.requiresPlan && !planOK;
+
+        // Keep UI consistent: show the tab, but send them to billing if locked.
+        const href = locked ? "/billing" : t.href;
+
+        return (
+          <li key={t.href} className="shrink-0">
             <Link
-              key={tab.href}
-              href={tab.href}
-              className={cls(
-                "inline-flex items-center gap-2 border px-3 py-2 text-sm",
-                "rounded-none", // square
-                active
-                  ? "bg-slate-900 text-white border-slate-900"
-                  : "bg-white text-slate-800 border-slate-200 hover:bg-slate-50"
-              )}
-              aria-current={active ? "page" : undefined}
+              href={href}
+              title={locked ? "Requires an active plan" : undefined}
+              className={[
+                "inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors whitespace-nowrap",
+                active && !locked
+                  ? "bg-black text-white"
+                  : "text-slate-700 hover:bg-gray-100 hover:text-black",
+                locked ? "opacity-60" : "",
+              ].join(" ")}
             >
-              {tab.icon}
-              {tab.label}
+              {t.icon && <span>{t.icon}</span>}
+              {t.label}
             </Link>
-          );
-        })}
-
-        {(roleLoading || billingLoading) && (
-          <span className="ml-2 text-xs text-slate-400">
-            {/* keep layout stable while loading */}
-          </span>
-        )}
-      </div>
-    </nav>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
