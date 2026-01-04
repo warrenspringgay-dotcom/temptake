@@ -437,7 +437,7 @@ export default function ManagerDashboardPage() {
   });
   const [showAllSignoffs, setShowAllSignoffs] = useState(false);
 
-  // ✅ Sign-off modal state
+  // Sign-off modal state
   const [signoffOpen, setSignoffOpen] = useState(false);
   const [signoffInitials, setSignoffInitials] = useState("");
   const [signoffNotes, setSignoffNotes] = useState("");
@@ -451,13 +451,11 @@ export default function ManagerDashboardPage() {
   const [qcSaving, setQcSaving] = useState(false);
   const [showAllQc, setShowAllQc] = useState(false);
 
-  // ✅ summary table on main page
   const [qcSummaryLoading, setQcSummaryLoading] = useState(false);
 
   const [managerTeamMember, setManagerTeamMember] =
     useState<TeamMemberOption | null>(null);
 
-  // ✅ IMPORTANT: use rating (DB column), not score
   const [qcForm, setQcForm] = useState({
     staff_id: "",
     reviewed_on: nowISO,
@@ -475,7 +473,6 @@ export default function ManagerDashboardPage() {
 
   const [incidentOpen, setIncidentOpen] = useState(false);
 
-  // Auto-load staff assessment when staff/range/date changes (no UI changes)
   const lastStaffAssessKeyRef = useRef<string>("");
 
   useEffect(() => {
@@ -720,7 +717,6 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
-  // ✅ Load team + logged in member as soon as we have orgId (no UI changes)
   useEffect(() => {
     if (!orgId) return;
     void loadTeamOptions();
@@ -728,7 +724,6 @@ export default function ManagerDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
-  // ✅ Auto-populate signoff initials when signoff modal opens (NO UI change)
   useEffect(() => {
     if (!signoffOpen) return;
     if (signoffInitials.trim()) return;
@@ -820,7 +815,6 @@ export default function ManagerDashboardPage() {
           .order("done_at", { ascending: false })
           .limit(5000),
 
-        // historical incidents (last 90d)
         supabase
           .from("incidents")
           .select(
@@ -834,7 +828,6 @@ export default function ManagerDashboardPage() {
           .order("created_at", { ascending: false })
           .limit(500),
 
-        // incident KPI today
         supabase
           .from("incidents")
           .select("id", { count: "exact", head: true })
@@ -842,7 +835,6 @@ export default function ManagerDashboardPage() {
           .eq("location_id", locationId)
           .eq("happened_on", selectedDateISO),
 
-        // incident KPI last 7d
         supabase
           .from("incidents")
           .select("id", { count: "exact", head: true })
@@ -960,7 +952,6 @@ export default function ManagerDashboardPage() {
         })
       );
 
-      // ✅ Incidents (your modal table) - last 90 days
       const incRows: any[] = (incidentsListRes.data as any[]) ?? [];
       setIncidentsHistory(
         incRows.map((r: any) => ({
@@ -1059,7 +1050,6 @@ export default function ManagerDashboardPage() {
     ? signoffsToday
     : signoffsToday.slice(0, 10);
 
-  // ✅ Sign-off eligibility + status
   const cleaningAllDone = cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
   const alreadySignedOff = signoffsToday.length > 0;
 
@@ -1120,7 +1110,6 @@ export default function ManagerDashboardPage() {
       const startIsoDate = isoDate(start);
       const endIsoDate = isoDate(end);
 
-      // QC last 30 days window
       const qcStart = new Date(selectedDateISO);
       qcStart.setHours(0, 0, 0, 0);
       const tmp = new Date(qcStart);
@@ -1515,11 +1504,11 @@ export default function ManagerDashboardPage() {
           </table>
         </div>
 
-        <TableFooterToggle
-          total={incidentsHistory.length}
-          showingAll={showAllIncidents}
-          onToggle={() => setShowAllIncidents((v) => !v)}
-        />
+      <TableFooterToggle
+        total={incidentsHistory.length}
+        showingAll={showAllIncidents}
+        onToggle={() => setShowAllIncidents((v) => !v)}
+      />
       </section>
 
       {/* Activity */}
@@ -1603,7 +1592,7 @@ export default function ManagerDashboardPage() {
               onToggle={() => setShowAllTemps((v) => !v)}
             />
 
-            {/* Temp failures table */}
+            {/* Temp failures */}
             <h3 className="mt-4 mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
               Temp failures & corrective actions
             </h3>
@@ -2442,7 +2431,7 @@ export default function ManagerDashboardPage() {
         </div>
       )}
 
-      {/* Incident modal – narrow orgId/locationId type so TS shuts up */}
+      {/* Incident modal – now passes required defaultInitials prop */}
       {incidentOpen && orgId && locationId && (
         <IncidentModal
           open={incidentOpen}
@@ -2450,6 +2439,7 @@ export default function ManagerDashboardPage() {
           defaultDate={selectedDateISO}
           orgId={orgId}
           locationId={locationId}
+          defaultInitials={managerTeamMember?.initials?.toUpperCase() ?? ""}
           onSaved={refreshAll}
         />
       )}
