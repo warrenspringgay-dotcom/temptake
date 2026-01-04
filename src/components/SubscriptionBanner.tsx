@@ -46,6 +46,8 @@ export default function SubscriptionBanner() {
 
   const WARN_DAYS = 7;
 
+
+  
   // ✅ Active subscription → HIDE banner (you only want it when expiring/expired)
   if (active) return null;
 

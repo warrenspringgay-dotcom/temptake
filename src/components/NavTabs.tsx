@@ -52,11 +52,12 @@ const TABS: Tab[] = [
 export default function NavTabs() {
   const pathname = usePathname();
   const { user, ready } = useAuth();
-
-  // Billing
   const billing = useSubscriptionStatus();
-  const hasValid = billing.hasValid;
-  const billingLoading = billing.loading;
+
+  // If billing is still loading, don't lock anything.
+  // Only lock once we have a definite answer.
+  const planOK = billing.loading ? true : !!billing.hasValid;
+
 
   // Role
   const [roleName, setRoleName] = useState<string | null>(null);
@@ -127,9 +128,7 @@ console.log("[billing]", billing);
     };
   }, [ready, user]);
 
-  // Billing resolved means we trust hasValid.
-  const billingResolved = !billingLoading && typeof hasValid === "boolean";
-  const planOK = billingResolved ? !!hasValid : true; // unknown => don’t punish the UI
+  
 
   // Build visible tabs by role (DO NOT hide plan tabs, only redirect them)
   const visibleTabs = useMemo(() => {

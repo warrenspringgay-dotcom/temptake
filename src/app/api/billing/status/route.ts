@@ -1,11 +1,12 @@
+// src/app/api/billing/status/route.ts
 import { NextResponse } from "next/server";
-import { getServerSupabaseAction } from "@/lib/supabaseServer"; // your correct helper naming
+import { getServerSupabaseAction } from "@/lib/supabaseServer";
 
 export async function GET() {
   try {
     const supabase = await getServerSupabaseAction();
 
-    // IMPORTANT: use getUser() not getSession()
+    // Authenticated user (real check)
     const {
       data: { user },
       error: userErr,
@@ -13,65 +14,110 @@ export async function GET() {
 
     if (userErr || !user) {
       return NextResponse.json(
-        { ok: false, hasValid: false, reason: "not_authenticated" },
+        {
+          ok: true,
+          loggedIn: false,
+          hasValid: false,
+          status: null,
+          inTrial: false,
+          trialEndsAt: null,
+          currentPeriodEnd: null,
+          reason: "not_authenticated",
+        },
         { status: 200 }
       );
     }
 
-    // Resolve org from profiles
+    // Resolve org_id
     const { data: profile, error: profileErr } = await supabase
       .from("profiles")
       .select("org_id")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
 
-    if (profileErr || !profile?.org_id) {
+    const orgId = (profile?.org_id as string | null) ?? null;
+
+    if (profileErr || !orgId) {
       return NextResponse.json(
-        { ok: false, hasValid: false, reason: "no_org" },
+        {
+          ok: true,
+          loggedIn: true,
+          hasValid: false,
+          status: null,
+          inTrial: false,
+          trialEndsAt: null,
+          currentPeriodEnd: null,
+          reason: "no_org",
+        },
         { status: 200 }
       );
     }
 
-    // You need SOME canonical subscription source.
-    // If you already have a table storing org subscription state, read it here.
-    // Common pattern: org_subscriptions(org_id, status, trial_ends_at, current_period_end)
-    const { data: sub, error: subErr } = await supabase
-      .from("org_subscriptions")
-      .select("status, trial_ends_at, current_period_end")
-      .eq("org_id", profile.org_id)
-      .single();
+    // ✅ Match billing page: latest row from billing_subscriptions
+    const { data: subRows, error: subErr } = await supabase
+      .from("billing_subscriptions")
+      .select("status, trial_ends_at, current_period_end, created_at")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(1);
 
-    // If you don’t have this table, your current status endpoint is guessing.
-    // But we still handle "no row" safely.
-    if (subErr || !sub) {
+    if (subErr) {
       return NextResponse.json(
-        { ok: true, hasValid: false, reason: "no_subscription_row" },
+        {
+          ok: true,
+          loggedIn: true,
+          hasValid: false,
+          status: null,
+          inTrial: false,
+          trialEndsAt: null,
+          currentPeriodEnd: null,
+          reason: "subscription_lookup_error",
+        },
         { status: 200 }
       );
     }
 
-    const status = String(sub.status ?? "").toLowerCase();
-    const trialEnds = sub.trial_ends_at ? new Date(sub.trial_ends_at).getTime() : null;
+    const sub = subRows?.[0] ?? null;
+    const status = (sub?.status as string | null)?.toLowerCase() ?? null;
+
+    const trialEndsAt = (sub?.trial_ends_at as string | null) ?? null;
+    const currentPeriodEnd = (sub?.current_period_end as string | null) ?? null;
 
     const now = Date.now();
-    const inTrial = trialEnds ? trialEnds > now : false;
+    const trialMs = trialEndsAt ? new Date(trialEndsAt).getTime() : null;
+    const inTrial = !!trialMs && trialMs > now;
 
-    // Treat active/trialing as valid. Add whatever statuses you use.
+    // treat these as valid for gating
     const hasValid =
-      status === "active" || status === "trialing" || inTrial;
+      status === "active" ||
+      status === "trialing" ||
+      status === "past_due" ||
+      inTrial;
 
     return NextResponse.json(
       {
         ok: true,
+        loggedIn: true,
         hasValid,
         status,
         inTrial,
+        trialEndsAt,
+        currentPeriodEnd,
       },
       { status: 200 }
     );
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, hasValid: false, reason: e?.message ?? "unknown_error" },
+      {
+        ok: false,
+        loggedIn: false,
+        hasValid: false,
+        status: null,
+        inTrial: false,
+        trialEndsAt: null,
+        currentPeriodEnd: null,
+        reason: e?.message ?? "unknown_error",
+      },
       { status: 200 }
     );
   }
