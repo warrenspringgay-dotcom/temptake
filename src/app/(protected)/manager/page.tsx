@@ -1,4 +1,3 @@
-// src/app/(protected)/manager/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -143,7 +142,12 @@ function toISODate(val: any): string {
   return d.toISOString().slice(0, 10);
 }
 
-async function fetchTempFailuresUnifiedForDay(orgId: string, locationId: string, d0: Date, d1: Date) {
+async function fetchTempFailuresUnifiedForDay(
+  orgId: string,
+  locationId: string,
+  d0: Date,
+  d1: Date
+) {
   const { data, error } = await supabase
     .from("food_temp_logs")
     .select(
@@ -485,7 +489,14 @@ export default function ManagerDashboardPage() {
 
     void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [staffAssessOpen, staffAssessStaffId, staffAssessDays, selectedDateISO, orgId, locationId]);
+  }, [
+    staffAssessOpen,
+    staffAssessStaffId,
+    staffAssessDays,
+    selectedDateISO,
+    orgId,
+    locationId,
+  ]);
 
   function tmLabel(t: { initials: string | null; name: string | null }) {
     const ini = (t.initials ?? "").toString().trim().toUpperCase();
@@ -894,7 +905,8 @@ export default function ManagerDashboardPage() {
       const tasksRaw: any[] = (cleaningTasksRes.data as any[]) ?? [];
       const tasks: CleaningTask[] = tasksRaw.map((t) => ({
         id: String(t.id),
-        frequency: (String(t.frequency ?? "daily").toLowerCase() as any) ?? "daily",
+        frequency:
+          (String(t.frequency ?? "daily").toLowerCase() as any) ?? "daily",
         category: t.category ?? null,
         task: t.task ?? null,
         weekday: t.weekday != null ? Number(t.weekday) : null,
@@ -904,17 +916,16 @@ export default function ManagerDashboardPage() {
       const taskById = new Map<string, CleaningTask>();
       for (const t of tasks) taskById.set(t.id, t);
 
-      const runsRaw: CleaningTaskRun[] = ((cleaningRunsDayRes.data as any[]) ?? []).map(
-        (r: any) => ({
-          id: String(r.id),
-          org_id: String(r.org_id),
-          task_id: String(r.task_id),
-          run_on: String(r.run_on),
-          done_by: r.done_by ? String(r.done_by) : null,
-          done_at: r.done_at ? String(r.done_at) : null,
-          location_id: r.location_id ? String(r.location_id) : null,
-        })
-      );
+      const runsRaw: CleaningTaskRun[] = ((cleaningRunsDayRes.data as any[]) ??
+        []).map((r: any) => ({
+        id: String(r.id),
+        org_id: String(r.org_id),
+        task_id: String(r.task_id),
+        run_on: String(r.run_on),
+        done_by: r.done_by ? String(r.done_by) : null,
+        done_at: r.done_at ? String(r.done_at) : null,
+        location_id: r.location_id ? String(r.location_id) : null,
+      }));
 
       const dueThatDay = tasks.filter((t) => isDueOn(t, selectedDateISO));
       const runTaskIds = new Set<string>(runsRaw.map((r) => String(r.task_id)));
@@ -984,7 +995,12 @@ export default function ManagerDashboardPage() {
         })
       );
 
-      const tempFails = await fetchTempFailuresUnifiedForDay(orgId, locationId, d0, d1);
+      const tempFails = await fetchTempFailuresUnifiedForDay(
+        orgId,
+        locationId,
+        d0,
+        d1
+      );
       setTempFailsToday(tempFails);
 
       const signoffRows: any[] = (signoffsDayRes.data as any[]) ?? [];
@@ -1039,7 +1055,9 @@ export default function ManagerDashboardPage() {
     ? incidentsHistory
     : incidentsHistory.slice(0, 10);
   const qcToRender = showAllQc ? qcReviews : qcReviews.slice(0, 10);
-  const signoffsToRender = showAllSignoffs ? signoffsToday : signoffsToday.slice(0, 10);
+  const signoffsToRender = showAllSignoffs
+    ? signoffsToday
+    : signoffsToday.slice(0, 10);
 
   // ✅ Sign-off eligibility + status
   const cleaningAllDone = cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
@@ -1105,8 +1123,9 @@ export default function ManagerDashboardPage() {
       // QC last 30 days window
       const qcStart = new Date(selectedDateISO);
       qcStart.setHours(0, 0, 0, 0);
-      qcStart.setDate(qcStart.getDate() - 29);
-      const qcStartIso = isoDate(qcStart);
+      const tmp = new Date(qcStart);
+      tmp.setDate(tmp.getDate() - 29);
+      const qcStartIso = isoDate(tmp);
 
       const [cleaningRunsRes, tempLogsRes, tempFailsRes, incidentsRes, qcRes] =
         await Promise.all([
@@ -1138,7 +1157,6 @@ export default function ManagerDashboardPage() {
             .gte("at", start.toISOString())
             .lte("at", end.toISOString()),
 
-          // ✅ incidents table (modal)
           supabase
             .from("incidents")
             .select("id", { count: "exact", head: true })
@@ -1148,7 +1166,6 @@ export default function ManagerDashboardPage() {
             .gte("happened_on", startIsoDate)
             .lte("happened_on", endIsoDate),
 
-          // ✅ staff_qc_reviews.rating (not score)
           supabase
             .from("staff_qc_reviews")
             .select("rating, reviewed_on")
@@ -1174,7 +1191,8 @@ export default function ManagerDashboardPage() {
       const qcAvg30d =
         qcCount30d > 0
           ? Math.round(
-              (qcRows.reduce((a, r) => a + Number(r.rating || 0), 0) / qcCount30d) *
+              (qcRows.reduce((a, r) => a + Number(r.rating || 0), 0) /
+                qcCount30d) *
                 10
             ) / 10
           : null;
@@ -1228,7 +1246,10 @@ export default function ManagerDashboardPage() {
               <>
                 Fails (7d):{" "}
                 <span
-                  className={cls("font-semibold", tempsSummary.fails7d > 0 && "text-red-700")}
+                  className={cls(
+                    "font-semibold",
+                    tempsSummary.fails7d > 0 && "text-red-700"
+                  )}
                 >
                   {tempsSummary.fails7d}
                 </span>
@@ -1380,13 +1401,17 @@ export default function ManagerDashboardPage() {
             <tbody>
               {cleaningCategoryProgress.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                  <td
+                    colSpan={4}
+                    className="px-3 py-4 text-center text-slate-500"
+                  >
                     No cleaning tasks scheduled for this day.
                   </td>
                 </tr>
               ) : (
                 cleaningCategoryProgress.map((r) => {
-                  const pct = r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
+                  const pct =
+                    r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
                   const pill =
                     pct === 100
                       ? "bg-emerald-100 text-emerald-800"
@@ -1395,7 +1420,10 @@ export default function ManagerDashboardPage() {
                       : "bg-red-100 text-red-800";
 
                   return (
-                    <tr key={r.category} className="border-t border-slate-100 text-slate-800">
+                    <tr
+                      key={r.category}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
                       <td className="px-3 py-2 font-semibold">{r.category}</td>
                       <td className="px-3 py-2">{r.done}</td>
                       <td className="px-3 py-2">{r.total}</td>
@@ -1418,7 +1446,7 @@ export default function ManagerDashboardPage() {
         </div>
       </section>
 
-      {/* Incidents (your modal table, last 90 days) */}
+      {/* Incidents */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
@@ -1444,13 +1472,19 @@ export default function ManagerDashboardPage() {
             <tbody>
               {incidentsToRender.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
+                  <td
+                    colSpan={6}
+                    className="px-3 py-4 text-center text-slate-500"
+                  >
                     No incidents logged.
                   </td>
                 </tr>
               ) : (
                 incidentsToRender.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                  <tr
+                    key={r.id}
+                    className="border-t border-slate-100 text-slate-800"
+                  >
                     <td className="px-3 py-2 whitespace-nowrap">
                       {formatDDMMYYYY(r.happened_on)}
                     </td>
@@ -1462,9 +1496,15 @@ export default function ManagerDashboardPage() {
                           })
                         : "—"}
                     </td>
-                    <td className="px-3 py-2 font-semibold">{r.type ?? "Incident"}</td>
-                    <td className="px-3 py-2">{r.created_by?.toUpperCase() ?? "—"}</td>
-                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.details ?? "—"}</td>
+                    <td className="px-3 py-2 font-semibold">
+                      {r.type ?? "Incident"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {r.created_by?.toUpperCase() ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">
+                      {r.details ?? "—"}
+                    </td>
                     <td className="px-3 py-2 max-w-[18rem] truncate">
                       {r.immediate_action ?? "—"}
                     </td>
@@ -1514,13 +1554,19 @@ export default function ManagerDashboardPage() {
                 <tbody>
                   {todayTemps.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
+                      <td
+                        colSpan={6}
+                        className="px-3 py-4 text-center text-slate-500"
+                      >
                         No temperature logs.
                       </td>
                     </tr>
                   ) : (
                     tempsToRender.map((r) => (
-                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <tr
+                        key={r.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
                         <td className="px-3 py-2">{r.time}</td>
                         <td className="px-3 py-2">{r.staff}</td>
                         <td className="px-3 py-2">{r.area}</td>
@@ -1557,7 +1603,7 @@ export default function ManagerDashboardPage() {
               onToggle={() => setShowAllTemps((v) => !v)}
             />
 
-            {/* ✅ Temp failures table (near temp logs, as requested) */}
+            {/* Temp failures table */}
             <h3 className="mt-4 mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
               Temp failures & corrective actions
             </h3>
@@ -1575,19 +1621,28 @@ export default function ManagerDashboardPage() {
                 <tbody>
                   {tempFailsToRender.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                      <td
+                        colSpan={4}
+                        className="px-3 py-4 text-center text-slate-500"
+                      >
                         No temp failures.
                       </td>
                     </tr>
                   ) : (
                     tempFailsToRender.map((r) => (
-                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <tr
+                        key={r.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
                         <td className="px-3 py-2 whitespace-nowrap">
                           {r.created_at
-                            ? new Date(r.created_at).toLocaleTimeString("en-GB", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
+                            ? new Date(r.created_at).toLocaleTimeString(
+                                "en-GB",
+                                {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                }
+                              )
                             : "—"}
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
@@ -1631,13 +1686,19 @@ export default function ManagerDashboardPage() {
                 <tbody>
                   {cleaningToRender.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                      <td
+                        colSpan={4}
+                        className="px-3 py-4 text-center text-slate-500"
+                      >
                         No cleaning tasks completed.
                       </td>
                     </tr>
                   ) : (
                     cleaningToRender.map((r) => (
-                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <tr
+                        key={r.id}
+                        className="border-t border-slate-100 text-slate-800"
+                      >
                         <td className="px-3 py-2">{r.time ?? "—"}</td>
                         <td className="px-3 py-2">
                           <div className="font-semibold">{r.category}</div>
@@ -1674,7 +1735,8 @@ export default function ManagerDashboardPage() {
             Day sign-offs
           </div>
           <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Daily sign-offs for selected day · Total: {signoffSummary.todayCount}
+            Daily sign-offs for selected day · Total:{" "}
+            {signoffSummary.todayCount}
           </div>
         </div>
 
@@ -1691,19 +1753,29 @@ export default function ManagerDashboardPage() {
             <tbody>
               {signoffsToRender.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                  <td
+                    colSpan={4}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
                     No sign-offs logged for this day.
                   </td>
                 </tr>
               ) : (
                 signoffsToRender.map((r) => {
-                  const t = r.created_at ? formatTimeHM(new Date(r.created_at)) : null;
+                  const t = r.created_at
+                    ? formatTimeHM(new Date(r.created_at))
+                    : null;
                   return (
-                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                    <tr
+                      key={r.id}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
                       <td className="px-3 py-2 whitespace-nowrap">
                         {formatDDMMYYYY(r.signoff_on)}
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap">{t ?? "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {t ?? "—"}
+                      </td>
                       <td className="px-3 py-2 font-semibold whitespace-nowrap">
                         {r.signed_by ? r.signed_by.toUpperCase() : "—"}
                       </td>
@@ -1725,7 +1797,7 @@ export default function ManagerDashboardPage() {
         />
       </section>
 
-      {/* ===== Manager QC Summary table ===== */}
+      {/* Manager QC Summary table */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
@@ -1746,7 +1818,11 @@ export default function ManagerDashboardPage() {
                 reviewed_on: selectedDateISO || f.reviewed_on,
               }));
               setQcOpen(true);
-              await Promise.all([loadTeamOptions(), loadLoggedInManager(), loadQcReviews()]);
+              await Promise.all([
+                loadTeamOptions(),
+                loadLoggedInManager(),
+                loadQcReviews(),
+              ]);
             }}
             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
           >
@@ -1768,13 +1844,19 @@ export default function ManagerDashboardPage() {
             <tbody>
               {qcSummaryLoading ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                  <td
+                    colSpan={5}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
                     Loading…
                   </td>
                 </tr>
               ) : qcToRender.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                  <td
+                    colSpan={5}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
                     No QC reviews logged.
                   </td>
                 </tr>
@@ -1788,7 +1870,10 @@ export default function ManagerDashboardPage() {
                       : "bg-red-100 text-red-800";
 
                   return (
-                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                    <tr
+                      key={r.id}
+                      className="border-t border-slate-100 text-slate-800"
+                    >
                       <td className="px-3 py-2 whitespace-nowrap">
                         {formatDDMMYYYY(r.reviewed_on)}
                       </td>
@@ -1826,9 +1911,12 @@ export default function ManagerDashboardPage() {
         />
       </section>
 
-      {/* ✅ Sign-off modal */}
+      {/* Sign-off modal */}
       {signoffOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setSignoffOpen(false)}
+        >
           <div
             className={cls(
               "mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
@@ -1854,7 +1942,8 @@ export default function ManagerDashboardPage() {
 
             {!cleaningAllDone && (
               <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                You can’t sign off until all cleaning tasks due today are completed.
+                You can’t sign off until all cleaning tasks due today are
+                completed.
               </div>
             )}
 
@@ -1866,12 +1955,14 @@ export default function ManagerDashboardPage() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Initials</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Initials
+                </label>
                 <input
                   value={signoffInitials}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    setSignoffInitials(e.target.value.toUpperCase())
-                  }
+                  onChange={(
+                    e: React.ChangeEvent<HTMLInputElement>
+                  ) => setSignoffInitials(e.target.value.toUpperCase())}
                   placeholder="WS"
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                 />
@@ -1914,7 +2005,7 @@ export default function ManagerDashboardPage() {
         </div>
       )}
 
-      {/* ✅ Individual staff assessment modal */}
+      {/* Individual staff assessment modal */}
       {staffAssessOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
@@ -1928,7 +2019,9 @@ export default function ManagerDashboardPage() {
           >
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <div className="text-base font-semibold">Individual staff assessment</div>
+                <div className="text-base font-semibold">
+                  Individual staff assessment
+                </div>
                 <div className="mt-0.5 text-xs text-slate-500">
                   Manager view of individual performance.
                 </div>
@@ -1951,7 +2044,9 @@ export default function ManagerDashboardPage() {
             <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
               <div className="grid gap-3 md:grid-cols-3">
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Staff</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Staff
+                  </label>
                   <select
                     value={staffAssessStaffId}
                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -1995,7 +2090,10 @@ export default function ManagerDashboardPage() {
                         alert("Select staff first.");
                         return;
                       }
-                      void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
+                      void loadStaffAssessment(
+                        staffAssessStaffId,
+                        staffAssessDays
+                      );
                     }}
                     disabled={staffAssessLoading || !orgId || !locationId}
                     className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
@@ -2031,7 +2129,9 @@ export default function ManagerDashboardPage() {
                 <KpiTile
                   title="Temp fails"
                   icon="🚫"
-                  tone={staffAssess && staffAssess.tempFails > 0 ? "danger" : "ok"}
+                  tone={
+                    staffAssess && staffAssess.tempFails > 0 ? "danger" : "ok"
+                  }
                   value={staffAssess?.tempFails ?? "—"}
                   sub={
                     staffAssess
@@ -2042,7 +2142,9 @@ export default function ManagerDashboardPage() {
                 <KpiTile
                   title="Incidents"
                   icon="⚠️"
-                  tone={staffAssess && staffAssess.incidents > 0 ? "warn" : "ok"}
+                  tone={
+                    staffAssess && staffAssess.incidents > 0 ? "warn" : "ok"
+                  }
                   value={staffAssess?.incidents ?? "—"}
                   sub={
                     staffAssess
@@ -2077,15 +2179,16 @@ export default function ManagerDashboardPage() {
               </div>
 
               <div className="mt-4 text-xs text-slate-500">
-                Note: this uses initials across logs (done_by, staff_initials, created_by). If
-                you switch to IDs everywhere later, this becomes rock-solid.
+                Note: this uses initials across logs (done_by, staff_initials,
+                created_by). If you switch to IDs everywhere later, this becomes
+                rock-solid.
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ===== QC modal ===== */}
+      {/* QC modal */}
       {qcOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
@@ -2101,7 +2204,8 @@ export default function ManagerDashboardPage() {
               <div>
                 <div className="text-base font-semibold">Manager QC</div>
                 <div className="mt-0.5 text-xs text-slate-500">
-                  Manager is your logged-in team member. Staff list is team members.
+                  Manager is your logged-in team member. Staff list is team
+                  members.
                 </div>
               </div>
 
@@ -2120,12 +2224,17 @@ export default function ManagerDashboardPage() {
                     Manager
                   </div>
                   <div className="mt-1 text-sm font-semibold text-slate-900">
-                    {managerTeamMember ? tmLabel(managerTeamMember) : "Not linked"}
+                    {managerTeamMember
+                      ? tmLabel(managerTeamMember)
+                      : "Not linked"}
                   </div>
                   {!managerTeamMember ? (
                     <div className="mt-1 text-xs text-rose-700">
                       Link this login by setting{" "}
-                      <span className="font-semibold">team_members.user_id</span>.
+                      <span className="font-semibold">
+                        team_members.user_id
+                      </span>
+                      .
                     </div>
                   ) : null}
                 </div>
@@ -2142,7 +2251,9 @@ export default function ManagerDashboardPage() {
 
               <div className="grid gap-3 md:grid-cols-4">
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Staff</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Staff
+                  </label>
                   <select
                     value={qcForm.staff_id}
                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
@@ -2160,7 +2271,9 @@ export default function ManagerDashboardPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Date</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Date
+                  </label>
                   <input
                     type="date"
                     value={qcForm.reviewed_on}
@@ -2172,11 +2285,16 @@ export default function ManagerDashboardPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Score</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Score
+                  </label>
                   <select
                     value={qcForm.rating}
                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                      setQcForm((f) => ({ ...f, rating: Number(e.target.value) }))
+                      setQcForm((f) => ({
+                        ...f,
+                        rating: Number(e.target.value),
+                      }))
                     }
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                   >
@@ -2189,7 +2307,9 @@ export default function ManagerDashboardPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Notes</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Notes
+                  </label>
                   <input
                     value={qcForm.notes}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
@@ -2212,7 +2332,9 @@ export default function ManagerDashboardPage() {
                 <button
                   type="button"
                   onClick={addQcReview}
-                  disabled={qcSaving || !orgId || !locationId || !managerTeamMember}
+                  disabled={
+                    qcSaving || !orgId || !locationId || !managerTeamMember
+                  }
                   className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
                 >
                   {qcSaving ? "Saving…" : "Add QC"}
@@ -2235,61 +2357,77 @@ export default function ManagerDashboardPage() {
                 <tbody>
                   {qcLoading ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                      <td
+                        colSpan={6}
+                        className="px-3 py-6 text-center text-slate-500"
+                      >
                         Loading…
                       </td>
                     </tr>
-                  ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length === 0 ? (
+                  ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length ===
+                    0 ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                      <td
+                        colSpan={6}
+                        className="px-3 py-6 text-center text-slate-500"
+                      >
                         No QC reviews logged.
                       </td>
                     </tr>
                   ) : (
-                    (showAllQc ? qcReviews : qcReviews.slice(0, 10)).map((r) => {
-                      const pill =
-                        r.rating >= 4
-                          ? "bg-emerald-100 text-emerald-800"
-                          : r.rating === 3
-                          ? "bg-amber-100 text-amber-800"
-                          : "bg-red-100 text-red-800";
+                    (showAllQc ? qcReviews : qcReviews.slice(0, 10)).map(
+                      (r) => {
+                        const pill =
+                          r.rating >= 4
+                            ? "bg-emerald-100 text-emerald-800"
+                            : r.rating === 3
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-red-100 text-red-800";
 
-                      return (
-                        <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {formatDDMMYYYY(r.reviewed_on)}
-                          </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {tmLabel(r.staff ?? { initials: null, name: "—" })}
-                          </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {tmLabel(r.manager ?? { initials: null, name: "—" })}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span
-                              className={cls(
-                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                                pill
+                        return (
+                          <tr
+                            key={r.id}
+                            className="border-t border-slate-100 text-slate-800"
+                          >
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {formatDDMMYYYY(r.reviewed_on)}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {tmLabel(
+                                r.staff ?? { initials: null, name: "—" }
                               )}
-                            >
-                              {r.rating}/5
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 max-w-[18rem] truncate">
-                            {r.notes ?? "—"}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <button
-                              type="button"
-                              onClick={() => deleteQcReview(r.id)}
-                              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {tmLabel(
+                                r.manager ?? { initials: null, name: "—" }
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              <span
+                                className={cls(
+                                  "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                                  pill
+                                )}
+                              >
+                                {r.rating}/5
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 max-w-[18rem] truncate">
+                              {r.notes ?? "—"}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => deleteQcReview(r.id)}
+                                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      }
+                    )
                   )}
                 </tbody>
               </table>
@@ -2304,8 +2442,8 @@ export default function ManagerDashboardPage() {
         </div>
       )}
 
-      {/* Incident modal (existing) */}
-      {incidentOpen && (
+      {/* Incident modal – narrow orgId/locationId type so TS shuts up */}
+      {incidentOpen && orgId && locationId && (
         <IncidentModal
           open={incidentOpen}
           onClose={() => setIncidentOpen(false)}
