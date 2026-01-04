@@ -17,31 +17,64 @@ type UnifiedIncidentRow = {
   happened_on: string | null;
   created_at: string | null;
   type: string | null;
-  created_by: string | null;
-  details: string | null;
-  corrective_action: string | null;
-  source: "temp_fail";
-};
-
-type LoggedIncidentRow = {
-  id: string;
-  happened_on: string;
-  created_at: string | null;
-  type: string | null;
   details: string | null;
   immediate_action: string | null;
-  preventive_action: string | null;
+  corrective_action: string | null;
   created_by: string | null;
+  source: "incident" | "temp_fail";
 };
 
-type TodayTempRow = {
+type CleaningCategoryProgress = {
+  category: string;
+  done: number;
+  total: number;
+};
+
+type CleaningActivityRow = {
   id: string;
-  time: string;
-  staff: string;
-  item: string;
-  area: string;
+  time: string | null;
+  category: string;
+  staff: string | null;
+  notes: string | null;
+  task: string | null;
+};
+
+type TempLogRow = {
+  id: string;
+  time: string | null;
+  staff: string | null;
+  area: string | null;
+  item: string | null;
   temp_c: number | null;
   status: string | null;
+};
+
+type SignoffRow = {
+  id: string;
+  signoff_on: string; // yyyy-mm-dd
+  signed_by: string | null;
+  notes: string | null;
+  created_at: string | null;
+};
+
+type SignoffSummary = {
+  todayCount: number;
+};
+
+type TrainingSummary = {
+  expired: number;
+  dueSoon: number;
+};
+
+type StaffQcReviewRow = {
+  id: string;
+  reviewed_on: string;
+  rating: number;
+  notes: string | null;
+  staff_id: string | null;
+  manager_id: string | null;
+  staff: { initials: string | null; name: string | null } | null;
+  manager: { initials: string | null; name: string | null } | null;
 };
 
 type CleaningTask = {
@@ -63,64 +96,14 @@ type CleaningTaskRun = {
   location_id: string | null;
 };
 
-type CleaningActivityRow = {
-  id: string;
-  time: string | null;
-  category: string;
-  staff: string | null;
-  notes: string | null;
-  task: string | null;
-};
-
-type CleaningCategoryProgressRow = {
-  category: string;
-  done: number;
-  total: number;
-};
-
-type IncidentSummary = { todayCount: number; last7Count: number };
-
-/* =========================
-   Day sign-offs (daily_signoffs)
-========================= */
-
-type SignoffRow = {
-  id: string;
-  signoff_on: string; // yyyy-mm-dd
-  signed_by: string | null;
-  notes: string | null;
-  created_at: string | null; // ISO datetime
-};
-
-type SignoffSummary = { todayCount: number };
-
-/* =========================
-   Manager QC (staff_qc_reviews) using team_members
-========================= */
-
 type TeamMemberOption = {
   id: string;
+  name: string | null;
   initials: string | null;
-  name: string;
   role: string | null;
-  active: boolean;
+  active: boolean | null;
   user_id: string | null;
 };
-
-type StaffQcReviewRow = {
-  id: string;
-  reviewed_on: string;
-  rating: number;
-  notes: string | null;
-  staff_id: string;
-  manager_id: string;
-  staff?: { initials: string | null; name: string | null } | null;
-  manager?: { initials: string | null; name: string | null } | null;
-};
-
-/* =========================
-   Individual staff assessment modal
-========================= */
 
 type StaffAssessment = {
   staffId: string;
@@ -134,43 +117,25 @@ type StaffAssessment = {
   qcCount30d: number;
 };
 
-const WEEKDAYS = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
-
-const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
-function formatPrettyDate(d: Date) {
-  const wd = WEEKDAYS[d.getDay()];
-  const day = d.getDate();
-  const month = MONTHS[d.getMonth()];
-  const year = d.getFullYear();
-  return `${wd} ${day} ${month} ${year}`;
-}
+const nowISO = new Date().toISOString().slice(0, 10);
 
 function safeDate(val: any): Date | null {
   if (!val) return null;
-  const d = new Date(val);
-  return Number.isNaN(d.getTime()) ? null : d;
+  const d = val instanceof Date ? val : new Date(val);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+function formatPrettyDate(dmy: string | null): string {
+  if (!dmy) return "—";
+  const d = new Date(dmy);
+  if (Number.isNaN(d.getTime())) return dmy;
+  return d.toLocaleDateString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
 }
 
 function toISODate(val: any): string {
@@ -178,44 +143,59 @@ function toISODate(val: any): string {
   return d.toISOString().slice(0, 10);
 }
 
-async function fetchTempFailuresUnifiedForDay(
-  orgId: string,
-  locationId: string,
-  dayISO: string
-): Promise<UnifiedIncidentRow[]> {
-  const fromStart = new Date(`${dayISO}T00:00:00.000Z`).toISOString();
-  const toEnd = new Date(`${dayISO}T23:59:59.999Z`).toISOString();
-
-  const { data: failLogs, error: failErr } = await supabase
+async function fetchTempFailuresUnifiedForDay(orgId: string, locationId: string, d0: Date, d1: Date) {
+  const { data, error } = await supabase
     .from("food_temp_logs")
-    .select("id, at, area, note, temp_c, target_key, status, staff_initials, location_id")
+    .select(
+      `
+      id,
+      at,
+      temp_c,
+      target_key,
+      area,
+      note,
+      staff_initials,
+      status,
+      corrective_action_log:food_temp_corrective_actions!food_temp_corrective_actions_temp_log_id_fkey(
+        id,
+        created_at,
+        recorded_by,
+        action,
+        recheck_temp_c,
+        recheck_at,
+        recheck_status
+      )
+    `
+    )
     .eq("org_id", orgId)
     .eq("location_id", locationId)
     .eq("status", "fail")
-    .gte("at", fromStart)
-    .lte("at", toEnd)
+    .gte("at", d0.toISOString())
+    .lt("at", d1.toISOString())
     .order("at", { ascending: false })
-    .limit(2000);
+    .limit(500);
 
-  if (failErr) throw failErr;
+  if (error) throw error;
 
-  const logs = (failLogs ?? []) as any[];
-  if (!logs.length) return [];
+  const rows: any[] = (data ?? []) as any[];
 
-  const ids = logs.map((r) => String(r.id));
+  const logs = rows.map((r) => ({
+    id: r.id,
+    at: r.at ? String(r.at) : null,
+    temp_c: r.temp_c != null ? Number(r.temp_c) : null,
+    target_key: r.target_key ?? null,
+    area: r.area ?? null,
+    note: r.note ?? null,
+    staff_initials: r.staff_initials ?? null,
+  }));
 
-  const { data: caRows, error: caErr } = await supabase
-    .from("food_temp_corrective_actions")
-    .select("temp_log_id, action, recheck_temp_c, recheck_at, recheck_status, recorded_by, created_at, location_id")
-    .eq("org_id", orgId)
-    .eq("location_id", locationId)
-    .in("temp_log_id", ids)
-    .limit(5000);
-
-  if (caErr) throw caErr;
+  const corrective = rows.flatMap((r) => {
+    const arr = r.corrective_action_log ?? [];
+    return Array.isArray(arr) ? arr : [];
+  });
 
   const byLog = new Map<string, any>();
-  for (const row of (caRows ?? []) as any[]) {
+  for (const row of corrective as any[]) {
     const key = String(row.temp_log_id);
     const existing = byLog.get(key);
     if (!existing) byLog.set(key, row);
@@ -242,9 +222,9 @@ async function fetchTempFailuresUnifiedForDay(
       const reT = `${Number(ca.recheck_temp_c)}°C`;
       const reAt = ca.recheck_at
         ? new Date(String(ca.recheck_at)).toLocaleTimeString("en-GB", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })
+            hour: "2-digit",
+            minute: "2-digit",
+          })
         : "—";
       const reStatus = ca.recheck_status ? String(ca.recheck_status) : "—";
       const suffix = `Re-check: ${reT} (${reStatus}) at ${reAt}`;
@@ -262,7 +242,7 @@ async function fetchTempFailuresUnifiedForDay(
       details,
       corrective_action: corrective,
       source: "temp_fail",
-    };
+    } as UnifiedIncidentRow;
   });
 }
 
@@ -271,6 +251,15 @@ function formatTimeHM(d: Date | null | undefined): string | null {
   const hours = String(d.getHours()).padStart(2, "0");
   const mins = String(d.getMinutes()).padStart(2, "0");
   return `${hours}:${mins}`;
+}
+
+function formatDDMMYYYY(val: any): string {
+  const d = safeDate(val);
+  if (!d) return "—";
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
 }
 
 const cls = (...p: Array<string | false | null | undefined>) =>
@@ -283,7 +272,7 @@ const addDaysISO = (dmy: string, delta: number) => {
   return isoDate(d);
 };
 
-const getDow1to7 = (dmy: string) => ((new Date(dmy).getDay() + 6) % 7) + 1; // Mon=1..Sun=7
+const getDow1to7 = (dmy: string) => ((new Date(dmy).getDay() + 6) % 7) + 1; // Mon=1.Sun=7
 const getDom = (dmy: string) => new Date(dmy).getDate();
 
 function isDueOn(t: CleaningTask, dmy: string) {
@@ -313,19 +302,19 @@ function KpiTile({
     tone === "danger"
       ? "border-red-200 bg-red-50/90"
       : tone === "warn"
-        ? "border-amber-200 bg-amber-50/90"
-        : tone === "ok"
-          ? "border-emerald-200 bg-emerald-50/90"
-          : "border-slate-200 bg-white/90";
+      ? "border-amber-200 bg-amber-50/90"
+      : tone === "ok"
+      ? "border-emerald-200 bg-emerald-50/90"
+      : "border-slate-200 bg-white/90";
 
   const accentCls =
     tone === "danger"
       ? "bg-red-400"
       : tone === "warn"
-        ? "bg-amber-400"
-        : tone === "ok"
-          ? "bg-emerald-400"
-          : "bg-slate-300";
+      ? "bg-amber-400"
+      : tone === "ok"
+      ? "bg-emerald-400"
+      : "bg-slate-300";
 
   return (
     <motion.div
@@ -345,26 +334,27 @@ function KpiTile({
       />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-700/90">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
             {title}
           </div>
-          <div className="mt-2 text-3xl font-extrabold text-slate-900 leading-none">
-            {value}
+          <div className="mt-1 flex items-baseline gap-2">
+            <div className="text-2xl font-extrabold text-slate-900 truncate">
+              {value}
+            </div>
           </div>
+          <div className="mt-1 text-xs text-slate-600 truncate">{sub}</div>
         </div>
         {icon ? (
-          <div className="shrink-0 text-lg opacity-90" aria-hidden="true">
-            {icon}
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900/5 text-lg">
+            <span>{icon}</span>
           </div>
         ) : null}
-      </div>
-
-      <div className="mt-auto pt-3 text-[11px] font-medium text-slate-600">
-        {sub}
       </div>
     </motion.div>
   );
 }
+
+/* ---------- Table footer toggle ---------- */
 
 function TableFooterToggle({
   total,
@@ -376,72 +366,63 @@ function TableFooterToggle({
   onToggle: () => void;
 }) {
   if (total <= 10) return null;
-
   return (
-    <div className="mt-2 flex items-center justify-between text-xs">
-      <div className="text-slate-500">
-        Showing {showingAll ? total : 10} of{" "}
-        <span className="font-semibold">{total}</span>
-      </div>
+    <div className="border-t border-slate-100 bg-slate-50/80 px-3 py-2 text-right text-xs text-slate-600">
+      Showing {showingAll ? "all" : "latest 10"} of {total} rows.{" "}
       <button
         type="button"
         onClick={onToggle}
-        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+        className="font-semibold text-indigo-700 hover:underline"
       >
-        {showingAll ? "Show less" : `Show all (${total})`}
+        {showingAll ? "Show less" : "Show all"}
       </button>
     </div>
   );
 }
+
+/* ---------- Page ---------- */
 
 export default function ManagerDashboardPage() {
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [locationLoading, setLocationLoading] = useState(false);
-
-  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const nowISO = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return isoDate(d);
-  }, []);
+  const [selectedDateISO, setSelectedDateISO] = useState(nowISO);
+  const centeredDate = useMemo(
+    () => formatPrettyDate(selectedDateISO),
+    [selectedDateISO]
+  );
 
-  const [selectedDateISO, setSelectedDateISO] = useState<string>(nowISO);
-
+  /* ===== KPI state ===== */
   const [tempsSummary, setTempsSummary] = useState<TempSummary>({
     today: 0,
     fails7d: 0,
   });
-  const [todayTemps, setTodayTemps] = useState<TodayTempRow[]>([]);
+  const [cleaningTotal, setCleaningTotal] = useState(0);
+  const [cleaningDoneTotal, setCleaningDoneTotal] = useState(0);
+  const [incidentsToday, setIncidentsToday] = useState(0);
+  const [incidents7d, setIncidents7d] = useState(0);
+  const [trainingExpired, setTrainingExpired] = useState(0);
+  const [trainingDueSoon, setTrainingDueSoon] = useState(0);
 
-  const [cleaningCategoryProgress, setCleaningCategoryProgress] = useState<
-    CleaningCategoryProgressRow[]
-  >([]);
+  /* ===== Today activity tables ===== */
+  const [todayTemps, setTodayTemps] = useState<TempLogRow[]>([]);
   const [cleaningActivity, setCleaningActivity] = useState<CleaningActivityRow[]>(
     []
   );
-
-  const [incidentSummary, setIncidentSummary] = useState<IncidentSummary>({
-    todayCount: 0,
-    last7Count: 0,
-  });
-
-  // ✅ Logged incidents (your modal table) - historical
-  const [incidentsHistory, setIncidentsHistory] = useState<LoggedIncidentRow[]>(
+  const [cleaningCategoryProgress, setCleaningCategoryProgress] = useState<
+    CleaningCategoryProgress[]
+  >([]);
+  const [tempFailsToday, setTempFailsToday] = useState<UnifiedIncidentRow[]>([]);
+  const [incidentsHistory, setIncidentsHistory] = useState<UnifiedIncidentRow[]>(
     []
   );
 
-  // ✅ Temp fails (near temp logs)
-  const [tempFailsToday, setTempFailsToday] = useState<UnifiedIncidentRow[]>([]);
-  const [showAllTempFails, setShowAllTempFails] = useState(false);
-
-  const [trainingDueSoon, setTrainingDueSoon] = useState(0);
-  const [trainingExpired, setTrainingExpired] = useState(0);
-
   const [showAllTemps, setShowAllTemps] = useState(false);
+  const [showAllTempFails, setShowAllTempFails] = useState(false);
   const [showAllCleaning, setShowAllCleaning] = useState(false);
   const [showAllIncidents, setShowAllIncidents] = useState(false);
 
@@ -774,20 +755,15 @@ export default function ManagerDashboardPage() {
       thirtyDaysAhead.setDate(thirtyDaysAhead.getDate() + 30);
 
       const [
-        tempsCountRes,
-        fails7dRes,
-        tempsListRes,
-
+        tempsTodayRes,
+        tempsFails7dRes,
+        todayTempLogsRes,
         cleaningTasksRes,
         cleaningRunsDayRes,
-
-        // ✅ incidents table (your modal)
         incidentsListRes,
-        incidentsTodayCountRes,
-        incidents7dCountRes,
-
+        incidentsTodayRes,
+        incidents7dRes,
         trainingsRes,
-
         signoffsDayRes,
       ] = await Promise.all([
         supabase
@@ -880,52 +856,27 @@ export default function ManagerDashboardPage() {
           .limit(200),
       ]);
 
-      const firstError =
-        tempsCountRes.error ||
-        fails7dRes.error ||
-        tempsListRes.error ||
+      const firstErr =
+        tempsTodayRes.error ||
+        tempsFails7dRes.error ||
+        todayTempLogsRes.error ||
         cleaningTasksRes.error ||
         cleaningRunsDayRes.error ||
         incidentsListRes.error ||
-        incidentsTodayCountRes.error ||
-        incidents7dCountRes.error ||
+        incidentsTodayRes.error ||
+        incidents7dRes.error ||
         trainingsRes.error ||
         signoffsDayRes.error;
 
-      if (firstError) throw firstError;
+      if (firstErr) throw firstErr;
 
       setTempsSummary({
-        today: tempsCountRes.count ?? 0,
-        fails7d: fails7dRes.count ?? 0,
+        today: tempsTodayRes.count ?? 0,
+        fails7d: tempsFails7dRes.count ?? 0,
       });
 
-      const tempsData: any[] = (tempsListRes.data as any[]) ?? [];
-      setTodayTemps(
-        tempsData.map((r) => {
-          const ts = r.at ? new Date(r.at) : r.created_at ? new Date(r.created_at) : null;
-          return {
-            id: String(r.id),
-            time: formatTimeHM(ts) ?? "—",
-            staff: (r.staff_initials ?? r.initials ?? "—").toString(),
-            item: (r.note ?? r.item ?? "—").toString(),
-            area: (r.area ?? "—").toString(),
-            temp_c: r.temp_c != null ? Number(r.temp_c) : null,
-            status: r.status ?? null,
-          };
-        })
-      );
-
-      // Temp fails table (selected day)
-      try {
-        const tf = await fetchTempFailuresUnifiedForDay(orgId, locationId, selectedDateISO);
-        setTempFailsToday(tf);
-        setShowAllTempFails(false);
-      } catch (e) {
-        console.error(e);
-        setTempFailsToday([]);
-      }
-
-      const tRows: any[] = (trainingsRes.data as any[]) ?? [];
+      const tRows: Array<{ expires_on: string | null }> =
+        (trainingsRes.data as any[]) ?? [];
       let expired = 0;
       let dueSoon = 0;
       for (const t of tRows) {
@@ -953,15 +904,17 @@ export default function ManagerDashboardPage() {
       const taskById = new Map<string, CleaningTask>();
       for (const t of tasks) taskById.set(t.id, t);
 
-      const runsRaw: CleaningTaskRun[] = ((cleaningRunsDayRes.data as any[]) ?? []).map((r: any) => ({
-        id: String(r.id),
-        org_id: String(r.org_id),
-        task_id: String(r.task_id),
-        run_on: String(r.run_on),
-        done_by: r.done_by ? String(r.done_by) : null,
-        done_at: r.done_at ? String(r.done_at) : null,
-        location_id: r.location_id ? String(r.location_id) : null,
-      }));
+      const runsRaw: CleaningTaskRun[] = ((cleaningRunsDayRes.data as any[]) ?? []).map(
+        (r: any) => ({
+          id: String(r.id),
+          org_id: String(r.org_id),
+          task_id: String(r.task_id),
+          run_on: String(r.run_on),
+          done_by: r.done_by ? String(r.done_by) : null,
+          done_at: r.done_at ? String(r.done_at) : null,
+          location_id: r.location_id ? String(r.location_id) : null,
+        })
+      );
 
       const dueThatDay = tasks.filter((t) => isDueOn(t, selectedDateISO));
       const runTaskIds = new Set<string>(runsRaw.map((r) => String(r.task_id)));
@@ -992,7 +945,7 @@ export default function ManagerDashboardPage() {
             staff: r.done_by ? String(r.done_by) : null,
             notes: null,
             task: t?.task ?? null,
-          };
+          } as CleaningActivityRow;
         })
       );
 
@@ -1003,37 +956,50 @@ export default function ManagerDashboardPage() {
           id: String(r.id),
           happened_on: String(r.happened_on),
           created_at: r.created_at ? String(r.created_at) : null,
-          type: r.type ? String(r.type) : null,
-          details: r.details ? String(r.details) : null,
-          immediate_action: r.immediate_action ? String(r.immediate_action) : null,
-          preventive_action: r.preventive_action ? String(r.preventive_action) : null,
+          type: r.type ?? "Incident",
+          details: r.details ?? null,
+          immediate_action: r.immediate_action ?? null,
+          corrective_action: r.preventive_action ?? null,
           created_by: r.created_by ? String(r.created_by) : null,
+          source: "incident",
         }))
       );
 
-      setIncidentSummary({
-        todayCount: incidentsTodayCountRes.count ?? 0,
-        last7Count: incidents7dCountRes.count ?? 0,
+      setIncidentsToday(incidentsTodayRes.count ?? 0);
+      setIncidents7d(incidents7dRes.count ?? 0);
+
+      const todayRows: any[] = (todayTempLogsRes.data as any[]) ?? [];
+      setTodayTemps(
+        todayRows.map((r) => {
+          const at = r.at ? new Date(r.at) : null;
+          return {
+            id: String(r.id),
+            time: at ? formatTimeHM(at) : null,
+            staff: r.staff_initials ? String(r.staff_initials) : null,
+            area: r.area ?? null,
+            item: r.note ?? null,
+            temp_c: r.temp_c != null ? Number(r.temp_c) : null,
+            status: r.status ?? null,
+          } as TempLogRow;
+        })
+      );
+
+      const tempFails = await fetchTempFailuresUnifiedForDay(orgId, locationId, d0, d1);
+      setTempFailsToday(tempFails);
+
+      const signoffRows: any[] = (signoffsDayRes.data as any[]) ?? [];
+      setSignoffsToday(
+        signoffRows.map((r) => ({
+          id: String(r.id),
+          signoff_on: String(r.signoff_on),
+          signed_by: r.signed_by ? String(r.signed_by) : null,
+          notes: r.notes ? String(r.notes) : null,
+          created_at: r.created_at ? String(r.created_at) : null,
+        }))
+      );
+      setSignoffSummary({
+        todayCount: signoffRows.length,
       });
-
-      // Sign-offs (selected day)
-      const soRows = ((signoffsDayRes.data as any[]) ?? []).map((r: any) => ({
-        id: String(r.id),
-        signoff_on: String(r.signoff_on),
-        signed_by: r.signed_by ? String(r.signed_by) : null,
-        notes: r.notes ? String(r.notes) : null,
-        created_at: r.created_at ? String(r.created_at) : null,
-      })) as SignoffRow[];
-
-      setSignoffsToday(soRows);
-      setSignoffSummary({ todayCount: soRows.length });
-      setShowAllSignoffs(false);
-
-      setShowAllTemps(false);
-      setShowAllCleaning(false);
-      setShowAllIncidents(false);
-
-      await loadQcSummary();
     } catch (e: any) {
       console.error(e);
       setErr(e?.message ?? "Failed to load manager dashboard.");
@@ -1042,29 +1008,37 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  const centeredDate = formatPrettyDate(new Date(selectedDateISO));
-
   const tempsTone: "neutral" | "ok" | "warn" | "danger" =
-    tempsSummary.fails7d > 0 ? "danger" : "ok";
+    tempsSummary.today === 0
+      ? "warn"
+      : tempsSummary.fails7d > 0
+      ? "danger"
+      : "ok";
+
+  const cleaningTone: "neutral" | "ok" | "warn" | "danger" =
+    cleaningTotal === 0
+      ? "neutral"
+      : cleaningDoneTotal === cleaningTotal
+      ? "ok"
+      : "warn";
+
   const incidentsTone: "neutral" | "ok" | "warn" | "danger" =
-    incidentSummary.todayCount > 0 ? "warn" : "ok";
+    incidentsToday > 0 ? "danger" : incidents7d > 0 ? "warn" : "ok";
+
   const trainingTone: "neutral" | "ok" | "warn" | "danger" =
     trainingExpired > 0 ? "danger" : trainingDueSoon > 0 ? "warn" : "ok";
 
-  const cleaningDoneTotal = cleaningCategoryProgress.reduce((a, r) => a + r.done, 0);
-  const cleaningTotal = cleaningCategoryProgress.reduce((a, r) => a + r.total, 0);
-
   const tempsToRender = showAllTemps ? todayTemps : todayTemps.slice(0, 10);
-  const cleaningToRender = showAllCleaning ? cleaningActivity : cleaningActivity.slice(0, 10);
-
+  const tempFailsToRender = showAllTempFails
+    ? tempFailsToday
+    : tempFailsToday.slice(0, 10);
+  const cleaningToRender = showAllCleaning
+    ? cleaningActivity
+    : cleaningActivity.slice(0, 10);
   const incidentsToRender = showAllIncidents
     ? incidentsHistory
     : incidentsHistory.slice(0, 10);
-
-  const tempFailsToRender = showAllTempFails ? tempFailsToday : tempFailsToday.slice(0, 10);
-
   const qcToRender = showAllQc ? qcReviews : qcReviews.slice(0, 10);
-
   const signoffsToRender = showAllSignoffs ? signoffsToday : signoffsToday.slice(0, 10);
 
   // ✅ Sign-off eligibility + status
@@ -1079,73 +1053,50 @@ export default function ManagerDashboardPage() {
       return;
     }
 
-    const initials = signoffInitials.trim().toUpperCase();
-    if (!initials) {
-      alert("Enter initials to sign off.");
+    if (!signoffInitials.trim()) {
+      alert("Enter your initials.");
       return;
     }
 
     setSignoffSaving(true);
     try {
-      const payload = {
+      const { error } = await supabase.from("daily_signoffs").insert({
         org_id: orgId,
         location_id: locationId,
         signoff_on: selectedDateISO,
-        signed_by: initials,
+        signed_by: signoffInitials.trim().toUpperCase(),
         notes: signoffNotes.trim() || null,
-      };
-
-      const { data, error } = await supabase
-        .from("daily_signoffs")
-        .insert(payload)
-        .select("id, signoff_on, signed_by, notes, created_at")
-        .single();
+      });
 
       if (error) throw error;
-
-      const row: SignoffRow = {
-        id: String((data as any).id),
-        signoff_on: String((data as any).signoff_on),
-        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
-        notes: (data as any).notes ? String((data as any).notes) : null,
-        created_at: (data as any).created_at ? String((data as any).created_at) : null,
-      };
-
-      setSignoffsToday((prev) => [row, ...prev]);
-      setSignoffSummary((prev) => ({ ...prev, todayCount: prev.todayCount + 1 }));
-      setShowAllSignoffs(false);
 
       setSignoffInitials("");
       setSignoffNotes("");
       setSignoffOpen(false);
+      await refreshAll();
     } catch (e: any) {
       console.error(e);
-      alert(e?.message ?? "Failed to sign off the day.");
+      alert(e?.message ?? "Failed to sign off.");
     } finally {
       setSignoffSaving(false);
     }
   }
 
-  // ✅ Load staff assessment
   async function loadStaffAssessment(staffId: string, days: number) {
     if (!orgId || !locationId) return;
-
-    const staff = teamOptions.find((t) => t.id === staffId) ?? null;
-    const initials = (staff?.initials ?? "").toString().trim().toUpperCase();
-
     setStaffAssessLoading(true);
     setStaffAssessErr(null);
-    setStaffAssess(null);
 
     try {
-      if (!staff) throw new Error("Select a staff member.");
-      if (!initials) throw new Error("Selected staff member has no initials.");
+      const staff = teamOptions.find((t) => t.id === staffId);
+      if (!staff) throw new Error("Staff not found in options.");
+
+      const initials = staff.initials?.trim().toUpperCase() || "";
+      if (!initials) throw new Error("Staff initials are required for assessment.");
 
       const end = new Date(selectedDateISO);
       end.setHours(23, 59, 59, 999);
-
-      const start = new Date(selectedDateISO);
-      start.setHours(0, 0, 0, 0);
+      const start = new Date(end);
       start.setDate(start.getDate() - (days - 1));
 
       const startIsoDate = isoDate(start);
@@ -1209,22 +1160,23 @@ export default function ManagerDashboardPage() {
             .limit(500),
         ]);
 
-      const firstErr =
+      const firstErr2 =
         cleaningRunsRes.error ||
         tempLogsRes.error ||
         tempFailsRes.error ||
         incidentsRes.error ||
         qcRes.error;
 
-      if (firstErr) throw firstErr;
+      if (firstErr2) throw firstErr2;
 
       const qcRows = (qcRes.data ?? []) as Array<{ rating: number }>;
       const qcCount30d = qcRows.length;
       const qcAvg30d =
         qcCount30d > 0
           ? Math.round(
-            (qcRows.reduce((a, r) => a + Number(r.rating || 0), 0) / qcCount30d) * 10
-          ) / 10
+              (qcRows.reduce((a, r) => a + Number(r.rating || 0), 0) / qcCount30d) *
+                10
+            ) / 10
           : null;
 
       setStaffAssess({
@@ -1283,187 +1235,135 @@ export default function ManagerDashboardPage() {
               </>
             }
           />
-
+          <KpiTile
+            title="Cleaning"
+            icon="🧼"
+            tone={cleaningTone}
+            value={`${cleaningDoneTotal}/${cleaningTotal}`}
+            sub="Tasks completed today"
+          />
           <KpiTile
             title="Incidents"
             icon="⚠️"
             tone={incidentsTone}
-            value={incidentSummary.todayCount}
-            sub={`Last 7d: ${incidentSummary.last7Count}`}
+            value={incidentsToday}
+            sub={`Last 7d: ${incidents7d}`}
           />
-
           <KpiTile
             title="Training"
             icon="🎓"
             tone={trainingTone}
-            value={trainingExpired}
-            sub={
-              <>
-                Due soon (30d):{" "}
-                <span
-                  className={cls("font-semibold", trainingDueSoon > 0 && "text-amber-700")}
-                >
-                  {trainingDueSoon}
-                </span>
-              </>
-            }
-          />
-
-          <KpiTile
-            title="Cleaning completion"
-            icon="✅"
-            tone="neutral"
-            value={`${cleaningDoneTotal}/${cleaningTotal}`}
-            sub="Done / total (selected day)"
+            value={`${trainingExpired} expired`}
+            sub={`${trainingDueSoon} due in 30d`}
           />
         </div>
-      </section>
 
-      {cleaningAllDone && !alreadySignedOff && (
-        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          <div className="font-semibold">All cleaning tasks are complete.</div>
-          <div className="text-emerald-800/90">
-            Sign off the day to lock in your compliance record.
-          </div>
-        </div>
-      )}
-
-      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="flex flex-wrap items-center gap-2 justify-end">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedDateISO((d) => addDaysISO(d, -1))}
-              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-              title="Previous day"
+            <label className="text-xs font-semibold text-slate-600">
+              Location
+            </label>
+            <select
+              value={locationId ?? ""}
+              onChange={(e) => setLocationId(e.target.value || null)}
+              className="h-9 rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+              disabled={locationLoading || locations.length === 0}
             >
-              ←
-            </button>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-slate-600">
+              Date
+            </label>
             <input
               type="date"
               value={selectedDateISO}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                setSelectedDateISO(e.target.value)
-              }
-              className="h-9 rounded-xl border border-slate-300 bg-white/90 px-3 text-sm shadow-sm"
+              onChange={(e) => setSelectedDateISO(e.target.value || nowISO)}
+              className="h-9 rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
             />
+          </div>
 
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setSelectedDateISO((d) => addDaysISO(d, +1))}
-              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-              title="Next day"
+              onClick={() => setSelectedDateISO(addDaysISO(selectedDateISO, -1))}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
             >
-              →
+              ◀ Previous
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedDateISO(nowISO)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedDateISO(addDaysISO(selectedDateISO, 1))}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Next ▶
             </button>
           </div>
 
-          <select
-            value={locationId ?? ""}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-              setLocationId(e.target.value || null)
-            }
-            disabled={locationLoading}
-            className="h-9 rounded-xl border border-slate-300 bg-white/90 px-3 text-sm shadow-sm"
-          >
-            {locations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIncidentOpen(true)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Log incident
+            </button>
 
-          <button
-            type="button"
-            onClick={async () => {
-              setStaffAssessErr(null);
-              setStaffAssess(null);
-              setStaffAssessStaffId("");
-              setStaffAssessDays(7);
-              setStaffAssessOpen(true);
-              lastStaffAssessKeyRef.current = "";
-              await loadTeamOptions();
-            }}
-            disabled={loading || !orgId}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
-          >
-            Staff assessment
-          </button>
+            <button
+              type="button"
+              onClick={() => setStaffAssessOpen(true)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Staff assessment
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setIncidentOpen(true)}
-            disabled={loading || !orgId || !locationId}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
-          >
-            Log incident
-          </button>
+            <button
+              type="button"
+              onClick={() => setSignoffOpen(true)}
+              disabled={!cleaningAllDone || alreadySignedOff}
+              className={cls(
+                "rounded-xl px-3 py-1.5 text-xs font-semibold shadow-sm",
+                !cleaningAllDone || alreadySignedOff
+                  ? "bg-slate-200 text-slate-500 cursor-not-allowed"
+                  : "bg-indigo-600 text-white hover:bg-indigo-700"
+              )}
+            >
+              {alreadySignedOff ? "Signed off" : "Sign off day"}
+            </button>
 
-          <IncidentModal
-            open={incidentOpen}
-            onClose={() => setIncidentOpen(false)}
-            orgId={orgId!}
-            locationId={locationId!}
-            defaultDate={selectedDateISO}
-            defaultInitials={managerTeamMember?.initials ?? ""}
-            onSaved={refreshAll}
-          />
-
-          <button
-            type="button"
-            onClick={async () => {
-              if (!orgId || !locationId) return;
-              setQcForm((f) => ({ ...f, reviewed_on: selectedDateISO || f.reviewed_on }));
-              setQcOpen(true);
-              await Promise.all([loadTeamOptions(), loadLoggedInManager(), loadQcReviews()]);
-            }}
-            disabled={loading || !orgId || !locationId}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
-          >
-            Manager QC
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSignoffOpen(true)}
-            disabled={!cleaningAllDone || alreadySignedOff || loading || !orgId || !locationId}
-            className={cls(
-              "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm disabled:opacity-60",
-              alreadySignedOff
-                ? "border border-slate-200 bg-white text-slate-600"
-                : "bg-indigo-600 text-white hover:bg-indigo-700"
-            )}
-            title={
-              alreadySignedOff
-                ? "Already signed off"
-                : cleaningAllDone
-                  ? "Sign off the day"
-                  : "Complete all cleaning tasks first"
-            }
-          >
-            {alreadySignedOff ? "Day signed off" : "Sign off day"}
-          </button>
-
-          <button
-            type="button"
-            onClick={refreshAll}
-            disabled={loading || !orgId || !locationId}
-            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-          >
-            {loading ? "Refreshing…" : "Refresh"}
-          </button>
+            <button
+              type="button"
+              onClick={refreshAll}
+              disabled={loading || !orgId || !locationId}
+              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {loading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
         </div>
       </section>
 
-      {/* Cleaning progress */}
+      {/* Cleaning category progress */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
             Cleaning progress
           </div>
           <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Tasks due by category
+            By category (selected day)
           </div>
         </div>
 
@@ -1472,16 +1372,16 @@ export default function ManagerDashboardPage() {
             <thead className="bg-slate-50">
               <tr className="text-left text-slate-500">
                 <th className="px-3 py-2">Category</th>
-                <th className="px-3 py-2">Completed</th>
+                <th className="px-3 py-2">Done</th>
                 <th className="px-3 py-2">Total</th>
-                <th className="px-3 py-2">%</th>
+                <th className="px-3 py-2">Completion</th>
               </tr>
             </thead>
             <tbody>
               {cleaningCategoryProgress.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
-                    No cleaning tasks due (or none loaded).
+                    No cleaning tasks scheduled for this day.
                   </td>
                 </tr>
               ) : (
@@ -1491,8 +1391,8 @@ export default function ManagerDashboardPage() {
                     pct === 100
                       ? "bg-emerald-100 text-emerald-800"
                       : pct >= 50
-                        ? "bg-amber-100 text-amber-800"
-                        : "bg-red-100 text-red-800";
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-red-100 text-red-800";
 
                   return (
                     <tr key={r.category} className="border-t border-slate-100 text-slate-800">
@@ -1551,19 +1451,23 @@ export default function ManagerDashboardPage() {
               ) : (
                 incidentsToRender.map((r) => (
                   <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                    <td className="px-3 py-2 whitespace-nowrap">{r.happened_on}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {formatDDMMYYYY(r.happened_on)}
+                    </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {r.created_at
                         ? new Date(r.created_at).toLocaleTimeString("en-GB", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
                         : "—"}
                     </td>
                     <td className="px-3 py-2 font-semibold">{r.type ?? "Incident"}</td>
                     <td className="px-3 py-2">{r.created_by?.toUpperCase() ?? "—"}</td>
                     <td className="px-3 py-2 max-w-[18rem] truncate">{r.details ?? "—"}</td>
-                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.immediate_action ?? "—"}</td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">
+                      {r.immediate_action ?? "—"}
+                    </td>
                   </tr>
                 ))
               )}
@@ -1608,7 +1512,7 @@ export default function ManagerDashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {tempsToRender.length === 0 ? (
+                  {todayTemps.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
                         No temperature logs.
@@ -1621,7 +1525,9 @@ export default function ManagerDashboardPage() {
                         <td className="px-3 py-2">{r.staff}</td>
                         <td className="px-3 py-2">{r.area}</td>
                         <td className="px-3 py-2">{r.item}</td>
-                        <td className="px-3 py-2">{r.temp_c != null ? `${r.temp_c}°C` : "—"}</td>
+                        <td className="px-3 py-2">
+                          {r.temp_c != null ? `${r.temp_c}°C` : "—"}
+                        </td>
                         <td className="px-3 py-2">
                           {r.status ? (
                             <span
@@ -1679,14 +1585,20 @@ export default function ManagerDashboardPage() {
                         <td className="px-3 py-2 whitespace-nowrap">
                           {r.created_at
                             ? new Date(r.created_at).toLocaleTimeString("en-GB", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })
                             : "—"}
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap">{r.created_by?.toUpperCase() ?? "—"}</td>
-                        <td className="px-3 py-2 max-w-[18rem] truncate">{r.details ?? "—"}</td>
-                        <td className="px-3 py-2 max-w-[18rem] truncate">{r.corrective_action ?? "—"}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {r.created_by?.toUpperCase() ?? "—"}
+                        </td>
+                        <td className="px-3 py-2 max-w-[18rem] truncate">
+                          {r.details ?? "—"}
+                        </td>
+                        <td className="px-3 py-2 max-w-[18rem] truncate">
+                          {r.corrective_action ?? "—"}
+                        </td>
                       </tr>
                     ))
                   )}
@@ -1736,7 +1648,9 @@ export default function ManagerDashboardPage() {
                           ) : null}
                         </td>
                         <td className="px-3 py-2">{r.staff ?? "—"}</td>
-                        <td className="px-3 py-2 max-w-[14rem] truncate">{r.notes ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[14rem] truncate">
+                          {r.notes ?? "—"}
+                        </td>
                       </tr>
                     ))
                   )}
@@ -1786,12 +1700,16 @@ export default function ManagerDashboardPage() {
                   const t = r.created_at ? formatTimeHM(new Date(r.created_at)) : null;
                   return (
                     <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap">{r.signoff_on}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {formatDDMMYYYY(r.signoff_on)}
+                      </td>
                       <td className="px-3 py-2 whitespace-nowrap">{t ?? "—"}</td>
                       <td className="px-3 py-2 font-semibold whitespace-nowrap">
                         {r.signed_by ? r.signed_by.toUpperCase() : "—"}
                       </td>
-                      <td className="px-3 py-2 max-w-[28rem] truncate">{r.notes ?? "—"}</td>
+                      <td className="px-3 py-2 max-w-[28rem] truncate">
+                        {r.notes ?? "—"}
+                      </td>
                     </tr>
                   );
                 })
@@ -1823,7 +1741,10 @@ export default function ManagerDashboardPage() {
             type="button"
             onClick={async () => {
               if (!orgId || !locationId) return;
-              setQcForm((f) => ({ ...f, reviewed_on: selectedDateISO || f.reviewed_on }));
+              setQcForm((f) => ({
+                ...f,
+                reviewed_on: selectedDateISO || f.reviewed_on,
+              }));
               setQcOpen(true);
               await Promise.all([loadTeamOptions(), loadLoggedInManager(), loadQcReviews()]);
             }}
@@ -1863,12 +1784,14 @@ export default function ManagerDashboardPage() {
                     r.rating >= 4
                       ? "bg-emerald-100 text-emerald-800"
                       : r.rating === 3
-                        ? "bg-amber-100 text-amber-800"
-                        : "bg-red-100 text-red-800";
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-red-100 text-red-800";
 
                   return (
                     <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {formatDDMMYYYY(r.reviewed_on)}
+                      </td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         {tmLabel(r.staff ?? { initials: null, name: "—" })}
                       </td>
@@ -1885,7 +1808,9 @@ export default function ManagerDashboardPage() {
                           {r.rating}/5
                         </span>
                       </td>
-                      <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
+                      <td className="px-3 py-2 max-w-[24rem] truncate">
+                        {r.notes ?? "—"}
+                      </td>
                     </tr>
                   );
                 })
@@ -1914,7 +1839,8 @@ export default function ManagerDashboardPage() {
               <div>
                 <div className="text-base font-semibold">Sign off day</div>
                 <div className="mt-0.5 text-xs text-slate-500">
-                  {selectedDateISO} · {locations.find((l) => l.id === locationId)?.name ?? "—"}
+                  {formatDDMMYYYY(selectedDateISO)} ·{" "}
+                  {locations.find((l) => l.id === locationId)?.name ?? "—"}
                 </div>
               </div>
               <button
@@ -1952,10 +1878,14 @@ export default function ManagerDashboardPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Notes (optional)
+                </label>
                 <input
                   value={signoffNotes}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSignoffNotes(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setSignoffNotes(e.target.value)
+                  }
                   placeholder="Any corrective actions / comments…"
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                 />
@@ -2026,12 +1956,10 @@ export default function ManagerDashboardPage() {
                     value={staffAssessStaffId}
                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
                       setStaffAssessStaffId(e.target.value);
-                      setStaffAssess(null);
-                      setStaffAssessErr(null);
                     }}
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                   >
-                    <option value="">Select…</option>
+                    <option value="">Select staff…</option>
                     {teamOptions.map((t) => (
                       <option key={t.id} value={t.id}>
                         {tmLabel(t)}
@@ -2041,92 +1969,117 @@ export default function ManagerDashboardPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Range</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Range (days)
+                  </label>
                   <select
                     value={staffAssessDays}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
-                      setStaffAssessDays(Number(e.target.value));
-                      setStaffAssess(null);
-                      setStaffAssessErr(null);
-                    }}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                      setStaffAssessDays(Number(e.target.value) || 7)
+                    }
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                   >
-                    <option value={7}>Last 7 days</option>
-                    <option value={14}>Last 14 days</option>
-                    <option value={30}>Last 30 days</option>
+                    {[7, 14, 30, 60, 90].map((n) => (
+                      <option key={n} value={n}>
+                        Last {n} days
+                      </option>
+                    ))}
                   </select>
                 </div>
 
-                <div className="flex items-end justify-end gap-2">
+                <div className="flex items-end">
                   <button
                     type="button"
-                    onClick={async () => {
-                      if (!staffAssessStaffId) return setStaffAssessErr("Select a staff member.");
-                      await loadStaffAssessment(staffAssessStaffId, staffAssessDays);
+                    onClick={() => {
+                      if (!staffAssessStaffId) {
+                        alert("Select staff first.");
+                        return;
+                      }
+                      void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
                     }}
-                    disabled={staffAssessLoading || !staffAssessStaffId}
-                    className="h-10 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
+                    disabled={staffAssessLoading || !orgId || !locationId}
+                    className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
                   >
                     {staffAssessLoading ? "Loading…" : "Load"}
                   </button>
                 </div>
               </div>
-            </div>
 
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <KpiTile
-                title="Cleaning runs"
-                icon="🧼"
-                tone="neutral"
-                value={staffAssess?.cleaningRuns ?? "—"}
-                sub={staffAssess ? `Completed in last ${staffAssess.rangeDays}d` : "Select staff + load"}
-              />
-              <KpiTile
-                title="Temp logs"
-                icon="🌡"
-                tone="neutral"
-                value={staffAssess?.tempLogs ?? "—"}
-                sub={staffAssess ? `Recorded in last ${staffAssess.rangeDays}d` : "—"}
-              />
-              <KpiTile
-                title="Temp fails"
-                icon="🚫"
-                tone={staffAssess && staffAssess.tempFails > 0 ? "danger" : "ok"}
-                value={staffAssess?.tempFails ?? "—"}
-                sub={staffAssess ? `Fails in last ${staffAssess.rangeDays}d` : "—"}
-              />
-              <KpiTile
-                title="Incidents"
-                icon="⚠️"
-                tone={staffAssess && staffAssess.incidents > 0 ? "warn" : "ok"}
-                value={staffAssess?.incidents ?? "—"}
-                sub={staffAssess ? `Logged in last ${staffAssess.rangeDays}d` : "—"}
-              />
-              <KpiTile
-                title="QC avg (30d)"
-                icon="📋"
-                tone="neutral"
-                value={
-                  staffAssess
-                    ? staffAssess.qcAvg30d != null
-                      ? `${staffAssess.qcAvg30d}/5`
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <KpiTile
+                  title="Cleaning runs"
+                  icon="🧼"
+                  tone="neutral"
+                  value={staffAssess?.cleaningRuns ?? "—"}
+                  sub={
+                    staffAssess
+                      ? `Completed in last ${staffAssess.rangeDays}d`
+                      : "Select staff + load"
+                  }
+                />
+                <KpiTile
+                  title="Temp logs"
+                  icon="🌡"
+                  tone="neutral"
+                  value={staffAssess?.tempLogs ?? "—"}
+                  sub={
+                    staffAssess
+                      ? `Recorded in last ${staffAssess.rangeDays}d`
                       : "—"
-                    : "—"
-                }
-                sub={staffAssess ? `Based on ${staffAssess.qcCount30d} reviews` : "—"}
-              />
-              <KpiTile
-                title="Staff"
-                icon="👤"
-                tone="neutral"
-                value={staffAssess?.staffLabel ?? "—"}
-                sub="Selected team member"
-              />
-            </div>
+                  }
+                />
+                <KpiTile
+                  title="Temp fails"
+                  icon="🚫"
+                  tone={staffAssess && staffAssess.tempFails > 0 ? "danger" : "ok"}
+                  value={staffAssess?.tempFails ?? "—"}
+                  sub={
+                    staffAssess
+                      ? `Fails in last ${staffAssess.rangeDays}d`
+                      : "—"
+                  }
+                />
+                <KpiTile
+                  title="Incidents"
+                  icon="⚠️"
+                  tone={staffAssess && staffAssess.incidents > 0 ? "warn" : "ok"}
+                  value={staffAssess?.incidents ?? "—"}
+                  sub={
+                    staffAssess
+                      ? `Logged in last ${staffAssess.rangeDays}d`
+                      : "—"
+                  }
+                />
+                <KpiTile
+                  title="QC avg (30d)"
+                  icon="📋"
+                  tone="neutral"
+                  value={
+                    staffAssess
+                      ? staffAssess.qcAvg30d != null
+                        ? `${staffAssess.qcAvg30d}/5`
+                        : "—"
+                      : "—"
+                  }
+                  sub={
+                    staffAssess
+                      ? `Based on ${staffAssess.qcCount30d} reviews`
+                      : "—"
+                  }
+                />
+                <KpiTile
+                  title="Staff"
+                  icon="👤"
+                  tone="neutral"
+                  value={staffAssess?.staffLabel ?? "—"}
+                  sub="Selected team member"
+                />
+              </div>
 
-            <div className="mt-4 text-xs text-slate-500">
-              Note: this uses initials across logs (done_by, staff_initials, created_by). If you switch
-              to IDs everywhere later, this becomes rock-solid.
+              <div className="mt-4 text-xs text-slate-500">
+                Note: this uses initials across logs (done_by, staff_initials, created_by). If
+                you switch to IDs everywhere later, this becomes rock-solid.
+              </div>
             </div>
           </div>
         </div>
@@ -2152,7 +2105,10 @@ export default function ManagerDashboardPage() {
                 </div>
               </div>
 
-              <button onClick={() => setQcOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
+              <button
+                onClick={() => setQcOpen(false)}
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+              >
                 ✕
               </button>
             </div>
@@ -2168,7 +2124,8 @@ export default function ManagerDashboardPage() {
                   </div>
                   {!managerTeamMember ? (
                     <div className="mt-1 text-xs text-rose-700">
-                      Link this login by setting <span className="font-semibold">team_members.user_id</span>.
+                      Link this login by setting{" "}
+                      <span className="font-semibold">team_members.user_id</span>.
                     </div>
                   ) : null}
                 </div>
@@ -2294,12 +2251,14 @@ export default function ManagerDashboardPage() {
                         r.rating >= 4
                           ? "bg-emerald-100 text-emerald-800"
                           : r.rating === 3
-                            ? "bg-amber-100 text-amber-800"
-                            : "bg-red-100 text-red-800";
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-red-100 text-red-800";
 
                       return (
                         <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                          <td className="px-3 py-2 whitespace-nowrap">{r.reviewed_on}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {formatDDMMYYYY(r.reviewed_on)}
+                          </td>
                           <td className="px-3 py-2 whitespace-nowrap">
                             {tmLabel(r.staff ?? { initials: null, name: "—" })}
                           </td>
@@ -2316,7 +2275,9 @@ export default function ManagerDashboardPage() {
                               {r.rating}/5
                             </span>
                           </td>
-                          <td className="px-3 py-2 max-w-[18rem] truncate">{r.notes ?? "—"}</td>
+                          <td className="px-3 py-2 max-w-[18rem] truncate">
+                            {r.notes ?? "—"}
+                          </td>
                           <td className="px-3 py-2 text-right">
                             <button
                               type="button"
@@ -2341,6 +2302,18 @@ export default function ManagerDashboardPage() {
             />
           </div>
         </div>
+      )}
+
+      {/* Incident modal (existing) */}
+      {incidentOpen && (
+        <IncidentModal
+          open={incidentOpen}
+          onClose={() => setIncidentOpen(false)}
+          defaultDate={selectedDateISO}
+          orgId={orgId}
+          locationId={locationId}
+          onSaved={refreshAll}
+        />
       )}
     </>
   );
