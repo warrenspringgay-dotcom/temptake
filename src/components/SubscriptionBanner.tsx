@@ -24,46 +24,31 @@ function calcDaysLeft(endsAt: string | null): number | null {
   if (Number.isNaN(end.getTime())) return null;
 
   const diffMs = end.getTime() - now.getTime();
-
-  // ended
   if (diffMs <= 0) return 0;
 
   return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 }
 
 export default function SubscriptionBanner() {
-  const {
-    loading,
-    loggedIn,
-    active,
-    onTrial,
-    trialEndsAt,
-    currentPeriodEnd,
-  } = useSubscriptionStatus();
+const { loading, loggedIn, hasValid, onTrial, trialEndsAt, currentPeriodEnd } = useSubscriptionStatus();
 
-  // Not ready or not logged in → no banner
-  if (loading || !loggedIn) return null;
+if (loading || !loggedIn) return null;
+if (hasValid) return null;
+
 
   const WARN_DAYS = 7;
 
+  // ✅ If plan is valid, banner should be hidden (aligns with NavTabs gating)
+  if (hasValid) return null;
 
-  
-  // ✅ Active subscription → HIDE banner (you only want it when expiring/expired)
-  if (active) return null;
-
-  // ✅ Trial: only show when trial is ending soon or has ended
+  // Trial flow (only matters if hasValid is false)
   if (onTrial) {
     const trialDaysLeft = calcDaysLeft(trialEndsAt);
-
-    // If we can't compute days left, keep quiet rather than spamming
     if (trialDaysLeft === null) return null;
-
-    // Trial still has plenty of time → no banner
     if (trialDaysLeft > WARN_DAYS) return null;
 
     const endsText = formatDate(trialEndsAt);
 
-    // Trial ended
     if (trialDaysLeft === 0) {
       return (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
@@ -71,8 +56,7 @@ export default function SubscriptionBanner() {
             <div>
               <div className="font-semibold">Trial ended</div>
               <div className="text-xs text-red-800">
-                Your trial has ended{endsText ? ` (ended ${endsText})` : ""}. Add
-                a plan to restore full access.
+                Your trial has ended{endsText ? ` (ended ${endsText})` : ""}. Add a plan to restore full access.
               </div>
             </div>
 
@@ -87,7 +71,6 @@ export default function SubscriptionBanner() {
       );
     }
 
-    // Trial ending soon
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -112,7 +95,6 @@ export default function SubscriptionBanner() {
     );
   }
 
-  // ✅ No active sub, no trial → this counts as expired/inactive, so show it
   const renewText = formatDate(currentPeriodEnd);
 
   return (

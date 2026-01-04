@@ -5,78 +5,68 @@ import { useEffect, useState } from "react";
 
 export type BillingState = {
   loading: boolean;
-  loggedIn: boolean;
-  hasValid: boolean;
-  status: string | null;
-  inTrial: boolean;
-  trialEndsAt: string | null;
-  currentPeriodEnd: string | null;
+  error: string | null;
 
-  // convenience flags your UI already expects
+  loggedIn: boolean;
+
+  hasValid: boolean;
   active: boolean;
   onTrial: boolean;
 
-  error?: string | null;
+  status: string | null;
+  trialEndsAt: string | null;
+  currentPeriodEnd: string | null;
 };
 
 const initial: BillingState = {
   loading: true,
+  error: null,
+
   loggedIn: false,
+
   hasValid: false,
-  status: null,
-  inTrial: false,
-  trialEndsAt: null,
-  currentPeriodEnd: null,
   active: false,
   onTrial: false,
-  error: null,
+
+  status: null,
+  trialEndsAt: null,
+  currentPeriodEnd: null,
 };
 
-export function useSubscriptionStatus(): BillingState {
+export function useSubscriptionStatus() {
   const [state, setState] = useState<BillingState>(initial);
 
   useEffect(() => {
     let cancelled = false;
 
-    (async () => {
+    async function run() {
       try {
         const res = await fetch("/api/billing/status", { cache: "no-store" });
-        const j = await res.json();
+        const json = await res.json();
 
         if (cancelled) return;
 
-        const status = (j?.status as string | null)?.toLowerCase() ?? null;
-        const inTrial = !!j?.inTrial;
-        const trialEndsAt = (j?.trialEndsAt as string | null) ?? null;
-        const currentPeriodEnd = (j?.currentPeriodEnd as string | null) ?? null;
-
-        const active =
-          status === "active" || status === "past_due" || status === "trialing";
-
-        const onTrial = status === "trialing" || inTrial;
-
         setState({
           loading: false,
-          loggedIn: !!j?.loggedIn,
-          hasValid: !!j?.hasValid,
-          status,
-          inTrial,
-          trialEndsAt,
-          currentPeriodEnd,
-          active,
-          onTrial,
-          error: null,
+          error: json?.ok === false ? json?.reason ?? "unknown_error" : null,
+
+          loggedIn: !!json?.loggedIn,
+
+          hasValid: !!json?.hasValid,
+          active: !!json?.active,
+          onTrial: !!json?.onTrial,
+
+          status: (json?.status ?? null) as string | null,
+          trialEndsAt: (json?.trialEndsAt ?? null) as string | null,
+          currentPeriodEnd: (json?.currentPeriodEnd ?? null) as string | null,
         });
       } catch (e: any) {
         if (cancelled) return;
-        setState({
-          ...initial,
-          loading: false,
-          error: e?.message ?? "Failed to load billing status",
-        });
+        setState({ ...initial, loading: false, error: e?.message ?? "network_error" });
       }
-    })();
+    }
 
+    run();
     return () => {
       cancelled = true;
     };
