@@ -100,11 +100,15 @@ function todayISODate() {
   return d.toISOString().slice(0, 10);
 }
 
+/** Global rule: render as DD/MM/YYYY */
 function formatDate(d: string | null | undefined) {
   if (!d) return "—";
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return d;
-  return dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const day = String(dt.getDate()).padStart(2, "0");
+  const month = String(dt.getMonth() + 1).padStart(2, "0");
+  const year = dt.getFullYear();
+  return `${day}/${month}/${year}`;
 }
 
 /* ================================================= */
@@ -329,14 +333,14 @@ export default function TeamManager() {
   }
 
   /**
-   * Keep pills in team_members AND also track expiry per pill in team_training_area_status
-   * expires_on = today + 12 months.
+   * Keep pills in team_members AND also track due date per pill in team_training_area_status
+   * due_on = today + 12 months.
    */
   async function syncTrainingTracking(memberId: string, selectedAreas: TrainingArea[]) {
     if (!orgId) return;
 
     const trained_on = todayISODate();
-    const expires_on = addMonthsISODate(12);
+    const due_on = addMonthsISODate(12);
 
     // Upsert selected
     if (selectedAreas.length) {
@@ -345,7 +349,7 @@ export default function TeamManager() {
         team_member_id: memberId,
         area,
         trained_on,
-        expires_on,
+        due_on,
       }));
 
       const { error: upErr } = await supabase
@@ -865,7 +869,7 @@ export default function TeamManager() {
                   })}
                 </div>
                 <p className="mt-1 text-[11px] text-slate-500">
-                  Tap to toggle. Each selected area is recorded as trained today and expires in 12 months.
+                  Tap to toggle. Each selected area is recorded as trained today and given a due date in 12 months.
                 </p>
               </div>
 
