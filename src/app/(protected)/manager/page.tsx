@@ -242,9 +242,9 @@ async function fetchTempFailuresUnifiedForDay(
       const reT = `${Number(ca.recheck_temp_c)}°C`;
       const reAt = ca.recheck_at
         ? new Date(String(ca.recheck_at)).toLocaleTimeString("en-GB", {
-            hour: "2-digit",
-            minute: "2-digit",
-          })
+          hour: "2-digit",
+          minute: "2-digit",
+        })
         : "—";
       const reStatus = ca.recheck_status ? String(ca.recheck_status) : "—";
       const suffix = `Re-check: ${reT} (${reStatus}) at ${reAt}`;
@@ -277,19 +277,19 @@ const cls = (...p: Array<string | false | null | undefined>) =>
   p.filter(Boolean).join(" ");
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
-const addDaysISO = (ymd: string, delta: number) => {
-  const d = new Date(ymd);
+const addDaysISO = (dmy: string, delta: number) => {
+  const d = new Date(dmy);
   d.setDate(d.getDate() + delta);
   return isoDate(d);
 };
 
-const getDow1to7 = (ymd: string) => ((new Date(ymd).getDay() + 6) % 7) + 1; // Mon=1..Sun=7
-const getDom = (ymd: string) => new Date(ymd).getDate();
+const getDow1to7 = (dmy: string) => ((new Date(dmy).getDay() + 6) % 7) + 1; // Mon=1..Sun=7
+const getDom = (dmy: string) => new Date(dmy).getDate();
 
-function isDueOn(t: CleaningTask, ymd: string) {
+function isDueOn(t: CleaningTask, dmy: string) {
   if (t.frequency === "daily") return true;
-  if (t.frequency === "weekly") return t.weekday === getDow1to7(ymd);
-  return t.month_day === getDom(ymd);
+  if (t.frequency === "weekly") return t.weekday === getDow1to7(dmy);
+  return t.month_day === getDom(dmy);
 }
 
 /* ---------- KPI Tile ---------- */
@@ -313,19 +313,19 @@ function KpiTile({
     tone === "danger"
       ? "border-red-200 bg-red-50/90"
       : tone === "warn"
-      ? "border-amber-200 bg-amber-50/90"
-      : tone === "ok"
-      ? "border-emerald-200 bg-emerald-50/90"
-      : "border-slate-200 bg-white/90";
+        ? "border-amber-200 bg-amber-50/90"
+        : tone === "ok"
+          ? "border-emerald-200 bg-emerald-50/90"
+          : "border-slate-200 bg-white/90";
 
   const accentCls =
     tone === "danger"
       ? "bg-red-400"
       : tone === "warn"
-      ? "bg-amber-400"
-      : tone === "ok"
-      ? "bg-emerald-400"
-      : "bg-slate-300";
+        ? "bg-amber-400"
+        : tone === "ok"
+          ? "bg-emerald-400"
+          : "bg-slate-300";
 
   return (
     <motion.div
@@ -1223,8 +1223,8 @@ export default function ManagerDashboardPage() {
       const qcAvg30d =
         qcCount30d > 0
           ? Math.round(
-              (qcRows.reduce((a, r) => a + Number(r.rating || 0), 0) / qcCount30d) * 10
-            ) / 10
+            (qcRows.reduce((a, r) => a + Number(r.rating || 0), 0) / qcCount30d) * 10
+          ) / 10
           : null;
 
       setStaffAssess({
@@ -1438,8 +1438,8 @@ export default function ManagerDashboardPage() {
               alreadySignedOff
                 ? "Already signed off"
                 : cleaningAllDone
-                ? "Sign off the day"
-                : "Complete all cleaning tasks first"
+                  ? "Sign off the day"
+                  : "Complete all cleaning tasks first"
             }
           >
             {alreadySignedOff ? "Day signed off" : "Sign off day"}
@@ -1491,8 +1491,8 @@ export default function ManagerDashboardPage() {
                     pct === 100
                       ? "bg-emerald-100 text-emerald-800"
                       : pct >= 50
-                      ? "bg-amber-100 text-amber-800"
-                      : "bg-red-100 text-red-800";
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-red-100 text-red-800";
 
                   return (
                     <tr key={r.category} className="border-t border-slate-100 text-slate-800">
@@ -1555,9 +1555,9 @@ export default function ManagerDashboardPage() {
                     <td className="px-3 py-2 whitespace-nowrap">
                       {r.created_at
                         ? new Date(r.created_at).toLocaleTimeString("en-GB", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
                         : "—"}
                     </td>
                     <td className="px-3 py-2 font-semibold">{r.type ?? "Incident"}</td>
@@ -1679,9 +1679,9 @@ export default function ManagerDashboardPage() {
                         <td className="px-3 py-2 whitespace-nowrap">
                           {r.created_at
                             ? new Date(r.created_at).toLocaleTimeString("en-GB", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
                             : "—"}
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">{r.created_by?.toUpperCase() ?? "—"}</td>
@@ -1863,8 +1863,8 @@ export default function ManagerDashboardPage() {
                     r.rating >= 4
                       ? "bg-emerald-100 text-emerald-800"
                       : r.rating === 3
-                      ? "bg-amber-100 text-amber-800"
-                      : "bg-red-100 text-red-800";
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-red-100 text-red-800";
 
                   return (
                     <tr key={r.id} className="border-t border-slate-100 text-slate-800">
@@ -2294,8 +2294,8 @@ export default function ManagerDashboardPage() {
                         r.rating >= 4
                           ? "bg-emerald-100 text-emerald-800"
                           : r.rating === 3
-                          ? "bg-amber-100 text-amber-800"
-                          : "bg-red-100 text-red-800";
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-red-100 text-red-800";
 
                       return (
                         <tr key={r.id} className="border-t border-slate-100 text-slate-800">
