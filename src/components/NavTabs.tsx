@@ -89,6 +89,7 @@ export default function NavTabs() {
           setRoleLoading(false);
           return;
         }
+console.log("[billing]", billing);
 
         const { data, error } = await supabase
           .from("team_members")
