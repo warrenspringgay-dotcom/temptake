@@ -30,11 +30,19 @@ function calcDaysLeft(endsAt: string | null): number | null {
 }
 
 export default function SubscriptionBanner() {
-const { loading, loggedIn, hasValid, onTrial, trialEndsAt, currentPeriodEnd } = useSubscriptionStatus();
+  const {
+    loading,
+    loggedIn,
+    hasValid,
+    onTrial,
+    trialEndsAt,
+    currentPeriodEnd,
+  } = useSubscriptionStatus();
 
-if (loading || !loggedIn) return null;
-if (hasValid) return null;
+  if (loading || !loggedIn) return null;
 
+  // ✅ One source of truth. If billing says you're valid, banner is dead.
+  if (hasValid) return null;
 
   const WARN_DAYS = 7;
 
