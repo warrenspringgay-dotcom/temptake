@@ -746,7 +746,8 @@ let reason: FourWeekBannerReason | null = null;
 
       {/* ✅ Four-week review banner */}
       {fourWeekBanner.kind === "show" && (
-        <div className="mx-auto w-full max-w-6xl px-3 sm:px-4 mt-3">
+        <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
+
           <div
             className={cls(
               "rounded-3xl border p-4 shadow-lg shadow-slate-900/5 backdrop-blur",
@@ -801,7 +802,8 @@ let reason: FourWeekBannerReason | null = null;
         </div>
       )}
 
-      <div className="mx-auto w-full max-w-6xl px-3 sm:px-4 mt-4">
+      <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
+
         <header className="text-center">
           <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">
             {headerDate}
