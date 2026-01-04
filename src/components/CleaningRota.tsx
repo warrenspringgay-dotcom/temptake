@@ -269,6 +269,31 @@ export default function CleaningRotaPage() {
         return;
       }
 
+      // 🔹 Auto-load current user's initials from team_members
+      try {
+        const { data: userRes } = await supabase.auth.getUser();
+        const userId = userRes.user?.id;
+        if (userId) {
+          const { data: tm, error: tmErr } = await supabase
+            .from("team_members")
+            .select("initials")
+            .eq("org_id", oid)
+            .eq("user_id", userId)
+            .maybeSingle();
+
+          if (!tmErr && tm && (tm as any).initials) {
+            const ini = String((tm as any).initials).trim().toUpperCase();
+            if (ini) {
+              setInitials(ini);
+              // don't overwrite signoffInitials here; we handle that when the modal opens
+            }
+          }
+        }
+      } catch (e) {
+        // non-fatal; user can still type initials manually
+        console.warn("[cleaning] unable to auto-load initials", e);
+      }
+
       const { data: tData, error: tErr } = await supabase
         .from("cleaning_tasks")
         .select("id,org_id,task,area,category,frequency,weekday,month_day")
@@ -352,7 +377,9 @@ export default function CleaningRotaPage() {
 
       // auto-open signoff prompt if not already signed off
       if (!signoff) {
-        setSignoffInitials((prev) => (prev.trim() ? prev : initials.trim().toUpperCase()));
+        setSignoffInitials((prev) =>
+          prev.trim() ? prev : initials.trim().toUpperCase()
+        );
         setSignoffNotes("");
         setSignoffOpen(true);
       }
@@ -589,6 +616,14 @@ export default function CleaningRotaPage() {
     }
   }
 
+  // 🔹 When the sign-off modal opens, auto-fill initials from current user if blank
+  useEffect(() => {
+    if (!signoffOpen) return;
+    if (signoffInitials.trim()) return;
+    if (!initials.trim()) return;
+    setSignoffInitials(initials.trim().toUpperCase());
+  }, [signoffOpen, signoffInitials, initials]);
+
   if (loading) {
     return (
       <div className={PAGE}>
@@ -626,7 +661,7 @@ export default function CleaningRotaPage() {
               Manage tasks
             </button>
 
-            {/* ✅ Sign off button (new) */}
+            {/* ✅ Sign off button */}
             <button
               onClick={() => {
                 setSignoffInitials((prev) =>
@@ -819,7 +854,7 @@ export default function CleaningRotaPage() {
         onSaved={loadAll}
       />
 
-      {/* ✅ Sign-off modal (new) */}
+      {/* ✅ Sign-off modal */}
       {signoffOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/30"
@@ -857,7 +892,9 @@ export default function CleaningRotaPage() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Initials</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Initials
+                </label>
                 <input
                   value={signoffInitials}
                   onChange={(e) => setSignoffInitials(e.target.value.toUpperCase())}
@@ -867,7 +904,9 @@ export default function CleaningRotaPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Notes (optional)
+                </label>
                 <input
                   value={signoffNotes}
                   onChange={(e) => setSignoffNotes(e.target.value)}

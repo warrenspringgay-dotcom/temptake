@@ -143,14 +143,14 @@ function toISODate(val: any): string {
   return `${y}-${m}-${day}`;
 }
 
-// dd-mm-yyyy
+// DD/MM/YYYY
 function formatISOToUK(iso: string | null | undefined): string {
   const d = safeDate(iso);
   if (!d) return "—";
   const day = String(d.getDate()).padStart(2, "0");
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const year = d.getFullYear();
-  return `${day}-${month}-${year}`;
+  return `${day}/${month}/${year}`;
 }
 
 function formatTimeHM(iso: string | null | undefined): string {
@@ -686,7 +686,7 @@ async function fetchIncidentsTrailAsUnifiedIncidentShape(
     happened_on: r.happened_on,
     type: r.type,
     details: r.details,
-    corrective_action: r.immediate_action, // 👈 mapped
+    corrective_action: r.immediate_action, // mapped
     preventive_action: r.preventive_action,
     created_by: r.created_by,
     created_at: r.created_at,
@@ -694,8 +694,7 @@ async function fetchIncidentsTrailAsUnifiedIncidentShape(
 }
 
 /**
- * NOTE: left untouched (this still uses trainings/staff as in your existing file).
- * If you've removed staff table, we should refactor these joins next.
+ * NOTE: left as-is (this still uses trainings/staff tables).
  */
 async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[]> {
   const { data: tData, error: tErr } = await supabase
@@ -945,7 +944,7 @@ export default function ReportsPage() {
   // unified failures table (incidents mapped + temp fails)
   const [incidents, setIncidents] = useState<UnifiedIncidentRow[] | null>(null);
 
-  // ✅ NEW: separate logged incidents table (public.incidents)
+  // separate logged incidents table (public.incidents)
   const [loggedIncidents, setLoggedIncidents] = useState<LoggedIncidentRow[] | null>(null);
 
   const [signoffs, setSignoffs] = useState<SignoffRow[] | null>(null);
@@ -1078,7 +1077,7 @@ export default function ReportsPage() {
         fetchCleaningCount(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchStaffReviews(rangeFrom, rangeTo, orgIdValue, locationId),
 
-        // ✅ NEW: real incidents table rows
+        // real incidents table rows
         fetchLoggedIncidentsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
 
         // used ONLY to map into unified failures table
@@ -1317,8 +1316,7 @@ export default function ReportsPage() {
 
         {!temps && !loading && (
           <div className="mt-3 text-xs text-slate-500">
-            Run a report to see results. (Instant Audit defaults to 90 days, which is your
-            inspection-ready view.)
+            Run a report to see results. Instant Audit gives you a ready-for-inspection 90-day view.
           </div>
         )}
       </Card>
@@ -1352,14 +1350,13 @@ export default function ReportsPage() {
                 Download 4-Week Audit (PDF)
               </Button>
               <div className="text-[11px] text-slate-500">
-                Uses your Four-Weekly route:{" "}
-                <span className="font-mono">/reports/four-week</span>
+                Uses your Four-Weekly route: <span className="font-mono">/reports/four-week</span>
               </div>
             </div>
           </div>
         </Card>
 
-        {/* Temps table */}
+        {/* Temperature Logs */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Temperature Logs {temps ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
@@ -1442,7 +1439,7 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* ✅ NEW: Logged incidents table */}
+        {/* Logged incidents (matches manager incidents table) */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Incidents (logged){" "}
@@ -1478,10 +1475,14 @@ export default function ReportsPage() {
                 ) : (
                   visibleLoggedIncidents!.map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">{r.happened_on ? formatISOToUK(r.happened_on) : "—"}</td>
+                      <td className="py-2 pr-3">
+                        {r.happened_on ? formatISOToUK(r.happened_on) : "—"}
+                      </td>
                       <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
                       <td className="py-2 pr-3 font-semibold">{r.type ?? "Incident"}</td>
-                      <td className="py-2 pr-3">{r.created_by ? r.created_by.toUpperCase() : "—"}</td>
+                      <td className="py-2 pr-3">
+                        {r.created_by ? r.created_by.toUpperCase() : "—"}
+                      </td>
                       <td className="py-2 pr-3 max-w-xs">
                         {r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}
                       </td>
@@ -1529,7 +1530,7 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Incidents (merged failures: mapped incidents + temp failures) */}
+        {/* Failures & corrective actions (incidents + temp failures) */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Failures & corrective actions{" "}
@@ -1564,7 +1565,9 @@ export default function ReportsPage() {
                 ) : (
                   visibleIncidents!.map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">{r.happened_on ? formatISOToUK(r.happened_on) : "—"}</td>
+                      <td className="py-2 pr-3">
+                        {r.happened_on ? formatISOToUK(r.happened_on) : "—"}
+                      </td>
                       <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
                       <td className="py-2 pr-3 font-semibold">
                         {r.type ?? "Incident"}
@@ -1574,7 +1577,9 @@ export default function ReportsPage() {
                           </span>
                         ) : null}
                       </td>
-                      <td className="py-2 pr-3">{r.created_by ? r.created_by.toUpperCase() : "—"}</td>
+                      <td className="py-2 pr-3">
+                        {r.created_by ? r.created_by.toUpperCase() : "—"}
+                      </td>
                       <td className="py-2 pr-3 max-w-xs">
                         {r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}
                       </td>
@@ -1614,10 +1619,549 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* (rest of your file continues unchanged...) */}
-        {/* NOTE: I didn’t paste the remainder here to avoid duplicating 1000+ lines you already have.
-           Keep everything below your existing merged incidents table as-is (signoffs, allergens, QC, etc.)
-           If you want, paste the bottom half and I’ll return a 100% full-file output. */}
+        {/* Cleaning runs trail (range-based) */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-1 text-base font-semibold">
+            Cleaning runs{" "}
+            {cleaningRuns ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+          <p className="mb-3 text-xs text-slate-500">
+            Total cleaning runs this period:{" "}
+            <span className="font-semibold text-slate-800">{cleaningCount}</span>
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Category</th>
+                  <th className="py-2 pr-3">Task</th>
+                  <th className="py-2 pr-3">Staff</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!cleaningRuns ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : cleaningRuns.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      No cleaning runs for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  visibleCleaningRuns!.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">{formatISOToUK(r.run_on)}</td>
+                      <td className="py-2 pr-3">{formatTimeHM(r.done_at)}</td>
+                      <td className="py-2 pr-3">{r.category}</td>
+                      <td className="py-2 pr-3 max-w-xs">{r.task}</td>
+                      <td className="py-2 pr-3">{r.done_by ?? "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {cleaningRuns && cleaningRuns.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllCleaningRuns
+                  ? cleaningRuns.length
+                  : Math.min(10, cleaningRuns.length)}{" "}
+                of {cleaningRuns.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllCleaningRuns((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllCleaningRuns ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Day sign-offs trail */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Day sign-offs{" "}
+            {signoffs ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Signed by</th>
+                  <th className="py-2 pr-3">Notes / corrective actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!signoffs ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : signoffs.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                      No sign-offs for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  visibleSignoffs!.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">{formatISOToUK(r.signoff_on)}</td>
+                      <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
+                      <td className="py-2 pr-3 font-semibold">
+                        {r.signed_by ? r.signed_by.toUpperCase() : "—"}
+                      </td>
+                      <td className="py-2 pr-3 max-w-xl">
+                        {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {signoffs && signoffs.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing {showAllSignoffs ? signoffs.length : Math.min(10, signoffs.length)} of{" "}
+                {signoffs.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllSignoffs((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllSignoffs ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Manager QC reviews (reports view of QC table) */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Manager QC reviews{" "}
+            {staffReviews ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Manager</th>
+                  <th className="py-2 pr-3">Location</th>
+                  <th className="py-2 pr-3">Score</th>
+                  <th className="py-2 pr-3">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!staffReviews ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : staffReviews.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 text-center text-slate-500">
+                      No QC reviews for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  (showAllEducation ? staffReviews : staffReviews.slice(0, 10)).map((r) => {
+                    const pill =
+                      r.rating >= 4
+                        ? "bg-emerald-100 text-emerald-800"
+                        : r.rating === 3
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-red-100 text-red-800";
+
+                    const staffLabel = r.staff_initials
+                      ? `${r.staff_initials.toUpperCase()} · ${r.staff_name}`
+                      : r.staff_name;
+
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3 whitespace-nowrap">
+                          {formatISOToUK(r.reviewed_on)}
+                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{staffLabel}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{r.reviewer ?? "—"}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">
+                          {r.location_name ?? "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${pill}`}
+                          >
+                            {r.rating}/5
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 max-w-xl">
+                          {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {staffReviews && staffReviews.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllEducation
+                  ? staffReviews.length
+                  : Math.min(10, staffReviews.length)}{" "}
+                of {staffReviews.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllEducation((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllEducation ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Education / training table */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">Training & certificates</h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Course</th>
+                  <th className="py-2 pr-3">Awarded</th>
+                  <th className="py-2 pr-3">Expires</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Notes</th>
+                  <th className="py-2 pr-3">Certificate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!education ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : education.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      No training records
+                    </td>
+                  </tr>
+                ) : (
+                  visibleEducation!.map((r) => {
+                    let pill = "bg-slate-100 text-slate-700";
+                    if (r.status === "expired") pill = "bg-red-100 text-red-800";
+                    else if (r.status === "valid") pill = "bg-emerald-100 text-emerald-800";
+
+                    const staffLabel = r.staff_initials
+                      ? `${r.staff_initials.toUpperCase()} · ${r.staff_name}`
+                      : r.staff_name;
+
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3">{staffLabel}</td>
+                        <td className="py-2 pr-3">{r.type ?? "—"}</td>
+                        <td className="py-2 pr-3">
+                          {r.awarded_on ? formatISOToUK(r.awarded_on) : "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {r.expires_on ? formatISOToUK(r.expires_on) : "—"}
+                          {r.days_until != null && (
+                            <span className="ml-1 text-xs text-slate-500">
+                              ({r.days_until}d)
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${pill}`}
+                          >
+                            {r.status === "no-expiry"
+                              ? "No expiry"
+                              : r.status === "expired"
+                              ? "Expired"
+                              : "Valid"}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 max-w-xs">
+                          {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {r.certificate_url ? (
+                            <a
+                              href={r.certificate_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs font-medium text-blue-700 underline"
+                            >
+                              View
+                            </a>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {education && education.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllEducation ? education.length : Math.min(10, education.length)} of{" "}
+                {education.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllEducation((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllEducation ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* SFBB training areas matrix */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-2 text-base font-semibold">Training areas (SFBB coverage)</h3>
+          <p className="mb-3 text-xs text-slate-500">
+            Each tick shows a team member trained in that SFBB area. Date = latest award date.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Team member</th>
+                  {SFBB_AREAS.map((area) => (
+                    <th key={area} className="py-2 px-2 text-center">
+                      {area}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {!trainingMatrix ? (
+                  <tr>
+                    <td colSpan={1 + SFBB_AREAS.length} className="py-6 text-center text-slate-500">
+                      Run a report to load training areas
+                    </td>
+                  </tr>
+                ) : trainingMatrix.length === 0 ? (
+                  <tr>
+                    <td colSpan={1 + SFBB_AREAS.length} className="py-6 text-center text-slate-500">
+                      No training area data
+                    </td>
+                  </tr>
+                ) : (
+                  visibleTrainingMatrix!.map((row) => (
+                    <tr key={row.member_id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3 whitespace-nowrap text-sm font-medium">
+                        {row.name}
+                      </td>
+                      {SFBB_AREAS.map((area) => {
+                        const meta = row.byArea[area];
+                        if (!meta?.selected) {
+                          return (
+                            <td
+                              key={area}
+                              className="py-2 px-2 text-center text-slate-400 align-top"
+                            >
+                              —
+                            </td>
+                          );
+                        }
+                        return (
+                          <td key={area} className="py-2 px-2 text-center align-top">
+                            <div className="inline-flex flex-col items-center gap-1">
+                              <span className="text-base leading-none">✓</span>
+                              {meta.awarded_on && (
+                                <span className="text-[10px] text-slate-500">
+                                  {formatISOToUK(meta.awarded_on)}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {trainingMatrix && trainingMatrix.length > 12 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllTrainingAreas
+                  ? trainingMatrix.length
+                  : Math.min(12, trainingMatrix.length)}{" "}
+                of {trainingMatrix.length} team members
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllTrainingAreas((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllTrainingAreas ? "Show first 12" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Upcoming expiries (training + allergen review) */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">Upcoming expiries (next 90 days)</h3>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Staff training */}
+            <div>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Staff training
+              </h4>
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-slate-50/80">
+                    <tr className="text-left text-slate-500">
+                      <th className="px-3 py-2">Staff</th>
+                      <th className="px-3 py-2">Expires</th>
+                      <th className="px-3 py-2">Days</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!teamDue ? (
+                      <tr>
+                        <td colSpan={3} className="px-3 py-4 text-center text-slate-500">
+                          Run a report to see results
+                        </td>
+                      </tr>
+                    ) : teamDue.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="px-3 py-4 text-center text-slate-500">
+                          No training expiries in next 90 days
+                        </td>
+                      </tr>
+                    ) : (
+                      teamDue.map((r) => {
+                        const staffLabel = r.initials
+                          ? `${r.initials.toUpperCase()} · ${r.name}`
+                          : r.name;
+                        return (
+                          <tr key={r.id} className="border-t border-slate-100">
+                            <td className="px-3 py-2">{staffLabel}</td>
+                            <td className="px-3 py-2">
+                              {r.expires_on ? formatISOToUK(r.expires_on) : "—"}
+                            </td>
+                            <td className="px-3 py-2">{r.days_until ?? "—"}</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Allergen review */}
+            <div>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Allergen review
+              </h4>
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-slate-50/80">
+                    <tr className="text-left text-slate-500">
+                      <th className="px-3 py-2">Last review</th>
+                      <th className="px-3 py-2">Next due</th>
+                      <th className="px-3 py-2">Days</th>
+                      <th className="px-3 py-2">Reviewer</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!allergenLog ? (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                          Run a report to see results
+                        </td>
+                      </tr>
+                    ) : allergenLog.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                          No allergen reviews due in next 90 days
+                        </td>
+                      </tr>
+                    ) : (
+                      allergenLog.map((r) => (
+                        <tr key={r.id} className="border-t border-slate-100">
+                          <td className="px-3 py-2">
+                            {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
+                          </td>
+                          <td className="px-3 py-2">
+                            {r.next_due ? formatISOToUK(r.next_due) : "—"}
+                          </td>
+                          <td className="px-3 py-2">{r.days_until ?? "—"}</td>
+                          <td className="px-3 py-2">{r.reviewer ?? "—"}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </Card>
       </div>
 
       <style jsx global>{`
