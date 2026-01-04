@@ -276,7 +276,7 @@ const addDaysISO = (dmy: string, delta: number) => {
   return isoDate(d);
 };
 
-const getDow1to7 = (dmy: string) => ((new Date(dmy).getDay() + 6) % 7) + 1; // Mon=1.Sun=7
+const getDow1to7 = (dmy: string) => ((new Date(dmy).getDay() + 6) % 7) + 1;
 const getDom = (dmy: string) => new Date(dmy).getDate();
 
 function isDueOn(t: CleaningTask, dmy: string) {
@@ -437,7 +437,6 @@ export default function ManagerDashboardPage() {
   });
   const [showAllSignoffs, setShowAllSignoffs] = useState(false);
 
-  // Sign-off modal state
   const [signoffOpen, setSignoffOpen] = useState(false);
   const [signoffInitials, setSignoffInitials] = useState("");
   const [signoffNotes, setSignoffNotes] = useState("");
@@ -735,6 +734,7 @@ export default function ManagerDashboardPage() {
   useEffect(() => {
     if (!orgId || !locationId) return;
     refreshAll();
+    void loadQcReviews(); // <<--- ensure QC table populates on load/date change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, locationId, selectedDateISO]);
 
@@ -1504,11 +1504,11 @@ export default function ManagerDashboardPage() {
           </table>
         </div>
 
-      <TableFooterToggle
-        total={incidentsHistory.length}
-        showingAll={showAllIncidents}
-        onToggle={() => setShowAllIncidents((v) => !v)}
-      />
+        <TableFooterToggle
+          total={incidentsHistory.length}
+          showingAll={showAllIncidents}
+          onToggle={() => setShowAllIncidents((v) => !v)}
+        />
       </section>
 
       {/* Activity */}
@@ -1592,7 +1592,7 @@ export default function ManagerDashboardPage() {
               onToggle={() => setShowAllTemps((v) => !v)}
             />
 
-            {/* Temp failures */}
+            {/* Temp failures & corrective actions */}
             <h3 className="mt-4 mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
               Temp failures & corrective actions
             </h3>
@@ -2431,7 +2431,7 @@ export default function ManagerDashboardPage() {
         </div>
       )}
 
-      {/* Incident modal – now passes required defaultInitials prop */}
+      {/* Incident modal – with defaultInitials */}
       {incidentOpen && orgId && locationId && (
         <IncidentModal
           open={incidentOpen}
