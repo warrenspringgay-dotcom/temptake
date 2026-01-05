@@ -40,6 +40,14 @@ type AllergenRow = {
   days_until?: number | null;
 };
 
+type AllergenChangeRow = {
+  id: string;
+  created_at: string | null;
+  item_name: string | null;
+  action: string | null;
+  staff_initials: string | null;
+};
+
 type StaffReviewRow = {
   id: string;
   reviewed_on: string;
@@ -455,7 +463,9 @@ async function fetchTempFailuresUnified(
 
   let caQ = supabase
     .from("food_temp_corrective_actions")
-    .select("id, temp_log_id, action, recheck_temp_c, recheck_at, recheck_status, recorded_by, created_at, location_id")
+    .select(
+      "id, temp_log_id, action, recheck_temp_c, recheck_at, recheck_status, recorded_by, created_at, location_id"
+    )
     .eq("org_id", orgId)
     .in("temp_log_id", ids)
     .limit(5000);
@@ -634,7 +644,9 @@ async function fetchLoggedIncidentsTrail(
 ): Promise<LoggedIncidentRow[]> {
   let q = supabase
     .from("incidents")
-    .select("id,org_id,location_id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at")
+    .select(
+      "id,org_id,location_id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at"
+    )
     .eq("org_id", String(orgId))
     .gte("happened_on", fromISO)
     .lte("happened_on", toISO)
@@ -802,6 +814,38 @@ async function fetchAllergenLog(withinDays: number, orgId: string): Promise<Alle
     .sort((a: any, b: any) => (a.next_due || "").localeCompare(b.next_due || ""));
 }
 
+async function fetchAllergenChanges(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<AllergenChangeRow[]> {
+  const fromStart = new Date(`${fromISO}T00:00:00.000Z`).toISOString();
+  const toEnd = new Date(`${toISO}T23:59:59.999Z`).toISOString();
+
+  let q = supabase
+    .from("allergen_change_logs")
+    .select("id, created_at, item_name, action, staff_initials, org_id, location_id")
+    .eq("org_id", orgId)
+    .gte("created_at", fromStart)
+    .lte("created_at", toEnd)
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (locationId) q = q.eq("location_id", locationId);
+
+  const { data, error } = await q;
+  if (error) throw error;
+
+  return (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    created_at: r.created_at ?? null,
+    item_name: r.item_name ?? null,
+    action: r.action ?? null,
+    staff_initials: r.staff_initials ?? null,
+  }));
+}
+
 async function fetchStaffReviews(
   fromISO: string,
   toISO: string,
@@ -937,6 +981,7 @@ export default function ReportsPage() {
   const [temps, setTemps] = useState<TempRow[] | null>(null);
   const [teamDue, setTeamDue] = useState<TeamRow[] | null>(null);
   const [allergenLog, setAllergenLog] = useState<AllergenRow[] | null>(null);
+  const [allergenChanges, setAllergenChanges] = useState<AllergenChangeRow[] | null>(null);
   const [staffReviews, setStaffReviews] = useState<StaffReviewRow[] | null>(null);
   const [education, setEducation] = useState<EducationRow[] | null>(null);
   const [cleaningCount, setCleaningCount] = useState(0);
@@ -1072,6 +1117,7 @@ export default function ReportsPage() {
         tempFails,
         so,
         cr,
+        allergenEditRows,
       ] = await Promise.all([
         fetchTemps(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningCount(rangeFrom, rangeTo, orgIdValue, locationId),
@@ -1086,6 +1132,7 @@ export default function ReportsPage() {
         fetchTempFailuresUnified(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchSignoffsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningRunsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
+        fetchAllergenChanges(rangeFrom, rangeTo, orgIdValue, locationId),
       ]);
 
       setTemps(t);
@@ -1093,6 +1140,7 @@ export default function ReportsPage() {
       setStaffReviews(reviews);
 
       setLoggedIncidents(loggedInc);
+      setAllergenChanges(allergenEditRows);
 
       const unified: UnifiedIncidentRow[] = [
         ...(incForUnified ?? []).map((r) => ({
@@ -1145,6 +1193,7 @@ export default function ReportsPage() {
       setTemps(null);
       setTeamDue(null);
       setAllergenLog(null);
+      setAllergenChanges(null);
       setStaffReviews(null);
       setEducation(null);
       setTrainingAreas(null);
@@ -2061,105 +2110,124 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Upcoming expiries (training + allergen review) */}
+        {/* Allergen review table (next 90 days, placed near allergen edits) */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-3 text-base font-semibold">Upcoming expiries (next 90 days)</h3>
+          <h3 className="mb-2 text-base font-semibold">
+            Allergen reviews (next 90 days)
+          </h3>
+          <p className="mb-3 text-xs text-slate-500">
+            Upcoming allergen review schedule from{" "}
+            <code>allergen_review_log</code> based on your configured intervals.
+          </p>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            {/* Staff training */}
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Staff training
-              </h4>
-              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-                <table className="min-w-full text-xs">
-                  <thead className="bg-slate-50/80">
-                    <tr className="text-left text-slate-500">
-                      <th className="px-3 py-2">Staff</th>
-                      <th className="px-3 py-2">Expires</th>
-                      <th className="px-3 py-2">Days</th>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Last review</th>
+                  <th className="py-2 pr-3">Next due</th>
+                  <th className="py-2 pr-3">Days</th>
+                  <th className="py-2 pr-3">Reviewer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!allergenLog ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : allergenLog.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                      No allergen reviews due in next 90 days
+                    </td>
+                  </tr>
+                ) : (
+                  allergenLog.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">
+                        {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.next_due ? formatISOToUK(r.next_due) : "—"}
+                      </td>
+                      <td className="py-2 pr-3">{r.days_until ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {!teamDue ? (
-                      <tr>
-                        <td colSpan={3} className="px-3 py-4 text-center text-slate-500">
-                          Run a report to see results
-                        </td>
-                      </tr>
-                    ) : teamDue.length === 0 ? (
-                      <tr>
-                        <td colSpan={3} className="px-3 py-4 text-center text-slate-500">
-                          No training expiries in next 90 days
-                        </td>
-                      </tr>
-                    ) : (
-                      teamDue.map((r) => {
-                        const staffLabel = r.initials
-                          ? `${r.initials.toUpperCase()} · ${r.name}`
-                          : r.name;
-                        return (
-                          <tr key={r.id} className="border-t border-slate-100">
-                            <td className="px-3 py-2">{staffLabel}</td>
-                            <td className="px-3 py-2">
-                              {r.expires_on ? formatISOToUK(r.expires_on) : "—"}
-                            </td>
-                            <td className="px-3 py-2">{r.days_until ?? "—"}</td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
 
-            {/* Allergen review */}
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Allergen review
-              </h4>
-              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-                <table className="min-w-full text-xs">
-                  <thead className="bg-slate-50/80">
-                    <tr className="text-left text-slate-500">
-                      <th className="px-3 py-2">Last review</th>
-                      <th className="px-3 py-2">Next due</th>
-                      <th className="px-3 py-2">Days</th>
-                      <th className="px-3 py-2">Reviewer</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!allergenLog ? (
-                      <tr>
-                        <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
-                          Run a report to see results
+        {/* Allergen edits table (NEW) */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Allergen edits{" "}
+            {allergenChanges ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+          <p className="mb-2 text-xs text-slate-500">
+            Change log from <code>allergen_change_logs</code> for the selected range and location.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Item</th>
+                  <th className="py-2 pr-3">Action</th>
+                  <th className="py-2 pr-3">By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!allergenChanges ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : allergenChanges.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      No allergen edits for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  allergenChanges.map((r) => {
+                    const actionLabel =
+                      r.action === "create"
+                        ? "Created"
+                        : r.action === "update"
+                        ? "Updated"
+                        : r.action === "delete"
+                        ? "Deleted"
+                        : r.action ?? "—";
+
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3">
+                          {r.created_at ? formatISOToUK(r.created_at) : "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {r.created_at ? formatTimeHM(r.created_at) : "—"}
+                        </td>
+                        <td className="py-2 pr-3 max-w-xs">
+                          {r.item_name ?? <span className="text-slate-400">Unnamed item</span>}
+                        </td>
+                        <td className="py-2 pr-3">{actionLabel}</td>
+                        <td className="py-2 pr-3">
+                          {r.staff_initials ? r.staff_initials.toUpperCase() : "—"}
                         </td>
                       </tr>
-                    ) : allergenLog.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
-                          No allergen reviews due in next 90 days
-                        </td>
-                      </tr>
-                    ) : (
-                      allergenLog.map((r) => (
-                        <tr key={r.id} className="border-t border-slate-100">
-                          <td className="px-3 py-2">
-                            {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
-                          </td>
-                          <td className="px-3 py-2">
-                            {r.next_due ? formatISOToUK(r.next_due) : "—"}
-                          </td>
-                          <td className="px-3 py-2">{r.days_until ?? "—"}</td>
-                          <td className="px-3 py-2">{r.reviewer ?? "—"}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </Card>
       </div>
