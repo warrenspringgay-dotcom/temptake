@@ -116,6 +116,16 @@ type StaffAssessment = {
   qcCount30d: number;
 };
 
+type AllergenChangeLogRow = {
+  id: string;
+  created_at: string | null;
+  action: string | null;
+  item_name: string | null;
+  category_before: string | null;
+  category_after: string | null;
+  staff_initials: string | null;
+};
+
 const nowISO = new Date().toISOString().slice(0, 10);
 
 function safeDate(val: any): Date | null {
@@ -472,6 +482,9 @@ export default function ManagerDashboardPage() {
 
   const [incidentOpen, setIncidentOpen] = useState(false);
 
+  const [allergenLogs, setAllergenLogs] = useState<AllergenChangeLogRow[]>([]);
+  const [showAllAllergenLogs, setShowAllAllergenLogs] = useState(false);
+
   const lastStaffAssessKeyRef = useRef<string>("");
 
   useEffect(() => {
@@ -734,7 +747,7 @@ export default function ManagerDashboardPage() {
   useEffect(() => {
     if (!orgId || !locationId) return;
     refreshAll();
-    void loadQcReviews(); // <<--- ensure QC table populates on load/date change
+    void loadQcReviews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, locationId, selectedDateISO]);
 
@@ -771,6 +784,7 @@ export default function ManagerDashboardPage() {
         incidents7dRes,
         trainingsRes,
         signoffsDayRes,
+        allergenLogsRes,
       ] = await Promise.all([
         supabase
           .from("food_temp_logs")
@@ -857,6 +871,16 @@ export default function ManagerDashboardPage() {
           .eq("signoff_on", selectedDateISO)
           .order("created_at", { ascending: false })
           .limit(200),
+
+        supabase
+          .from("allergen_change_logs")
+          .select(
+            "id, created_at, action, item_name, category_before, category_after, staff_initials"
+          )
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .order("created_at", { ascending: false })
+          .limit(500),
       ]);
 
       const firstErr =
@@ -869,7 +893,8 @@ export default function ManagerDashboardPage() {
         incidentsTodayRes.error ||
         incidents7dRes.error ||
         trainingsRes.error ||
-        signoffsDayRes.error;
+        signoffsDayRes.error ||
+        allergenLogsRes.error;
 
       if (firstErr) throw firstErr;
 
@@ -931,10 +956,16 @@ export default function ManagerDashboardPage() {
         byCat.set(cat, cur);
       }
 
-      setCleaningCategoryProgress(
-        Array.from(byCat.entries())
-          .map(([category, v]) => ({ category, done: v.done, total: v.total }))
-          .sort((a, b) => a.category.localeCompare(b.category))
+      const cleaningCatProg = Array.from(byCat.entries())
+        .map(([category, v]) => ({ category, done: v.done, total: v.total }))
+        .sort((a, b) => a.category.localeCompare(b.category));
+
+      setCleaningCategoryProgress(cleaningCatProg);
+      setCleaningTotal(
+        cleaningCatProg.reduce((acc, c) => acc + c.total, 0)
+      );
+      setCleaningDoneTotal(
+        cleaningCatProg.reduce((acc, c) => acc + c.done, 0)
       );
 
       setCleaningActivity(
@@ -1007,6 +1038,19 @@ export default function ManagerDashboardPage() {
       setSignoffSummary({
         todayCount: signoffRows.length,
       });
+
+      const allergenRows: any[] = (allergenLogsRes.data as any[]) ?? [];
+      setAllergenLogs(
+        allergenRows.map((r) => ({
+          id: String(r.id),
+          created_at: r.created_at ? String(r.created_at) : null,
+          action: r.action ?? null,
+          item_name: r.item_name ?? null,
+          category_before: r.category_before ?? null,
+          category_after: r.category_after ?? null,
+          staff_initials: r.staff_initials ?? null,
+        }))
+      );
     } catch (e: any) {
       console.error(e);
       setErr(e?.message ?? "Failed to load manager dashboard.");
@@ -1049,6 +1093,9 @@ export default function ManagerDashboardPage() {
   const signoffsToRender = showAllSignoffs
     ? signoffsToday
     : signoffsToday.slice(0, 10);
+  const allergenLogsToRender = showAllAllergenLogs
+    ? allergenLogs
+    : allergenLogs.slice(0, 10);
 
   const cleaningAllDone = cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
   const alreadySignedOff = signoffsToday.length > 0;
@@ -1897,6 +1944,79 @@ export default function ManagerDashboardPage() {
           total={qcReviews.length}
           showingAll={showAllQc}
           onToggle={() => setShowAllQc((v) => !v)}
+        />
+      </section>
+
+      {/* Allergen edit log */}
+      <section className="mt-4 mb-6 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Allergens
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Allergen edit log (this location)
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Time</th>
+                <th className="px-3 py-2">Item</th>
+                <th className="px-3 py-2">Action</th>
+                <th className="px-3 py-2">Category change</th>
+                <th className="px-3 py-2">By</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allergenLogsToRender.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-3 py-4 text-center text-slate-500"
+                  >
+                    No allergen edits logged.
+                  </td>
+                </tr>
+              ) : (
+                allergenLogsToRender.map((r) => (
+                  <tr
+                    key={r.id}
+                    className="border-t border-slate-100 text-slate-800"
+                  >
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {formatDDMMYYYY(r.created_at)}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {formatTimeHM(safeDate(r.created_at)) ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 max-w-[14rem] truncate">
+                      {r.item_name ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {r.action ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 max-w-[16rem] truncate">
+                      {(r.category_before ?? "—") +
+                        " → " +
+                        (r.category_after ?? "—")}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {r.staff_initials?.toUpperCase() ?? "—"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle
+          total={allergenLogs.length}
+          showingAll={showAllAllergenLogs}
+          onToggle={() => setShowAllAllergenLogs((v) => !v)}
         />
       </section>
 

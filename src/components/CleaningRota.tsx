@@ -645,7 +645,8 @@ export default function CleaningRotaPage() {
       <ClassicConfetti show={showConfetti} />
 
       <div className={`${CARD} p-4 sm:p-5`}>
-        <div className="flex items-center justify-between gap-3">
+        {/* Header: mobile-safe wrapping (buttons were overflowing the viewport) */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="text-lg font-semibold text-slate-900">
               Cleaning rota
@@ -653,10 +654,10 @@ export default function CleaningRotaPage() {
             <div className="text-xs text-slate-500">{todayIso}</div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
             <button
               onClick={() => setManageOpen(true)}
-              className="rounded-full bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
+              className="h-9 whitespace-nowrap rounded-full bg-indigo-600 px-3 text-xs font-semibold leading-none text-white hover:bg-indigo-700"
             >
               Manage tasks
             </button>
@@ -672,7 +673,7 @@ export default function CleaningRotaPage() {
               }}
               disabled={!allDone || !!signoff}
               className={[
-                "rounded-full px-3 py-2 text-xs font-semibold",
+                "h-9 whitespace-nowrap rounded-full px-3 text-xs font-semibold leading-none",
                 signoff
                   ? "bg-slate-200 text-slate-700"
                   : !allDone
@@ -700,13 +701,13 @@ export default function CleaningRotaPage() {
               />
             </div>
 
-            <div className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white">
+            <div className="flex h-9 items-center whitespace-nowrap rounded-full bg-slate-900 px-3 text-xs font-semibold leading-none text-white">
               {doneCount}/{dueToday.length}
             </div>
 
             <button
               onClick={() => completeAllInCategory(dueToday.map((t) => t.id))}
-              className="rounded-full bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600"
+              className="h-9 whitespace-nowrap rounded-full bg-emerald-500 px-3 text-xs font-semibold leading-none text-white hover:bg-emerald-600"
             >
               Complete all today
             </button>
