@@ -22,6 +22,7 @@ import {
   MicOff,
   ClipboardList,
   CheckSquare,
+  MessageSquare,
 } from "lucide-react";
 import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
 
@@ -137,7 +138,9 @@ function SignoffModal({
 
         <div className="p-5 space-y-4">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 space-y-1">
-            <div className="font-semibold text-slate-900">Daily diary sign-off</div>
+            <div className="font-semibold text-slate-900">
+              Daily diary sign-off
+            </div>
             <div>
               By signing, I confirm today’s food safety checks were completed and I
               have reviewed the records for this site (temps, cleaning, allergens
@@ -361,6 +364,198 @@ function CorrectiveModal({
   );
 }
 
+/* ===================== Feedback modal (FAB) ===================== */
+
+type FeedbackKind = "bug" | "confusing" | "idea" | "other";
+
+function FeedbackModal({
+  open,
+  onClose,
+  locationId,
+  area,
+}: {
+  open: boolean;
+  onClose: () => void;
+  locationId: string | null;
+  area: string | null;
+}) {
+  const { addToast } = useToast();
+  const [kind, setKind] = useState<FeedbackKind>("other");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setKind("other");
+    setMessage("");
+    setSaving(false);
+  }, [open]);
+
+  async function submit() {
+    const text = message.trim();
+    if (text.length < 3) {
+      addToast({
+        title: "Add a bit more detail",
+        message: "Feedback needs at least 3 characters.",
+        type: "error",
+      });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const orgId = await getActiveOrgIdClient();
+      if (!orgId) throw new Error("No organisation found.");
+
+      const { data: authData, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+      const userId = authData?.user?.id;
+      if (!userId) throw new Error("Not signed in.");
+
+      const pagePath =
+        typeof window !== "undefined" ? window.location.pathname : null;
+
+      const meta = {
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : null,
+        timestampClient: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from("feedback_items").insert({
+        org_id: orgId,
+        user_id: userId,
+        location_id: locationId,
+        area: area || null,
+        kind,
+        message: text,
+        page_path: pagePath,
+        meta,
+      });
+
+      if (error) throw error;
+
+      addToast({ title: "Feedback sent", type: "success" });
+      posthog.capture("feedback_sent", {
+        source: "fab",
+        kind,
+        has_area: !!area,
+        page_path: pagePath,
+      });
+
+      onClose();
+    } catch (e: any) {
+      addToast({
+        title: "Could not send feedback",
+        message: e?.message ?? "Something went wrong.",
+        type: "error",
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-end justify-center p-3 sm:items-center">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+        onClick={onClose}
+        aria-label="Close feedback modal"
+      />
+
+      <div className="relative w-full max-w-[520px] overflow-hidden rounded-3xl border border-white/30 bg-white shadow-2xl">
+        <div className="bg-slate-900 px-5 py-4 text-white">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] opacity-80">
+            Feedback
+          </div>
+          <div className="text-xl font-extrabold leading-tight">
+            Send a quick note
+          </div>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Type</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(["bug", "confusing", "idea", "other"] as FeedbackKind[]).map(
+                (k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setKind(k)}
+                    className={cls(
+                      "rounded-full border px-3 py-1 text-xs font-semibold",
+                      kind === k
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+                    )}
+                  >
+                    {k === "bug"
+                      ? "Bug"
+                      : k === "confusing"
+                      ? "Confusing"
+                      : k === "idea"
+                      ? "Idea"
+                      : "Other"}
+                  </button>
+                )
+              )}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Message</div>
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              className="mt-2 w-full min-h-[120px] rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+              placeholder="What were you trying to do?"
+              maxLength={1500}
+            />
+            <div className="mt-2 text-[11px] text-slate-500">
+              {locationId ? (
+                <>
+                  Location selected:{" "}
+                  <span className="font-mono">{locationId.slice(0, 8)}…</span>
+                </>
+              ) : (
+                <>No location selected</>
+              )}
+              {area ? (
+                <>
+                  {" "}
+                  · Area: <span className="font-mono">{area}</span>
+                </>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              Close
+            </button>
+
+            <button
+              type="button"
+              onClick={submit}
+              disabled={saving || message.trim().length < 3}
+              className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-60"
+            >
+              {saving ? "Sending..." : "Send"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ======================================================================= */
 
 export default function TempFab() {
@@ -436,6 +631,9 @@ export default function TempFab() {
   const [correctiveAction, setCorrectiveAction] = useState("");
   const [correctiveRecheckEnabled, setCorrectiveRecheckEnabled] = useState(true);
   const [correctiveRecheckTemp, setCorrectiveRecheckTemp] = useState("");
+
+  // ✅ Feedback modal state
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   function closeCorrective() {
     setCorrective((c) => ({ ...c, open: false }));
@@ -598,8 +796,8 @@ export default function TempFab() {
         return;
       }
 
-      if (orgId !== activeOrgId) setActiveOrgId(orgId);
-      if (locationId !== activeLocationId) setActiveLocationId(locationId);
+      if (orgId !== activeOrgId) setActiveOrgId(orgId ?? null);
+      if (locationId !== activeLocationId) setActiveLocationId(locationId ?? null);
 
       const todayISO = isoToday();
 
@@ -779,9 +977,13 @@ export default function TempFab() {
         org_id: String((data as any).org_id),
         location_id: String((data as any).location_id),
         signoff_on: String((data as any).signoff_on),
-        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+        signed_by: (data as any).signed_by
+          ? String((data as any).signed_by)
+          : null,
         notes: (data as any).notes ? String((data as any).notes) : null,
-        created_at: (data as any).created_at ? String((data as any).created_at) : null,
+        created_at: (data as any).created_at
+          ? String((data as any).created_at)
+          : null,
       });
 
       try {
@@ -1127,7 +1329,6 @@ export default function TempFab() {
       setCorrectiveAction("");
       setCorrectiveRecheckEnabled(true);
       setCorrectiveRecheckTemp("");
-      // keep temp modal open or close it? minimal disruption: close temp modal so user focuses on corrective modal
       setOpen(false);
       setShowMenu(false);
       return;
@@ -1355,11 +1556,35 @@ export default function TempFab() {
                 >
                   Open wall
                 </button>
+
+                {/* ✅ Feedback (trial FAB action) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMenu(false);
+                    setFeedbackOpen(true);
+                    posthog.capture("fab_choose_feedback");
+                  }}
+                  className="w-full rounded-xl bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50"
+                >
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    Send feedback
+                  </span>
+                </button>
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* ✅ Feedback modal */}
+      <FeedbackModal
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        locationId={activeLocationId}
+        area={form.location ? String(form.location) : null}
+      />
 
       {/* Day sign-off modal */}
       <SignoffModal
