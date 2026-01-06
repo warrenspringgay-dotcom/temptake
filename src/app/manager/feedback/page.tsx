@@ -2,8 +2,11 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+
+const SUPERADMIN_USER_ID = "ae9dde44-35bf-4045-984f-cef2cae3359b";
 
 type FeedbackItem = {
   id: string;
@@ -73,6 +76,12 @@ function displayUser(
 }
 
 export default function ManagerFeedbackPage() {
+  const router = useRouter();
+
+  // ✅ Access control (client gate)
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authorized, setAuthorized] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -82,14 +91,53 @@ export default function ManagerFeedbackPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // user_id -> team member
-  const [teamByUserId, setTeamByUserId] = useState<Record<string, TeamMemberLite>>(
-    {}
-  );
+  const [teamByUserId, setTeamByUserId] = useState<
+    Record<string, TeamMemberLite>
+  >({});
 
   const selected = useMemo(
     () => items.find((i) => i.id === selectedId) ?? null,
     [items, selectedId]
   );
+
+  // ✅ Hard gate: only your Supabase user id can view this page
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error) throw error;
+
+        const uid = data?.user?.id ?? null;
+
+        if (!uid || uid !== SUPERADMIN_USER_ID) {
+          if (!alive) return;
+          setAuthorized(false);
+          setAuthChecking(false);
+
+          // Bounce them somewhere safe. You asked for /dashboard as fallback.
+          router.replace("/dashboard");
+          router.refresh();
+          return;
+        }
+
+        if (!alive) return;
+        setAuthorized(true);
+        setAuthChecking(false);
+      } catch {
+        if (!alive) return;
+        setAuthorized(false);
+        setAuthChecking(false);
+        router.replace("/dashboard");
+        router.refresh();
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [router]);
 
   async function loadTeamMembersFor(userIds: string[], orgId: string) {
     if (!userIds.length) {
@@ -100,7 +148,6 @@ export default function ManagerFeedbackPage() {
     // De-dupe + keep sane size
     const unique = Array.from(new Set(userIds)).filter(Boolean).slice(0, 500);
 
-    // Note: this assumes your RLS allows managers to read team_members in org (likely true).
     const { data, error } = await supabase
       .from("team_members")
       .select("user_id,name,email,initials,role,active")
@@ -108,7 +155,6 @@ export default function ManagerFeedbackPage() {
       .in("user_id", unique);
 
     if (error) {
-      // Don’t block page if lookup fails. Just fall back to UUID display.
       console.warn("team_members lookup failed:", error.message);
       setTeamByUserId({});
       return;
@@ -132,6 +178,9 @@ export default function ManagerFeedbackPage() {
   }
 
   async function load() {
+    // Don’t even try if not authorized
+    if (!authorized) return;
+
     setLoading(true);
     setError(null);
 
@@ -147,9 +196,7 @@ export default function ManagerFeedbackPage() {
 
       let query = supabase
         .from("feedback_items")
-        .select(
-          "id,kind,message,page_path,area,location_id,user_id,created_at,meta"
-        )
+        .select("id,kind,message,page_path,area,location_id,user_id,created_at,meta")
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
         .limit(500);
@@ -181,9 +228,12 @@ export default function ManagerFeedbackPage() {
   }
 
   useEffect(() => {
-    load();
+    // Only load once authorized + auth check done
+    if (!authChecking && authorized) {
+      load();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind]);
+  }, [authChecking, authorized, kind]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -217,11 +267,7 @@ export default function ManagerFeedbackPage() {
     if (!ok) return;
 
     try {
-      const { error } = await supabase
-        .from("feedback_items")
-        .delete()
-        .eq("id", selected.id);
-
+      const { error } = await supabase.from("feedback_items").delete().eq("id", selected.id);
       if (error) throw error;
 
       setItems((prev) => prev.filter((x) => x.id !== selected.id));
@@ -229,6 +275,22 @@ export default function ManagerFeedbackPage() {
     } catch (e: any) {
       alert(e?.message ?? "Could not delete feedback item.");
     }
+  }
+
+  // While auth is checking, render nothing heavy (prevents data flashing)
+  if (authChecking) {
+    return (
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
+        <div className="rounded-3xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
+          Loading…
+        </div>
+      </div>
+    );
+  }
+
+  // If not authorized, we already redirected. Render nothing to avoid flicker.
+  if (!authorized) {
+    return null;
   }
 
   return (
@@ -338,10 +400,7 @@ export default function ManagerFeedbackPage() {
                                 <span className="font-mono">{i.area ?? "—"}</span>
                               </span>
                               <span>
-                                User:{" "}
-                                <span className="font-mono">
-                                  {u.primary}
-                                </span>
+                                User: <span className="font-mono">{u.primary}</span>
                               </span>
                             </div>
                           </div>
