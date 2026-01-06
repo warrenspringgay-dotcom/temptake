@@ -17,6 +17,15 @@ type FeedbackItem = {
   meta: any;
 };
 
+type TeamMemberLite = {
+  user_id: string | null;
+  name: string | null;
+  email: string | null;
+  initials: string | null;
+  role: string | null;
+  active: boolean | null;
+};
+
 function cls(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -41,6 +50,28 @@ function shortId(id?: string | null) {
   return `${id.slice(0, 8)}…`;
 }
 
+function displayUser(
+  userId: string,
+  tm?: TeamMemberLite | null
+): { primary: string; secondary: string } {
+  if (tm?.name) {
+    return {
+      primary: tm.name,
+      secondary: tm.email ? tm.email : shortId(userId),
+    };
+  }
+  if (tm?.email) {
+    return {
+      primary: tm.email,
+      secondary: shortId(userId),
+    };
+  }
+  return {
+    primary: shortId(userId),
+    secondary: userId,
+  };
+}
+
 export default function ManagerFeedbackPage() {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<FeedbackItem[]>([]);
@@ -50,10 +81,55 @@ export default function ManagerFeedbackPage() {
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  // user_id -> team member
+  const [teamByUserId, setTeamByUserId] = useState<Record<string, TeamMemberLite>>(
+    {}
+  );
+
   const selected = useMemo(
     () => items.find((i) => i.id === selectedId) ?? null,
     [items, selectedId]
   );
+
+  async function loadTeamMembersFor(userIds: string[], orgId: string) {
+    if (!userIds.length) {
+      setTeamByUserId({});
+      return;
+    }
+
+    // De-dupe + keep sane size
+    const unique = Array.from(new Set(userIds)).filter(Boolean).slice(0, 500);
+
+    // Note: this assumes your RLS allows managers to read team_members in org (likely true).
+    const { data, error } = await supabase
+      .from("team_members")
+      .select("user_id,name,email,initials,role,active")
+      .eq("org_id", orgId)
+      .in("user_id", unique);
+
+    if (error) {
+      // Don’t block page if lookup fails. Just fall back to UUID display.
+      console.warn("team_members lookup failed:", error.message);
+      setTeamByUserId({});
+      return;
+    }
+
+    const map: Record<string, TeamMemberLite> = {};
+    (data ?? []).forEach((r: any) => {
+      const uid = r.user_id ? String(r.user_id) : null;
+      if (!uid) return;
+      map[uid] = {
+        user_id: uid,
+        name: r.name ? String(r.name) : null,
+        email: r.email ? String(r.email) : null,
+        initials: r.initials ? String(r.initials) : null,
+        role: r.role ? String(r.role) : null,
+        active: typeof r.active === "boolean" ? r.active : null,
+      };
+    });
+
+    setTeamByUserId(map);
+  }
 
   async function load() {
     setLoading(true);
@@ -64,6 +140,7 @@ export default function ManagerFeedbackPage() {
       if (!orgId) {
         setError("No active organisation found.");
         setItems([]);
+        setTeamByUserId({});
         setLoading(false);
         return;
       }
@@ -85,6 +162,10 @@ export default function ManagerFeedbackPage() {
       const list = (data ?? []) as FeedbackItem[];
       setItems(list);
 
+      // Resolve users -> team members
+      const userIds = list.map((x) => x.user_id).filter(Boolean);
+      await loadTeamMembersFor(userIds, orgId);
+
       // Keep selected row stable if still present
       if (selectedId && !list.some((x) => x.id === selectedId)) {
         setSelectedId(null);
@@ -94,6 +175,7 @@ export default function ManagerFeedbackPage() {
     } catch (e: any) {
       setError(e?.message ?? "Failed to load feedback.");
       setItems([]);
+      setTeamByUserId({});
       setLoading(false);
     }
   }
@@ -108,6 +190,7 @@ export default function ManagerFeedbackPage() {
     if (!needle) return items;
 
     return items.filter((i) => {
+      const tm = teamByUserId[i.user_id];
       const hay = [
         i.kind,
         i.message,
@@ -116,24 +199,29 @@ export default function ManagerFeedbackPage() {
         i.location_id ?? "",
         i.user_id ?? "",
         i.created_at ?? "",
+        tm?.name ?? "",
+        tm?.email ?? "",
+        tm?.initials ?? "",
       ]
         .join(" ")
         .toLowerCase();
 
       return hay.includes(needle);
     });
-  }, [items, q]);
+  }, [items, q, teamByUserId]);
 
   async function deleteSelected() {
     if (!selected) return;
 
-    const ok = confirm(
-      "Delete this feedback item?\n\nThis is permanent."
-    );
+    const ok = confirm("Delete this feedback item?\n\nThis is permanent.");
     if (!ok) return;
 
     try {
-      const { error } = await supabase.from("feedback_items").delete().eq("id", selected.id);
+      const { error } = await supabase
+        .from("feedback_items")
+        .delete()
+        .eq("id", selected.id);
+
       if (error) throw error;
 
       setItems((prev) => prev.filter((x) => x.id !== selected.id));
@@ -205,6 +293,9 @@ export default function ManagerFeedbackPage() {
               <ul className="divide-y divide-slate-100">
                 {filtered.map((i) => {
                   const active = i.id === selectedId;
+                  const tm = teamByUserId[i.user_id] ?? null;
+                  const u = displayUser(i.user_id, tm);
+
                   return (
                     <li key={i.id}>
                       <button
@@ -222,9 +313,13 @@ export default function ManagerFeedbackPage() {
                                 {i.kind}
                               </span>
                               <span className="text-xs text-slate-500">
-                                {fmtDDMMYYYY(i.created_at)}{" "}
-                                {fmtTimeHHMM(i.created_at)}
+                                {fmtDDMMYYYY(i.created_at)} {fmtTimeHHMM(i.created_at)}
                               </span>
+                              {tm?.initials ? (
+                                <span className="text-xs font-semibold text-slate-700">
+                                  {tm.initials}
+                                </span>
+                              ) : null}
                             </div>
 
                             <div className="mt-1 line-clamp-2 text-sm font-semibold text-slate-900">
@@ -240,14 +335,12 @@ export default function ManagerFeedbackPage() {
                               </span>
                               <span>
                                 Area:{" "}
-                                <span className="font-mono">
-                                  {i.area ?? "—"}
-                                </span>
+                                <span className="font-mono">{i.area ?? "—"}</span>
                               </span>
                               <span>
                                 User:{" "}
                                 <span className="font-mono">
-                                  {shortId(i.user_id)}
+                                  {u.primary}
                                 </span>
                               </span>
                             </div>
@@ -286,8 +379,7 @@ export default function ManagerFeedbackPage() {
                     {selected.kind}
                   </div>
                   <div className="text-xs text-slate-500">
-                    {fmtDDMMYYYY(selected.created_at)}{" "}
-                    {fmtTimeHHMM(selected.created_at)}
+                    {fmtDDMMYYYY(selected.created_at)} {fmtTimeHHMM(selected.created_at)}
                   </div>
                 </div>
 
@@ -307,6 +399,27 @@ export default function ManagerFeedbackPage() {
                   {selected.message}
                 </div>
               </div>
+
+              {(() => {
+                const tm = teamByUserId[selected.user_id] ?? null;
+                const u = displayUser(selected.user_id, tm);
+                return (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs font-semibold text-slate-600">User</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">
+                      {u.primary}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-600">
+                      {u.secondary}
+                      {tm?.role ? <> · {tm.role}</> : null}
+                      {tm?.active === false ? <> · inactive</> : null}
+                    </div>
+                    <div className="mt-1 font-mono text-[11px] text-slate-500">
+                      {selected.user_id}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -333,9 +446,9 @@ export default function ManagerFeedbackPage() {
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="text-xs font-semibold text-slate-600">User ID</div>
+                  <div className="text-xs font-semibold text-slate-600">Feedback ID</div>
                   <div className="mt-1 font-mono text-xs text-slate-900">
-                    {selected.user_id}
+                    {selected.id}
                   </div>
                 </div>
               </div>
