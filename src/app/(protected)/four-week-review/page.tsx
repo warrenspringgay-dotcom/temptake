@@ -4,9 +4,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
 
 type StatTone = "good" | "warn" | "bad" | "neutral";
 
@@ -25,7 +22,12 @@ function Pill({ tone, children }: { tone: StatTone; children: React.ReactNode })
       : "border-slate-200 bg-slate-50 text-slate-700";
 
   return (
-    <span className={cls("inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold", styles)}>
+    <span
+      className={cls(
+        "inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold",
+        styles
+      )}
+    >
       {children}
     </span>
   );
@@ -67,7 +69,9 @@ function StatCard({
       <div className={cls("absolute left-0 top-0 h-full w-1.5", bar)} />
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.28em] text-slate-600">{title}</div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.28em] text-slate-600">
+            {title}
+          </div>
           <div className="mt-2 text-4xl font-extrabold text-slate-900">{value}</div>
           <div className="mt-1 text-sm text-slate-600">{subtitle}</div>
         </div>
@@ -79,136 +83,162 @@ function StatCard({
   );
 }
 
-function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10);
-}
+type SummaryShape = {
+  rangeLabel?: string;
+  compliantDays?: number;
+  totalDays?: number;
+  tempLogs?: number;
+  tempFails?: number;
+  cleaningDone?: number;
+  cleaningTotal?: number | null;
+  trainingDueSoon?: number;
+  incidents?: number;
+  topMissedAreas?: Array<{ area: string; missed: number }>;
+};
 
 export default function FourWeekReviewPage() {
   const router = useRouter();
 
-  const [orgId, setOrgId] = useState<string | null>(null);
-  const [locationId, setLocationId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const [manualIncidents, setManualIncidents] = useState(0);
-  const [tempFails, setTempFails] = useState(0);
-  const [tempLogs, setTempLogs] = useState(0);
-
-  const fromISO = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 28);
-    return isoDate(d);
-  }, []);
+  const [summary, setSummary] = useState<SummaryShape | null>(null);
 
   useEffect(() => {
-    (async () => {
-      const o = await getActiveOrgIdClient();
-      const loc = await getActiveLocationIdClient();
-      setOrgId(o ?? null);
-      setLocationId(loc ?? null);
-    })();
-  }, []);
-
-  useEffect(() => {
-    if (!orgId || !locationId) return;
+    let alive = true;
 
     (async () => {
+      setLoading(true);
       setErr(null);
+
       try {
-        // Manual incidents (incidents table)
-        const incRes = await supabase
-          .from("incidents")
-          .select("id", { count: "exact", head: true })
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .gte("happened_on", fromISO);
+        const res = await fetch("/four-week-review/summary", {
+          method: "GET",
+          cache: "no-store",
+        });
 
-        if (incRes.error) throw incRes.error;
+        const json = await res.json().catch(() => null);
 
-        // Temp logs + fails (adjust these filters if your schema differs)
-        const logsRes = await supabase
-          .from("food_temp_logs")
-          .select("id", { count: "exact", head: true })
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .eq("voided", false)
-          .gte("at", new Date(fromISO).toISOString());
+        if (!res.ok) {
+          const msg =
+            (json?.error as string | undefined) ||
+            (json?.message as string | undefined) ||
+            `Failed to load 4-week review (HTTP ${res.status}).`;
+          throw new Error(msg);
+        }
 
-        if (logsRes.error) throw logsRes.error;
+        // Support either { summary: {...} } or direct object
+        const s = (json?.summary ?? json) as SummaryShape;
 
-        const failsRes = await supabase
-          .from("food_temp_logs")
-          .select("id", { count: "exact", head: true })
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .eq("voided", false)
-          .eq("status", "FAIL")
-          .gte("at", new Date(fromISO).toISOString());
-
-        if (failsRes.error) throw failsRes.error;
-
-        setManualIncidents(incRes.count ?? 0);
-        setTempLogs(logsRes.count ?? 0);
-        setTempFails(failsRes.count ?? 0);
+        if (!alive) return;
+        setSummary(s);
+        setLoading(false);
       } catch (e: any) {
+        if (!alive) return;
         console.error(e);
         setErr(e?.message ?? "Failed to load 4-week review.");
+        setSummary(null);
+        setLoading(false);
       }
     })();
-  }, [orgId, locationId, fromISO]);
 
-  // Still placeholders until you wire routines/training properly
-  const data = useMemo(() => {
-    return {
-      rangeLabel: "Last 4 weeks",
-      compliantDays: 22,
-      totalDays: 28,
-      tempLogs,
-      tempFails,
-      cleaningDone: 410,
-      cleaningTotal: 496,
-      trainingDueSoon: 1,
-      incidents: manualIncidents,
-      topMissedAreas: [
-        { area: "Hot hold checks", missed: 4 },
-        { area: "Closing temps", missed: 3 },
-        { area: "Allergen review", missed: 2 },
-      ],
+    return () => {
+      alive = false;
     };
-  }, [manualIncidents, tempFails, tempLogs]);
+  }, []);
 
-  const compliancePct = Math.round((data.compliantDays / data.totalDays) * 100);
-  const cleaningPct = Math.round((data.cleaningDone / data.cleaningTotal) * 100);
+  const data = useMemo(() => {
+    const s = summary ?? {};
 
-  const complianceTone: StatTone = compliancePct >= 90 ? "good" : compliancePct >= 75 ? "warn" : "bad";
-  const cleaningTone: StatTone = cleaningPct >= 90 ? "good" : cleaningPct >= 75 ? "warn" : "bad";
-  const tempsTone: StatTone = data.tempFails === 0 ? "good" : data.tempFails <= 3 ? "warn" : "bad";
+    return {
+      rangeLabel: s.rangeLabel ?? "Last 4 weeks",
+      compliantDays: typeof s.compliantDays === "number" ? s.compliantDays : 0,
+      totalDays: typeof s.totalDays === "number" ? s.totalDays : 28,
+
+      tempLogs: typeof s.tempLogs === "number" ? s.tempLogs : 0,
+      tempFails: typeof s.tempFails === "number" ? s.tempFails : 0,
+
+      cleaningDone: typeof s.cleaningDone === "number" ? s.cleaningDone : 0,
+      cleaningTotal:
+        typeof s.cleaningTotal === "number" ? s.cleaningTotal : null,
+
+      trainingDueSoon: typeof s.trainingDueSoon === "number" ? s.trainingDueSoon : 0,
+      incidents: typeof s.incidents === "number" ? s.incidents : 0,
+
+      topMissedAreas: Array.isArray(s.topMissedAreas) ? s.topMissedAreas : [],
+    };
+  }, [summary]);
+
+  const compliancePct = useMemo(() => {
+    const denom = data.totalDays > 0 ? data.totalDays : 28;
+    return Math.round((data.compliantDays / denom) * 100);
+  }, [data.compliantDays, data.totalDays]);
+
+  const cleaningPct = useMemo(() => {
+    if (!data.cleaningTotal || data.cleaningTotal <= 0) return null;
+    return Math.round((data.cleaningDone / data.cleaningTotal) * 100);
+  }, [data.cleaningDone, data.cleaningTotal]);
+
+  const complianceTone: StatTone =
+    compliancePct >= 90 ? "good" : compliancePct >= 75 ? "warn" : "bad";
+
+  const cleaningTone: StatTone =
+    cleaningPct === null
+      ? "neutral"
+      : cleaningPct >= 90
+      ? "good"
+      : cleaningPct >= 75
+      ? "warn"
+      : "bad";
+
+  const tempsTone: StatTone =
+    data.tempFails === 0 ? "good" : data.tempFails <= 3 ? "warn" : "bad";
+
   const trainingTone: StatTone = data.trainingDueSoon === 0 ? "good" : "warn";
-  const incidentsTone: StatTone = data.incidents === 0 ? "good" : data.incidents <= 2 ? "warn" : "bad";
+
+  const incidentsTone: StatTone =
+    data.incidents === 0 ? "good" : data.incidents <= 2 ? "warn" : "bad";
 
   return (
     <div className="fixed inset-0 z-[60]">
-      <button type="button" aria-label="Close" onClick={() => router.back()} className="absolute inset-0 bg-black/40" />
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={() => router.back()}
+        className="absolute inset-0 bg-black/40"
+      />
 
       <div className="absolute inset-x-0 bottom-0 top-10 mx-auto w-full max-w-6xl px-3 sm:top-12 sm:px-4">
         <div className="h-full overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
           <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-white/90 px-4 py-4 backdrop-blur">
             <div>
-              <div className="text-[11px] font-extrabold uppercase tracking-[0.25em] text-slate-500">Four week review</div>
-              <h1 className="mt-1 text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl">Compliance snapshot</h1>
+              <div className="text-[11px] font-extrabold uppercase tracking-[0.25em] text-slate-500">
+                Four week review
+              </div>
+              <h1 className="mt-1 text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl">
+                Compliance snapshot
+              </h1>
+
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Pill tone={complianceTone}>{data.rangeLabel}</Pill>
+
                 <Pill tone={complianceTone}>
-                  {compliancePct}% compliant days ({data.compliantDays}/{data.totalDays})
+                  {loading ? "—" : `${compliancePct}%`} compliant days ({data.compliantDays}/{data.totalDays})
                 </Pill>
+
                 <Pill tone={tempsTone}>{data.tempFails} temp fails</Pill>
                 <Pill tone={trainingTone}>{data.trainingDueSoon} training due soon</Pill>
                 <Pill tone={incidentsTone}>{data.incidents} incidents</Pill>
               </div>
 
-              {err && (
-                <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800">
-                  {err}
+              {(err || (loading && !summary)) && (
+                <div
+                  className={cls(
+                    "mt-2 rounded-xl border px-3 py-2 text-sm font-semibold",
+                    err ? "border-rose-200 bg-rose-50 text-rose-800" : "border-slate-200 bg-slate-50 text-slate-700"
+                  )}
+                >
+                  {err ? err : "Loading…"}
                 </div>
               )}
             </div>
@@ -232,10 +262,41 @@ export default function FourWeekReviewPage() {
 
           <div className="h-[calc(100%-72px)] overflow-y-auto bg-slate-50/60 p-4">
             <div className="grid gap-4 md:grid-cols-4">
-              <StatCard title="Compliance" value={`${compliancePct}%`} subtitle={`${data.compliantDays}/${data.totalDays} days compliant`} tone={complianceTone} icon="✅" />
-              <StatCard title="Temps" value={`${data.tempLogs}`} subtitle={`${data.tempFails} fails (4w)`} tone={tempsTone} icon="🌡️" />
-              <StatCard title="Cleaning" value={`${cleaningPct}%`} subtitle={`${data.cleaningDone}/${data.cleaningTotal} done`} tone={cleaningTone} icon="🧽" />
-              <StatCard title="Incidents" value={`${data.incidents}`} subtitle="Manual incident log (4w)" tone={incidentsTone} icon="⚠️" />
+              <StatCard
+                title="Compliance"
+                value={loading ? "—" : `${compliancePct}%`}
+                subtitle={`${data.compliantDays}/${data.totalDays} days compliant`}
+                tone={complianceTone}
+                icon="✅"
+              />
+
+              <StatCard
+                title="Temps"
+                value={`${data.tempLogs}`}
+                subtitle={`${data.tempFails} fails (4w)`}
+                tone={tempsTone}
+                icon="🌡️"
+              />
+
+              <StatCard
+                title="Cleaning"
+                value={cleaningPct === null ? `${data.cleaningDone}` : `${cleaningPct}%`}
+                subtitle={
+                  cleaningPct === null
+                    ? `${data.cleaningDone} done`
+                    : `${data.cleaningDone}/${data.cleaningTotal} done`
+                }
+                tone={cleaningTone}
+                icon="🧽"
+              />
+
+              <StatCard
+                title="Incidents"
+                value={`${data.incidents}`}
+                subtitle="Manual incident log (4w)"
+                tone={incidentsTone}
+                icon="⚠️"
+              />
             </div>
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -249,12 +310,21 @@ export default function FourWeekReviewPage() {
                 </div>
 
                 <div className="mt-3 space-y-2">
-                  {data.topMissedAreas.map((x) => (
-                    <div key={x.area} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
-                      <div className="text-sm font-semibold text-slate-900">{x.area}</div>
-                      <Pill tone={x.missed >= 4 ? "warn" : "neutral"}>{x.missed} missed</Pill>
+                  {data.topMissedAreas.length === 0 ? (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+                      No routine data yet.
                     </div>
-                  ))}
+                  ) : (
+                    data.topMissedAreas.map((x) => (
+                      <div
+                        key={x.area}
+                        className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2"
+                      >
+                        <div className="text-sm font-semibold text-slate-900">{x.area}</div>
+                        <Pill tone={x.missed >= 4 ? "warn" : "neutral"}>{x.missed} missed</Pill>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -268,9 +338,8 @@ export default function FourWeekReviewPage() {
                 </div>
 
                 <div className="mt-3 text-sm text-slate-700">
-                  - Manual incidents are now counted from <code>incidents</code>.<br />
-                  - Temp fails are counted from <code>food_temp_logs</code> status FAIL.<br />
-                  - Routine misses still placeholder.
+                  - This page now reads totals from <code>/four-week-review/summary</code>.<br />
+                  - If something looks wrong, fix it in the server summary logic, not by hardcoding UI numbers.
                 </div>
 
                 <div className="mt-3">
