@@ -9,11 +9,6 @@ const PUBLIC_PATHS = new Set<string>([
   "/auth/callback",
 ]);
 
-// ✅ Machine-to-machine endpoints that must NEVER redirect to /login
-const PUBLIC_API_PATHS = new Set<string>([
-  "/api/stripe/webhook",
-]);
-
 function isStaticAsset(pathname: string) {
   return (
     pathname.startsWith("/_next") ||
@@ -26,11 +21,12 @@ function isStaticAsset(pathname: string) {
 export async function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
-  if (isStaticAsset(pathname)) return NextResponse.next();
+  // ✅ Let Stripe webhooks through (Stripe will not be logged in, ever)
+  if (pathname.startsWith("/api/stripe/webhook")) {
+    return NextResponse.next();
+  }
 
-  // ✅ Stripe (and similar services) will not have a session cookie.
-  // If we redirect them to /login, Stripe marks the webhook delivery as failed (307).
-  if (PUBLIC_API_PATHS.has(pathname)) return NextResponse.next();
+  if (isStaticAsset(pathname)) return NextResponse.next();
 
   // Create response first so Supabase can write refreshed cookies onto it
   const res = NextResponse.next();
@@ -52,7 +48,6 @@ export async function middleware(req: NextRequest) {
     }
   );
 
-  // This both reads session AND refreshes cookies when needed
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -67,7 +62,7 @@ export async function middleware(req: NextRequest) {
   }
 
   if (session && (pathname === "/login" || pathname === "/signup")) {
-    const target = req.nextUrl.searchParams.get("redirect") || "/";
+    const target = req.nextUrl.searchParams.get("redirect") || "/dashboard"; // ✅ your preference
     const url = req.nextUrl.clone();
     url.pathname = target;
     url.search = "";
