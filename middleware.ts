@@ -9,6 +9,11 @@ const PUBLIC_PATHS = new Set<string>([
   "/auth/callback",
 ]);
 
+// ✅ Machine-to-machine endpoints that must NEVER redirect to /login
+const PUBLIC_API_PATHS = new Set<string>([
+  "/api/stripe/webhook",
+]);
+
 function isStaticAsset(pathname: string) {
   return (
     pathname.startsWith("/_next") ||
@@ -22,6 +27,10 @@ export async function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
   if (isStaticAsset(pathname)) return NextResponse.next();
+
+  // ✅ Stripe (and similar services) will not have a session cookie.
+  // If we redirect them to /login, Stripe marks the webhook delivery as failed (307).
+  if (PUBLIC_API_PATHS.has(pathname)) return NextResponse.next();
 
   // Create response first so Supabase can write refreshed cookies onto it
   const res = NextResponse.next();
