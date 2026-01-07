@@ -18,6 +18,7 @@ type FeedbackItem = {
   user_id: string;
   created_at: string;
   meta: any;
+  org_id: string;
 };
 
 type TeamMemberLite = {
@@ -185,21 +186,12 @@ export default function ManagerFeedbackPage() {
     setError(null);
 
     try {
-      const orgId = await getActiveOrgIdClient();
-      if (!orgId) {
-        setError("No active organisation found.");
-        setItems([]);
-        setTeamByUserId({});
-        setLoading(false);
-        return;
-      }
-
       let query = supabase
-        .from("feedback_items")
-        .select("id,kind,message,page_path,area,location_id,user_id,created_at,meta")
-        .eq("org_id", orgId)
-        .order("created_at", { ascending: false })
-        .limit(500);
+  .from("feedback_items")
+  .select("id,kind,message,page_path,area,location_id,user_id,created_at,meta,org_id")
+  .order("created_at", { ascending: false })
+  .limit(500);
+
 
       if (kind !== "all") query = query.eq("kind", kind);
 
@@ -210,8 +202,49 @@ export default function ManagerFeedbackPage() {
       setItems(list);
 
       // Resolve users -> team members
-      const userIds = list.map((x) => x.user_id).filter(Boolean);
-      await loadTeamMembersFor(userIds, orgId);
+     // Resolve users -> team members (grouped by org)
+const byOrg = new Map<string, string[]>();
+
+for (const row of list) {
+  if (!row.org_id || !row.user_id) continue;
+  const arr = byOrg.get(row.org_id) ?? [];
+  arr.push(row.user_id);
+  byOrg.set(row.org_id, arr);
+}
+
+// Build one combined map
+const combined: Record<string, TeamMemberLite> = {};
+
+for (const [oid, uids] of byOrg.entries()) {
+  const unique = Array.from(new Set(uids)).slice(0, 500);
+
+  const { data, error } = await supabase
+    .from("team_members")
+    .select("user_id,name,email,initials,role,active")
+    .eq("org_id", oid)
+    .in("user_id", unique);
+
+  if (error) {
+    console.warn("team_members lookup failed for org:", oid, error.message);
+    continue;
+  }
+
+  (data ?? []).forEach((r: any) => {
+    const uid = r.user_id ? String(r.user_id) : null;
+    if (!uid) return;
+    combined[uid] = {
+      user_id: uid,
+      name: r.name ? String(r.name) : null,
+      email: r.email ? String(r.email) : null,
+      initials: r.initials ? String(r.initials) : null,
+      role: r.role ? String(r.role) : null,
+      active: typeof r.active === "boolean" ? r.active : null,
+    };
+  });
+}
+
+setTeamByUserId(combined);
+
 
       // Keep selected row stable if still present
       if (selectedId && !list.some((x) => x.id === selectedId)) {
