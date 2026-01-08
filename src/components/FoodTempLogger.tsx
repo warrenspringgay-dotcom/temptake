@@ -118,7 +118,7 @@ function toISODate(val: any): string | null {
   return d.toISOString().slice(0, 10);
 }
 
-// dd-mm-yyyy (local date parts)
+// DD/MM/YYYY (local date parts)
 function formatDDMMYYYY(val: any): string | null {
   if (!val) return null;
   const d = new Date(val);
@@ -128,7 +128,7 @@ function formatDDMMYYYY(val: any): string | null {
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = String(d.getFullYear());
 
-  return `${dd}-${mm}-${yyyy}`;
+  return `${dd}/${mm}/${yyyy}`;
 }
 
 function getDow1to7(ymd: string) {
@@ -169,10 +169,95 @@ function daysBetween(aISO: string, bISO: string) {
 }
 
 function isLikelyMonthEnd(d = new Date()) {
-  // "First login after month end" heuristic:
   // If it's within first 3 days of the month, treat as month end review time.
-  const day = d.getDate();
-  return day <= 3;
+  return d.getDate() <= 3;
+}
+
+/* ---------- Four-week dismiss helpers ---------- */
+
+// Stable key: only YYYY-MM-DD (no times)
+function makeReviewKey(periodFromISO: string, periodToISO: string) {
+  const from = (periodFromISO ?? "").slice(0, 10);
+  const to = (periodToISO ?? "").slice(0, 10);
+  return `${from}_to_${to}`;
+}
+
+function makeDismissStorageKey(args: {
+  orgId: string | null;
+  locationId: string | null;
+  reviewKey: string;
+}) {
+  const orgKey = args.orgId ?? "no-org";
+  const locKey = args.locationId ?? "no-loc";
+  return `tt_four_week_dismiss_until:${orgKey}:${locKey}:${args.reviewKey}`;
+}
+
+async function isFourWeekReviewDismissed(args: {
+  orgId: string;
+  locationId: string;
+  periodFrom: string;
+  periodTo: string;
+}) {
+  const { orgId, locationId, periodFrom, periodTo } = args;
+  const reviewKey = makeReviewKey(periodFrom, periodTo);
+
+  const { data, error } = await supabase
+    .from("review_dismissals")
+    .select("dismissed_until")
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .eq("review_key", reviewKey)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[four-week dismiss] read failed:", error.message);
+    return false; // fail open (show rather than silently hide)
+  }
+
+  if (!data?.dismissed_until) return false;
+  return new Date(data.dismissed_until).getTime() > Date.now();
+}
+
+async function dismissFourWeekReview(args: {
+  orgId: string;
+  locationId: string;
+  periodFrom: string;
+  periodTo: string;
+}) {
+  const { orgId, locationId, periodFrom, periodTo } = args;
+  const reviewKey = makeReviewKey(periodFrom, periodTo);
+
+  const { data: existing } = await supabase
+    .from("review_dismissals")
+    .select("dismiss_count")
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .eq("review_key", reviewKey)
+    .maybeSingle();
+
+  const currentCount = existing?.dismiss_count ?? 0;
+  const nextCount = currentCount + 1;
+
+  // 1-2 dismisses => 24h, 3rd+ => 28 days
+  const hours = nextCount >= 3 ? 24 * 28 : 24;
+  const dismissedUntil = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+
+  const { error } = await supabase
+    .from("review_dismissals")
+    .upsert(
+      {
+        org_id: orgId,
+        location_id: locationId,
+        review_key: reviewKey,
+        dismissed_until: dismissedUntil,
+        dismiss_count: nextCount,
+      },
+      { onConflict: "org_id,location_id,review_key" }
+    );
+
+  if (error) {
+    console.warn("[four-week dismiss] upsert failed:", error.message);
+  }
 }
 
 /* ---------- Small UI helpers ---------- */
@@ -348,7 +433,11 @@ export default function DashboardPage() {
   const [user, setUser] = React.useState<any | null>(null);
   const [authReady, setAuthReady] = React.useState(false);
 
-  // ✅ Four-week banner state
+  // Keep active org/location around for banner dismiss persistence
+  const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
+  const [activeLocationId, setActiveLocationId] = useState<string | null>(null);
+
+  // Four-week banner state
   const [fourWeekBanner, setFourWeekBanner] = useState<FourWeekBannerState>({
     kind: "none",
   });
@@ -376,7 +465,7 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // Detect hover capability (prevents transforms on touch devices)
+  // Detect hover capability
   const [canHover, setCanHover] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -403,13 +492,16 @@ export default function DashboardPage() {
           return;
         }
 
+        setActiveOrgId(orgId);
+        setActiveLocationId(locationId);
+
         await Promise.all([
           loadTempsKpi(orgId, locationId, today, cancelled),
           loadCleaningKpi(orgId, locationId, today, cancelled),
           loadTrainingAndAllergenKpi(orgId, cancelled),
           loadLeaderBoard(orgId, cancelled),
           loadWallPosts(orgId, cancelled),
-          loadFourWeekBanner(today, cancelled),
+          loadFourWeekBanner(orgId, locationId, today, cancelled),
         ]);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load dashboard.");
@@ -453,10 +545,11 @@ export default function DashboardPage() {
       if (!d || Number.isNaN(d.getTime())) return;
 
       const iso = d.toISOString().slice(0, 10);
-      const status: string | null = r.status ?? null;
+      const statusRaw: string | null = r.status ?? null;
+      const status = statusRaw ? String(statusRaw).toUpperCase() : null;
 
       if (iso === todayISO) tempLogsToday += 1;
-      if (d >= since && status === "fail") tempFails7d += 1;
+      if (d >= since && status === "FAIL") tempFails7d += 1;
     });
 
     setKpi((prev) => ({
@@ -543,7 +636,10 @@ export default function DashboardPage() {
 
     // Training
     try {
-      const { data } = await supabase.from("team_members").select("*").eq("org_id", orgId);
+      const { data } = await supabase
+        .from("team_members")
+        .select("*")
+        .eq("org_id", orgId);
 
       (data ?? []).forEach((r: any) => {
         const raw =
@@ -630,18 +726,24 @@ export default function DashboardPage() {
     }
   }
 
-  // ✅ NEW: Four-week review banner logic
-  async function loadFourWeekBanner(todayISO: string, cancelled: boolean) {
+  // ✅ Four-week review banner logic (fixed, stable keys, localStorage works)
+  async function loadFourWeekBanner(
+    orgId: string,
+    locationId: string | null,
+    todayISO: string,
+    cancelled: boolean
+  ) {
     try {
       if (typeof window === "undefined") return;
 
       const reviewedAtRaw = localStorage.getItem("tt_four_week_reviewed_at");
       const lastReviewedISO = reviewedAtRaw ? toISODate(reviewedAtRaw) : null;
 
-      // fetch current summary (fast, and lets us show “issues found”)
-      const res = await fetch(`/four-week-review/summary?to=${encodeURIComponent(todayISO)}`, {
-        cache: "no-store",
-      });
+      // Fetch summary first (we need periodFrom/periodTo to build reviewKey)
+      const res = await fetch(
+        `/four-week-review/summary?to=${encodeURIComponent(todayISO)}`,
+        { cache: "no-store" }
+      );
 
       if (!res.ok) return;
       const payload = await res.json();
@@ -650,17 +752,32 @@ export default function DashboardPage() {
       const periodFrom = String(payload?.summary?.period?.from ?? "");
       const periodTo = String(payload?.summary?.period?.to ?? todayISO);
 
+      const reviewKey = makeReviewKey(periodFrom, periodTo);
+
+// check BOTH: scoped + fallback
+const dismissKeyScoped = makeDismissStorageKey({ orgId, locationId, reviewKey });
+const dismissKeyFallback = makeDismissStorageKey({ orgId, locationId: null, reviewKey });
+
+const dismissUntilRaw =
+  localStorage.getItem(dismissKeyScoped) ?? localStorage.getItem(dismissKeyFallback);
+
+if (dismissUntilRaw) {
+  const dismissUntil = new Date(dismissUntilRaw).getTime();
+  if (!Number.isNaN(dismissUntil) && dismissUntil > Date.now()) {
+    setFourWeekBanner({ kind: "none" });
+    return;
+  }
+}
+
+
       if (cancelled) return;
 
-      const overdue = !lastReviewedISO || daysBetween(lastReviewedISO, todayISO) >= 28;
+      const overdue =
+        !lastReviewedISO || daysBetween(lastReviewedISO, todayISO) >= 28;
       const monthEnd = isLikelyMonthEnd(new Date());
 
-      // Show banner if:
-      // - overdue (28+ days since mark reviewed), OR
-      // - month-end window (first 3 days of month), OR
-      // - there are issues (so it’s useful, not naggy)
       type FourWeekBannerReason = "overdue" | "month_end" | "issues";
-let reason: FourWeekBannerReason | null = null;
+      let reason: FourWeekBannerReason | null = null;
 
       if (issues > 0) reason = "issues";
       else if (overdue) reason = "overdue";
@@ -671,6 +788,23 @@ let reason: FourWeekBannerReason | null = null;
         return;
       }
 
+      // ✅ Optional DB dismissal check (only if we have org+location)
+      if (locationId && periodFrom && periodTo) {
+        const dismissed = await isFourWeekReviewDismissed({
+          orgId,
+          locationId,
+          periodFrom,
+          periodTo,
+        });
+
+        if (cancelled) return;
+
+        if (dismissed) {
+          setFourWeekBanner({ kind: "none" });
+          return;
+        }
+      }
+
       setFourWeekBanner({
         kind: "show",
         issues,
@@ -679,7 +813,6 @@ let reason: FourWeekBannerReason | null = null;
         reason,
       });
     } catch {
-      // keep quiet
       setFourWeekBanner({ kind: "none" });
     }
   }
@@ -747,7 +880,6 @@ let reason: FourWeekBannerReason | null = null;
       {/* ✅ Four-week review banner */}
       {fourWeekBanner.kind === "show" && (
         <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
-
           <div
             className={cls(
               "rounded-3xl border p-4 shadow-lg shadow-slate-900/5 backdrop-blur",
@@ -756,9 +888,8 @@ let reason: FourWeekBannerReason | null = null;
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <div className="text-sm font-extrabold">
-                  Four-week review ready
-                </div>
+                <div className="text-sm font-extrabold">Four-week review ready</div>
+
                 <div className="mt-1 text-xs font-medium opacity-90">
                   Period:{" "}
                   <span className="font-extrabold">
@@ -769,6 +900,7 @@ let reason: FourWeekBannerReason | null = null;
                   Issues found:{" "}
                   <span className="font-extrabold">{fourWeekBanner.issues}</span>
                 </div>
+
                 <div className="mt-1 text-[11px] font-medium opacity-80">
                   {fourWeekBanner.reason === "issues"
                     ? "Recurring issues detected. Fix the top items and you look like you run the place."
@@ -788,10 +920,46 @@ let reason: FourWeekBannerReason | null = null;
 
                 <button
                   type="button"
-                  onClick={() => {
-                    localStorage.setItem("tt_four_week_reviewed_at", new Date().toISOString());
-                    setFourWeekBanner({ kind: "none" });
-                  }}
+                  onClick={async () => {
+  try {
+    // fetch fresh, don't trust state
+    const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
+    const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
+
+    const reviewKey = makeReviewKey(fourWeekBanner.periodFrom, fourWeekBanner.periodTo);
+
+    const dismissKeyScoped = makeDismissStorageKey({ orgId: orgId ?? null, locationId: locationId ?? null, reviewKey });
+    const dismissKeyFallback = makeDismissStorageKey({ orgId: orgId ?? null, locationId: null, reviewKey });
+
+    const until = new Date();
+    until.setDate(until.getDate() + 28);
+
+    // store BOTH so location changes don't resurrect it
+    localStorage.setItem(dismissKeyScoped, until.toISOString());
+    localStorage.setItem(dismissKeyFallback, until.toISOString());
+
+    // also mark reviewed
+    localStorage.setItem("tt_four_week_reviewed_at", new Date().toISOString());
+
+    // DB persist only if we genuinely have locationId (table requires NOT NULL)
+    if (orgId && locationId) {
+      await dismissFourWeekReview({
+        orgId,
+        locationId,
+        periodFrom: fourWeekBanner.periodFrom,
+        periodTo: fourWeekBanner.periodTo,
+      });
+    } else {
+      console.warn("[four-week dismiss] skipped DB write because org/location missing", {
+        orgId,
+        locationId,
+      });
+    }
+  } finally {
+    setFourWeekBanner({ kind: "none" });
+  }
+}}
+
                   className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 text-xs font-extrabold text-slate-900 shadow-sm hover:bg-white"
                 >
                   Dismiss
@@ -803,7 +971,6 @@ let reason: FourWeekBannerReason | null = null;
       )}
 
       <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
-
         <header className="text-center">
           <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">
             {headerDate}
@@ -956,7 +1123,9 @@ let reason: FourWeekBannerReason | null = null;
 
           <div className="rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-md shadow-amber-200/60 flex flex-col">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <h2 className="text-sm font-extrabold text-amber-900">Employee of the month</h2>
+              <h2 className="text-sm font-extrabold text-amber-900">
+                Employee of the month
+              </h2>
               <span className="text-xl" aria-hidden="true">
                 🏆
               </span>
