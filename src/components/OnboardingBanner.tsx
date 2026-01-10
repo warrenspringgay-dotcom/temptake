@@ -7,7 +7,12 @@ import { usePathname } from "next/navigation";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getStepDone, setStepDone, type OnboardingStepKey } from "@/lib/onboarding";
+import {
+  clearSnooze,
+  isStepSnoozed,
+  snoozeStep,
+  type OnboardingStepKey,
+} from "@/lib/onboarding";
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
@@ -42,6 +47,20 @@ function toneClasses(tone: Step["tone"]) {
         btn: "bg-emerald-600 hover:bg-emerald-700 text-white",
       };
   }
+}
+
+/* ---------- server checks ---------- */
+
+async function hasAnyLocation(orgId: string) {
+  const q = await supabase
+    .from("locations")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .eq("active", true)
+    .limit(1);
+
+  if (q.error) return false;
+  return (q.count ?? 0) > 0;
 }
 
 async function hasAnyTempRoutine(orgId: string) {
@@ -90,15 +109,9 @@ async function hasAnyTeamMember(orgId: string) {
 }
 
 /**
- * ✅ "Training exists" = at least one training record exists for this org.
- * For YOUR schema, training/education is stored in public.trainings
- * (prefer team_member_id, fallback staff_id legacy).
- *
- * Since the banner specifically says "expiry dates", we treat this as done
- * when there's at least 1 training row WITH expires_on set.
+ * "Training step done" = team exists AND at least one training record with expires_on.
  */
 async function hasAnyTrainingSet(orgId: string) {
-  // Prefer: team_member_id training rows with an expiry date
   const qTeam = await supabase
     .from("trainings")
     .select("id", { count: "exact", head: true })
@@ -109,7 +122,6 @@ async function hasAnyTrainingSet(orgId: string) {
 
   if (!qTeam.error && (qTeam.count ?? 0) > 0) return true;
 
-  // Fallback: any training rows with an expiry date (covers older rows linked to staff_id)
   const qAny = await supabase
     .from("trainings")
     .select("id", { count: "exact", head: true })
@@ -121,6 +133,8 @@ async function hasAnyTrainingSet(orgId: string) {
   return (qAny.count ?? 0) > 0;
 }
 
+/* ---------- Component ---------- */
+
 export default function OnboardingBanner() {
   const pathname = usePathname();
 
@@ -128,11 +142,14 @@ export default function OnboardingBanner() {
   const [locationId, setLocationId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [routinesDone, setRoutinesDone] = useState(false);
-  const [cleaningDone, setCleaningDone] = useState(false);
-  const [allergensDone, setAllergensDone] = useState(false);
-  const [teamDone, setTeamDone] = useState(false);
-  const [locationsDone, setLocationsDone] = useState(false);
+  // real completion state
+  const [done, setDone] = useState<Record<OnboardingStepKey, boolean>>({
+    locations: false,
+    routines: false,
+    cleaning: false,
+    allergens: false,
+    team: false,
+  });
 
   const steps: Step[] = useMemo(
     () => [
@@ -206,49 +223,40 @@ export default function OnboardingBanner() {
         setOrgId(o ?? null);
         setLocationId(l ?? null);
 
-        // Local (instant) state first
-        setLocationsDone(!!l || getStepDone(o ?? null, "locations"));
-        setRoutinesDone(getStepDone(o ?? null, "routines"));
-        setCleaningDone(getStepDone(o ?? null, "cleaning"));
-        setAllergensDone(getStepDone(o ?? null, "allergens"));
-        setTeamDone(getStepDone(o ?? null, "team"));
+        if (!o) return;
 
-        // Server-backed checks
-        if (o) {
-          const [rOk, aOk, hasTeam, hasTraining] = await Promise.all([
+        // server truth
+        const [locOk, routinesOk, allergenOk, teamOk, trainingOk] =
+          await Promise.all([
+            hasAnyLocation(o),
             hasAnyTempRoutine(o),
             hasAnyAllergenReview(o),
             hasAnyTeamMember(o),
             hasAnyTrainingSet(o),
           ]);
 
-          if (!cancelled) {
-            if (rOk) {
-              setRoutinesDone(true);
-              setStepDone(o, "routines", true);
-            }
-            if (aOk) {
-              setAllergensDone(true);
-              setStepDone(o, "allergens", true);
-            }
-
-            // ✅ Team step is ONLY done when team exists AND training expiry exists
-            if (hasTeam && hasTraining) {
-              setTeamDone(true);
-              setStepDone(o, "team", true);
-            } else {
-              setTeamDone(false);
-            }
-          }
-
-          if (o && l) {
-            const cOk = await hasAnyCleaningTask(o, l);
-            if (!cancelled && cOk) {
-              setCleaningDone(true);
-              setStepDone(o, "cleaning", true);
-            }
-          }
+        // cleaning depends on location
+        let cleaningOk = false;
+        if (l) {
+          cleaningOk = await hasAnyCleaningTask(o, l);
         }
+
+        if (cancelled) return;
+
+        const nextDone: Record<OnboardingStepKey, boolean> = {
+          locations: !!l || locOk,
+          routines: routinesOk,
+          cleaning: cleaningOk,
+          allergens: allergenOk,
+          team: teamOk && trainingOk,
+        };
+
+        // If something becomes truly done, clear its snooze so it doesn't interfere.
+        (Object.keys(nextDone) as OnboardingStepKey[]).forEach((k) => {
+          if (nextDone[k]) clearSnooze(o, k);
+        });
+
+        setDone(nextDone);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -259,20 +267,18 @@ export default function OnboardingBanner() {
     };
   }, [pathname]);
 
-  const doneMap: Record<OnboardingStepKey, boolean> = {
-    locations: locationsDone,
-    routines: routinesDone,
-    cleaning: cleaningDone,
-    allergens: allergensDone,
-    team: teamDone,
-  };
-
-  const remaining = steps.filter((s) => !doneMap[s.key]);
+  const remaining = useMemo(() => steps.filter((s) => !done[s.key]), [steps, done]);
   const allDone = remaining.length === 0;
 
   const suggested = useMemo(() => {
+    if (!orgId) return null;
     if (allDone) return null;
 
+    // Filter remaining by snooze (do NOT treat snooze as "done", just "not now")
+    const awakeRemaining = remaining.filter((s) => !isStepSnoozed(orgId, s.key));
+    const pool = awakeRemaining.length ? awakeRemaining : remaining;
+
+    // Prefer next step after current page
     const onKey = ((): OnboardingStepKey | null => {
       if (pathname?.startsWith("/locations")) return "locations";
       if (pathname?.startsWith("/routines")) return "routines";
@@ -282,16 +288,18 @@ export default function OnboardingBanner() {
       return null;
     })();
 
-    if (!onKey) return remaining[0];
+    if (!onKey) return pool[0];
 
     const idx = steps.findIndex((s) => s.key === onKey);
-    const next = steps.slice(idx + 1).find((s) => !doneMap[s.key]);
-    return next ?? remaining[0];
-  }, [allDone, pathname, remaining, steps, doneMap]);
+    const next = steps.slice(idx + 1).find((s) => !done[s.key] && !isStepSnoozed(orgId, s.key));
+    return next ?? pool[0];
+  }, [orgId, allDone, pathname, remaining, steps, done]);
 
-  const progress = Math.round(
-    ((steps.length - remaining.length) / steps.length) * 100
-  );
+  const progress = useMemo(() => {
+    const total = steps.length;
+    const doneCount = steps.reduce((acc, s) => acc + (done[s.key] ? 1 : 0), 0);
+    return Math.round((doneCount / total) * 100);
+  }, [steps, done]);
 
   if (!pageEligible) return null;
   if (loading) return null;
@@ -323,17 +331,11 @@ export default function OnboardingBanner() {
           <button
             type="button"
             onClick={() => {
-              // Snooze this step for this org (not “completed”, just “don’t nag”)
-              setStepDone(orgId, suggested.key, true);
-
-              if (suggested.key === "locations") setLocationsDone(true);
-              if (suggested.key === "routines") setRoutinesDone(true);
-              if (suggested.key === "cleaning") setCleaningDone(true);
-              if (suggested.key === "allergens") setAllergensDone(true);
-              if (suggested.key === "team") setTeamDone(true);
+              // Snooze this step (do NOT mark it complete)
+              snoozeStep(orgId, suggested.key);
             }}
             className="text-[11px] font-semibold text-slate-600 hover:text-slate-900"
-            title="Hide this step"
+            title="Snooze this step"
           >
             Dismiss
           </button>
@@ -344,6 +346,29 @@ export default function OnboardingBanner() {
         </div>
         <div className="mt-0.5 text-xs font-medium text-slate-600">
           {suggested.body}
+        </div>
+
+        {/* Lightweight checklist of what’s left */}
+        <div className="mt-2 flex flex-wrap gap-2">
+          {steps.map((s) => {
+            const isDone = done[s.key];
+            const isLeft = !isDone;
+            return (
+              <span
+                key={s.key}
+                className={cls(
+                  "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+                  isDone
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-slate-200 bg-white/70 text-slate-700"
+                )}
+                title={s.title}
+              >
+                <span aria-hidden="true">{isDone ? "✅" : "⬜"}</span>
+                {isLeft ? s.title : s.title}
+              </span>
+            );
+          })}
         </div>
       </div>
 
