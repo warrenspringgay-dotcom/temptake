@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -157,37 +157,30 @@ export default function TeamManager() {
   const [editCertSaving, setEditCertSaving] = useState(false);
 
   /* =========================================================
-     ✅ Fix: prevent page jumping to top when VIEW modal opens
-     - Locks body scroll at current position (mobile Safari etc.)
-     - Restores on close
+     ✅ Fix: prevent "jump to top" when VIEW modal opens
+     - We do NOT lock body scroll (keeps modal scroll working)
+     - We capture scrollY and force it back next frame
   ========================================================= */
+  const viewScrollYRef = useRef(0);
+
+  function closeView() {
+    setViewOpen(false);
+    // restore scroll position after state update paint
+    requestAnimationFrame(() => {
+      window.scrollTo(0, viewScrollYRef.current || 0);
+    });
+  }
+
   useEffect(() => {
     if (!viewOpen) return;
-
     const y = window.scrollY || 0;
-    const body = document.body;
+    viewScrollYRef.current = y;
 
-    const prevPosition = body.style.position;
-    const prevTop = body.style.top;
-    const prevWidth = body.style.width;
-    const prevOverflowY = body.style.overflowY;
-
-    body.style.position = "fixed";
-    body.style.top = `-${y}px`;
-    body.style.width = "100%";
-    body.style.overflowY = "scroll";
-
-    return () => {
-      const lockedTop = body.style.top; // "-123px"
-
-      body.style.position = prevPosition;
-      body.style.top = prevTop;
-      body.style.width = prevWidth;
-      body.style.overflowY = prevOverflowY;
-
-      const restoreY = Math.abs(parseInt(lockedTop || "", 10)) || y;
-      window.scrollTo(0, restoreY);
-    };
+    // Some mobile browsers jump when fixed overlay mounts.
+    // Force it back immediately.
+    requestAnimationFrame(() => {
+      window.scrollTo(0, y);
+    });
   }, [viewOpen]);
 
   /* -------------------- Load team + determine owner -------------------- */
@@ -577,9 +570,14 @@ export default function TeamManager() {
   }
 
   async function openCard(m: Member) {
+    // capture scroll before opening so we can restore if browser jumps
+    viewScrollYRef.current = window.scrollY || 0;
+
     setViewFor(m);
     setViewOpen(true);
-    await loadCertsForMember(m);
+
+    // Load certs after opening (no need to block UI)
+    void loadCertsForMember(m);
   }
 
   /* -------------------- Invite flow -------------------- */
@@ -1055,9 +1053,10 @@ export default function TeamManager() {
 
       {/* View modal (Education list ONLY now, no add form) */}
       {viewOpen && viewFor && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setViewOpen(false)}>
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={closeView}>
           <div
-            className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur"
+            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur
+                       max-h-[calc(100dvh-4rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="bg-slate-900 px-4 py-3 text-white">
@@ -1148,7 +1147,7 @@ export default function TeamManager() {
             <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
               <button
                 onClick={() => {
-                  setViewOpen(false);
+                  closeView();
                   void openEdit(viewFor);
                 }}
                 className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
@@ -1157,7 +1156,7 @@ export default function TeamManager() {
                 Edit
               </button>
               <button
-                onClick={() => setViewOpen(false)}
+                onClick={closeView}
                 className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
                 type="button"
               >
