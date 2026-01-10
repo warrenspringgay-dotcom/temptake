@@ -156,6 +156,40 @@ export default function TeamManager() {
   });
   const [editCertSaving, setEditCertSaving] = useState(false);
 
+  /* =========================================================
+     ✅ Fix: prevent page jumping to top when VIEW modal opens
+     - Locks body scroll at current position (mobile Safari etc.)
+     - Restores on close
+  ========================================================= */
+  useEffect(() => {
+    if (!viewOpen) return;
+
+    const y = window.scrollY || 0;
+    const body = document.body;
+
+    const prevPosition = body.style.position;
+    const prevTop = body.style.top;
+    const prevWidth = body.style.width;
+    const prevOverflowY = body.style.overflowY;
+
+    body.style.position = "fixed";
+    body.style.top = `-${y}px`;
+    body.style.width = "100%";
+    body.style.overflowY = "scroll";
+
+    return () => {
+      const lockedTop = body.style.top; // "-123px"
+
+      body.style.position = prevPosition;
+      body.style.top = prevTop;
+      body.style.width = prevWidth;
+      body.style.overflowY = prevOverflowY;
+
+      const restoreY = Math.abs(parseInt(lockedTop || "", 10)) || y;
+      window.scrollTo(0, restoreY);
+    };
+  }, [viewOpen]);
+
   /* -------------------- Load team + determine owner -------------------- */
   async function load() {
     setLoading(true);
@@ -768,8 +802,13 @@ export default function TeamManager() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">{editing.id ? "Edit member" : "Add member"}</div>
-              <button onClick={() => setEditOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
+              <div className="text-base font-semibold">
+                {editing.id ? "Edit member" : "Add member"}
+              </div>
+              <button
+                onClick={() => setEditOpen(false)}
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+              >
                 ✕
               </button>
             </div>
@@ -1071,7 +1110,10 @@ export default function TeamManager() {
                 ) : certs.length ? (
                   <div className="space-y-2">
                     {certs.map((c) => (
-                      <div key={c.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                      <div
+                        key={c.id}
+                        className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                      >
                         <div className="flex items-start justify-between gap-2">
                           <div className="text-xs font-semibold text-slate-900">
                             {c.type ?? "—"}
@@ -1135,7 +1177,10 @@ export default function TeamManager() {
           >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Invite team member</div>
-              <button onClick={() => setInviteOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
+              <button
+                onClick={() => setInviteOpen(false)}
+                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+              >
                 ✕
               </button>
             </div>
