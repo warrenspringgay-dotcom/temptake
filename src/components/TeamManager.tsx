@@ -158,14 +158,13 @@ export default function TeamManager() {
 
   /* =========================================================
      ✅ Fix: prevent "jump to top" when VIEW modal opens
-     - We do NOT lock body scroll (keeps modal scroll working)
-     - We capture scrollY and force it back next frame
+     - No body lock (modal must scroll)
+     - Capture scrollY and force it back next frame
   ========================================================= */
   const viewScrollYRef = useRef(0);
 
   function closeView() {
     setViewOpen(false);
-    // restore scroll position after state update paint
     requestAnimationFrame(() => {
       window.scrollTo(0, viewScrollYRef.current || 0);
     });
@@ -176,8 +175,6 @@ export default function TeamManager() {
     const y = window.scrollY || 0;
     viewScrollYRef.current = y;
 
-    // Some mobile browsers jump when fixed overlay mounts.
-    // Force it back immediately.
     requestAnimationFrame(() => {
       window.scrollTo(0, y);
     });
@@ -570,13 +567,9 @@ export default function TeamManager() {
   }
 
   async function openCard(m: Member) {
-    // capture scroll before opening so we can restore if browser jumps
     viewScrollYRef.current = window.scrollY || 0;
-
     setViewFor(m);
     setViewOpen(true);
-
-    // Load certs after opening (no need to block UI)
     void loadCertsForMember(m);
   }
 
@@ -794,9 +787,12 @@ export default function TeamManager() {
 
       {/* Edit / Add modal */}
       {editOpen && editing && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setEditOpen(false)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4"
+          onClick={() => setEditOpen(false)}
+        >
           <div
-            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+            className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-2rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
@@ -811,6 +807,7 @@ export default function TeamManager() {
               </button>
             </div>
 
+            {/* (rest of your edit modal content unchanged) */}
             <div className="grid gap-3">
               <div className="grid grid-cols-3 gap-3">
                 <div>
@@ -883,7 +880,6 @@ export default function TeamManager() {
                 </label>
               </div>
 
-              {/* Training areas selector */}
               <div>
                 <label className="mb-1 block text-xs text-slate-500">Training areas</label>
                 <div className="flex flex-wrap gap-2">
@@ -919,7 +915,7 @@ export default function TeamManager() {
                 />
               </div>
 
-              {/* ✅ Education moved HERE (Edit modal) */}
+              {/* ✅ Education block unchanged */}
               {editing.id ? (
                 <div className="mt-1 rounded-2xl border border-slate-200 bg-white/80 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -970,7 +966,6 @@ export default function TeamManager() {
                     <div className="text-xs text-slate-500">No courses recorded.</div>
                   )}
 
-                  {/* Add course form (moved from View modal) */}
                   <div className="mt-3 grid gap-2">
                     <div className="grid grid-cols-2 gap-2">
                       <input
@@ -1028,7 +1023,6 @@ export default function TeamManager() {
                   </div>
                 </div>
               ) : null}
-              {/* ✅ End education */}
 
               <div className="flex justify-end gap-2 pt-1">
                 <button
@@ -1053,10 +1047,12 @@ export default function TeamManager() {
 
       {/* View modal (Education list ONLY now, no add form) */}
       {viewOpen && viewFor && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={closeView}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4"
+          onClick={closeView}
+        >
           <div
-            className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur
-                       max-h-[calc(100dvh-4rem)] overflow-y-auto"
+            className="w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-2rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="bg-slate-900 px-4 py-3 text-white">
@@ -1169,9 +1165,12 @@ export default function TeamManager() {
 
       {/* Invite modal */}
       {inviteOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setInviteOpen(false)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4"
+          onClick={() => setInviteOpen(false)}
+        >
           <div
-            className="mx-auto mt-16 w-full max-w-md rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-2rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
