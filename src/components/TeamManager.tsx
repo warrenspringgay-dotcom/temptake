@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -111,6 +112,13 @@ function formatDate(d: string | null | undefined) {
   return `${day}/${month}/${year}`;
 }
 
+function ModalPortal({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+}
+
 /* ================================================= */
 export default function TeamManager() {
   const searchParams = useSearchParams();
@@ -155,30 +163,6 @@ export default function TeamManager() {
     notes: "",
   });
   const [editCertSaving, setEditCertSaving] = useState(false);
-
-  /* =========================================================
-     ✅ Fix: prevent "jump to top" when VIEW modal opens
-     - No body lock (modal must scroll)
-     - Capture scrollY and force it back next frame
-  ========================================================= */
-  const viewScrollYRef = useRef(0);
-
-  function closeView() {
-    setViewOpen(false);
-    requestAnimationFrame(() => {
-      window.scrollTo(0, viewScrollYRef.current || 0);
-    });
-  }
-
-  useEffect(() => {
-    if (!viewOpen) return;
-    const y = window.scrollY || 0;
-    viewScrollYRef.current = y;
-
-    requestAnimationFrame(() => {
-      window.scrollTo(0, y);
-    });
-  }, [viewOpen]);
 
   /* -------------------- Load team + determine owner -------------------- */
   async function load() {
@@ -567,10 +551,9 @@ export default function TeamManager() {
   }
 
   async function openCard(m: Member) {
-    viewScrollYRef.current = window.scrollY || 0;
     setViewFor(m);
     setViewOpen(true);
-    void loadCertsForMember(m);
+    await loadCertsForMember(m);
   }
 
   /* -------------------- Invite flow -------------------- */
@@ -787,141 +770,305 @@ export default function TeamManager() {
 
       {/* Edit / Add modal */}
       {editOpen && editing && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4"
-          onClick={() => setEditOpen(false)}
-        >
-          <div
-            className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-2rem)] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">
-                {editing.id ? "Edit member" : "Add member"}
-              </div>
-              <button
-                onClick={() => setEditOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* (rest of your edit modal content unchanged) */}
-            <div className="grid gap-3">
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Initials</label>
-                  <input
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                    value={editing.initials ?? ""}
-                    onChange={(e) => setEditing({ ...editing, initials: e.target.value })}
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="mb-1 block text-xs text-slate-500">Name *</label>
-                  <input
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                    value={editing.name}
-                    onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                  />
-                </div>
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setEditOpen(false)}>
+            <div
+              className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-6rem)] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-base font-semibold">{editing.id ? "Edit member" : "Add member"}</div>
+                <button onClick={() => setEditOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
+                  ✕
+                </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Email</label>
-                  <input
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                    value={editing.email ?? ""}
-                    onChange={(e) => setEditing({ ...editing, email: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Phone</label>
-                  <input
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                    value={editing.phone ?? ""}
-                    onChange={(e) => setEditing({ ...editing, phone: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Role</label>
-                  {isOwner ? (
-                    <select
-                      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                      value={(editing.role ?? "staff").toLowerCase()}
-                      onChange={(e) => setEditing({ ...editing, role: e.target.value })}
-                    >
-                      <option value="staff">Staff</option>
-                      <option value="manager">Manager</option>
-                      <option value="owner">Owner</option>
-                    </select>
-                  ) : (
+              <div className="grid gap-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-slate-500">Initials</label>
                     <input
-                      className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm"
-                      value={prettyRole(editing.role ?? "staff")}
-                      disabled
+                      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                      value={editing.initials ?? ""}
+                      onChange={(e) => setEditing({ ...editing, initials: e.target.value })}
                     />
-                  )}
+                  </div>
+                  <div className="col-span-2">
+                    <label className="mb-1 block text-xs text-slate-500">Name *</label>
+                    <input
+                      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                      value={editing.name}
+                      onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                    />
+                  </div>
                 </div>
 
-                <label className="mt-6 flex items-center gap-2 text-sm text-slate-800">
-                  <input
-                    type="checkbox"
-                    className="accent-emerald-600"
-                    checked={!!editing.active}
-                    onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
-                  />
-                  Active
-                </label>
-              </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-slate-500">Email</label>
+                    <input
+                      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                      value={editing.email ?? ""}
+                      onChange={(e) => setEditing({ ...editing, email: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-slate-500">Phone</label>
+                    <input
+                      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                      value={editing.phone ?? ""}
+                      onChange={(e) => setEditing({ ...editing, phone: e.target.value })}
+                    />
+                  </div>
+                </div>
 
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Training areas</label>
-                <div className="flex flex-wrap gap-2">
-                  {TRAINING_AREAS.map((a) => {
-                    const selected = normalizeAreas(editing.training_areas).includes(a.key);
-                    return (
-                      <button
-                        key={a.key}
-                        type="button"
-                        onClick={() => toggleArea(a.key)}
-                        className={[
-                          "rounded-full border px-3 py-1 text-xs font-medium transition",
-                          pillClassSelected(selected),
-                        ].join(" ")}
-                        title={a.label}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-slate-500">Role</label>
+                    {isOwner ? (
+                      <select
+                        className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                        value={(editing.role ?? "staff").toLowerCase()}
+                        onChange={(e) => setEditing({ ...editing, role: e.target.value })}
                       >
-                        {a.short}
-                      </button>
-                    );
-                  })}
+                        <option value="staff">Staff</option>
+                        <option value="manager">Manager</option>
+                        <option value="owner">Owner</option>
+                      </select>
+                    ) : (
+                      <input
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm"
+                        value={prettyRole(editing.role ?? "staff")}
+                        disabled
+                      />
+                    )}
+                  </div>
+
+                  <label className="mt-6 flex items-center gap-2 text-sm text-slate-800">
+                    <input
+                      type="checkbox"
+                      className="accent-emerald-600"
+                      checked={!!editing.active}
+                      onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
+                    />
+                    Active
+                  </label>
                 </div>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Tap to toggle. Each selected area is recorded as trained today and given a due date in 12 months.
-                </p>
+
+                {/* Training areas selector */}
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Training areas</label>
+                  <div className="flex flex-wrap gap-2">
+                    {TRAINING_AREAS.map((a) => {
+                      const selected = normalizeAreas(editing.training_areas).includes(a.key);
+                      return (
+                        <button
+                          key={a.key}
+                          type="button"
+                          onClick={() => toggleArea(a.key)}
+                          className={[
+                            "rounded-full border px-3 py-1 text-xs font-medium transition",
+                            pillClassSelected(selected),
+                          ].join(" ")}
+                          title={a.label}
+                        >
+                          {a.short}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Tap to toggle. Each selected area is recorded as trained today and given a due date in 12 months.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Notes</label>
+                  <textarea
+                    className="min-h-[80px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
+                    value={editing.notes ?? ""}
+                    onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
+                  />
+                </div>
+
+                {/* ✅ Education moved HERE (Edit modal) */}
+                {editing.id ? (
+                  <div className="mt-1 rounded-2xl border border-slate-200 bg-white/80 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="text-sm font-semibold text-slate-900">Education / Courses</div>
+                      <button
+                        onClick={() => void loadEditCertsForMember(editing)}
+                        className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                        type="button"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+
+                    {editCertsLoading ? (
+                      <div className="text-xs text-slate-500">Loading…</div>
+                    ) : editCerts.length ? (
+                      <div className="space-y-2">
+                        {editCerts.map((c) => (
+                          <div
+                            key={c.id}
+                            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="text-xs font-semibold text-slate-900">
+                                {c.type ?? "—"}
+                              </div>
+                              {c.certificate_url ? (
+                                <a
+                                  href={c.certificate_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                                >
+                                  View →
+                                </a>
+                              ) : null}
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-600">
+                              Awarded: {formatDate(c.awarded_on)} · Expires: {formatDate(c.expires_on)}
+                            </div>
+                            {c.notes ? (
+                              <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-500">No courses recorded.</div>
+                    )}
+
+                    {/* Add course form */}
+                    <div className="mt-3 grid gap-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                          value={editCertForm.type}
+                          onChange={(e) => setEditCertForm((p) => ({ ...p, type: e.target.value }))}
+                          placeholder="Type (e.g. Food Hygiene Level 2)"
+                        />
+                        <input
+                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                          value={editCertForm.certificate_url}
+                          onChange={(e) =>
+                            setEditCertForm((p) => ({ ...p, certificate_url: e.target.value }))
+                          }
+                          placeholder="Certificate URL (optional)"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="date"
+                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                          value={editCertForm.awarded_on}
+                          onChange={(e) =>
+                            setEditCertForm((p) => ({ ...p, awarded_on: e.target.value }))
+                          }
+                        />
+                        <input
+                          type="date"
+                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                          value={editCertForm.expires_on}
+                          onChange={(e) =>
+                            setEditCertForm((p) => ({ ...p, expires_on: e.target.value }))
+                          }
+                        />
+                      </div>
+
+                      <input
+                        className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                        value={editCertForm.notes}
+                        onChange={(e) => setEditCertForm((p) => ({ ...p, notes: e.target.value }))}
+                        placeholder="Notes (optional)"
+                      />
+
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => void addEditCertificate()}
+                          disabled={editCertSaving}
+                          className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                          type="button"
+                        >
+                          {editCertSaving ? "Saving…" : "Add education"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => setEditOpen(false)}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                    onClick={() => void saveMember()}
+                    type="button"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
+
+      {/* View modal */}
+      {viewOpen && viewFor && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setViewOpen(false)}>
+            <div
+              className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-6rem)] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-slate-900 px-4 py-3 text-white">
+                <div className="text-sm opacity-80">Team member</div>
+                <div className="text-xl font-semibold">{viewFor.name}</div>
+                <div className="opacity-80">{viewFor.active ? "Active" : "Inactive"}</div>
               </div>
 
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Notes</label>
-                <textarea
-                  className="min-h-[80px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
-                  value={editing.notes ?? ""}
-                  onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
-                />
-              </div>
+              <div className="space-y-2 p-4 text-sm">
+                <div>
+                  <span className="font-medium">Initials:</span>{" "}
+                  {viewFor.initials ?? safeInitials(viewFor) ?? "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Role:</span> {prettyRole(viewFor.role)}
+                </div>
+                <div>
+                  <span className="font-medium">Email:</span> {viewFor.email ?? "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Phone:</span> {viewFor.phone ?? "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Training areas:</span>{" "}
+                  {normalizeAreas(viewFor.training_areas).length
+                    ? normalizeAreas(viewFor.training_areas)
+                        .map((k) => TRAINING_AREAS.find((a) => a.key === k)?.label ?? k)
+                        .join(", ")
+                    : "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Notes:</span> {viewFor.notes ?? "—"}
+                </div>
 
-              {/* ✅ Education block unchanged */}
-              {editing.id ? (
-                <div className="mt-1 rounded-2xl border border-slate-200 bg-white/80 p-3">
+                {/* Education / certificates (READ ONLY) */}
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="text-sm font-semibold text-slate-900">Education / Courses</div>
                     <button
-                      onClick={() => void loadEditCertsForMember(editing)}
+                      onClick={() => void loadCertsForMember(viewFor)}
                       className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
                       type="button"
                     >
@@ -929,11 +1076,11 @@ export default function TeamManager() {
                     </button>
                   </div>
 
-                  {editCertsLoading ? (
+                  {certsLoading ? (
                     <div className="text-xs text-slate-500">Loading…</div>
-                  ) : editCerts.length ? (
+                  ) : certs.length ? (
                     <div className="space-y-2">
-                      {editCerts.map((c) => (
+                      {certs.map((c) => (
                         <div
                           key={c.id}
                           className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
@@ -965,282 +1112,107 @@ export default function TeamManager() {
                   ) : (
                     <div className="text-xs text-slate-500">No courses recorded.</div>
                   )}
-
-                  <div className="mt-3 grid gap-2">
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                        value={editCertForm.type}
-                        onChange={(e) => setEditCertForm((p) => ({ ...p, type: e.target.value }))}
-                        placeholder="Type (e.g. Food Hygiene Level 2)"
-                      />
-                      <input
-                        className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                        value={editCertForm.certificate_url}
-                        onChange={(e) =>
-                          setEditCertForm((p) => ({ ...p, certificate_url: e.target.value }))
-                        }
-                        placeholder="Certificate URL (optional)"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="date"
-                        className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                        value={editCertForm.awarded_on}
-                        onChange={(e) =>
-                          setEditCertForm((p) => ({ ...p, awarded_on: e.target.value }))
-                        }
-                      />
-                      <input
-                        type="date"
-                        className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                        value={editCertForm.expires_on}
-                        onChange={(e) =>
-                          setEditCertForm((p) => ({ ...p, expires_on: e.target.value }))
-                        }
-                      />
-                    </div>
-
-                    <input
-                      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                      value={editCertForm.notes}
-                      onChange={(e) => setEditCertForm((p) => ({ ...p, notes: e.target.value }))}
-                      placeholder="Notes (optional)"
-                    />
-
-                    <div className="flex justify-end">
-                      <button
-                        onClick={() => void addEditCertificate()}
-                        disabled={editCertSaving}
-                        className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                        type="button"
-                      >
-                        {editCertSaving ? "Saving…" : "Add education"}
-                      </button>
-                    </div>
-                  </div>
                 </div>
-              ) : null}
+              </div>
 
-              <div className="flex justify-end gap-2 pt-1">
+              <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
                 <button
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                  onClick={() => setEditOpen(false)}
+                  onClick={() => {
+                    setViewOpen(false);
+                    void openEdit(viewFor);
+                  }}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
                   type="button"
                 >
-                  Cancel
+                  Edit
                 </button>
                 <button
-                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-                  onClick={() => void saveMember()}
+                  onClick={() => setViewOpen(false)}
+                  className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
                   type="button"
                 >
-                  Save
+                  Close
                 </button>
               </div>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* View modal (Education list ONLY now, no add form) */}
-      {viewOpen && viewFor && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4"
-          onClick={closeView}
-        >
-          <div
-            className="w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-2rem)] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="bg-slate-900 px-4 py-3 text-white">
-              <div className="text-sm opacity-80">Team member</div>
-              <div className="text-xl font-semibold">{viewFor.name}</div>
-              <div className="opacity-80">{viewFor.active ? "Active" : "Inactive"}</div>
-            </div>
-
-            <div className="space-y-2 p-4 text-sm">
-              <div>
-                <span className="font-medium">Initials:</span>{" "}
-                {viewFor.initials ?? safeInitials(viewFor) ?? "—"}
-              </div>
-              <div>
-                <span className="font-medium">Role:</span> {prettyRole(viewFor.role)}
-              </div>
-              <div>
-                <span className="font-medium">Email:</span> {viewFor.email ?? "—"}
-              </div>
-              <div>
-                <span className="font-medium">Phone:</span> {viewFor.phone ?? "—"}
-              </div>
-              <div>
-                <span className="font-medium">Training areas:</span>{" "}
-                {normalizeAreas(viewFor.training_areas).length
-                  ? normalizeAreas(viewFor.training_areas)
-                      .map((k) => TRAINING_AREAS.find((a) => a.key === k)?.label ?? k)
-                      .join(", ")
-                  : "—"}
-              </div>
-              <div>
-                <span className="font-medium">Notes:</span> {viewFor.notes ?? "—"}
-              </div>
-
-              {/* Education / certificates (READ ONLY) */}
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <div className="text-sm font-semibold text-slate-900">Education / Courses</div>
-                  <button
-                    onClick={() => void loadCertsForMember(viewFor)}
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-                    type="button"
-                  >
-                    Refresh
-                  </button>
-                </div>
-
-                {certsLoading ? (
-                  <div className="text-xs text-slate-500">Loading…</div>
-                ) : certs.length ? (
-                  <div className="space-y-2">
-                    {certs.map((c) => (
-                      <div
-                        key={c.id}
-                        className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="text-xs font-semibold text-slate-900">
-                            {c.type ?? "—"}
-                          </div>
-                          {c.certificate_url ? (
-                            <a
-                              href={c.certificate_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
-                            >
-                              View →
-                            </a>
-                          ) : null}
-                        </div>
-                        <div className="mt-1 text-[11px] text-slate-600">
-                          Awarded: {formatDate(c.awarded_on)} · Expires: {formatDate(c.expires_on)}
-                        </div>
-                        {c.notes ? (
-                          <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-xs text-slate-500">No courses recorded.</div>
-                )}
-              </div>
-              {/* End education */}
-            </div>
-
-            <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
-              <button
-                onClick={() => {
-                  closeView();
-                  void openEdit(viewFor);
-                }}
-                className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-                type="button"
-              >
-                Edit
-              </button>
-              <button
-                onClick={closeView}
-                className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-                type="button"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* Invite modal */}
       {inviteOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4"
-          onClick={() => setInviteOpen(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-2rem)] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">Invite team member</div>
-              <button
-                onClick={() => setInviteOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3 text-sm">
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Email</label>
-                <input
-                  type="email"
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                  placeholder="team@example.com"
-                  value={inviteForm.email}
-                  onChange={(e) => setInviteForm((f) => ({ ...f, email: e.target.value }))}
-                />
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setInviteOpen(false)}>
+            <div
+              className="mx-auto mt-16 w-full max-w-md rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-6rem)] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-base font-semibold">Invite team member</div>
+                <button onClick={() => setInviteOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
+                  ✕
+                </button>
               </div>
 
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Role</label>
-                <select
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                  value={inviteForm.role}
-                  onChange={(e) => setInviteForm((f) => ({ ...f, role: e.target.value }))}
-                >
-                  <option value="staff">Staff</option>
-                  <option value="manager">Manager</option>
-                  <option value="owner">Owner</option>
-                </select>
-              </div>
-
-              <p className="text-xs text-slate-500">
-                We’ll add them to this business and send a sign-in link.
-              </p>
-
-              {inviteError && (
-                <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                  {inviteError}
+              <div className="space-y-3 text-sm">
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Email</label>
+                  <input
+                    type="email"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                    placeholder="team@example.com"
+                    value={inviteForm.email}
+                    onChange={(e) => setInviteForm((f) => ({ ...f, email: e.target.value }))}
+                  />
                 </div>
-              )}
-              {inviteInfo && (
-                <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-                  {inviteInfo}
-                </div>
-              )}
 
-              <div className="flex justify-end gap-2 pt-1">
-                <button
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                  onClick={() => setInviteOpen(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-                  disabled={inviteSending}
-                  onClick={() => void sendInvite()}
-                >
-                  {inviteSending ? "Sending…" : "Send invite"}
-                </button>
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Role</label>
+                  <select
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                    value={inviteForm.role}
+                    onChange={(e) => setInviteForm((f) => ({ ...f, role: e.target.value }))}
+                  >
+                    <option value="staff">Staff</option>
+                    <option value="manager">Manager</option>
+                    <option value="owner">Owner</option>
+                  </select>
+                </div>
+
+                <p className="text-xs text-slate-500">
+                  We’ll add them to this business and send a sign-in link.
+                </p>
+
+                {inviteError && (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    {inviteError}
+                  </div>
+                )}
+                {inviteInfo && (
+                  <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                    {inviteInfo}
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => setInviteOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                    disabled={inviteSending}
+                    onClick={() => void sendInvite()}
+                  >
+                    {inviteSending ? "Sending…" : "Send invite"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   );
