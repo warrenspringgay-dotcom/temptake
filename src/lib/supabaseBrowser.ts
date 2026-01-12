@@ -15,3 +15,4 @@ export const supabase =
 if (process.env.NODE_ENV !== "production") {
   globalThis.__tt_supabase__ = supabase;
 }
+console.log("SUPABASE URL", process.env.NEXT_PUBLIC_SUPABASE_URL);
