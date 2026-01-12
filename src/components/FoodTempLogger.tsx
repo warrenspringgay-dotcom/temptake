@@ -736,6 +736,28 @@ export default function DashboardPage() {
     try {
       if (typeof window === "undefined") return;
 
+const firstSeenKey = "tt_first_seen_at";
+let firstSeenISO = localStorage.getItem(firstSeenKey);
+
+if (!firstSeenISO) {
+  firstSeenISO = new Date().toISOString();
+  localStorage.setItem(firstSeenKey, firstSeenISO);
+}
+
+// Not eligible until 28 days after first seen
+const eligibleDate = new Date(firstSeenISO);
+eligibleDate.setDate(eligibleDate.getDate() + 28);
+
+const eligible =
+  eligibleDate.getTime() <= Date.now();
+
+if (!eligible) {
+  setFourWeekBanner({ kind: "none" });
+  return;
+}
+
+
+
       const reviewedAtRaw = localStorage.getItem("tt_four_week_reviewed_at");
       const lastReviewedISO = reviewedAtRaw ? toISODate(reviewedAtRaw) : null;
 
