@@ -25,6 +25,33 @@ export default function SignupClient() {
   const [error, setError] = useState<string | null>(null);
   const isSubmitting = useRef(false);
 
+  async function signUpWithGoogle() {
+    setError(null);
+
+    if (!agreed) {
+      setError("Please accept the Terms of Use and Privacy Policy.");
+      return;
+    }
+
+    // After Google auth, send them to /setup so you can collect business name if needed
+    const nextParam = searchParams.get("next");
+    const safeNext =
+      nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//")
+        ? nextParam
+        : "/dashboard";
+
+    const redirectTo = `${window.location.origin}/auth/callback?next=/setup&after=${encodeURIComponent(
+      withWelcomeParam(safeNext)
+    )}`;
+
+    const { error: oauthErr } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
+    });
+
+    if (oauthErr) setError(oauthErr.message);
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -107,7 +134,6 @@ export default function SignupClient() {
 
         if (!bootstrapRes.ok || !json || json.ok === false) {
           console.error("[signup] bootstrap failed", json);
-          // We still continue into the app; the org can be repaired manually.
           setError(
             "Account created, but setup did not finish. Please contact support."
           );
@@ -200,6 +226,20 @@ export default function SignupClient() {
         className="w-full rounded-xl bg-black py-3 text-white disabled:opacity-50"
       >
         {isSubmitting.current ? "Creating account..." : "Create account"}
+      </button>
+
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1 bg-gray-200" />
+        <div className="text-xs text-gray-500">or</div>
+        <div className="h-px flex-1 bg-gray-200" />
+      </div>
+
+      <button
+        type="button"
+        onClick={signUpWithGoogle}
+        className="w-full rounded-xl border bg-white py-3 text-sm font-medium hover:bg-gray-50"
+      >
+        Continue with Google
       </button>
     </form>
   );

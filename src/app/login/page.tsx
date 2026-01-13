@@ -1,7 +1,7 @@
 // src/app/login/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
@@ -16,17 +16,24 @@ export default function LoginPage() {
   const [err, setErr] = useState<string | null>(null);
   const [resetInfo, setResetInfo] = useState<string | null>(null);
 
-  // Work out where we should send the user AFTER login
-  const rawNext = searchParams.get("next");
-  let safeNext =
-    rawNext && rawNext.startsWith("/") && !rawNext.startsWith("//")
-      ? rawNext
-      : "/dashboard";
+  const safeNext = useMemo(() => {
+    const rawNext = searchParams.get("next");
+    let next =
+      rawNext && rawNext.startsWith("/") && !rawNext.startsWith("//")
+        ? rawNext
+        : "/dashboard";
 
-  // Avoid loops like ?next=/login
-  if (safeNext === "/login") safeNext = "/dashboard";
+    if (next === "/login") next = "/dashboard";
+    return next;
+  }, [searchParams]);
 
-  // If user is already logged in, don’t show login – send them on
+  useEffect(() => {
+    const e = searchParams.get("error");
+    if (e === "oauth") {
+      setErr("Google sign-in failed. Please try again or use email/password.");
+    }
+  }, [searchParams]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -43,6 +50,30 @@ export default function LoginPage() {
     };
   }, [router, safeNext]);
 
+  async function signInWithGoogle() {
+    setErr(null);
+    setResetInfo(null);
+
+    try {
+      setLoading(true);
+
+      // Route through /post-auth so we can ensure org + trial before landing user
+      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+        `/post-auth?dest=${encodeURIComponent(safeNext)}`
+      )}`;
+
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo },
+      });
+
+      if (error) throw error;
+    } catch (e: any) {
+      setErr(e?.message || "Google sign-in failed.");
+      setLoading(false);
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
@@ -57,7 +88,6 @@ export default function LoginPage() {
 
       if (error) throw error;
 
-      // ✅ honour ?next=… instead of hard-coding /dashboard
       router.replace(safeNext);
       router.refresh();
     } catch (e: any) {
@@ -73,7 +103,7 @@ export default function LoginPage() {
 
     const cleanEmail = email.trim();
     if (!cleanEmail) {
-      setErr("Enter your email first, then tap ‘Forgot password?’."); 
+      setErr("Enter your email first, then tap ‘Forgot password?’.");
       return;
     }
 
@@ -96,9 +126,7 @@ export default function LoginPage() {
   return (
     <div className="flex justify-center bg-slate-50 px-4 pt-10">
       <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-sm">
-        <h1 className="mb-4 text-xl font-semibold text-gray-900">
-          Sign in
-        </h1>
+        <h1 className="mb-4 text-xl font-semibold text-gray-900">Sign in</h1>
 
         <form onSubmit={onSubmit} className="space-y-3">
           <label className="block text-sm">
@@ -149,12 +177,24 @@ export default function LoginPage() {
           </button>
         </form>
 
+        <div className="my-4 flex items-center gap-3">
+          <div className="h-px flex-1 bg-gray-200" />
+          <div className="text-xs text-gray-500">or</div>
+          <div className="h-px flex-1 bg-gray-200" />
+        </div>
+
+        <button
+          type="button"
+          onClick={signInWithGoogle}
+          disabled={loading}
+          className="flex h-10 w-full items-center justify-center rounded-2xl border border-gray-200 bg-white text-sm font-medium hover:bg-gray-50 disabled:opacity-60"
+        >
+          Continue with Google
+        </button>
+
         <p className="mt-4 text-center text-xs text-gray-600">
           Don’t have an account?{" "}
-          <Link
-            href="/signup"
-            className="font-medium text-gray-900 underline"
-          >
+          <Link href="/signup" className="font-medium text-gray-900 underline">
             Create one
           </Link>
         </p>
