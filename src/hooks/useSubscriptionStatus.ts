@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseBrowser";
 
 export type BillingState = {
   loading: boolean;
@@ -41,9 +42,15 @@ export function useSubscriptionStatus() {
 
     async function run() {
       try {
-        const res = await fetch("/api/billing/status", { cache: "no-store" });
-        const json = await res.json();
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token ?? null;
 
+        const res = await fetch("/api/billing/status", {
+          cache: "no-store",
+          headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+        });
+
+        const json = await res.json();
         if (cancelled) return;
 
         setState({
@@ -66,9 +73,18 @@ export function useSubscriptionStatus() {
       }
     }
 
+    // initial fetch
     run();
+
+    // refetch when auth changes
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      setState((s) => ({ ...s, loading: true }));
+      run();
+    });
+
     return () => {
       cancelled = true;
+      sub?.subscription?.unsubscribe();
     };
   }, []);
 

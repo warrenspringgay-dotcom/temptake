@@ -9,11 +9,10 @@ function formatDate(iso: string | null | undefined) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
 
-  return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = String(d.getFullYear());
+  return `${dd}/${mm}/${yyyy}`; // ✅ DD/MM/YYYY
 }
 
 function calcDaysLeft(endsAt: string | null): number | null {
@@ -41,15 +40,12 @@ export default function SubscriptionBanner() {
 
   if (loading || !loggedIn) return null;
 
-  // ✅ One source of truth. If billing says you're valid, banner is dead.
+  // ✅ One source of truth: valid means no banner
   if (hasValid) return null;
 
   const WARN_DAYS = 7;
 
-  // ✅ If plan is valid, banner should be hidden (aligns with NavTabs gating)
-  if (hasValid) return null;
-
-  // Trial flow (only matters if hasValid is false)
+  // Trial warnings (only if hasValid is false)
   if (onTrial) {
     const trialDaysLeft = calcDaysLeft(trialEndsAt);
     if (trialDaysLeft === null) return null;

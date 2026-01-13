@@ -1,6 +1,8 @@
 // src/app/api/billing/status/route.ts
 import { NextResponse } from "next/server";
-import { getServerSupabaseAction } from "@/lib/supabaseServer";
+import { createClient } from "@supabase/supabase-js";
+import { getServerSupabase } from "@/lib/supabaseServer";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 type StatusJson = {
   ok: boolean;
@@ -14,35 +16,64 @@ type StatusJson = {
   reason?: string;
 };
 
-export async function GET() {
+function addDays(date: Date, days: number) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+export async function GET(req: Request) {
   try {
-    const supabase = await getServerSupabaseAction();
+    // 1) Prefer Bearer token if provided (client -> server)
+    const authHeader = req.headers.get("authorization") || req.headers.get("Authorization");
+    const bearer = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
-    const {
-      data: { user },
-      error: userErr,
-    } = await supabase.auth.getUser();
+    let userId: string | null = null;
 
-    if (userErr || !user) {
-      const out: StatusJson = {
-        ok: true,
-        loggedIn: false,
-        hasValid: false,
-        active: false,
-        onTrial: false,
-        reason: "not_authenticated",
-      };
-      return NextResponse.json(out, { status: 200 });
+    if (bearer) {
+      const supabaseTokenClient = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        { global: { headers: { Authorization: `Bearer ${bearer}` } } }
+      );
+
+      const { data, error } = await supabaseTokenClient.auth.getUser();
+      if (!error && data?.user) userId = data.user.id;
     }
 
-    // org_id from profiles
-    const { data: profile, error: profileErr } = await supabase
+    // 2) Fallback to cookie-based auth (server)
+    if (!userId) {
+      const supabase = await getServerSupabase();
+      const {
+        data: { user },
+        error: userErr,
+      } = await supabase.auth.getUser();
+
+      if (userErr || !user) {
+        const out: StatusJson = {
+          ok: true,
+          loggedIn: false,
+          hasValid: false,
+          active: false,
+          onTrial: false,
+          reason: "not_authenticated",
+        };
+        return NextResponse.json(out, { status: 200 });
+      }
+
+      userId = user.id;
+    }
+
+    // 3) Get org_id (use admin so RLS can’t block it)
+    const { data: profile, error: profileErr } = await supabaseAdmin
       .from("profiles")
       .select("org_id")
-      .eq("id", user.id)
-      .single();
+      .eq("id", userId)
+      .maybeSingle();
 
-    if (profileErr || !profile?.org_id) {
+    const orgId = profile?.org_id ?? null;
+
+    if (profileErr || !orgId) {
       const out: StatusJson = {
         ok: true,
         loggedIn: true,
@@ -54,14 +85,65 @@ export async function GET() {
       return NextResponse.json(out, { status: 200 });
     }
 
-    // ✅ Source of truth: billing_subscriptions (unique per org)
-    const { data: sub, error: subErr } = await supabase
+    // 4) Read subscription using admin (RLS-proof)
+    let { data: sub, error: subErr } = await supabaseAdmin
       .from("billing_subscriptions")
-      .select("status, trial_ends_at, current_period_end, cancel_at_period_end")
-      .eq("org_id", profile.org_id)
+      .select("status, trial_ends_at, current_period_end, cancel_at_period_end, created_at")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
-    if (subErr || !sub) {
+    if (subErr) {
+      const out: StatusJson = {
+        ok: false,
+        loggedIn: true,
+        hasValid: false,
+        active: false,
+        onTrial: false,
+        reason: `billing_lookup_failed:${subErr.message}`,
+      };
+      return NextResponse.json(out, { status: 200 });
+    }
+
+    // 5) Self-heal: if missing, create a 14-day trial row
+    if (!sub) {
+      const trialEndsAt = addDays(new Date(), 14);
+
+      const { error: insErr } = await supabaseAdmin.from("billing_subscriptions").insert({
+        org_id: orgId,
+        user_id: userId,
+        status: "trialing",
+        trial_ends_at: trialEndsAt.toISOString(),
+        current_period_end: trialEndsAt.toISOString(),
+        cancel_at_period_end: false,
+      });
+
+      if (insErr) {
+        const out: StatusJson = {
+          ok: false,
+          loggedIn: true,
+          hasValid: false,
+          active: false,
+          onTrial: false,
+          reason: `trial_insert_failed:${insErr.message}`,
+        };
+        return NextResponse.json(out, { status: 200 });
+      }
+
+      // Re-read after insert
+      const reread = await supabaseAdmin
+        .from("billing_subscriptions")
+        .select("status, trial_ends_at, current_period_end, cancel_at_period_end, created_at")
+        .eq("org_id", orgId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      sub = reread.data ?? null;
+    }
+
+    if (!sub) {
       const out: StatusJson = {
         ok: true,
         loggedIn: true,
@@ -81,18 +163,13 @@ export async function GET() {
       : null;
 
     const now = Date.now();
+
     const trialMs = sub.trial_ends_at ? new Date(sub.trial_ends_at).getTime() : null;
     const inTrial = trialMs ? trialMs > now : false;
 
-    // Active status values can vary. These are the ones that typically mean “valid”.
-    const active =
-      status === "active" ||
-      status === "trialing"; // some systems store trialing explicitly
-
+    const active = status === "active" || status === "trialing";
     const onTrial = status === "trialing" || inTrial;
 
-    // If it’s “active” we treat it valid even if cancel_at_period_end is true (still valid until end)
-    // If you store “canceled” but keep current_period_end in the future, treat as valid too:
     const periodEndMs = sub.current_period_end ? new Date(sub.current_period_end).getTime() : null;
     const stillInPaidPeriod = status === "canceled" && periodEndMs ? periodEndMs > now : false;
 
@@ -107,6 +184,7 @@ export async function GET() {
       status,
       trialEndsAt,
       currentPeriodEnd,
+      reason: "ok",
     };
 
     return NextResponse.json(out, { status: 200 });

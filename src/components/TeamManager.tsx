@@ -961,23 +961,37 @@ export default function TeamManager() {
                         />
                       </div>
 
+                      {/* ✅ FIX: labels for date inputs (placeholders don’t work on type=date) */}
                       <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="date"
-                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                          value={editCertForm.awarded_on}
-                          onChange={(e) =>
-                            setEditCertForm((p) => ({ ...p, awarded_on: e.target.value }))
-                          }
-                        />
-                        <input
-                          type="date"
-                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                          value={editCertForm.expires_on}
-                          onChange={(e) =>
-                            setEditCertForm((p) => ({ ...p, expires_on: e.target.value }))
-                          }
-                        />
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-medium text-slate-600">
+                            Date passed
+                          </label>
+                          <input
+                            type="date"
+                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                            value={editCertForm.awarded_on}
+                            onChange={(e) =>
+                              setEditCertForm((p) => ({ ...p, awarded_on: e.target.value }))
+                            }
+                            aria-label="Date passed"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-medium text-slate-600">
+                            Date expired
+                          </label>
+                          <input
+                            type="date"
+                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                            value={editCertForm.expires_on}
+                            onChange={(e) =>
+                              setEditCertForm((p) => ({ ...p, expires_on: e.target.value }))
+                            }
+                            aria-label="Date expired"
+                          />
+                        </div>
                       </div>
 
                       <input

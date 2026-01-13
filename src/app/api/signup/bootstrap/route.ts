@@ -1,6 +1,14 @@
 // src/app/api/signup/bootstrap/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { ensureOrgForCurrentUser } from "@/lib/ensureOrg";
+import { getServerSupabase } from "@/lib/supabaseServer";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+
+function addDays(date: Date, days: number) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,20 +19,89 @@ export async function POST(req: NextRequest) {
     const ownerName = body?.ownerName ?? "";
     const businessName = body?.businessName ?? "";
 
-    const result = await ensureOrgForCurrentUser({
-      ownerName,
-      businessName,
-    });
-
+    // 1) Create org/team/location etc
+    const result = await ensureOrgForCurrentUser({ ownerName, businessName });
     if (!result.ok) {
       return NextResponse.json(result, { status: 500 });
     }
 
-    return NextResponse.json(result);
-  } catch (err) {
+    // Must have a logged-in user (cookie session) for userId
+    const supabase = await getServerSupabase();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+
+    if (userErr || !user) {
+      return NextResponse.json(
+        { ok: false as const, reason: "no-auth-session-for-billing" },
+        { status: 401 }
+      );
+    }
+
+    const orgId: string | undefined =
+      (result as any).orgId ?? (result as any).org_id;
+
+    if (!orgId) {
+      return NextResponse.json(
+        { ok: false as const, reason: "missing-org-id" },
+        { status: 500 }
+      );
+    }
+
+    // 2) Ensure trial subscription row exists for this org
+    const { data: existingSub, error: existingErr } = await supabaseAdmin
+      .from("billing_subscriptions")
+      .select("id,status,trial_ends_at,current_period_end")
+      .eq("org_id", orgId)
+      .maybeSingle();
+
+    if (existingErr) {
+      return NextResponse.json(
+        {
+          ok: false as const,
+          reason: "billing-subscriptions-lookup-failed",
+          detail: existingErr.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!existingSub) {
+      const trialEndsAt = addDays(new Date(), 14);
+
+      const { error: insertErr } = await supabaseAdmin
+        .from("billing_subscriptions")
+        .insert({
+          org_id: orgId,
+          user_id: user.id,
+          status: "trialing",
+          trial_ends_at: trialEndsAt.toISOString(),
+          current_period_end: trialEndsAt.toISOString(),
+          cancel_at_period_end: false,
+        });
+
+      if (insertErr) {
+        return NextResponse.json(
+          {
+            ok: false as const,
+            reason: "billing-subscriptions-insert-failed",
+            detail: insertErr.message,
+          },
+          { status: 500 }
+        );
+      }
+    }
+
+    // NOTE: We are NOT inserting billing_customers here because
+    // stripe_customer_id is NOT NULL in your schema.
+    // Create billing_customers ONLY when you have a real Stripe customer id.
+
+    return NextResponse.json({ ...result, billingOk: true });
+  } catch (err: any) {
     console.error("[signup/bootstrap] unexpected error", err);
     return NextResponse.json(
-      { ok: false as const, reason: "exception" },
+      { ok: false as const, reason: "exception", detail: err?.message ?? String(err) },
       { status: 500 }
     );
   }
