@@ -736,7 +736,8 @@ export default function DashboardPage() {
     try {
       if (typeof window === "undefined") return;
 
-const firstSeenKey = "tt_first_seen_at";
+const firstSeenKey = `tt_first_seen_at:${orgId}`;
+
 let firstSeenISO = localStorage.getItem(firstSeenKey);
 
 if (!firstSeenISO) {
