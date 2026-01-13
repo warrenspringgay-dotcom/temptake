@@ -1,3 +1,4 @@
+// src/components/OnboardingBanner.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -132,31 +133,25 @@ async function hasAnyTrainingSet(orgId: string) {
   return (qAny.count ?? 0) > 0;
 }
 
-/* ---------- Banner dismiss (banner-level) ---------- */
+/* ---------- banner-level dismiss ---------- */
 
 function bannerDismissKey(orgId: string) {
   return `tt_onboarding_banner_dismiss_until:${orgId}`;
 }
 
 function isBannerDismissed(orgId: string) {
-  try {
-    const raw = localStorage.getItem(bannerDismissKey(orgId));
-    if (!raw) return false;
-    const t = new Date(raw).getTime();
-    return !Number.isNaN(t) && t > Date.now();
-  } catch {
-    return false;
-  }
+  if (typeof window === "undefined") return false;
+  const raw = localStorage.getItem(bannerDismissKey(orgId));
+  if (!raw) return false;
+  const t = new Date(raw).getTime();
+  return !Number.isNaN(t) && t > Date.now();
 }
 
 function dismissBanner(orgId: string, days = 7) {
-  try {
-    const until = new Date();
-    until.setDate(until.getDate() + days);
-    localStorage.setItem(bannerDismissKey(orgId), until.toISOString());
-  } catch {
-    // ignore
-  }
+  if (typeof window === "undefined") return;
+  const until = new Date();
+  until.setDate(until.getDate() + days);
+  localStorage.setItem(bannerDismissKey(orgId), until.toISOString());
 }
 
 /* ---------- Component ---------- */
@@ -164,15 +159,15 @@ function dismissBanner(orgId: string, days = 7) {
 export default function OnboardingBanner() {
   const pathname = usePathname();
 
-  // Used to force suggested recompute after snoozing a step
-  const [snoozeTick, setSnoozeTick] = useState(0);
-
-  // Banner-level instant hide (no refresh)
-  const [bannerHidden, setBannerHidden] = useState(false);
-
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // force recompute after snooze click
+  const [snoozeTick, setSnoozeTick] = useState(0);
+
+  // instant hide after banner dismiss click
+  const [bannerHidden, setBannerHidden] = useState(false);
 
   const [done, setDone] = useState<Record<OnboardingStepKey, boolean>>({
     locations: false,
@@ -266,7 +261,9 @@ export default function OnboardingBanner() {
           ]);
 
         let cleaningOk = false;
-        if (l) cleaningOk = await hasAnyCleaningTask(o, l);
+        if (l) {
+          cleaningOk = await hasAnyCleaningTask(o, l);
+        }
 
         if (cancelled) return;
 
@@ -278,7 +275,6 @@ export default function OnboardingBanner() {
           team: teamOk && trainingOk,
         };
 
-        // If something becomes truly done, clear its snooze so it doesn't interfere.
         (Object.keys(nextDone) as OnboardingStepKey[]).forEach((k) => {
           if (nextDone[k]) clearSnooze(o, k);
         });
@@ -301,33 +297,21 @@ export default function OnboardingBanner() {
 
   const allDone = remaining.length === 0;
 
+  // if every remaining step is snoozed, hide the banner (this is the fix for your "last step" case)
+  const allRemainingSnoozed = useMemo(() => {
+    if (!orgId) return false;
+    if (remaining.length === 0) return false;
+    return remaining.every((s) => isStepSnoozed(orgId, s.key));
+  }, [orgId, remaining, snoozeTick]);
+
   const suggested = useMemo(() => {
     if (!orgId) return null;
     if (allDone) return null;
 
-    // Filter remaining by snooze (do NOT treat snooze as "done", just "not now")
+    // choose first non-snoozed step; otherwise null (we will hide the banner)
     const awakeRemaining = remaining.filter((s) => !isStepSnoozed(orgId, s.key));
-    const pool = awakeRemaining.length ? awakeRemaining : remaining;
-
-    // Prefer next step after current page
-    const onKey = ((): OnboardingStepKey | null => {
-      if (pathname?.startsWith("/locations")) return "locations";
-      if (pathname?.startsWith("/routines")) return "routines";
-      if (pathname?.startsWith("/cleaning-rota")) return "cleaning";
-      if (pathname?.startsWith("/allergens")) return "allergens";
-      if (pathname?.startsWith("/team")) return "team";
-      return null;
-    })();
-
-    if (!onKey) return pool[0];
-
-    const idx = steps.findIndex((s) => s.key === onKey);
-    const next = steps
-      .slice(idx + 1)
-      .find((s) => !done[s.key] && !isStepSnoozed(orgId, s.key));
-
-    return next ?? pool[0];
-  }, [orgId, allDone, pathname, remaining, steps, done, snoozeTick]);
+    return (awakeRemaining[0] ?? null) as Step | null;
+  }, [orgId, allDone, remaining, snoozeTick]);
 
   const progress = useMemo(() => {
     const total = steps.length;
@@ -335,13 +319,17 @@ export default function OnboardingBanner() {
     return Math.round((doneCount / total) * 100);
   }, [steps, done]);
 
-  // ---------- render gating ----------
+  // ---- render guards (ONLY here, not inside useMemo)
   if (!pageEligible) return null;
   if (loading) return null;
   if (!orgId) return null;
   if (bannerHidden) return null;
   if (isBannerDismissed(orgId)) return null;
   if (allDone) return null;
+
+  // KEY: if the only stuff left is snoozed, hide the whole banner
+  if (allRemainingSnoozed) return null;
+
   if (!suggested) return null;
 
   const tone = toneClasses(suggested.tone);
@@ -365,7 +353,7 @@ export default function OnboardingBanner() {
             Setup {progress}%
           </span>
 
-          {/* Banner-level dismiss (hide everything for 7 days) */}
+          {/* Banner-level dismiss (hide everything, not just a step) */}
           <button
             type="button"
             onClick={() => {
@@ -376,6 +364,19 @@ export default function OnboardingBanner() {
             title="Hide setup banner"
           >
             Dismiss
+          </button>
+
+          {/* Step snooze (move to next suggested step) */}
+          <button
+            type="button"
+            onClick={async () => {
+              await snoozeStep(orgId, suggested.key);
+              setSnoozeTick((n) => n + 1);
+            }}
+            className="text-[11px] font-semibold text-slate-600 hover:text-slate-900"
+            title="Snooze this step"
+          >
+            Snooze step
           </button>
         </div>
 
@@ -418,19 +419,6 @@ export default function OnboardingBanner() {
         >
           {suggested.ctaLabel}
         </Link>
-
-        {/* Optional: Snooze just the current step (not the whole banner) */}
-        <button
-          type="button"
-          onClick={async () => {
-            await snoozeStep(orgId, suggested.key);
-            setSnoozeTick((n) => n + 1);
-          }}
-          className="hidden sm:inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white/70 px-3 py-2 text-[11px] font-extrabold text-slate-900 hover:bg-white"
-          title="Snooze just this step"
-        >
-          Snooze step
-        </button>
 
         <div className="hidden sm:flex items-center text-[11px] font-semibold text-slate-600">
           {remaining.length} left
