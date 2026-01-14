@@ -9,7 +9,7 @@ const PUBLIC_PATHS = new Set<string>([
   "/auth/callback",
   "/pricing",
   "/guides",
-  "/demo-wall",
+  "/demo",
 ]);
 
 function isStaticAsset(pathname: string) {
@@ -25,9 +25,7 @@ export async function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
   // Let Stripe webhooks through untouched
-  if (pathname.startsWith("/api/stripe/webhook")) {
-    return NextResponse.next();
-  }
+  if (pathname.startsWith("/api/stripe/webhook")) return NextResponse.next();
 
   if (isStaticAsset(pathname)) return NextResponse.next();
 
@@ -55,7 +53,10 @@ export async function middleware(req: NextRequest) {
     data: { session },
   } = await supabase.auth.getSession();
 
-  const isPublic = PUBLIC_PATHS.has(pathname);
+  // ✅ public routes (including guides sub-pages)
+  const isPublic =
+    PUBLIC_PATHS.has(pathname) ||
+    pathname.startsWith("/guides/");
 
   // 🔒 Not logged in → send to login with ?next=
   if (!session && !isPublic) {
