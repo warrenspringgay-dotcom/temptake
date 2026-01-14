@@ -56,7 +56,8 @@ export async function middleware(req: NextRequest) {
   // ✅ public routes (including guides sub-pages)
   const isPublic =
     PUBLIC_PATHS.has(pathname) ||
-    pathname.startsWith("/guides/");
+    pathname.startsWith("/guides/")||
+     pathname.startsWith("/demo-wall");
 
   // 🔒 Not logged in → send to login with ?next=
   if (!session && !isPublic) {
