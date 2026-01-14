@@ -25,6 +25,32 @@ export default function SignupClient() {
   const [error, setError] = useState<string | null>(null);
   const isSubmitting = useRef(false);
 
+  async function signUpWithGoogle() {
+    setError(null);
+
+    if (!agreed) {
+      setError("Please accept the Terms of Use and Privacy Policy.");
+      return;
+    }
+
+    const nextParam = searchParams.get("next");
+    const safeNext =
+      nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//")
+        ? nextParam
+        : "/dashboard";
+
+    const redirectTo = `${window.location.origin}/auth/callback?next=/setup&after=${encodeURIComponent(
+      withWelcomeParam(safeNext)
+    )}`;
+
+    const { error: oauthErr } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
+    });
+
+    if (oauthErr) setError(oauthErr.message);
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -33,7 +59,6 @@ export default function SignupClient() {
     isSubmitting.current = true;
 
     try {
-      // Basic validation
       if (!agreed) {
         setError("Please accept the Terms of Use and Privacy Policy.");
         return;
@@ -55,7 +80,6 @@ export default function SignupClient() {
         return;
       }
 
-      // 1) Sign up in Supabase auth
       const { error: signUpErr } = await supabase.auth.signUp({
         email,
         password,
@@ -72,7 +96,6 @@ export default function SignupClient() {
         return;
       }
 
-      // 2) Immediately sign in
       const { error: signInErr } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -86,7 +109,6 @@ export default function SignupClient() {
         return;
       }
 
-      // 3) Ask server to bootstrap org, user_orgs, team_members, locations
       try {
         const bootstrapRes = await fetch("/api/org/ensure", {
           method: "POST",
@@ -94,32 +116,23 @@ export default function SignupClient() {
           body: JSON.stringify({
             ownerName: ownerName.trim(),
             businessName: businessName.trim(),
-            locationName: businessName.trim(), // use business name for first location
+            locationName: businessName.trim(),
           }),
         });
 
-        let json: any = null;
-        try {
-          json = await bootstrapRes.json();
-        } catch {
-          json = null;
-        }
+        const json = await bootstrapRes.json().catch(() => null);
 
         if (!bootstrapRes.ok || !json || json.ok === false) {
-          console.error("[signup] bootstrap failed", json);
-          // We still continue into the app; the org can be repaired manually.
           setError(
             "Account created, but setup did not finish. Please contact support."
           );
         }
-      } catch (err) {
-        console.error("[signup] bootstrap exception", err);
+      } catch {
         setError(
           "Account created, but setup did not finish. Please contact support."
         );
       }
 
-      // 4) Navigate to dashboard
       const nextParam = searchParams.get("next");
       const safeNext =
         nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//")
@@ -130,7 +143,6 @@ export default function SignupClient() {
       router.replace(redirect);
       router.refresh();
     } catch (err: any) {
-      console.error("[signup] unexpected error", err);
       setError(err?.message ?? "Something went wrong.");
     } finally {
       isSubmitting.current = false;
@@ -200,6 +212,42 @@ export default function SignupClient() {
         className="w-full rounded-xl bg-black py-3 text-white disabled:opacity-50"
       >
         {isSubmitting.current ? "Creating account..." : "Create account"}
+      </button>
+
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1 bg-gray-200" />
+        <div className="text-xs text-gray-500">or</div>
+        <div className="h-px flex-1 bg-gray-200" />
+      </div>
+
+      <button
+        type="button"
+        onClick={signUpWithGoogle}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border bg-white py-3 text-sm font-medium hover:bg-gray-50"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 48 48"
+          className="h-4 w-4"
+        >
+          <path
+            fill="#FFC107"
+            d="M43.6 20.5H42V20H24v8h11.3C33.7 32.6 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8.1 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.1-.1-2.1-.4-3.5z"
+          />
+          <path
+            fill="#FF3D00"
+            d="M6.3 14.7l6.6 4.8C14.7 16 19 12 24 12c3.1 0 5.9 1.2 8.1 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4c-7.7 0-14.4 4.3-17.7 10.7z"
+          />
+          <path
+            fill="#4CAF50"
+            d="M24 44c5.1 0 9.8-2 13.4-5.2l-6.2-5.2C29.1 35.1 26.6 36 24 36c-5.2 0-9.6-3.3-11.2-7.9l-6.5 5C9.5 39.7 16.2 44 24 44z"
+          />
+          <path
+            fill="#1976D2"
+            d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.1 5.6l6.2 5.2C36.8 40.4 44 36 44 24c0-1.1-.1-2.1-.4-3.5z"
+          />
+        </svg>
+        Continue with Google
       </button>
     </form>
   );

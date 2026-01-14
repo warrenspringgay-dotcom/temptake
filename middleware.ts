@@ -21,14 +21,14 @@ function isStaticAsset(pathname: string) {
 export async function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
-  // ✅ Let Stripe webhooks through (Stripe will not be logged in, ever)
+  // Let Stripe webhooks through untouched
   if (pathname.startsWith("/api/stripe/webhook")) {
     return NextResponse.next();
   }
 
   if (isStaticAsset(pathname)) return NextResponse.next();
 
-  // Create response first so Supabase can write refreshed cookies onto it
+  // Create response early so Supabase can attach refreshed cookies
   const res = NextResponse.next();
 
   const supabase = createServerClient(
@@ -54,15 +54,17 @@ export async function middleware(req: NextRequest) {
 
   const isPublic = PUBLIC_PATHS.has(pathname);
 
+  // 🔒 Not logged in → send to login with ?next=
   if (!session && !isPublic) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
-    url.searchParams.set("redirect", pathname + (search || ""));
+    url.searchParams.set("next", pathname + (search || ""));
     return NextResponse.redirect(url);
   }
 
+  // 🔁 Logged in but trying to hit /login or /signup → send them on
   if (session && (pathname === "/login" || pathname === "/signup")) {
-    const target = req.nextUrl.searchParams.get("redirect") || "/dashboard"; // ✅ your preference
+    const target = req.nextUrl.searchParams.get("next") || "/dashboard";
     const url = req.nextUrl.clone();
     url.pathname = target;
     url.search = "";
