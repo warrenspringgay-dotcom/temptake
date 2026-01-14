@@ -49,15 +49,50 @@ const TABS: Tab[] = [
   { href: "/reports", label: "Reports", requiresPlan: true },
 ];
 
+function isFutureIso(iso: unknown) {
+  if (typeof iso !== "string" || !iso) return false;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t > Date.now() : false;
+}
+
 export default function NavTabs() {
   const pathname = usePathname();
   const { user, ready } = useAuth();
   const billing = useSubscriptionStatus();
 
-  // If billing is still loading, don't lock anything.
-  // Only lock once we have a definite answer.
-  const planOK = billing.loading ? true : !!billing.hasValid;
+  /**
+   * PLAN GATING (fixed):
+   * - Your billing page shows "Free trial active" but billing.hasValid is false.
+   * - So we treat trialing/onTrial/future trial_ends_at as valid access.
+   *
+   * We keep the original behavior: while loading, don't lock anything.
+   */
+  const planOK = useMemo(() => {
+    if (billing?.loading) return true;
 
+    // Common flags
+    const hasValid = !!(billing as any)?.hasValid;
+    const active = !!(billing as any)?.active;
+    const onTrial = !!(billing as any)?.onTrial;
+
+    // Common fields (depending on your hook's shape)
+    const status = String((billing as any)?.status ?? "").toLowerCase();
+    const trialEndsAt = (billing as any)?.trialEndsAt ?? (billing as any)?.trial_ends_at ?? null;
+    const currentPeriodEnd =
+      (billing as any)?.currentPeriodEnd ?? (billing as any)?.current_period_end ?? null;
+
+    // ✅ IMPORTANT: trial counts as valid plan access
+    if (hasValid || active || onTrial) return true;
+    if (status === "trialing") return true;
+
+    // If status flags are buggy, still allow if trial end is in the future
+    if (isFutureIso(trialEndsAt)) return true;
+
+    // Some setups only populate current_period_end even during trial
+    if (isFutureIso(currentPeriodEnd) && status !== "canceled") return true;
+
+    return false;
+  }, [billing]);
 
   // Role
   const [roleName, setRoleName] = useState<string | null>(null);
@@ -90,7 +125,8 @@ export default function NavTabs() {
           setRoleLoading(false);
           return;
         }
-console.log("[billing]", billing);
+
+        console.log("[billing]", billing);
 
         const { data, error } = await supabase
           .from("team_members")
@@ -126,9 +162,7 @@ console.log("[billing]", billing);
     return () => {
       alive = false;
     };
-  }, [ready, user]);
-
-  
+  }, [ready, user, billing]);
 
   // Build visible tabs by role (DO NOT hide plan tabs, only redirect them)
   const visibleTabs = useMemo(() => {
