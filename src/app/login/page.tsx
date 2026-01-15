@@ -50,29 +50,29 @@ export default function LoginPage() {
     };
   }, [router, safeNext]);
 
-  async function signInWithGoogle() {
-    setErr(null);
-    setResetInfo(null);
+ async function signInWithGoogle() {
+  setErr(null);
+  setResetInfo(null);
 
-    try {
-      setLoading(true);
+  try {
+    setLoading(true);
 
-      // Route through /post-auth so we can ensure org + trial before landing user
-      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-        `/post-auth?dest=${encodeURIComponent(safeNext)}`
-      )}`;
+    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+      safeNext
+    )}`;
 
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo },
-      });
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
+    });
 
-      if (error) throw error;
-    } catch (e: any) {
-      setErr(e?.message || "Google sign-in failed.");
-      setLoading(false);
-    }
+    if (error) throw error;
+  } catch (e: any) {
+    setErr(e?.message || "Google sign-in failed.");
+    setLoading(false);
   }
+}
+
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
