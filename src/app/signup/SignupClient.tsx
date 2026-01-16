@@ -1,7 +1,7 @@
-// src/app/signup/SignupClient.tsx
 "use client";
 
 import React, { useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 
@@ -203,7 +203,17 @@ export default function SignupClient() {
           checked={agreed}
           onChange={(e) => setAgreed(e.target.checked)}
         />
-        I agree to the Terms of Use and Privacy Policy.
+        <span>
+          I agree to the{" "}
+          <Link href="/terms" className="underline underline-offset-2">
+            Terms of Use
+          </Link>{" "}
+          and{" "}
+          <Link href="/privacy" className="underline underline-offset-2">
+            Privacy Policy
+          </Link>
+          .
+        </span>
       </label>
 
       <button

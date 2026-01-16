@@ -1,4 +1,3 @@
-// src/app/help/page.tsx
 "use client";
 
 import Image from "next/image";
@@ -413,11 +412,23 @@ export default function HelpPage() {
 
       {/* Footer */}
       <footer className="mt-4 border-t border-slate-200 pt-4 text-xs text-slate-500">
-        Need more help or want to suggest a new feature?{" "}
-        <Link href="mailto:info@temptake.com" className="underline">
-          Contact support
-        </Link>{" "}
-        or speak to your manager.
+        <div>
+          Need more help or want to suggest a new feature?{" "}
+          <Link href="mailto:info@temptake.com" className="underline">
+            Contact support
+          </Link>{" "}
+          or speak to your manager.
+        </div>
+
+        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+          <Link href="/privacy" className="underline underline-offset-2">
+            Privacy Policy
+          </Link>
+          <span aria-hidden="true">·</span>
+          <Link href="/terms" className="underline underline-offset-2">
+            Terms of Service
+          </Link>
+        </div>
       </footer>
     </div>
   );

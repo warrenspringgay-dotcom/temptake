@@ -10,6 +10,9 @@ const PUBLIC_PATHS = new Set<string>([
   "/pricing",
   "/guides",
   "/app",
+  "/privacy",
+"/terms",
+
 ]);
 
 function isStaticAsset(pathname: string) {

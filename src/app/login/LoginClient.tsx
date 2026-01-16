@@ -1,7 +1,7 @@
-// src/app/login/LoginClient.tsx
 "use client";
 
 import React, { useActionState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signInAction, type AuthResult } from "@/app/actions/auth";
 
@@ -16,11 +16,8 @@ export default function LoginClient({ next = "/dashboard" }: { next?: string }) 
 
   useEffect(() => {
     if (!state.ok || !state.redirect) return;
-
-    // ✅ FIXED: Use router.push instead of window.location.assign
-    // This properly handles Next.js routing and cookie propagation
-    router.refresh(); // Refresh server components
-    router.push(state.redirect); // Navigate without full reload
+    router.refresh();
+    router.push(state.redirect);
   }, [state, router]);
 
   return (
@@ -38,10 +35,28 @@ export default function LoginClient({ next = "/dashboard" }: { next?: string }) 
         className="w-full rounded border px-3 py-2"
       />
       <input type="hidden" name="next" value={next} />
+
       {state.message && <div className="text-sm text-red-600">{state.message}</div>}
-      <button type="submit" disabled={pending} className="rounded bg-black px-3 py-2 text-white">
+
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded bg-black px-3 py-2 text-white"
+      >
         {pending ? "Signing in…" : "Sign in"}
       </button>
+
+      <p className="text-[11px] text-slate-500">
+        By continuing, you agree to our{" "}
+        <Link href="/terms" className="underline underline-offset-2">
+          Terms
+        </Link>{" "}
+        and{" "}
+        <Link href="/privacy" className="underline underline-offset-2">
+          Privacy Policy
+        </Link>
+        .
+      </p>
     </form>
   );
 }
