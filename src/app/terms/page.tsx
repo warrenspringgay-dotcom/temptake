@@ -88,7 +88,7 @@ export default function TermsPage() {
         <h2>Contact</h2>
         <p>
           For questions about these Terms, contact{" "}
-          <a href="mailto:support@temptake.com">support@temptake.com</a>.
+          <a href="mailto:info@temptake.com">support@temptake.com</a>.
         </p>
 
         <hr />
