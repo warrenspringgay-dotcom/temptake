@@ -222,6 +222,19 @@ export default function LoginPage() {
           </Link>
         </p>
 
+<p className="mt-4 text-center text-xs text-slate-500">
+  By continuing, you agree to our{" "}
+  <Link href="/terms" className="text-slate-900 underline underline-offset-2">
+    Terms
+  </Link>{" "}
+  and{" "}
+  <Link href="/privacy" className="text-slate-900 underline underline-offset-2">
+    Privacy Policy
+  </Link>
+  .
+</p>
+
+
         <div className="mt-3 space-y-1 text-xs">
           {err && (
             <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
