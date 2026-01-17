@@ -19,6 +19,11 @@ self.addEventListener('fetch', () => { /* pass-through; hook is enough for insta
 const VERSION = "v7"; // bump this whenever you change SW behaviour
 const STATIC_CACHE = `tt-static-${VERSION}`;
 
+self.addEventListener("message", (event) => {
+  if (event?.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
+
+
 self.addEventListener("install", (event) => {
   self.skipWaiting();
   event.waitUntil(
