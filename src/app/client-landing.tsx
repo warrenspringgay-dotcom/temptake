@@ -667,25 +667,45 @@ export default function LaunchPage() {
         </section>
 
         {/* ----------------------- FOOTER ----------------------- */}
-        <footer className="border-t border-white/10 bg-slate-950">
-          <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-5 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-            <div>© {new Date().getFullYear()} TempTake. All rights reserved.</div>
-            <div className="flex flex-wrap items-center gap-3">
-              <span>Made for UK food businesses.</span>
-              <a href="#guides" className="text-slate-300 hover:text-emerald-300">
-                Guides
-              </a>
-              <button
-                type="button"
-                {...tallyAttrs}
-                onClick={() => openTallyWaitlist()}
-                className="text-slate-300 hover:text-emerald-300"
-              >
-                Join early access
-              </button>
-            </div>
-          </div>
-        </footer>
+    {/* ----------------------- FOOTER ----------------------- */}
+<footer className="border-t border-white/10 bg-slate-950">
+  <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-5 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+    <div>© {new Date().getFullYear()} TempTake. All rights reserved.</div>
+
+    <div className="flex flex-wrap items-center gap-3">
+      <span>Made for UK food businesses.</span>
+
+      <a href="#guides" className="text-slate-300 hover:text-emerald-300">
+        Guides
+      </a>
+
+      <button
+        type="button"
+        {...tallyAttrs}
+        onClick={() => openTallyWaitlist()}
+        className="text-slate-300 hover:text-emerald-300"
+      >
+        Join early access
+      </button>
+
+      <span className="hidden sm:inline text-slate-700">|</span>
+
+      <Link href="/terms" className="text-slate-300 hover:text-emerald-300">
+        Terms
+      </Link>
+      <Link href="/privacy" className="text-slate-300 hover:text-emerald-300">
+        Privacy
+      </Link>
+      <Link href="/cookies" className="text-slate-300 hover:text-emerald-300">
+        Cookies
+      </Link>
+      <Link href="/help" className="text-slate-300 hover:text-emerald-300">
+        Support
+      </Link>
+    </div>
+  </div>
+</footer>
+
       </main>
 
       {/* ----------------------- STAFF INTERACTIONS / LEADERBOARD MODAL ----------------------- */}
