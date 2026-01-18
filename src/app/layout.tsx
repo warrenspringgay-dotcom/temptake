@@ -15,6 +15,8 @@ import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import FabShell from "@/app/FabShell";
 
 import HeaderSwitcher from "@/components/HeaderSwitcher";
+import CookieBanner from "@/components/CookieBanner";
+import ConsentBootstrap from "@/components/ConsentBootstrap";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -24,7 +26,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en">
       <head>
         <meta name="theme-color" content="#111111" />
-        {/* Ensure proper mobile viewport scaling */}
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="manifest" href="/manifest.webmanifest" />
       </head>
@@ -36,16 +37,15 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               <AuthProvider>
                 <Pwa />
 
+                {/* Cookie consent + PostHog opt-in/out */}
+                <ConsentBootstrap />
+                <CookieBanner />
+
                 <Suspense fallback={null}>
                   <HeaderSwitcher />
                 </Suspense>
 
                 <main className="w-full">
-                  {/* 
-                    Mobile: full-width, no horizontal padding
-                    sm+: bring padding back
-                    md+: cap width at 6xl and center
-                  */}
                   <div className="w-full px-0 sm:px-4 md:mx-auto md:max-w-6xl">
                     {children}
                   </div>
