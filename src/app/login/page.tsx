@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
+import posthog from "posthog-js";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -50,29 +51,28 @@ export default function LoginPage() {
     };
   }, [router, safeNext]);
 
- async function signInWithGoogle() {
-  setErr(null);
-  setResetInfo(null);
+  async function signInWithGoogle() {
+    setErr(null);
+    setResetInfo(null);
 
-  try {
-    setLoading(true);
+    try {
+      setLoading(true);
 
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-      safeNext
-    )}`;
+      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+        safeNext
+      )}`;
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo },
-    });
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo },
+      });
 
-    if (error) throw error;
-  } catch (e: any) {
-    setErr(e?.message || "Google sign-in failed.");
-    setLoading(false);
+      if (error) throw error;
+    } catch (e: any) {
+      setErr(e?.message || "Google sign-in failed.");
+      setLoading(false);
+    }
   }
-}
-
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -80,13 +80,28 @@ export default function LoginPage() {
     setResetInfo(null);
     setLoading(true);
 
+    const cleanEmail = email.trim();
+
     try {
       const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: cleanEmail,
         password,
       });
 
       if (error) throw error;
+
+      // ✅ only capture after successful login
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const distinctId = user?.id || cleanEmail;
+      posthog.identify(distinctId, { email: user?.email ?? cleanEmail });
+
+      posthog.capture("user_logged_in", {
+        method: "email",
+        email: user?.email ?? cleanEmail,
+      });
 
       router.replace(safeNext);
       router.refresh();
@@ -183,37 +198,36 @@ export default function LoginPage() {
           <div className="h-px flex-1 bg-gray-200" />
         </div>
 
-   <button
-  type="button"
-  onClick={signInWithGoogle}
-  disabled={loading}
-  className="flex h-10 w-full items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white text-sm font-medium hover:bg-gray-50 disabled:opacity-60"
->
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    viewBox="0 0 48 48"
-    className="h-4 w-4"
-  >
-    <path
-      fill="#FFC107"
-      d="M43.6 20.5H42V20H24v8h11.3C33.7 32.6 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8.1 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.1-.1-2.1-.4-3.5z"
-    />
-    <path
-      fill="#FF3D00"
-      d="M6.3 14.7l6.6 4.8C14.7 16 19 12 24 12c3.1 0 5.9 1.2 8.1 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4c-7.7 0-14.4 4.3-17.7 10.7z"
-    />
-    <path
-      fill="#4CAF50"
-      d="M24 44c5.1 0 9.8-2 13.4-5.2l-6.2-5.2C29.1 35.1 26.6 36 24 36c-5.2 0-9.6-3.3-11.2-7.9l-6.5 5C9.5 39.7 16.2 44 24 44z"
-    />
-    <path
-      fill="#1976D2"
-      d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.1 5.6l6.2 5.2C36.8 40.4 44 36 44 24c0-1.1-.1-2.1-.4-3.5z"
-    />
-  </svg>
-  Continue with Google
-</button>
-
+        <button
+          type="button"
+          onClick={signInWithGoogle}
+          disabled={loading}
+          className="flex h-10 w-full items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white text-sm font-medium hover:bg-gray-50 disabled:opacity-60"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 48 48"
+            className="h-4 w-4"
+          >
+            <path
+              fill="#FFC107"
+              d="M43.6 20.5H42V20H24v8h11.3C33.7 32.6 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8.1 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.1-.1-2.1-.4-3.5z"
+            />
+            <path
+              fill="#FF3D00"
+              d="M6.3 14.7l6.6 4.8C14.7 16 19 12 24 12c3.1 0 5.9 1.2 8.1 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4c-7.7 0-14.4 4.3-17.7 10.7z"
+            />
+            <path
+              fill="#4CAF50"
+              d="M24 44c5.1 0 9.8-2 13.4-5.2l-6.2-5.2C29.1 35.1 26.6 36 24 36c-5.2 0-9.6-3.3-11.2-7.9l-6.5 5C9.5 39.7 16.2 44 24 44z"
+            />
+            <path
+              fill="#1976D2"
+              d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.1 5.6l6.2 5.2C36.8 40.4 44 36 44 24c0-1.1-.1-2.1-.4-3.5z"
+            />
+          </svg>
+          Continue with Google
+        </button>
 
         <p className="mt-4 text-center text-xs text-gray-600">
           Don’t have an account?{" "}
@@ -222,18 +236,17 @@ export default function LoginPage() {
           </Link>
         </p>
 
-<p className="mt-4 text-center text-xs text-slate-500">
-  By continuing, you agree to our{" "}
-  <Link href="/terms" className="text-slate-900 underline underline-offset-2">
-    Terms
-  </Link>{" "}
-  and{" "}
-  <Link href="/privacy" className="text-slate-900 underline underline-offset-2">
-    Privacy Policy
-  </Link>
-  .
-</p>
-
+        <p className="mt-4 text-center text-xs text-slate-500">
+          By continuing, you agree to our{" "}
+          <Link href="/terms" className="text-slate-900 underline underline-offset-2">
+            Terms
+          </Link>{" "}
+          and{" "}
+          <Link href="/privacy" className="text-slate-900 underline underline-offset-2">
+            Privacy Policy
+          </Link>
+          .
+        </p>
 
         <div className="mt-3 space-y-1 text-xs">
           {err && (

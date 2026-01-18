@@ -1,9 +1,11 @@
+// src/app/signup/SignupClient.tsx
 "use client";
 
 import React, { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
+import posthog from "posthog-js";
 
 function withWelcomeParam(next: string) {
   const url = new URL(next, "http://local");
@@ -58,6 +60,8 @@ export default function SignupClient() {
     if (isSubmitting.current) return;
     isSubmitting.current = true;
 
+    const cleanEmail = email.trim();
+
     try {
       if (!agreed) {
         setError("Please accept the Terms of Use and Privacy Policy.");
@@ -71,7 +75,7 @@ export default function SignupClient() {
         setError("Business name is required.");
         return;
       }
-      if (!email || !password) {
+      if (!cleanEmail || !password) {
         setError("Email and password are required.");
         return;
       }
@@ -81,7 +85,7 @@ export default function SignupClient() {
       }
 
       const { error: signUpErr } = await supabase.auth.signUp({
-        email,
+        email: cleanEmail,
         password,
         options: {
           data: {
@@ -97,7 +101,7 @@ export default function SignupClient() {
       }
 
       const { error: signInErr } = await supabase.auth.signInWithPassword({
-        email,
+        email: cleanEmail,
         password,
       });
 
@@ -108,6 +112,24 @@ export default function SignupClient() {
         );
         return;
       }
+
+      // ✅ only capture signup after sign-in succeeds
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const distinctId = user?.id || cleanEmail;
+
+      posthog.identify(distinctId, {
+        email: user?.email ?? cleanEmail,
+        full_name: ownerName.trim(),
+        business_name: businessName.trim(),
+      });
+
+      posthog.capture("user_signed_up", {
+        method: "email",
+        email: user?.email ?? cleanEmail,
+      });
 
       try {
         const bootstrapRes = await fetch("/api/org/ensure", {
