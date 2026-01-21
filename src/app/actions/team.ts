@@ -129,7 +129,6 @@ export async function saveTeamMember(input: TeamMemberInput) {
   };
 
   if (input.id) {
-    // Update existing row, scoped by org
     const { error } = await supabase
       .from("team_members")
       .update(payload)
@@ -138,7 +137,6 @@ export async function saveTeamMember(input: TeamMemberInput) {
 
     if (error) throw new Error(error.message);
   } else {
-    // Insert new row
     const { error } = await supabase.from("team_members").insert({
       ...payload,
       org_id: orgId,
@@ -181,10 +179,6 @@ export async function listTeamMembers(): Promise<TeamMember[]> {
   return (data ?? []) as TeamMember[];
 }
 
-/**
- * Staff initials helper for FoodTempLogger etc.
- * Returns a deduped, UPPERCASE list of initials for the active org.
- */
 export async function listStaffInitials(): Promise<string[]> {
   const supabase = await getServerSupabase();
 
@@ -192,7 +186,7 @@ export async function listStaffInitials(): Promise<string[]> {
   try {
     orgId = await getActiveOrgIdServer();
   } catch {
-    // ignore – will just fall back to no org filter
+    // ignore
   }
 
   let query = supabase
@@ -227,15 +221,12 @@ export async function listStaffInitials(): Promise<string[]> {
 
 /* ============================================================
    New API used by TeamManager.tsx
-   (thin wrappers + training helpers)
 ============================================================ */
 
-/** List team for the current org – used by TeamManager.tsx */
 export async function listTeam(): Promise<TeamMember[]> {
   return listTeamMembers();
 }
 
-/** Upsert a member from the TeamManager form. */
 export async function upsertTeamMember(
   input: Partial<TeamMember>
 ): Promise<void> {
@@ -259,10 +250,6 @@ export async function upsertTeamMember(
   await saveTeamMember(payload);
 }
 
-/**
- * Ensure a staff row exists in the `staff` table for these initials,
- * and return its *database id* (NOT the initials).
- */
 export async function ensureStaffByInitials(
   initials: string,
   name: string
@@ -277,7 +264,6 @@ export async function ensureStaffByInitials(
   const cleanInitials = initials.trim().toUpperCase();
   const displayName = name?.trim() || cleanInitials;
 
-  // 1) Look up existing staff by org + initials
   const { data: existing, error: findError } = await supabase
     .from("staff")
     .select("id")
@@ -291,7 +277,6 @@ export async function ensureStaffByInitials(
     return String(existing.id);
   }
 
-  // 2) Create a new staff record
   const { data: created, error: insertError } = await supabase
     .from("staff")
     .insert({
@@ -307,7 +292,6 @@ export async function ensureStaffByInitials(
   return String(created.id);
 }
 
-/** List training records for a given staff id. */
 export async function listTrainingsForStaff(
   staffId: string
 ): Promise<TrainingRow[]> {
@@ -323,10 +307,6 @@ export async function listTrainingsForStaff(
   return (data ?? []) as TrainingRow[];
 }
 
-/**
- * Insert a training record for the given staff id.
- * Expects a *real* staff.id (from `ensureStaffByInitials`).
- */
 export async function insertTraining(
   staffId: string,
   input: TrainingInput
@@ -345,7 +325,6 @@ export async function insertTraining(
 
 /* ============================================================
    Invite flow using Supabase Admin API
-   – creates auth user + sends invite email with password set
 ============================================================ */
 
 export type InviteTeamMemberResult = {
@@ -378,10 +357,24 @@ export async function inviteTeamMemberServer(args: {
       .join("");
   const initials = initialsRaw.toUpperCase().slice(0, 4);
 
+  // ✅ Build a stable redirect URL for the invite email
+  const origin =
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    (process.env.NEXT_PUBLIC_VERCEL_URL?.startsWith("http")
+      ? process.env.NEXT_PUBLIC_VERCEL_URL
+      : process.env.NEXT_PUBLIC_VERCEL_URL
+      ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`
+      : "https://temptake.com");
+
+  // Where the invited user lands after accepting the invite
+  // (You can change this to /login, /dashboard, /setup, etc.)
+  const redirectTo = `${origin}/invite/accept`;
+
   // 1) Create user + send invite email
   const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(
     email,
     {
+      redirectTo,
       data: { name },
     }
   );
