@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ensureOrgForCurrentUser } from "@/lib/ensureOrg";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { sendEmail } from "@/lib/email";
 
 function addDays(date: Date, days: number) {
   const d = new Date(date);
@@ -92,6 +93,35 @@ export async function POST(req: NextRequest) {
         );
       }
     }
+
+    // 3) Send welcome email (do not block signup if email fails)
+    try {
+      const to = user.email;
+      if (to) {
+        await sendEmail({
+          to,
+          subject: "Welcome to TempTake",
+          html: `
+            <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.5">
+              <h2 style="margin:0 0 12px">Welcome to TempTake</h2>
+              <p style="margin:0 0 12px">
+                Your account is set up and your 14-day trial is active.
+              </p>
+              <p style="margin:0 0 12px">
+                Next step: add your first location and run today’s checks.
+              </p>
+              <p style="margin:0">
+                Need help? Reply to this email.
+              </p>
+            </div>
+          `,
+        });
+      }
+    } catch (emailErr) {
+      console.error("[signup/bootstrap] welcome email failed", emailErr);
+      // Intentionally NOT failing signup for email issues.
+    }
+
 
     // NOTE: We are NOT inserting billing_customers here because
     // stripe_customer_id is NOT NULL in your schema.
