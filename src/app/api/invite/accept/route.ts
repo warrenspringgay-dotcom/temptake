@@ -1,3 +1,4 @@
+// src/app/api/invite/accept/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -10,11 +11,13 @@ export async function GET(req: NextRequest) {
     error: userErr,
   } = await supabase.auth.getUser();
 
-  if (userErr || !user?.email) {
+  // Must have a logged-in user with an email
+  const emailRaw = user?.email;
+  if (userErr || !user || !emailRaw) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  const email = user.email.toLowerCase();
+  const email = emailRaw.toLowerCase();
 
   // Find org from team_members (authoritative for invites)
   const { data: tm, error: tmErr } = await supabaseAdmin
@@ -28,10 +31,14 @@ export async function GET(req: NextRequest) {
   }
 
   // Set profiles.org_id so getActiveOrgIdServer stops being awkward
-  await supabaseAdmin
+  const { error: profErr } = await supabaseAdmin
     .from("profiles")
     .update({ org_id: tm.org_id })
     .eq("id", user.id);
+
+  if (profErr) {
+    return NextResponse.redirect(new URL("/login?invite=profile", req.url));
+  }
 
   return NextResponse.redirect(new URL("/manager/team?invite=1", req.url));
 }
