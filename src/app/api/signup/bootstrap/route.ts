@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
 
     // 3) Send welcome email (do not block signup if email fails)
     try {
-      const to = user.email;
+      const to = user.email?.trim();
       if (to) {
         await sendEmail({
           to,
@@ -122,7 +122,6 @@ export async function POST(req: NextRequest) {
       // Intentionally NOT failing signup for email issues.
     }
 
-
     // NOTE: We are NOT inserting billing_customers here because
     // stripe_customer_id is NOT NULL in your schema.
     // Create billing_customers ONLY when you have a real Stripe customer id.
@@ -131,7 +130,11 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[signup/bootstrap] unexpected error", err);
     return NextResponse.json(
-      { ok: false as const, reason: "exception", detail: err?.message ?? String(err) },
+      {
+        ok: false as const,
+        reason: "exception",
+        detail: err?.message ?? String(err),
+      },
       { status: 500 }
     );
   }

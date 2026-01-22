@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   } = await supabase.auth.getUser();
 
   // Must have a logged-in user with an email
-  const emailRaw = user?.email;
+  const emailRaw = user?.email?.trim();
   if (userErr || !user || !emailRaw) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
