@@ -42,11 +42,63 @@ async function getLocationCountForOrg(orgId: string) {
   return count ?? 1;
 }
 
+async function getOrCreateStripeCustomer(params: {
+  orgId: string;
+  userId: string;
+  email?: string | null;
+}) {
+  const { orgId, userId, email } = params;
+
+  // 1) Try DB first
+  const { data: existing, error: existingErr } = await supabaseAdmin
+    .from("billing_customers")
+    .select("stripe_customer_id")
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  if (existingErr) {
+    console.error("[billing] billing_customers lookup failed", { orgId, existingErr });
+    throw new Error("Failed to load billing customer");
+  }
+
+  if (existing?.stripe_customer_id) {
+    return String(existing.stripe_customer_id);
+  }
+
+  // 2) Create Stripe customer once
+  const customer = await stripe.customers.create({
+    email: email ?? undefined,
+    metadata: {
+      org_id: orgId,
+      supabase_user_id: userId,
+    },
+  });
+
+  // 3) Persist
+  const { error: upsertErr } = await supabaseAdmin
+    .from("billing_customers")
+    .upsert(
+      {
+        org_id: orgId,
+        user_id: userId,
+        stripe_customer_id: customer.id,
+      },
+      { onConflict: "org_id" }
+    );
+
+  if (upsertErr) {
+    console.error("[billing] billing_customers upsert failed", { orgId, upsertErr });
+    // Don’t throw: Stripe customer exists, but DB failed. Still safer to stop here.
+    throw new Error("Failed to save billing customer");
+  }
+
+  return customer.id;
+}
+
 export async function POST(req: NextRequest) {
   try {
     // 1) Identify the user from cookies/session
     const supabase = await getServerSupabaseAction();
-
     const {
       data: { user },
       error: authError,
@@ -64,7 +116,6 @@ export async function POST(req: NextRequest) {
 
     // 4) Decide monthly vs yearly
     const interval = req.nextUrl.searchParams.get("interval") || "month";
-
     const plan = getPlanForLocationCount(locationCount);
 
     let priceId = plan.stripePriceId;
@@ -92,10 +143,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!priceId) {
-      return NextResponse.json(
-        { error: "Stripe pricing not configured" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Stripe pricing not configured" }, { status: 500 });
     }
 
     // 5) Build redirect URLs
@@ -107,44 +155,45 @@ export async function POST(req: NextRequest) {
     const successUrl = `${origin}/billing?success=1`;
     const cancelUrl = `${origin}/billing?canceled=1`;
 
-    // 6) Create Stripe checkout session
+    // 6) Ensure we always use ONE Stripe customer per org
+    const customerId = await getOrCreateStripeCustomer({
+      orgId,
+      userId: user.id,
+      email: user.email,
+    });
+
+    // 7) Create Stripe checkout session (attach to known customer)
     const session = await stripe.checkout.sessions.create({
-  mode: "subscription",
-  customer_email: user.email ?? undefined,
-  line_items: [{ price: priceId, quantity: 1 }],
+      mode: "subscription",
+      customer: customerId,
+      line_items: [{ price: priceId, quantity: 1 }],
 
-  subscription_data: {
-    // no more trial_period_days here
-    metadata: {
-      org_id: orgId,
-      plan_tier: plan.tier,
-      max_locations: plan.maxLocations?.toString() ?? "",
-      billing_interval: billingInterval,
-      supabase_user_id: user.id,
-    },
-  },
+      subscription_data: {
+        metadata: {
+          org_id: orgId,
+          plan_tier: plan.tier,
+          max_locations: plan.maxLocations?.toString() ?? "",
+          billing_interval: billingInterval,
+          supabase_user_id: user.id,
+        },
+      },
 
-  success_url: successUrl,
-  cancel_url: cancelUrl,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
 
-  metadata: {
-    supabase_user_id: user.id,
-    org_id: orgId,
-    plan_tier: plan.tier,
-    billing_interval: billingInterval,
-  },
-});
-
+      metadata: {
+        supabase_user_id: user.id,
+        org_id: orgId,
+        plan_tier: plan.tier,
+        billing_interval: billingInterval,
+      },
+    });
 
     if (!session.url) {
       console.error("[stripe] checkout session missing url");
-      return NextResponse.json(
-        { error: "Could not create checkout session" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Could not create checkout session" }, { status: 500 });
     }
 
-    // Redirect the browser straight to Stripe
     return NextResponse.redirect(session.url, { status: 303 });
   } catch (err: any) {
     console.error("[stripe] create-checkout-session error", err);
