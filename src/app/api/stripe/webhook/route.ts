@@ -3,12 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { sendEmail } from "@/lib/email";
 
 export const runtime = "nodejs";
 
 /**
  * Stripe signature verification MUST use the raw request body bytes.
- * Using req.text() can break signatures in production.
  */
 async function getRawBody(req: NextRequest): Promise<Buffer> {
   const ab = await req.arrayBuffer();
@@ -18,6 +18,22 @@ async function getRawBody(req: NextRequest): Promise<Buffer> {
 function toIsoFromUnixSeconds(ts?: number | null) {
   if (!ts || !Number.isFinite(ts)) return null;
   return new Date(ts * 1000).toISOString();
+}
+
+function fmtDDMMYYYY(d: Date) {
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = d.getUTCFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function getOrigin(req: NextRequest) {
+  const env =
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    (process.env.NEXT_PUBLIC_VERCEL_URL
+      ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`
+      : "");
+  return (env || req.nextUrl.origin).replace(/\/$/, "");
 }
 
 async function upsertBillingCustomer(params: {
@@ -99,12 +115,37 @@ async function resolveOrgAndUserFromEmail(email: string) {
   };
 }
 
+async function getAuthEmailForUserId(userId: string | null) {
+  if (!userId) return null;
+  const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
+  if (error) return null;
+  return data?.user?.email?.trim() ?? null;
+}
+
+async function getBillingSubscriptionByOrg(orgId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("billing_subscriptions")
+    .select(
+      "id, org_id, user_id, status, trial_ends_at, stripe_subscription_id, last_payment_event_id, payment_failed_sent_at, cancelled_sent_at"
+    )
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ?? null;
+}
+
+async function markBillingSubEvent(orgId: string, patch: Record<string, any>) {
+  const { error } = await supabaseAdmin
+    .from("billing_subscriptions")
+    .update(patch)
+    .eq("org_id", orgId);
+
+  if (error) throw error;
+}
+
 /**
- * Handle checkout.session.completed:
- * - use metadata (best)
- * - fallback to email -> profiles lookup
- * - upsert billing_customers
- * - upsert billing_subscriptions (by retrieving subscription)
+ * Handle checkout.session.completed
  */
 async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
   const customerId = typeof session.customer === "string" ? session.customer : null;
@@ -139,18 +180,14 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
     return;
   }
 
-  // Upsert customer row (one per org)
   if (customerId) {
     await upsertBillingCustomer({
       org_id: orgId,
       user_id: userId ?? null,
       stripe_customer_id: customerId,
     });
-
-    console.log("[stripe webhook] billing_customers upserted", orgId, customerId);
   }
 
-  // Upsert subscription row (one per org)
   if (subscriptionId) {
     const sub = await stripe.subscriptions.retrieve(subscriptionId, {
       expand: ["items.data.price"],
@@ -169,19 +206,17 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
       cancel_at_period_end: !!sub.cancel_at_period_end,
       trial_ends_at: toIsoFromUnixSeconds(sub.trial_end),
     });
-
-    console.log("[stripe webhook] billing_subscriptions upserted", orgId, sub.id, sub.status);
   }
 }
 
 /**
- * Handle customer.subscription.*:
- * - metadata should be present because you set subscription_data.metadata in checkout
- * - upsert customer + subscription so renewals/cancellations stay in sync
+ * Handle customer.subscription.*
  */
 async function handleSubscriptionEvent(sub: Stripe.Subscription) {
   const orgId = sub.metadata?.org_id ? String(sub.metadata.org_id) : null;
-  const userId = sub.metadata?.supabase_user_id ? String(sub.metadata.supabase_user_id) : null;
+  const userId = sub.metadata?.supabase_user_id
+    ? String(sub.metadata.supabase_user_id)
+    : null;
 
   if (!orgId) {
     console.warn("[stripe webhook] subscription event missing org_id metadata", {
@@ -215,14 +250,160 @@ async function handleSubscriptionEvent(sub: Stripe.Subscription) {
     cancel_at_period_end: !!sub.cancel_at_period_end,
     trial_ends_at: toIsoFromUnixSeconds(sub.trial_end),
   });
+}
 
-  console.log("[stripe webhook] subscription sync", orgId, sub.id, sub.status);
+/**
+ * Resolve org/user for invoice (best-effort):
+ * 1) subscription metadata (best)
+ * 2) billing_customers (customer -> org) (good)
+ */
+async function resolveOrgUserForInvoice(invoice: Stripe.Invoice) {
+  // Stripe TS types sometimes omit `subscription` on Invoice. The API still returns it.
+  const subscriptionId =
+    typeof (invoice as any).subscription === "string" ? (invoice as any).subscription : null;
+
+  if (subscriptionId) {
+    const sub = await stripe.subscriptions.retrieve(subscriptionId);
+    const orgId = sub.metadata?.org_id ? String(sub.metadata.org_id) : null;
+    const userId = sub.metadata?.supabase_user_id
+      ? String(sub.metadata.supabase_user_id)
+      : null;
+
+    if (orgId) return { orgId, userId, subscriptionId: sub.id };
+  }
+
+  const customerId = typeof invoice.customer === "string" ? invoice.customer : null;
+  if (customerId) {
+    const { data, error } = await supabaseAdmin
+      .from("billing_customers")
+      .select("org_id, user_id")
+      .eq("stripe_customer_id", customerId)
+      .maybeSingle();
+
+    if (!error && data?.org_id) {
+      return {
+        orgId: String(data.org_id),
+        userId: data.user_id ? String(data.user_id) : null,
+        subscriptionId,
+      };
+    }
+  }
+
+  return { orgId: null as string | null, userId: null as string | null, subscriptionId };
+}
+
+async function sendPaymentFailedEmail(params: {
+  req: NextRequest;
+  orgId: string;
+  userId: string | null;
+  eventId: string;
+  invoice: Stripe.Invoice;
+}) {
+  const { req, orgId, userId, eventId, invoice } = params;
+
+  const billingSub = await getBillingSubscriptionByOrg(orgId);
+  if (!billingSub) return;
+
+  // Idempotency
+  if (billingSub.last_payment_event_id === eventId) return;
+
+  const email = await getAuthEmailForUserId(userId ?? billingSub.user_id ?? null);
+  if (!email) return;
+
+  const origin = getOrigin(req);
+  const ctaUrl = `${origin}/pricing`;
+
+  const amountDue =
+    typeof invoice.amount_due === "number" ? (invoice.amount_due / 100).toFixed(2) : null;
+
+  await sendEmail({
+    to: email,
+    subject: "Payment failed: action needed to keep TempTake running",
+    html: `
+      <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.5;color:#111">
+        <h2 style="margin:0 0 12px">Payment failed</h2>
+        <p style="margin:0 0 12px">
+          We couldn’t take your latest payment${amountDue ? ` (£${amountDue})` : ""}.
+        </p>
+        <p style="margin:0 0 16px">
+          Update your payment details to avoid any interruption.
+        </p>
+        <p style="margin:0 0 18px">
+          <a href="${ctaUrl}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:10px 14px;border-radius:10px">
+            Update payment
+          </a>
+        </p>
+        <p style="margin:0;color:#555;font-size:12px">
+          Need help? Reply to this email.
+        </p>
+      </div>
+    `,
+  });
+
+  await markBillingSubEvent(orgId, {
+    payment_failed_sent_at: new Date().toISOString(),
+    last_payment_event_id: eventId,
+  });
+}
+
+async function sendCancelledEmail(params: {
+  req: NextRequest;
+  orgId: string;
+  userId: string | null;
+  eventId: string;
+  sub: Stripe.Subscription;
+}) {
+  const { req, orgId, userId, eventId, sub } = params;
+
+  const billingSub = await getBillingSubscriptionByOrg(orgId);
+  if (!billingSub) return;
+
+  if (billingSub.last_payment_event_id === eventId) return;
+
+  const email = await getAuthEmailForUserId(userId ?? billingSub.user_id ?? null);
+  if (!email) return;
+
+  const origin = getOrigin(req);
+  const ctaUrl = `${origin}/pricing`;
+
+  const endedAt =
+    typeof (sub as any).canceled_at === "number"
+      ? fmtDDMMYYYY(new Date((sub as any).canceled_at * 1000))
+      : null;
+
+  await sendEmail({
+    to: email,
+    subject: "Your TempTake subscription has been cancelled",
+    html: `
+      <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.5;color:#111">
+        <h2 style="margin:0 0 12px">Subscription cancelled</h2>
+        <p style="margin:0 0 12px">
+          Your TempTake subscription has been cancelled${endedAt ? ` (${endedAt})` : ""}.
+        </p>
+        <p style="margin:0 0 16px">
+          If that wasn’t intentional, you can restart in a couple of clicks.
+        </p>
+        <p style="margin:0 0 18px">
+          <a href="${ctaUrl}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:10px 14px;border-radius:10px">
+            Restart subscription
+          </a>
+        </p>
+        <p style="margin:0;color:#555;font-size:12px">
+          Need help? Reply to this email.
+        </p>
+      </div>
+    `,
+  });
+
+  await markBillingSubEvent(orgId, {
+    cancelled_sent_at: new Date().toISOString(),
+    last_payment_event_id: eventId,
+  });
 }
 
 export async function POST(req: NextRequest) {
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-  // If this is missing in prod, NOTHING will ever write. Which is your situation.
   if (!webhookSecret) {
     console.error("[stripe webhook] STRIPE_WEBHOOK_SECRET is missing");
     return NextResponse.json({ error: "Webhook misconfigured" }, { status: 500 });
@@ -247,7 +428,6 @@ export async function POST(req: NextRequest) {
 
   console.log("[stripe webhook] event type:", event.type);
 
-  // Handle event
   try {
     switch (event.type) {
       case "checkout.session.completed": {
@@ -261,18 +441,43 @@ export async function POST(req: NextRequest) {
       case "customer.subscription.deleted": {
         const sub = event.data.object as Stripe.Subscription;
         await handleSubscriptionEvent(sub);
+
+        if (event.type === "customer.subscription.deleted") {
+          const orgId = sub.metadata?.org_id ? String(sub.metadata.org_id) : null;
+          const userId = sub.metadata?.supabase_user_id
+            ? String(sub.metadata.supabase_user_id)
+            : null;
+
+          if (orgId) {
+            await sendCancelledEmail({ req, orgId, userId, eventId: event.id, sub });
+          }
+        }
+        break;
+      }
+
+      case "invoice.payment_failed": {
+        const invoice = event.data.object as Stripe.Invoice;
+        const resolved = await resolveOrgUserForInvoice(invoice);
+
+        if (resolved.orgId) {
+          await sendPaymentFailedEmail({
+            req,
+            orgId: resolved.orgId,
+            userId: resolved.userId,
+            eventId: event.id,
+            invoice,
+          });
+        }
         break;
       }
 
       default:
-        // ignore
         break;
     }
 
     return NextResponse.json({ received: true });
   } catch (err: any) {
     console.error("[stripe webhook] handler crashed:", err?.message ?? err);
-    // 500 => Stripe retries. That's what you want.
     return NextResponse.json(
       { error: "Webhook handler error", details: err?.message ?? null },
       { status: 500 }

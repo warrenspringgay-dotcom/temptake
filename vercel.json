@@ -1,6 +1,8 @@
 {
   "crons": [
     { "path": "/api/cron/trial-reminders", "schedule": "0 9 * * *" },
-    { "path": "/api/cron/trial-expiring-tomorrow", "schedule": "10 9 * * *" }
+    { "path": "/api/cron/trial-ended", "schedule": "10 9 * * *" },
+    { "path": "/api/cron/trial-final-nudge", "schedule": "20 9 * * *" },
+    { "path": "/api/cron/inactive-nudge", "schedule": "30 9 * * *" }
   ]
 }
