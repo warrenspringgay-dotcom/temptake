@@ -9,10 +9,7 @@ function assertCronAuth(req: NextRequest) {
 
   const auth = req.headers.get("authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (token !== expected) {
-    return false;
-  }
-  return true;
+  return token === expected;
 }
 
 function addDays(d: Date, days: number) {
@@ -37,6 +34,15 @@ function getOrigin(req: NextRequest) {
   return (env || req.nextUrl.origin).replace(/\/$/, "");
 }
 
+type SubRow = {
+  id: string;
+  org_id: string;
+  user_id: string | null;
+  trial_ends_at: string | null;
+  status: string;
+  trial_reminders: any | null; // jsonb
+};
+
 export async function GET(req: NextRequest) {
   try {
     if (!assertCronAuth(req)) {
@@ -45,17 +51,17 @@ export async function GET(req: NextRequest) {
 
     const now = new Date();
 
-    // We’ll send "ending soon" when trial ends in ~2 days (48-72h window).
+    // Send "ending soon" when trial ends in ~2 days (48–72h window).
     const windowStart = addDays(now, 2);
     const windowEnd = addDays(now, 3);
 
-    const { data: subs, error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("billing_subscriptions")
-      .select("id, org_id, user_id, trial_ends_at, status")
+      .select("id, org_id, user_id, trial_ends_at, status, trial_reminders")
       .eq("status", "trialing")
       .gte("trial_ends_at", windowStart.toISOString())
       .lt("trial_ends_at", windowEnd.toISOString())
-      .is("trial_reminder_sent_at", null);
+      .limit(500);
 
     if (error) {
       return NextResponse.json(
@@ -64,13 +70,21 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const subs = (data ?? []) as SubRow[];
+
+    // Only those we haven't already emailed for the "soon" reminder
+    const candidates = subs.filter((s) => {
+      const r = s.trial_reminders || {};
+      return !r.soon;
+    });
+
     const origin = getOrigin(req);
 
     let sent = 0;
     let skipped = 0;
     const failures: Array<{ id: string; reason: string }> = [];
 
-    for (const s of subs ?? []) {
+    for (const s of candidates) {
       try {
         if (!s.user_id || !s.trial_ends_at) {
           skipped++;
@@ -78,9 +92,8 @@ export async function GET(req: NextRequest) {
         }
 
         // Pull email from auth user
-        const { data: userData, error: userErr } = await supabaseAdmin.auth.admin.getUserById(
-          s.user_id
-        );
+        const { data: userData, error: userErr } =
+          await supabaseAdmin.auth.admin.getUserById(s.user_id);
 
         const email = userData?.user?.email?.trim();
         if (userErr || !email) {
@@ -91,7 +104,6 @@ export async function GET(req: NextRequest) {
         const trialEnds = new Date(s.trial_ends_at);
         const trialEndsFmt = fmtDDMMYYYY(trialEnds);
 
-        // Keep it simple: point them to billing/pricing
         const ctaUrl = `${origin}/pricing`;
 
         await sendEmail({
@@ -118,10 +130,13 @@ export async function GET(req: NextRequest) {
           `,
         });
 
-        // Mark as sent (idempotency)
+        // ✅ Mark as sent using jsonb
+        const reminders = s.trial_reminders || {};
+        reminders.soon = new Date().toISOString();
+
         const { error: updErr } = await supabaseAdmin
           .from("billing_subscriptions")
-          .update({ trial_reminder_sent_at: new Date().toISOString() })
+          .update({ trial_reminders: reminders })
           .eq("id", s.id);
 
         if (updErr) {
@@ -141,7 +156,7 @@ export async function GET(req: NextRequest) {
         end: windowEnd.toISOString(),
       },
       totals: {
-        candidates: subs?.length ?? 0,
+        candidates: candidates.length,
         sent,
         skipped,
         failures: failures.length,
