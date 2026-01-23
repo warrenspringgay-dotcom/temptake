@@ -140,17 +140,21 @@ export default async function BillingPage() {
             </li>
           </ul>
 
-          <form method="POST" action="/api/stripe/create-checkout-session">
-            <button
-              type="submit"
-              className="mt-5 inline-flex w-full items-center justify-center rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:bg-slate-300"
-              disabled={plan.tier === "custom" || hasActiveSub}
-            >
-              {hasActiveSub
-                ? "Subscription already active"
-                : "Start monthly subscription"}
-            </button>
-          </form>
+       <form
+  method="POST"
+  action={`/api/stripe/create-portal-session?returnUrl=${encodeURIComponent(
+    "https://temptake.com/billing"
+  )}`}
+>
+  <button
+    type="submit"
+    className="mt-3 inline-flex items-center justify-center rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+    disabled={!hasActiveSub}
+  >
+    Open billing portal
+  </button>
+</form>
+
 
           {plan.tier === "custom" && (
             <p className="mt-2 text-xs text-slate-500">
