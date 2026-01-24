@@ -1,10 +1,18 @@
 // src/app/billing/page.tsx
 import { redirect } from "next/navigation";
 import { getServerSupabase } from "@/lib/supabaseServer";
-import { getPlanForLocationCount } from "@/lib/billingTiers";
+import { getBandForLocationCount, PLAN_BANDS } from "@/lib/billingTiers";
 import TrialBanner from "@/components/TrialBanner";
 
 export const dynamic = "force-dynamic";
+
+function fmtDDMMYYYY(iso: string) {
+  const d = new Date(iso);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
 
 export default async function BillingPage() {
   const supabase = await getServerSupabase();
@@ -18,20 +26,18 @@ export default async function BillingPage() {
     redirect(`/login?next=/billing`);
   }
 
-  // Get org_id for this user
+  // Get org_id
   const { data: profile, error: profileErr } = await supabase
     .from("profiles")
     .select("org_id")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (profileErr) {
-    console.error("[billing/page] profile lookup error", profileErr);
-  }
+  if (profileErr) console.error("[billing/page] profile lookup error", profileErr);
 
   const orgId = profile?.org_id as string | undefined;
 
-  // Count locations for the org
+  // Count locations
   let locationCount = 0;
   if (orgId) {
     const { count, error: locErr } = await supabase
@@ -43,9 +49,9 @@ export default async function BillingPage() {
     locationCount = count ?? 0;
   }
 
-  const plan = getPlanForLocationCount(locationCount || 1);
+  const recommended = getBandForLocationCount(locationCount || 1);
 
-  // Subscriptions are org-scoped (webhook writes org_id)
+  // Latest subscription row (org-scoped)
   const { data: subRows, error: subErr } = await supabase
     .from("billing_subscriptions")
     .select("*")
@@ -53,26 +59,27 @@ export default async function BillingPage() {
     .order("created_at", { ascending: false })
     .limit(1);
 
-  if (subErr) {
-    console.error("[billing/page] subscription lookup error", subErr);
-  }
+  if (subErr) console.error("[billing/page] subscription lookup error", subErr);
 
   const subscription = subRows?.[0] ?? null;
-
   const status = (subscription?.status as string | null) ?? null;
-  const stripeSubId = (subscription?.stripe_subscription_id as string | null) ?? null;
 
-  // ✅ Only treat portal / Stripe as available if a Stripe subscription exists
-  const hasStripeSubscription =
-    !!stripeSubId && (status === "active" || status === "trialing" || status === "past_due");
-
-  // ✅ App-only trial = trialing but no Stripe sub id
-  const hasAppTrial = !stripeSubId && status === "trialing";
-
-  // Any paid-ish status *in Stripe* counts as “subscription exists”
-  const hasPaidOrStripeTrial = hasStripeSubscription;
-
+  const hasActiveSub = status === "active" || status === "trialing" || status === "past_due";
   const trialEndsAt = (subscription?.trial_ends_at as string | null) ?? null;
+
+  // Stripe customer (org-scoped). If this is missing, portal will look “empty”.
+  const { data: custRows } = await supabase
+    .from("billing_customers")
+    .select("stripe_customer_id")
+    .eq("org_id", orgId ?? "__no_org__")
+    .limit(1);
+
+  const stripeCustomerId = (custRows?.[0] as any)?.stripe_customer_id as string | undefined;
+  const hasStripePortalContext = !!stripeCustomerId || !!subscription?.stripe_subscription_id;
+
+  const planSingle = PLAN_BANDS.find((p) => p.id === "single")!;
+  const planUpTo3 = PLAN_BANDS.find((p) => p.id === "up_to_3")!;
+  const planUpTo5 = PLAN_BANDS.find((p) => p.id === "up_to_5")!;
 
   return (
     <main className="mx-auto max-w-4xl space-y-8 px-4 py-10">
@@ -88,36 +95,32 @@ export default async function BillingPage() {
       <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm text-slate-800">
         <div className="font-semibold">
           Subscription status:{" "}
-          {hasStripeSubscription ? (
+          {hasActiveSub ? (
             status === "trialing" ? (
               <span className="text-emerald-600">Free trial active</span>
             ) : (
               <span className="text-emerald-600">Active</span>
             )
-          ) : hasAppTrial ? (
-            <span className="text-emerald-600">Free trial active</span>
           ) : (
             <span className="text-rose-600">No subscription</span>
           )}
         </div>
 
-        {(status === "trialing" && trialEndsAt) && (
+        {status === "trialing" && trialEndsAt && (
           <div className="mt-1 text-xs text-slate-600">
-            Free trial ends on {new Date(trialEndsAt).toLocaleDateString("en-GB")}.
+            Free trial ends on <strong>{fmtDDMMYYYY(trialEndsAt)}</strong>.
           </div>
         )}
 
         <div className="mt-2 text-xs text-slate-600">
-          Locations in this organisation: <strong>{locationCount}</strong>. This band covers{" "}
-          {plan.maxLocations
-            ? `up to ${plan.maxLocations} location${plan.maxLocations > 1 ? "s" : ""}.`
-            : "6+ locations on a custom package."}
+          Locations in this organisation: <strong>{locationCount}</strong>. Recommended plan:{" "}
+          <strong>{recommended.label}</strong>.
         </div>
 
-        {/* Helpful nudge (only when app-only trial exists) */}
-        {hasAppTrial && (
+        {status === "trialing" && !hasStripePortalContext && (
           <div className="mt-2 text-xs text-slate-600">
-            You’re currently on a free trial. The Stripe billing portal will show your plan once you start a subscription.
+            You’re currently on a free trial. The Stripe billing portal will show your plan once you start a
+            subscription.
           </div>
         )}
       </div>
@@ -128,61 +131,83 @@ export default async function BillingPage() {
         <div className="rounded-2xl border bg-white px-5 py-6 shadow-sm">
           <h2 className="mb-1 text-sm font-semibold text-slate-700">MONTHLY</h2>
 
-          <div className="flex items-baseline gap-1">
-            <div className="text-3xl font-semibold text-slate-900">
-              £{plan.pricePerMonth ?? 9.99}
-            </div>
-            <span className="text-sm text-slate-500">/ month (from)</span>
-          </div>
-
-          <p className="mt-3 text-sm text-slate-700">
-            Pricing is banded by the number of locations on your account:
+          <p className="mt-2 text-sm text-slate-700">
+            Pick the plan that covers the number of locations you want on your account:
           </p>
 
-          <ul className="mt-2 space-y-1 text-sm text-slate-600">
-            <li>• 1 site → £9.99 / month</li>
-            <li>• 2–3 sites → £19.99 / month</li>
-            <li>• 4–5 sites → £29.99 / month</li>
-            <li>
-              • 6+ sites → custom pricing{" "}
-              <a
-                href="mailto:info@temptake.com"
-                className="text-emerald-600 underline hover:text-emerald-400"
+          <div className="mt-4 space-y-3">
+            {/* Single monthly */}
+            <form method="POST" action="/api/stripe/create-checkout-session?band=single&interval=month">
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
+                disabled={hasActiveSub}
               >
-                contact us
-              </a>
-            </li>
-          </ul>
+                <span>
+                  <span className="font-semibold">{planSingle.label}</span>
+                  <span className="block text-xs text-slate-600">£{planSingle.pricePerMonth} / month</span>
+                </span>
+                <span className="text-slate-500">Select</span>
+              </button>
+            </form>
 
-          {/* Start subscription */}
-          <form method="POST" action="/api/stripe/create-checkout-session">
-            <button
-              type="submit"
-              className="mt-5 inline-flex w-full items-center justify-center rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:bg-slate-300"
-              disabled={plan.tier === "custom" || hasPaidOrStripeTrial}
-            >
-              {hasPaidOrStripeTrial ? "Subscription already active" : "Start monthly subscription"}
-            </button>
-          </form>
+            {/* Up to 3 */}
+            <form method="POST" action="/api/stripe/create-checkout-session?band=up_to_3&interval=month">
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
+                disabled={hasActiveSub}
+              >
+                <span>
+                  <span className="font-semibold">{planUpTo3.label}</span>
+                  <span className="block text-xs text-slate-600">£{planUpTo3.pricePerMonth} / month</span>
+                </span>
+                <span className="text-slate-500">Select</span>
+              </button>
+            </form>
 
-          {/* Stripe portal button (only if Stripe sub exists) */}
-          <form method="POST" action="/api/stripe/create-portal-session">
-            <button
-              type="submit"
-              className="mt-3 inline-flex w-full items-center justify-center rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-              disabled={!hasStripeSubscription}
-              title={!hasStripeSubscription ? "Available after you start a subscription" : undefined}
-            >
-              Open billing portal
-            </button>
-          </form>
+            {/* Up to 5 */}
+            <form method="POST" action="/api/stripe/create-checkout-session?band=up_to_5&interval=month">
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
+                disabled={hasActiveSub}
+              >
+                <span>
+                  <span className="font-semibold">{planUpTo5.label}</span>
+                  <span className="block text-xs text-slate-600">£{planUpTo5.pricePerMonth} / month</span>
+                </span>
+                <span className="text-slate-500">Select</span>
+              </button>
+            </form>
 
-          {plan.tier === "custom" && (
-            <p className="mt-2 text-xs text-slate-500">
-              For 6 or more sites we&apos;ll set up a custom package and onboarding call so everything is wired
-              correctly from day one. Drop us a line at <strong>info@temptake.com</strong>.
-            </p>
-          )}
+            {/* Single annual */}
+            <form method="POST" action="/api/stripe/create-checkout-session?band=single&interval=year">
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
+                disabled={hasActiveSub}
+              >
+                <span>
+                  <span className="font-semibold">Single site (annual)</span>
+                  <span className="block text-xs text-slate-600">Billed yearly</span>
+                </span>
+                <span className="text-slate-500">Select</span>
+              </button>
+            </form>
+
+            {/* Custom */}
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-slate-800">
+              <div className="font-semibold">6+ locations (custom)</div>
+              <div className="mt-1 text-xs text-slate-600">
+                Email{" "}
+                <a className="text-emerald-700 underline" href="mailto:info@temptake.com">
+                  info@temptake.com
+                </a>{" "}
+                and we’ll sort it.
+              </div>
+            </div>
+          </div>
 
           <TrialBanner />
         </div>
@@ -196,30 +221,29 @@ export default async function BillingPage() {
           <h3 className="mt-3 text-lg font-semibold text-slate-900">Built for groups</h3>
 
           <ul className="mt-3 space-y-1.5 text-sm text-slate-800">
-            <li>1. Start a subscription using the button on the left.</li>
-            <li>2. Open the Stripe billing portal to upgrade to the correct band.</li>
+            <li>1. Choose the plan that covers the number of sites you need.</li>
+            <li>2. Complete checkout in Stripe.</li>
             <li>
-              3. Come back to TempTake – the <strong>Add location</strong> button will unlock and you can add your
-              extra sites.
+              3. Come back to TempTake. The <strong>Add location</strong> button stays locked until your plan
+              covers it.
             </li>
           </ul>
         </div>
       </section>
 
-      {/* Billing portal (same gating, kept as separate section to preserve your layout) */}
+      {/* Billing portal */}
       <section className="rounded-2xl border bg-white px-5 py-5">
         <h2 className="text-sm font-semibold text-slate-800">Manage your subscription</h2>
         <p className="mt-1 text-xs text-slate-600">
-          If you already have an active subscription, you can update your card, view invoices or cancel via the Stripe
-          billing portal.
+          Update payment method, view invoices or cancel via the Stripe billing portal.
         </p>
 
         <form method="POST" action="/api/stripe/create-portal-session">
           <button
             type="submit"
             className="mt-3 inline-flex items-center justify-center rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-            disabled={!hasStripeSubscription}
-            title={!hasStripeSubscription ? "Available after you start a subscription" : undefined}
+            disabled={!hasStripePortalContext}
+            title={!hasStripePortalContext ? "No Stripe subscription yet" : undefined}
           >
             Open billing portal
           </button>
