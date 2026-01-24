@@ -28,6 +28,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <meta name="theme-color" content="#111111" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="manifest" href="/manifest.webmanifest" />
+        
       </head>
 
       <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
