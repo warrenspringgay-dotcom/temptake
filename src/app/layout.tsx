@@ -3,6 +3,7 @@ import "./globals.css";
 
 import type { ReactNode } from "react";
 import React, { Suspense } from "react";
+import type { Metadata, Viewport } from "next";
 import { Analytics } from "@vercel/analytics/next";
 
 import { ToastProvider } from "@/components/ui/use-toast";
@@ -17,14 +18,25 @@ import FabShell from "@/app/FabShell";
 import HeaderSwitcher from "@/components/HeaderSwitcher";
 import CookieBanner from "@/components/CookieBanner";
 import ConsentBootstrap from "@/components/ConsentBootstrap";
-import type { Metadata } from "next";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+export const viewport: Viewport = {
+  themeColor: "#111111",
+  width: "device-width",
+  initialScale: 1,
+};
+
 export const metadata: Metadata = {
   title: "TempTake",
+  manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/favicon.ico",
+    icon: [
+      { url: "/favicon.ico" },
+      // Optional but helps some browsers behave:
+      { url: "/favicon.png", type: "image/png" },
+    ],
     shortcut: "/favicon.ico",
     apple: "/apple-touch-icon.png",
   },
@@ -33,13 +45,6 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        <meta name="theme-color" content="#111111" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="manifest" href="/manifest.webmanifest" />
-      
-      </head>
-
       <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
         <PHProvider>
           <ToastProvider>
