@@ -17,9 +17,18 @@ import FabShell from "@/app/FabShell";
 import HeaderSwitcher from "@/components/HeaderSwitcher";
 import CookieBanner from "@/components/CookieBanner";
 import ConsentBootstrap from "@/components/ConsentBootstrap";
-
+import type { Metadata } from "next";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+export const metadata: Metadata = {
+  title: "TempTake",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+    apple: "/apple-touch-icon.png",
+  },
+};
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -28,7 +37,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <meta name="theme-color" content="#111111" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="manifest" href="/manifest.webmanifest" />
-        
+      
       </head>
 
       <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
