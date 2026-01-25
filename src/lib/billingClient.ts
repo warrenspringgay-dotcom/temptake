@@ -1,22 +1,35 @@
 // src/lib/billingClient.ts
 "use client";
 
-import { supabase } from "@/lib/supabaseBrowser";
-
 /**
- * Shape returned by /billing/status API route.
+ * Shape returned by /api/billing/status
+ * (make the API the single source of truth, don’t invent fields client-side).
  */
 export type BillingStatus = {
-  status: string | null;            // "active", "trialing", "past_due", null
-  trial_ends_at: string | null;     // ISO string or null
-  current_period_end: string | null;
-  cancel_at_period_end: boolean | null;
-  plan_name: string | null;         // e.g. "1 site", "up to 3 sites"
+  ok: boolean;
+  loggedIn: boolean;
+  hasValid: boolean;
+  active: boolean;
+  onTrial: boolean;
+
+  status: string | null;
+
+  // source of truth for plan gating
+  priceId: string | null;
+
+  // UI convenience (derived server-side)
+  planName: string | null;
+
+  cancelAtPeriodEnd: boolean | null;
+
+  trialEndsAt: string | null;
+  currentPeriodEnd: string | null;
+
+  reason?: string;
 };
 
 /**
- * Fetch the current organisation's billing/subscription status.
- * This calls your API route:  GET /api/billing/status
+ * Fetch billing status for current org/user.
  */
 export async function getBillingStatusClient(): Promise<BillingStatus | null> {
   try {
@@ -31,12 +44,25 @@ export async function getBillingStatusClient(): Promise<BillingStatus | null> {
     }
 
     const data = await res.json();
+
     return {
+      ok: !!data?.ok,
+      loggedIn: !!data?.loggedIn,
+      hasValid: !!data?.hasValid,
+      active: !!data?.active,
+      onTrial: !!data?.onTrial,
+
       status: data?.status ?? null,
-      trial_ends_at: data?.trial_ends_at ?? null,
-      current_period_end: data?.current_period_end ?? null,
-      cancel_at_period_end: data?.cancel_at_period_end ?? null,
-      plan_name: data?.plan_name ?? null,
+
+      priceId: data?.priceId ?? null,
+      planName: data?.planName ?? null,
+
+      cancelAtPeriodEnd: data?.cancelAtPeriodEnd ?? null,
+
+      trialEndsAt: data?.trialEndsAt ?? null,
+      currentPeriodEnd: data?.currentPeriodEnd ?? null,
+
+      reason: data?.reason ?? undefined,
     };
   } catch (err) {
     console.error("[billingClient] error:", err);
@@ -45,21 +71,42 @@ export async function getBillingStatusClient(): Promise<BillingStatus | null> {
 }
 
 /**
- * Convenience helper to check if subscription is active or trialing.
+ * Source-of-truth gating:
+ * priceId -> max locations.
+ */
+export function getMaxLocationsFromPriceId(priceId: string | null | undefined): number {
+  // If there’s no priceId yet (trial / no sub), default to single site.
+  if (!priceId) return 1;
+
+  const single = process.env.NEXT_PUBLIC_STRIPE_PRICE_SINGLE_SITE ?? "";
+  const singleAnnual = process.env.NEXT_PUBLIC_STRIPE_PRICE_SINGLE_SITE_ANNUAL ?? "";
+  const upTo3 = process.env.NEXT_PUBLIC_STRIPE_PRICE_UP_TO_3 ?? "";
+  const upTo5 = process.env.NEXT_PUBLIC_STRIPE_PRICE_UP_TO_5 ?? "";
+
+  if (priceId === single) return 1;
+  if (priceId === singleAnnual) return 1;
+  if (priceId === upTo3) return 3;
+  if (priceId === upTo5) return 5;
+
+  // Unknown/legacy/custom: safest is restrict, not “free unlimited locations”.
+  return 1;
+}
+
+/**
+ * Convenience helper: do they have a valid subscription/trial/grace access?
+ * Uses server’s computed hasValid flag (and keeps a fallback).
  */
 export async function hasValidSubscriptionClient(): Promise<boolean> {
-  const status = await getBillingStatusClient();
-  if (!status) return false;
+  const bs = await getBillingStatusClient();
+  if (!bs) return false;
 
-  if (status.status === "active" || status.status === "trialing") {
-    return true;
-  }
+  if (bs.hasValid) return true;
 
-  // Grace period: cancelled but still paid up
+  // extra fallback (just in case)
   if (
-    status.cancel_at_period_end &&
-    status.current_period_end &&
-    status.current_period_end > new Date().toISOString()
+    bs.cancelAtPeriodEnd &&
+    bs.currentPeriodEnd &&
+    bs.currentPeriodEnd > new Date().toISOString()
   ) {
     return true;
   }

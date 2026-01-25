@@ -4,12 +4,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getBillingStatusClient } from "@/lib/billingClient";
-import {
-  getMaxLocationsFromPlanName,
-  getPlanForLocationCount,
-  type PlanBandId,
-} from "@/lib/billingTiers";
+import { getBillingStatusClient, getMaxLocationsFromPriceId } from "@/lib/billingClient";
 
 type LocationRow = {
   id: string;
@@ -27,13 +22,13 @@ export default function LocationsManager() {
 
   const [newName, setNewName] = useState("");
   const [savingNew, setSavingNew] = useState(false);
-
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  // Billing gating
+  // Billing gating (new source-of-truth = priceId from /api/billing/status)
   const [billingLoading, setBillingLoading] = useState(true);
   const [billingStatus, setBillingStatus] = useState<string | null>(null);
   const [planName, setPlanName] = useState<string | null>(null);
+  const [priceId, setPriceId] = useState<string | null>(null);
   const [maxAllowedLocations, setMaxAllowedLocations] = useState<number>(1);
 
   async function loadLocations() {
@@ -78,19 +73,23 @@ export default function LocationsManager() {
     try {
       const bs = await getBillingStatusClient();
 
-      const status = bs?.status ?? null;
-      const pn = bs?.plan_name ?? null;
+      // New shape (per your updated /api/billing/status route)
+      const status = (bs as any)?.status ?? null;
+      const pn = (bs as any)?.planName ?? null;
+      const pid = (bs as any)?.priceId ?? null;
 
       setBillingStatus(status);
       setPlanName(pn);
+      setPriceId(pid);
 
-      // If we don’t know plan_name, safest is single site.
-      const max = getMaxLocationsFromPlanName(pn);
+      // Price ID is the only thing that matters for gating
+      const max = getMaxLocationsFromPriceId(pid);
       setMaxAllowedLocations(max);
     } catch (e) {
       console.error("[LocationsManager] billing status failed", e);
       setBillingStatus(null);
       setPlanName(null);
+      setPriceId(null);
       setMaxAllowedLocations(1);
     } finally {
       setBillingLoading(false);
@@ -98,7 +97,7 @@ export default function LocationsManager() {
   }
 
   useEffect(() => {
-    // Parallel load: faster UI, fewer sad humans
+    // parallel load
     loadLocations();
     loadBilling();
   }, []);
@@ -109,7 +108,6 @@ export default function LocationsManager() {
   );
 
   const isAtLimit = useMemo(() => {
-    // While billing is loading, don’t prematurely block the UI.
     if (billingLoading) return false;
     return activeCount >= maxAllowedLocations;
   }, [billingLoading, activeCount, maxAllowedLocations]);
@@ -119,24 +117,17 @@ export default function LocationsManager() {
     return activeCount < maxAllowedLocations;
   }, [billingLoading, activeCount, maxAllowedLocations]);
 
-  // Upgrade targeting: they’re trying to add one more site than they currently have
+  // If they click upgrade, they typically want one more than current usage
   const desiredLocations = Math.max(1, activeCount + 1);
 
-  // This computes the tier they should move to for desiredLocations
-  const desiredBand = useMemo(() => {
-    const plan = getPlanForLocationCount(desiredLocations);
-    return plan.tier as PlanBandId;
-  }, [desiredLocations]);
-
-  const isCustomUpgrade = desiredBand === "custom";
+  // 6+ is custom (per your pricing model)
+  const isCustomUpgrade = desiredLocations >= 6;
 
   async function handleAddLocation(e: React.FormEvent) {
     e.preventDefault();
 
     if (!canAddLocation) {
-      alert(
-        "You’ve reached your locations limit. Upgrade your plan to add more sites."
-      );
+      alert("You’ve reached your locations limit. Upgrade your plan to add more sites.");
       return;
     }
 
@@ -161,7 +152,7 @@ export default function LocationsManager() {
 
       setNewName("");
       await loadLocations();
-      await loadBilling(); // keep UI honest
+      await loadBilling();
     } catch (e: any) {
       console.error(e);
       alert(e?.message || "Failed to add location.");
@@ -200,6 +191,15 @@ export default function LocationsManager() {
     }
   }
 
+  const upgradeAction = useMemo(() => {
+    // One route to rule them all:
+    // - if Stripe sub exists -> portal update flow
+    // - if trial/no-sub -> checkout for right tier
+    return `/api/stripe/upgrade-from-limit?desiredLocations=${encodeURIComponent(
+      String(desiredLocations)
+    )}&returnUrl=${encodeURIComponent("/locations")}`;
+  }, [desiredLocations]);
+
   return (
     <div className="space-y-4">
       {/* Limit banner */}
@@ -207,9 +207,7 @@ export default function LocationsManager() {
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="font-semibold">
-                You’ve reached your locations limit.
-              </div>
+              <div className="font-semibold">You’ve reached your locations limit.</div>
               <div className="mt-0.5 text-xs text-amber-800">
                 Your plan covers up to <strong>{maxAllowedLocations}</strong>{" "}
                 location{maxAllowedLocations === 1 ? "" : "s"}. You’re currently
@@ -219,18 +217,17 @@ export default function LocationsManager() {
 
             {isCustomUpgrade ? (
               <a
-                href="mailto:info@temptake.com?subject=TempTake%20Custom%20Pricing%20(6%2B%20Sites)"
+                href={`mailto:info@temptake.com?subject=${encodeURIComponent(
+                  "TempTake Custom Pricing (6+ Sites)"
+                )}&body=${encodeURIComponent(
+                  `Hi TempTake,\n\nI’d like pricing for ${desiredLocations} locations.\n\nThanks`
+                )}`}
                 className="inline-flex h-10 items-center justify-center rounded-xl bg-amber-600 px-4 text-sm font-semibold text-white hover:bg-amber-700"
               >
                 Contact for 6+ sites
               </a>
             ) : (
-              <form
-                method="POST"
-                action={`/api/stripe/create-checkout-session?band=${encodeURIComponent(
-                  desiredBand
-                )}&interval=month`}
-              >
+              <form method="POST" action={upgradeAction}>
                 <button
                   type="submit"
                   className="inline-flex h-10 items-center justify-center rounded-xl bg-amber-600 px-4 text-sm font-semibold text-white hover:bg-amber-700"
@@ -259,8 +256,8 @@ export default function LocationsManager() {
         </div>
 
         <p className="mt-2 text-xs text-slate-500">
-          Add one location per site (for example: <strong>Pier Vista</strong>,
-          <strong> Kiosk</strong>). The location you pick in the top bar is used
+          Add one location per site (for example: <strong>Pier Vista</strong>,{" "}
+          <strong>Kiosk</strong>). The location you pick in the top bar is used
           to filter temperature logs and cleaning tasks.
         </p>
 
@@ -271,6 +268,12 @@ export default function LocationsManager() {
               <>
                 {" "}
                 • Plan: <strong>{planName}</strong>
+              </>
+            ) : null}
+            {priceId ? (
+              <>
+                {" "}
+                • Price: <strong>{priceId}</strong>
               </>
             ) : null}
           </p>
@@ -306,11 +309,7 @@ export default function LocationsManager() {
                 ? "bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 hover:brightness-105"
                 : "bg-slate-400 cursor-not-allowed"
             )}
-            title={
-              !canAddLocation
-                ? "Upgrade your plan to add more locations"
-                : undefined
-            }
+            title={!canAddLocation ? "Upgrade your plan to add more locations" : undefined}
           >
             {savingNew ? "Adding…" : "Add location"}
           </button>
@@ -321,18 +320,17 @@ export default function LocationsManager() {
           <div className="mt-3">
             {isCustomUpgrade ? (
               <a
-                href="mailto:info@temptake.com?subject=TempTake%20Custom%20Pricing%20(6%2B%20Sites)"
+                href={`mailto:info@temptake.com?subject=${encodeURIComponent(
+                  "TempTake Custom Pricing (6+ Sites)"
+                )}&body=${encodeURIComponent(
+                  `Hi TempTake,\n\nI’d like pricing for ${desiredLocations} locations.\n\nThanks`
+                )}`}
                 className="inline-flex h-10 items-center justify-center rounded-2xl border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-900 hover:bg-amber-100"
               >
                 Contact for 6+ sites
               </a>
             ) : (
-              <form
-                method="POST"
-                action={`/api/stripe/create-checkout-session?band=${encodeURIComponent(
-                  desiredBand
-                )}&interval=month`}
-              >
+              <form method="POST" action={upgradeAction}>
                 <button
                   type="submit"
                   className="inline-flex h-10 items-center justify-center rounded-2xl border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-900 hover:bg-amber-100"
@@ -392,9 +390,7 @@ export default function LocationsManager() {
                       <span className="text-xs text-slate-500">Status</span>
                       <button
                         type="button"
-                        onClick={() =>
-                          updateLocation(loc.id, { active: !loc.active })
-                        }
+                        onClick={() => updateLocation(loc.id, { active: !loc.active })}
                         disabled={isSaving}
                         className={cls(
                           "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium shadow-sm",
