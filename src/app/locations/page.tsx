@@ -22,8 +22,7 @@ export default function LocationsPage() {
         <OnboardingBanner />
 
 
-      {/* 🔒 Show plan / limit info for this org */}
-      <LocationPlanNotice />
+  
 
       <LocationsManager />
     </div>
