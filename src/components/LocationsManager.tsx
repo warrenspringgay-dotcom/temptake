@@ -5,7 +5,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getBillingStatusClient } from "@/lib/billingClient";
-import { getMaxLocationsFromPlanName } from "@/lib/billingTiers";
+import {
+  getMaxLocationsFromPlanName,
+  getPlanForLocationCount,
+  type PlanBandId,
+} from "@/lib/billingTiers";
 
 type LocationRow = {
   id: string;
@@ -115,11 +119,24 @@ export default function LocationsManager() {
     return activeCount < maxAllowedLocations;
   }, [billingLoading, activeCount, maxAllowedLocations]);
 
+  // Upgrade targeting: they’re trying to add one more site than they currently have
+  const desiredLocations = Math.max(1, activeCount + 1);
+
+  // This computes the tier they should move to for desiredLocations
+  const desiredBand = useMemo(() => {
+    const plan = getPlanForLocationCount(desiredLocations);
+    return plan.tier as PlanBandId;
+  }, [desiredLocations]);
+
+  const isCustomUpgrade = desiredBand === "custom";
+
   async function handleAddLocation(e: React.FormEvent) {
     e.preventDefault();
 
     if (!canAddLocation) {
-      alert("You’ve reached your locations limit. Upgrade your plan to add more sites.");
+      alert(
+        "You’ve reached your locations limit. Upgrade your plan to add more sites."
+      );
       return;
     }
 
@@ -144,9 +161,7 @@ export default function LocationsManager() {
 
       setNewName("");
       await loadLocations();
-
-      // Re-check billing after location changes (keeps UI honest)
-      await loadBilling();
+      await loadBilling(); // keep UI honest
     } catch (e: any) {
       console.error(e);
       alert(e?.message || "Failed to add location.");
@@ -185,9 +200,6 @@ export default function LocationsManager() {
     }
   }
 
-  // For upgrade flow: if user clicks upgrade, we ask for current+1 sites
-  const desiredLocations = Math.max(1, activeCount + 1);
-
   return (
     <div className="space-y-4">
       {/* Limit banner */}
@@ -195,28 +207,38 @@ export default function LocationsManager() {
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="font-semibold">You’ve reached your locations limit.</div>
+              <div className="font-semibold">
+                You’ve reached your locations limit.
+              </div>
               <div className="mt-0.5 text-xs text-amber-800">
                 Your plan covers up to <strong>{maxAllowedLocations}</strong>{" "}
-                location{maxAllowedLocations === 1 ? "" : "s"}. You’re currently using{" "}
-                <strong>{activeCount}</strong>.
+                location{maxAllowedLocations === 1 ? "" : "s"}. You’re currently
+                using <strong>{activeCount}</strong>.
               </div>
             </div>
 
-            {/* This POST will: portal if subscription exists, checkout if trial/no-sub */}
-            <form
-              method="POST"
-              action={`/api/stripe/upgrade-from-limit?desiredLocations=${encodeURIComponent(
-                String(desiredLocations)
-              )}&returnUrl=${encodeURIComponent("/locations")}`}
-            >
-              <button
-                type="submit"
+            {isCustomUpgrade ? (
+              <a
+                href="mailto:info@temptake.com?subject=TempTake%20Custom%20Pricing%20(6%2B%20Sites)"
                 className="inline-flex h-10 items-center justify-center rounded-xl bg-amber-600 px-4 text-sm font-semibold text-white hover:bg-amber-700"
               >
-                Upgrade plan
-              </button>
-            </form>
+                Contact for 6+ sites
+              </a>
+            ) : (
+              <form
+                method="POST"
+                action={`/api/stripe/create-checkout-session?band=${encodeURIComponent(
+                  desiredBand
+                )}&interval=month`}
+              >
+                <button
+                  type="submit"
+                  className="inline-flex h-10 items-center justify-center rounded-xl bg-amber-600 px-4 text-sm font-semibold text-white hover:bg-amber-700"
+                >
+                  Upgrade plan
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -238,8 +260,8 @@ export default function LocationsManager() {
 
         <p className="mt-2 text-xs text-slate-500">
           Add one location per site (for example: <strong>Pier Vista</strong>,
-          <strong> Kiosk</strong>). The location you pick in the top bar is used to
-          filter temperature logs and cleaning tasks.
+          <strong> Kiosk</strong>). The location you pick in the top bar is used
+          to filter temperature logs and cleaning tasks.
         </p>
 
         {!billingLoading && (
@@ -256,56 +278,72 @@ export default function LocationsManager() {
       </div>
 
       {/* Add location form */}
-      <form
-        onSubmit={handleAddLocation}
-        className="flex flex-col gap-2 rounded-2xl border border-white/40 bg-white/80 p-4 shadow-sm backdrop-blur sm:flex-row sm:items-end"
-      >
-        <div className="flex-1">
-          <label className="mb-1 block text-xs font-medium text-slate-600">
-            New location name
-          </label>
-          <input
-            type="text"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm shadow-inner"
-            placeholder="e.g. Pier Vista, Kiosk, Upstairs kitchen"
-            disabled={!canAddLocation}
-          />
-        </div>
-
-        <button
-          type="submit"
-          disabled={!newName.trim() || savingNew || !canAddLocation}
-          className={cls(
-            "h-10 rounded-2xl px-4 text-sm font-medium text-white shadow-sm shadow-emerald-500/30",
-            newName.trim() && !savingNew && canAddLocation
-              ? "bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 hover:brightness-105"
-              : "bg-slate-400 cursor-not-allowed"
-          )}
-          title={!canAddLocation ? "Upgrade your plan to add more locations" : undefined}
+      <div className="rounded-2xl border border-white/40 bg-white/80 p-4 shadow-sm backdrop-blur">
+        <form
+          onSubmit={handleAddLocation}
+          className="flex flex-col gap-2 sm:flex-row sm:items-end"
         >
-          {savingNew ? "Adding…" : "Add location"}
-        </button>
+          <div className="flex-1">
+            <label className="mb-1 block text-xs font-medium text-slate-600">
+              New location name
+            </label>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm shadow-inner"
+              placeholder="e.g. Pier Vista, Kiosk, Upstairs kitchen"
+              disabled={!canAddLocation}
+            />
+          </div>
 
-        {/* If they’re blocked, give them a direct upgrade CTA right here too */}
-        {!canAddLocation && !billingLoading && (
-          <form
-            method="POST"
-            action={`/api/stripe/upgrade-from-limit?desiredLocations=${encodeURIComponent(
-              String(desiredLocations)
-            )}&returnUrl=${encodeURIComponent("/locations")}`}
-            className="sm:ml-2"
+          <button
+            type="submit"
+            disabled={!newName.trim() || savingNew || !canAddLocation}
+            className={cls(
+              "h-10 rounded-2xl px-4 text-sm font-medium text-white shadow-sm shadow-emerald-500/30",
+              newName.trim() && !savingNew && canAddLocation
+                ? "bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 hover:brightness-105"
+                : "bg-slate-400 cursor-not-allowed"
+            )}
+            title={
+              !canAddLocation
+                ? "Upgrade your plan to add more locations"
+                : undefined
+            }
           >
-            <button
-              type="submit"
-              className="h-10 rounded-2xl border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-900 hover:bg-amber-100"
-            >
-              Upgrade plan
-            </button>
-          </form>
+            {savingNew ? "Adding…" : "Add location"}
+          </button>
+        </form>
+
+        {/* Upgrade CTA (NOT nested inside the form) */}
+        {!canAddLocation && !billingLoading && (
+          <div className="mt-3">
+            {isCustomUpgrade ? (
+              <a
+                href="mailto:info@temptake.com?subject=TempTake%20Custom%20Pricing%20(6%2B%20Sites)"
+                className="inline-flex h-10 items-center justify-center rounded-2xl border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+              >
+                Contact for 6+ sites
+              </a>
+            ) : (
+              <form
+                method="POST"
+                action={`/api/stripe/create-checkout-session?band=${encodeURIComponent(
+                  desiredBand
+                )}&interval=month`}
+              >
+                <button
+                  type="submit"
+                  className="inline-flex h-10 items-center justify-center rounded-2xl border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+                >
+                  Upgrade plan
+                </button>
+              </form>
+            )}
+          </div>
         )}
-      </form>
+      </div>
 
       {/* List */}
       <div className="rounded-2xl border border-white/40 bg-white/80 p-4 shadow-sm backdrop-blur">
@@ -342,7 +380,7 @@ export default function LocationsManager() {
                         if (name && name !== loc.name) {
                           updateLocation(loc.id, { name });
                         } else {
-                          e.target.value = loc.name; // reset on empty
+                          e.target.value = loc.name;
                         }
                       }}
                       className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"

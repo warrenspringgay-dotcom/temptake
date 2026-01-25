@@ -29,8 +29,8 @@ async function getActiveOrgIdForUser(userId: string) {
 
 function getOrigin(req: NextRequest) {
   const originHeader = req.headers.get("origin"); // string | null
-
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL; // string | undefined
+
   const vercelUrl = process.env.NEXT_PUBLIC_VERCEL_URL
     ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`
     : undefined;
@@ -38,7 +38,6 @@ function getOrigin(req: NextRequest) {
   const fallback = `${req.nextUrl.protocol}//${req.nextUrl.host}`;
 
   const origin = originHeader || siteUrl || vercelUrl || fallback;
-
   return origin.replace(/\/$/, "");
 }
 
@@ -52,7 +51,8 @@ function getPriceId(params: { band: PlanBandId; interval: "month" | "year" }) {
 
   if (band === "single") {
     if (interval === "year") {
-      if (!PRICE_SINGLE_ANNUAL) throw new Error("STRIPE_PRICE_SINGLE_SITE_ANNUAL not configured");
+      if (!PRICE_SINGLE_ANNUAL)
+        throw new Error("STRIPE_PRICE_SINGLE_SITE_ANNUAL not configured");
       return { priceId: PRICE_SINGLE_ANNUAL, maxLocations: 1 };
     }
     if (!PRICE_SINGLE) throw new Error("STRIPE_PRICE_SINGLE_SITE not configured");
@@ -60,7 +60,7 @@ function getPriceId(params: { band: PlanBandId; interval: "month" | "year" }) {
   }
 
   if (interval === "year") {
-    // You said annual only for single-site.
+    // Annual only for single site (your rule)
     throw new Error("Yearly billing is only available for single-site accounts");
   }
 
@@ -79,7 +79,9 @@ function getPriceId(params: { band: PlanBandId; interval: "month" | "year" }) {
 }
 
 function parseBand(input: string | null): PlanBandId {
-  if (input === "single" || input === "up_to_3" || input === "up_to_5" || input === "custom") return input;
+  if (input === "single" || input === "up_to_3" || input === "up_to_5" || input === "custom") {
+    return input;
+  }
   return "single";
 }
 
@@ -98,12 +100,10 @@ export async function POST(req: NextRequest) {
 
     const orgId = await getActiveOrgIdForUser(user.id);
 
-    // Selection comes from query params:
     // /api/stripe/create-checkout-session?band=up_to_3&interval=month
     const band = parseBand(req.nextUrl.searchParams.get("band"));
-    const interval = (req.nextUrl.searchParams.get("interval") === "year" ? "year" : "month") as
-      | "month"
-      | "year";
+    const interval =
+      req.nextUrl.searchParams.get("interval") === "year" ? "year" : "month";
 
     if (band === "custom") {
       return NextResponse.json(
@@ -146,7 +146,10 @@ export async function POST(req: NextRequest) {
 
     if (!session.url) {
       console.error("[stripe] checkout session missing url");
-      return NextResponse.json({ error: "Could not create checkout session" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Could not create checkout session" },
+        { status: 500 }
+      );
     }
 
     return NextResponse.redirect(session.url, { status: 303 });

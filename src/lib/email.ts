@@ -1,8 +1,24 @@
-// src/lib/email.ts
 import "server-only";
 import { Resend } from "resend";
 
 const FROM = process.env.EMAIL_FROM || "TempTake <info@temptake.com>";
+
+let resend: Resend | null = null;
+
+function getResendClient(): Resend {
+  if (resend) return resend;
+
+  const key = process.env.RESEND_API_KEY;
+  if (!key) {
+    // IMPORTANT:
+    // Don't throw at import-time, or Next builds will fail while collecting routes.
+    // We only throw when we *actually* try to send an email.
+    throw new Error("RESEND_API_KEY is not set");
+  }
+
+  resend = new Resend(key);
+  return resend;
+}
 
 export async function sendEmail({
   to,
@@ -13,16 +29,11 @@ export async function sendEmail({
   subject: string;
   html: string;
 }) {
-  const RESEND_API_KEY = process.env.RESEND_API_KEY;
+  if (!to?.trim()) throw new Error("sendEmail: missing 'to'");
 
-  // ✅ Do NOT throw at module import time (breaks builds)
-  if (!RESEND_API_KEY) {
-    throw new Error("RESEND_API_KEY is not set");
-  }
+  const client = getResendClient();
 
-  const resend = new Resend(RESEND_API_KEY);
-
-  return resend.emails.send({
+  return client.emails.send({
     from: FROM,
     to,
     subject,

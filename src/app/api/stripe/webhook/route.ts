@@ -1,4 +1,3 @@
-// src/app/api/stripe/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
@@ -8,7 +7,7 @@ import { sendEmail } from "@/lib/email";
 export const runtime = "nodejs";
 
 /**
- * Stripe signature verification MUST use the raw request body bytes.
+ * Stripe signature verification MUST use raw request body bytes.
  */
 async function getRawBody(req: NextRequest): Promise<Buffer> {
   const ab = await req.arrayBuffer();
@@ -36,6 +35,16 @@ function getOrigin(req: NextRequest) {
   return (env || req.nextUrl.origin).replace(/\/$/, "");
 }
 
+async function safeSendEmail(args: { to: string; subject: string; html: string }) {
+  try {
+    await sendEmail(args);
+    return { ok: true as const };
+  } catch (e: any) {
+    console.error("[email] send failed", e?.message ?? e);
+    return { ok: false as const, error: e?.message ?? String(e) };
+  }
+}
+
 async function upsertBillingCustomer(params: {
   org_id: string;
   user_id: string | null;
@@ -45,14 +54,7 @@ async function upsertBillingCustomer(params: {
 
   const { error } = await supabaseAdmin
     .from("billing_customers")
-    .upsert(
-      {
-        org_id,
-        user_id,
-        stripe_customer_id,
-      },
-      { onConflict: "org_id" }
-    );
+    .upsert({ org_id, user_id, stripe_customer_id }, { onConflict: "org_id" });
 
   if (error) throw error;
 }
@@ -146,6 +148,10 @@ async function markBillingSubEvent(orgId: string, patch: Record<string, any>) {
 
 /**
  * Handle checkout.session.completed
+ * - use metadata (best)
+ * - fallback to email -> profiles lookup
+ * - upsert billing_customers
+ * - upsert billing_subscriptions
  */
 async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
   const customerId = typeof session.customer === "string" ? session.customer : null;
@@ -157,7 +163,6 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
   let orgId = meta.org_id ? String(meta.org_id) : null;
   let userId = meta.supabase_user_id ? String(meta.supabase_user_id) : null;
 
-  // Fallback via email if metadata missing
   if (!orgId || !userId) {
     const email =
       session.customer_details?.email ??
@@ -210,7 +215,7 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
 }
 
 /**
- * Handle customer.subscription.*
+ * Handle customer.subscription.* (sync)
  */
 async function handleSubscriptionEvent(sub: Stripe.Subscription) {
   const orgId = sub.metadata?.org_id ? String(sub.metadata.org_id) : null;
@@ -253,23 +258,26 @@ async function handleSubscriptionEvent(sub: Stripe.Subscription) {
 }
 
 /**
- * Resolve org/user for invoice (best-effort):
+ * Resolve org/user for invoice:
  * 1) subscription metadata (best)
- * 2) billing_customers (customer -> org) (good)
+ * 2) billing_customers (customer -> org)
  */
 async function resolveOrgUserForInvoice(invoice: Stripe.Invoice) {
-  // Stripe TS types sometimes omit `subscription` on Invoice. The API still returns it.
   const subscriptionId =
     typeof (invoice as any).subscription === "string" ? (invoice as any).subscription : null;
 
   if (subscriptionId) {
-    const sub = await stripe.subscriptions.retrieve(subscriptionId);
-    const orgId = sub.metadata?.org_id ? String(sub.metadata.org_id) : null;
-    const userId = sub.metadata?.supabase_user_id
-      ? String(sub.metadata.supabase_user_id)
-      : null;
+    try {
+      const sub = await stripe.subscriptions.retrieve(subscriptionId);
+      const orgId = sub.metadata?.org_id ? String(sub.metadata.org_id) : null;
+      const userId = sub.metadata?.supabase_user_id
+        ? String(sub.metadata.supabase_user_id)
+        : null;
 
-    if (orgId) return { orgId, userId, subscriptionId: sub.id };
+      if (orgId) return { orgId, userId, subscriptionId: sub.id };
+    } catch (e) {
+      console.warn("[stripe webhook] invoice->subscription retrieve failed", subscriptionId);
+    }
   }
 
   const customerId = typeof invoice.customer === "string" ? invoice.customer : null;
@@ -304,19 +312,19 @@ async function sendPaymentFailedEmail(params: {
   const billingSub = await getBillingSubscriptionByOrg(orgId);
   if (!billingSub) return;
 
-  // Idempotency
+  // Idempotency: one Stripe event -> one email
   if (billingSub.last_payment_event_id === eventId) return;
 
   const email = await getAuthEmailForUserId(userId ?? billingSub.user_id ?? null);
   if (!email) return;
 
   const origin = getOrigin(req);
-  const ctaUrl = `${origin}/pricing`;
+  const ctaUrl = `${origin}/billing`;
 
   const amountDue =
     typeof invoice.amount_due === "number" ? (invoice.amount_due / 100).toFixed(2) : null;
 
-  await sendEmail({
+  await safeSendEmail({
     to: email,
     subject: "Payment failed: action needed to keep TempTake running",
     html: `
@@ -330,7 +338,7 @@ async function sendPaymentFailedEmail(params: {
         </p>
         <p style="margin:0 0 18px">
           <a href="${ctaUrl}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:10px 14px;border-radius:10px">
-            Update payment
+            Fix payment
           </a>
         </p>
         <p style="margin:0;color:#555;font-size:12px">
@@ -371,7 +379,7 @@ async function sendCancelledEmail(params: {
       ? fmtDDMMYYYY(new Date((sub as any).canceled_at * 1000))
       : null;
 
-  await sendEmail({
+  await safeSendEmail({
     to: email,
     subject: "Your TempTake subscription has been cancelled",
     html: `
@@ -411,7 +419,6 @@ export async function POST(req: NextRequest) {
 
   let event: Stripe.Event;
 
-  // Verify / parse event
   try {
     const sig = req.headers.get("stripe-signature");
     if (!sig) {
@@ -478,6 +485,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true });
   } catch (err: any) {
     console.error("[stripe webhook] handler crashed:", err?.message ?? err);
+    // 500 => Stripe retries (good)
     return NextResponse.json(
       { error: "Webhook handler error", details: err?.message ?? null },
       { status: 500 }
