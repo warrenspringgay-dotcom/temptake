@@ -215,7 +215,11 @@ export default function LaunchPage() {
                   <span className="mt-2 block text-slate-200">
                 The only food compliance assistant you need.</span>
               <span className="mt-2 block text-slate-200"></span>
+
+              </p>
+              <p>
             <span className="mt-4 max-w-xl text-sm text-slate-200 sm:text-base">
+
               TempTake replaces paper logs with simple daily routines for</span>{" "}
               <span className="font-semibold">temperatures, cleaning and allergens</span>
           
