@@ -211,12 +211,12 @@ export default function LaunchPage() {
             </h1>
 
             <p  className="mt-2 block text-slate-200 font-semibold">
-                TempTake is the ultimate food hygiene app.</p>
+                TempTake is the ultimate food hygiene app.
                   <span className="mt-2 block text-slate-200">
                 The only food compliance assistant you need.</span>
               <span className="mt-2 block text-slate-200"></span>
             <span className="mt-4 max-w-xl text-sm text-slate-200 sm:text-base">
-              TempTake replaces paper logs with simple daily routines for{" "}
+              TempTake replaces paper logs with simple daily routines for</span>{" "}
               <span className="font-semibold">temperatures, cleaning and allergens</span>
                <span className="mt-2 block text-slate-200">
                 TempTake is the ultimate food hygiene app.</span>
