@@ -1,9 +1,11 @@
 // src/components/LocationsManager.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getBillingStatusClient } from "@/lib/billingClient";
+import { getMaxLocationsFromPlanName } from "@/lib/billingTiers";
 
 type LocationRow = {
   id: string;
@@ -23,6 +25,12 @@ export default function LocationsManager() {
   const [savingNew, setSavingNew] = useState(false);
 
   const [savingId, setSavingId] = useState<string | null>(null);
+
+  // Billing gating
+  const [billingLoading, setBillingLoading] = useState(true);
+  const [billingStatus, setBillingStatus] = useState<string | null>(null);
+  const [planName, setPlanName] = useState<string | null>(null);
+  const [maxAllowedLocations, setMaxAllowedLocations] = useState<number>(1);
 
   async function loadLocations() {
     setLoading(true);
@@ -61,12 +69,60 @@ export default function LocationsManager() {
     }
   }
 
+  async function loadBilling() {
+    setBillingLoading(true);
+    try {
+      const bs = await getBillingStatusClient();
+
+      const status = bs?.status ?? null;
+      const pn = bs?.plan_name ?? null;
+
+      setBillingStatus(status);
+      setPlanName(pn);
+
+      // If we don’t know plan_name, safest is single site.
+      const max = getMaxLocationsFromPlanName(pn);
+      setMaxAllowedLocations(max);
+    } catch (e) {
+      console.error("[LocationsManager] billing status failed", e);
+      setBillingStatus(null);
+      setPlanName(null);
+      setMaxAllowedLocations(1);
+    } finally {
+      setBillingLoading(false);
+    }
+  }
+
   useEffect(() => {
+    // Parallel load: faster UI, fewer sad humans
     loadLocations();
+    loadBilling();
   }, []);
+
+  const activeCount = useMemo(
+    () => locations.filter((l) => l.active).length,
+    [locations]
+  );
+
+  const isAtLimit = useMemo(() => {
+    // While billing is loading, don’t prematurely block the UI.
+    if (billingLoading) return false;
+    return activeCount >= maxAllowedLocations;
+  }, [billingLoading, activeCount, maxAllowedLocations]);
+
+  const canAddLocation = useMemo(() => {
+    if (billingLoading) return true;
+    return activeCount < maxAllowedLocations;
+  }, [billingLoading, activeCount, maxAllowedLocations]);
 
   async function handleAddLocation(e: React.FormEvent) {
     e.preventDefault();
+
+    if (!canAddLocation) {
+      alert("You’ve reached your locations limit. Upgrade your plan to add more sites.");
+      return;
+    }
+
     const name = newName.trim();
     if (!name) return;
 
@@ -88,6 +144,9 @@ export default function LocationsManager() {
 
       setNewName("");
       await loadLocations();
+
+      // Re-check billing after location changes (keeps UI honest)
+      await loadBilling();
     } catch (e: any) {
       console.error(e);
       alert(e?.message || "Failed to add location.");
@@ -117,6 +176,7 @@ export default function LocationsManager() {
       if (error) throw error;
 
       await loadLocations();
+      await loadBilling();
     } catch (e: any) {
       console.error(e);
       alert(e?.message || "Failed to save changes.");
@@ -125,10 +185,42 @@ export default function LocationsManager() {
     }
   }
 
-  const activeCount = locations.filter((l) => l.active).length;
+  // For upgrade flow: if user clicks upgrade, we ask for current+1 sites
+  const desiredLocations = Math.max(1, activeCount + 1);
 
   return (
     <div className="space-y-4">
+      {/* Limit banner */}
+      {isAtLimit && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="font-semibold">You’ve reached your locations limit.</div>
+              <div className="mt-0.5 text-xs text-amber-800">
+                Your plan covers up to <strong>{maxAllowedLocations}</strong>{" "}
+                location{maxAllowedLocations === 1 ? "" : "s"}. You’re currently using{" "}
+                <strong>{activeCount}</strong>.
+              </div>
+            </div>
+
+            {/* This POST will: portal if subscription exists, checkout if trial/no-sub */}
+            <form
+              method="POST"
+              action={`/api/stripe/upgrade-from-limit?desiredLocations=${encodeURIComponent(
+                String(desiredLocations)
+              )}&returnUrl=${encodeURIComponent("/locations")}`}
+            >
+              <button
+                type="submit"
+                className="inline-flex h-10 items-center justify-center rounded-xl bg-amber-600 px-4 text-sm font-semibold text-white hover:bg-amber-700"
+              >
+                Upgrade plan
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Summary / info */}
       <div className="rounded-2xl border border-white/40 bg-white/80 p-4 text-sm text-slate-700 shadow-sm backdrop-blur">
         <div className="flex flex-wrap items-center gap-2">
@@ -136,12 +228,31 @@ export default function LocationsManager() {
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
             Active: {activeCount}
           </span>
+
+          {!billingLoading && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+              Limit: {maxAllowedLocations}
+            </span>
+          )}
         </div>
+
         <p className="mt-2 text-xs text-slate-500">
           Add one location per site (for example: <strong>Pier Vista</strong>,
-          <strong> Kiosk</strong>). The location you pick in the top bar is
-          used to filter temperature logs and cleaning tasks.
+          <strong> Kiosk</strong>). The location you pick in the top bar is used to
+          filter temperature logs and cleaning tasks.
         </p>
+
+        {!billingLoading && (
+          <p className="mt-2 text-[11px] text-slate-500">
+            Billing status: <strong>{billingStatus ?? "none"}</strong>
+            {planName ? (
+              <>
+                {" "}
+                • Plan: <strong>{planName}</strong>
+              </>
+            ) : null}
+          </p>
+        )}
       </div>
 
       {/* Add location form */}
@@ -159,20 +270,41 @@ export default function LocationsManager() {
             onChange={(e) => setNewName(e.target.value)}
             className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm shadow-inner"
             placeholder="e.g. Pier Vista, Kiosk, Upstairs kitchen"
+            disabled={!canAddLocation}
           />
         </div>
+
         <button
           type="submit"
-          disabled={!newName.trim() || savingNew}
+          disabled={!newName.trim() || savingNew || !canAddLocation}
           className={cls(
             "h-10 rounded-2xl px-4 text-sm font-medium text-white shadow-sm shadow-emerald-500/30",
-            newName.trim() && !savingNew
+            newName.trim() && !savingNew && canAddLocation
               ? "bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 hover:brightness-105"
               : "bg-slate-400 cursor-not-allowed"
           )}
+          title={!canAddLocation ? "Upgrade your plan to add more locations" : undefined}
         >
           {savingNew ? "Adding…" : "Add location"}
         </button>
+
+        {/* If they’re blocked, give them a direct upgrade CTA right here too */}
+        {!canAddLocation && !billingLoading && (
+          <form
+            method="POST"
+            action={`/api/stripe/upgrade-from-limit?desiredLocations=${encodeURIComponent(
+              String(desiredLocations)
+            )}&returnUrl=${encodeURIComponent("/locations")}`}
+            className="sm:ml-2"
+          >
+            <button
+              type="submit"
+              className="h-10 rounded-2xl border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+            >
+              Upgrade plan
+            </button>
+          </form>
+        )}
       </form>
 
       {/* List */}
@@ -237,9 +369,7 @@ export default function LocationsManager() {
                       </button>
                     </div>
                     {isSaving && (
-                      <span className="text-[11px] text-slate-400">
-                        Saving…
-                      </span>
+                      <span className="text-[11px] text-slate-400">Saving…</span>
                     )}
                   </div>
                 </div>

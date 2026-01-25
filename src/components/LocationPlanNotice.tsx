@@ -159,16 +159,20 @@ export default function LocationPlanNotice() {
           To add more sites, upgrade your plan on the billing page.
         </div>
       </div>
-      <form method="POST" action="/api/stripe/create-checkout-session
-  ?target_band=up_to_3
-">
+      <form
+  method="POST"
+  action={`/api/stripe/upgrade-from-limit?returnUrl=${encodeURIComponent(
+    "https://temptake.com/locations"
+  )}`}
+>
   <button
     type="submit"
-    className="rounded-md bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+    className="...your button classes..."
   >
     Upgrade plan
   </button>
 </form>
+
 
     </div>
   );
