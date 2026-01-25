@@ -10,9 +10,17 @@ type StatusJson = {
   hasValid: boolean;
   active: boolean;
   onTrial: boolean;
+
   status?: string | null;
+
+  // core billing fields
+  priceId?: string | null;
+  planName?: string | null; // derived from priceId (UI convenience)
+  cancelAtPeriodEnd?: boolean | null;
+
   trialEndsAt?: string | null;
   currentPeriodEnd?: string | null;
+
   reason?: string;
 };
 
@@ -22,10 +30,32 @@ function addDays(date: Date, days: number) {
   return d;
 }
 
+/**
+ * Map Stripe price_id -> plan name (UI only).
+ * Gating should be done via priceId, not this string.
+ */
+function planNameFromPriceId(priceId: string | null): string | null {
+  if (!priceId) return null;
+
+  const single = process.env.STRIPE_PRICE_SINGLE_SITE ?? "";
+  const singleAnnual = process.env.STRIPE_PRICE_SINGLE_SITE_ANNUAL ?? "";
+  const upTo3 = process.env.STRIPE_PRICE_UP_TO_3 ?? "";
+  const upTo5 = process.env.STRIPE_PRICE_UP_TO_5 ?? "";
+
+  if (priceId === single) return "Single site (monthly)";
+  if (priceId === singleAnnual) return "Single site (annual)";
+  if (priceId === upTo3) return "Up to 3 sites (monthly)";
+  if (priceId === upTo5) return "Up to 5 sites (monthly)";
+
+  // Unknown/legacy/custom
+  return "Custom / legacy";
+}
+
 export async function GET(req: Request) {
   try {
     // 1) Prefer Bearer token if provided (client -> server)
-    const authHeader = req.headers.get("authorization") || req.headers.get("Authorization");
+    const authHeader =
+      req.headers.get("authorization") || req.headers.get("Authorization");
     const bearer = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
     let userId: string | null = null;
@@ -88,7 +118,9 @@ export async function GET(req: Request) {
     // 4) Read subscription using admin (RLS-proof)
     let { data: sub, error: subErr } = await supabaseAdmin
       .from("billing_subscriptions")
-      .select("status, trial_ends_at, current_period_end, cancel_at_period_end, created_at")
+      .select(
+        "status, price_id, trial_ends_at, current_period_end, cancel_at_period_end, created_at"
+      )
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -109,15 +141,19 @@ export async function GET(req: Request) {
     // 5) Self-heal: if missing, create a 14-day trial row
     if (!sub) {
       const trialEndsAt = addDays(new Date(), 14);
+      const trialIso = trialEndsAt.toISOString();
 
-      const { error: insErr } = await supabaseAdmin.from("billing_subscriptions").insert({
-        org_id: orgId,
-        user_id: userId,
-        status: "trialing",
-        trial_ends_at: trialEndsAt.toISOString(),
-        current_period_end: trialEndsAt.toISOString(),
-        cancel_at_period_end: false,
-      });
+      const { error: insErr } = await supabaseAdmin
+        .from("billing_subscriptions")
+        .insert({
+          org_id: orgId,
+          user_id: userId,
+          status: "trialing",
+          price_id: null, // trial has no Stripe price yet
+          trial_ends_at: trialIso,
+          current_period_end: trialIso,
+          cancel_at_period_end: false,
+        });
 
       if (insErr) {
         const out: StatusJson = {
@@ -134,7 +170,9 @@ export async function GET(req: Request) {
       // Re-read after insert
       const reread = await supabaseAdmin
         .from("billing_subscriptions")
-        .select("status, trial_ends_at, current_period_end, cancel_at_period_end, created_at")
+        .select(
+          "status, price_id, trial_ends_at, current_period_end, cancel_at_period_end, created_at"
+        )
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -157,7 +195,10 @@ export async function GET(req: Request) {
 
     const status = String(sub.status ?? "").toLowerCase();
 
-    const trialEndsAt = sub.trial_ends_at ? new Date(sub.trial_ends_at).toISOString() : null;
+    const trialEndsAt = sub.trial_ends_at
+      ? new Date(sub.trial_ends_at).toISOString()
+      : null;
+
     const currentPeriodEnd = sub.current_period_end
       ? new Date(sub.current_period_end).toISOString()
       : null;
@@ -165,23 +206,38 @@ export async function GET(req: Request) {
     const now = Date.now();
 
     const trialMs = sub.trial_ends_at ? new Date(sub.trial_ends_at).getTime() : null;
-    const inTrial = trialMs ? trialMs > now : false;
+    const inTrialWindow = trialMs ? trialMs > now : false;
 
-    const active = status === "active" || status === "trialing";
-    const onTrial = status === "trialing" || inTrial;
+    // Treat these as “valid” for access
+    const isActiveish =
+      status === "active" || status === "trialing" || status === "past_due";
 
-    const periodEndMs = sub.current_period_end ? new Date(sub.current_period_end).getTime() : null;
-    const stillInPaidPeriod = status === "canceled" && periodEndMs ? periodEndMs > now : false;
+    const onTrial = status === "trialing" || inTrialWindow;
 
-    const hasValid = active || onTrial || stillInPaidPeriod;
+    const periodEndMs = sub.current_period_end
+      ? new Date(sub.current_period_end).getTime()
+      : null;
+
+    const stillInPaidPeriod =
+      status === "canceled" && periodEndMs ? periodEndMs > now : false;
+
+    const hasValid = isActiveish || onTrial || stillInPaidPeriod;
+
+    const priceId = (sub.price_id as string | null) ?? null;
+    const planName = planNameFromPriceId(priceId);
 
     const out: StatusJson = {
       ok: true,
       loggedIn: true,
       hasValid,
-      active: active || stillInPaidPeriod,
+      active: isActiveish || stillInPaidPeriod,
       onTrial,
       status,
+
+      priceId,
+      planName,
+      cancelAtPeriodEnd: (sub.cancel_at_period_end as boolean | null) ?? null,
+
       trialEndsAt,
       currentPeriodEnd,
       reason: "ok",
