@@ -3,7 +3,7 @@
 
 /**
  * Shape returned by /api/billing/status
- * (make the API the single source of truth, don’t invent fields client-side).
+ * API is the single source of truth.
  */
 export type BillingStatus = {
   ok: boolean;
@@ -14,11 +14,14 @@ export type BillingStatus = {
 
   status: string | null;
 
-  // source of truth for plan gating
+  // core billing fields
   priceId: string | null;
 
   // UI convenience (derived server-side)
   planName: string | null;
+
+  // SOURCE OF TRUTH for gating (derived server-side)
+  maxLocations: number;
 
   cancelAtPeriodEnd: boolean | null;
 
@@ -57,6 +60,12 @@ export async function getBillingStatusClient(): Promise<BillingStatus | null> {
       priceId: data?.priceId ?? null,
       planName: data?.planName ?? null,
 
+      // Default to 1 if API ever omits it for some reason
+      maxLocations:
+        Number.isFinite(Number(data?.maxLocations)) && Number(data?.maxLocations) > 0
+          ? Number(data.maxLocations)
+          : 1,
+
       cancelAtPeriodEnd: data?.cancelAtPeriodEnd ?? null,
 
       trialEndsAt: data?.trialEndsAt ?? null,
@@ -68,28 +77,6 @@ export async function getBillingStatusClient(): Promise<BillingStatus | null> {
     console.error("[billingClient] error:", err);
     return null;
   }
-}
-
-/**
- * Source-of-truth gating:
- * priceId -> max locations.
- */
-export function getMaxLocationsFromPriceId(priceId: string | null | undefined): number {
-  // If there’s no priceId yet (trial / no sub), default to single site.
-  if (!priceId) return 1;
-
-  const single = process.env.NEXT_PUBLIC_STRIPE_PRICE_SINGLE_SITE ?? "";
-  const singleAnnual = process.env.NEXT_PUBLIC_STRIPE_PRICE_SINGLE_SITE_ANNUAL ?? "";
-  const upTo3 = process.env.NEXT_PUBLIC_STRIPE_PRICE_UP_TO_3 ?? "";
-  const upTo5 = process.env.NEXT_PUBLIC_STRIPE_PRICE_UP_TO_5 ?? "";
-
-  if (priceId === single) return 1;
-  if (priceId === singleAnnual) return 1;
-  if (priceId === upTo3) return 3;
-  if (priceId === upTo5) return 5;
-
-  // Unknown/legacy/custom: safest is restrict, not “free unlimited locations”.
-  return 1;
 }
 
 /**

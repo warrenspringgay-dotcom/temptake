@@ -4,7 +4,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getBillingStatusClient, getMaxLocationsFromPriceId } from "@/lib/billingClient";
+import { getBillingStatusClient, type BillingStatus } from "@/lib/billingClient";
 
 type LocationRow = {
   id: string;
@@ -24,11 +24,9 @@ export default function LocationsManager() {
   const [savingNew, setSavingNew] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  // Billing gating (new source-of-truth = priceId from /api/billing/status)
+  // Billing gating (server is source of truth)
   const [billingLoading, setBillingLoading] = useState(true);
-  const [billingStatus, setBillingStatus] = useState<string | null>(null);
-  const [planName, setPlanName] = useState<string | null>(null);
-  const [priceId, setPriceId] = useState<string | null>(null);
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [maxAllowedLocations, setMaxAllowedLocations] = useState<number>(1);
 
   async function loadLocations() {
@@ -39,7 +37,6 @@ export default function LocationsManager() {
       if (!orgId) {
         setLocations([]);
         setErr("No organisation found for this user.");
-        setLoading(false);
         return;
       }
 
@@ -72,24 +69,17 @@ export default function LocationsManager() {
     setBillingLoading(true);
     try {
       const bs = await getBillingStatusClient();
+      setBilling(bs);
 
-      // New shape (per your updated /api/billing/status route)
-      const status = (bs as any)?.status ?? null;
-      const pn = (bs as any)?.planName ?? null;
-      const pid = (bs as any)?.priceId ?? null;
+      const max =
+        bs && Number.isFinite(Number(bs.maxLocations)) && Number(bs.maxLocations) > 0
+          ? Number(bs.maxLocations)
+          : 1;
 
-      setBillingStatus(status);
-      setPlanName(pn);
-      setPriceId(pid);
-
-      // Price ID is the only thing that matters for gating
-      const max = getMaxLocationsFromPriceId(pid);
       setMaxAllowedLocations(max);
     } catch (e) {
       console.error("[LocationsManager] billing status failed", e);
-      setBillingStatus(null);
-      setPlanName(null);
-      setPriceId(null);
+      setBilling(null);
       setMaxAllowedLocations(1);
     } finally {
       setBillingLoading(false);
@@ -107,14 +97,14 @@ export default function LocationsManager() {
     [locations]
   );
 
-  const isAtLimit = useMemo(() => {
-    if (billingLoading) return false;
-    return activeCount >= maxAllowedLocations;
-  }, [billingLoading, activeCount, maxAllowedLocations]);
-
   const canAddLocation = useMemo(() => {
     if (billingLoading) return true;
     return activeCount < maxAllowedLocations;
+  }, [billingLoading, activeCount, maxAllowedLocations]);
+
+  const isAtLimit = useMemo(() => {
+    if (billingLoading) return false;
+    return activeCount >= maxAllowedLocations;
   }, [billingLoading, activeCount, maxAllowedLocations]);
 
   // If they click upgrade, they typically want one more than current usage
@@ -192,13 +182,14 @@ export default function LocationsManager() {
   }
 
   const upgradeAction = useMemo(() => {
-    // One route to rule them all:
-    // - if Stripe sub exists -> portal update flow
-    // - if trial/no-sub -> checkout for right tier
     return `/api/stripe/upgrade-from-limit?desiredLocations=${encodeURIComponent(
       String(desiredLocations)
     )}&returnUrl=${encodeURIComponent("/locations")}`;
   }, [desiredLocations]);
+
+  const billingStatus = billing?.status ?? null;
+  const planName = billing?.planName ?? null;
+  const priceId = billing?.priceId ?? null;
 
   return (
     <div className="space-y-4">
@@ -270,6 +261,7 @@ export default function LocationsManager() {
                 • Plan: <strong>{planName}</strong>
               </>
             ) : null}
+            {/* Debug only. Remove later unless you like leaking internal ids to users. */}
             {priceId ? (
               <>
                 {" "}

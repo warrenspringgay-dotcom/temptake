@@ -1,115 +1,73 @@
+// src/components/WelcomeBanner.tsx
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { getBillingStatusClient } from "@/lib/billingClient"; // ← You already have this from earlier work
+import React, { useEffect, useState } from "react";
+import { getBillingStatusClient, type BillingStatus } from "@/lib/billingClient";
 
-type BillingInfo = {
+type BannerBilling = {
   status: string | null;
   trialEndsAt: string | null;
   planName: string | null;
 };
 
+function fmtDDMMYYYY(iso: string) {
+  const d = new Date(iso);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
 export default function WelcomeBanner() {
-  const [billing, setBilling] = useState<BillingInfo | null>(null);
+  const [billing, setBilling] = useState<BannerBilling>({
+    status: null,
+    trialEndsAt: null,
+    planName: null,
+  });
+
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function load() {
+    let mounted = true;
+
+    (async () => {
       try {
-        const data = await getBillingStatusClient();
+        const data: BillingStatus | null = await getBillingStatusClient();
+
+        if (!mounted) return;
+
         setBilling({
           status: data?.status ?? null,
-          trialEndsAt: data?.trial_ends_at ?? null,
-          planName: data?.plan_name ?? null,
+          trialEndsAt: data?.trialEndsAt ?? null,
+          planName: data?.planName ?? null,
         });
-      } catch {
-        setBilling(null);
+      } catch (e) {
+        // Don’t hard-fail the UI because billing had a wobble.
+        console.error("[WelcomeBanner] billing load failed", e);
+      } finally {
+        if (mounted) setLoading(false);
       }
-    }
-    load();
+    })();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  // ========== UI LOGIC ==========
-  let banner = null;
+  if (loading) return null;
 
-  if (billing) {
-    const s = billing.status;
-    const trialEnd = billing.trialEndsAt
-      ? new Date(billing.trialEndsAt)
-      : null;
-
-    if (s === "trialing" && trialEnd) {
-      const daysLeft = Math.ceil(
-        (trialEnd.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-      );
-
-      banner = (
-        <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-amber-900">
-          <p className="font-semibold">
-            Your free trial is active — {daysLeft} day{daysLeft !== 1 ? "s" : ""} remaining.
-          </p>
-          <p className="text-sm mt-1">
-            Trial ends on {trialEnd.toLocaleDateString("en-GB")}.{" "}
-            <Link href="/billing" className="underline">
-              Manage subscription
-            </Link>
-          </p>
-        </div>
-      );
-    }
-
-    if (s === "past_due" || s === "unpaid") {
-      banner = (
-        <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-red-800">
-          <p className="font-semibold">Payment required</p>
-          <p className="text-sm mt-1">
-            Your subscription needs attention.{" "}
-            <Link href="/billing" className="underline font-semibold">
-              Update payment details
-            </Link>
-          </p>
-        </div>
-      );
-    }
-
-    if (s === "active") {
-      banner = (
-        <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-emerald-900">
-          <p className="font-semibold">
-            Subscription active — {billing.planName}
-          </p>
-          <p className="text-sm mt-1">
-            Thank you for being a TempTake customer!
-          </p>
-        </div>
-      );
-    }
-
-    if (s === null) {
-      banner = (
-        <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-slate-700">
-          <p className="font-semibold">No subscription yet</p>
-          <p className="text-sm mt-1">
-            Start your trial to unlock temperatures, cleaning, allergens and full reporting.{" "}
-            <Link href="/billing" className="underline font-semibold">
-              Choose a plan
-            </Link>
-          </p>
-        </div>
-      );
-    }
-  }
+  // If you only want this banner during trial, keep it simple:
+  if (billing.status !== "trialing") return null;
 
   return (
-    <div className="space-y-4">
-      {banner}
+    <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 text-sm text-slate-800 shadow-sm backdrop-blur">
+      <div className="font-semibold">Welcome to TempTake</div>
 
-      <div className="rounded-xl bg-white border p-6 shadow-sm">
-        <h1 className="text-xl font-semibold">Welcome to TempTake 👋</h1>
-        <p className="text-slate-600 mt-1">
-          Your daily food safety checks all in one place.
-        </p>
-      </div>
+      <p className="mt-1 text-xs text-slate-600">
+        You’re currently on a free trial
+        {billing.trialEndsAt ? ` until ${fmtDDMMYYYY(billing.trialEndsAt)}` : ""}.
+        {billing.planName ? ` Plan: ${billing.planName}.` : ""}
+      </p>
     </div>
   );
 }
