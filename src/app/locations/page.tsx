@@ -1,7 +1,6 @@
 // src/app/locations/page.tsx
 import React from "react";
 import LocationsManager from "@/components/LocationsManager";
-import LocationPlanNotice from "@/components/LocationPlanNotice";
 import OnboardingBanner from "@/components/OnboardingBanner";
 
 export const dynamic = "force-dynamic";

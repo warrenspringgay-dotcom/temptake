@@ -16,6 +16,7 @@ type StatusJson = {
   // core billing fields
   priceId?: string | null;
   planName?: string | null; // derived from priceId (UI convenience)
+  maxLocations?: number; // SOURCE OF TRUTH for gating (server-derived)
   cancelAtPeriodEnd?: boolean | null;
 
   trialEndsAt?: string | null;
@@ -31,11 +32,32 @@ function addDays(date: Date, days: number) {
 }
 
 /**
+ * Server-side mapping: Stripe price_id -> max locations
+ * IMPORTANT: keep this on the server so the client isn't tied to env injection.
+ */
+function maxLocationsFromPriceId(priceId: string | null): number {
+  // Trial / no Stripe subscription yet -> single site gating
+  if (!priceId) return 1;
+
+  const single = process.env.STRIPE_PRICE_SINGLE_SITE ?? "";
+  const singleAnnual = process.env.STRIPE_PRICE_SINGLE_SITE_ANNUAL ?? "";
+  const upTo3 = process.env.STRIPE_PRICE_UP_TO_3 ?? "";
+  const upTo5 = process.env.STRIPE_PRICE_UP_TO_5 ?? "";
+
+  if (priceId === single) return 1;
+  if (priceId === singleAnnual) return 1;
+  if (priceId === upTo3) return 3;
+  if (priceId === upTo5) return 5;
+
+  // Unknown/legacy/custom: safest is restrict, not “unlimited”.
+  return 1;
+}
+
+/**
  * Map Stripe price_id -> plan name (UI only).
- * Gating should be done via priceId, not this string.
  */
 function planNameFromPriceId(priceId: string | null): string | null {
-  if (!priceId) return null;
+  if (!priceId) return "Free trial";
 
   const single = process.env.STRIPE_PRICE_SINGLE_SITE ?? "";
   const singleAnnual = process.env.STRIPE_PRICE_SINGLE_SITE_ANNUAL ?? "";
@@ -47,7 +69,6 @@ function planNameFromPriceId(priceId: string | null): string | null {
   if (priceId === upTo3) return "Up to 3 sites (monthly)";
   if (priceId === upTo5) return "Up to 5 sites (monthly)";
 
-  // Unknown/legacy/custom
   return "Custom / legacy";
 }
 
@@ -225,6 +246,7 @@ export async function GET(req: Request) {
 
     const priceId = (sub.price_id as string | null) ?? null;
     const planName = planNameFromPriceId(priceId);
+    const maxLocations = maxLocationsFromPriceId(priceId);
 
     const out: StatusJson = {
       ok: true,
@@ -236,6 +258,7 @@ export async function GET(req: Request) {
 
       priceId,
       planName,
+      maxLocations,
       cancelAtPeriodEnd: (sub.cancel_at_period_end as boolean | null) ?? null,
 
       trialEndsAt,
