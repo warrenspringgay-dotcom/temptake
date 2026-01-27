@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { useAuth } from "@/components/AuthProvider";
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import LocationSwitcher from "@/components/LocationSwitcher";
 
 type Tab = {
   href: string;
@@ -298,8 +299,23 @@ export default function MobileMenu() {
                 </div>
               ) : (
                 <>
-                  {/* NAV */}
+                  {/* LOCATION (GLOBAL CONTEXT) */}
                   <div className="px-2 pt-2">
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-emerald-700">
+                        Location
+                      </div>
+                      <div className="mt-2">
+                        <LocationSwitcher />
+                      </div>
+                      <div className="mt-2 text-[11px] text-emerald-800/80">
+                        Logs and tasks will be saved to the selected location.
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* NAV */}
+                  <div className="px-2 pt-3">
                     <div className="px-2 pb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
                       Navigation
                     </div>
@@ -348,7 +364,7 @@ export default function MobileMenu() {
                         </Link>
                       ))}
 
-                      {/* ✅ Install/Get app: triggers PWA prompt when possible, otherwise routes to dashboard */}
+                      {/* ✅ Install/Get app */}
                       <button
                         type="button"
                         onClick={handleInstallClick}

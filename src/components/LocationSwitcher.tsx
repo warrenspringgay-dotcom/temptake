@@ -1,24 +1,28 @@
 // src/components/LocationSwitcher.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import {
-  getActiveLocationIdClient,
-  setActiveLocationIdClient,
-} from "@/lib/locationClient";
+import { getActiveLocationIdClient, setActiveLocationIdClient } from "@/lib/locationClient";
 
 type LocationRow = {
   id: string;
   name: string;
 };
 
+const cls = (...parts: Array<string | false | null | undefined>) =>
+  parts.filter(Boolean).join(" ");
+
 export default function LocationSwitcher() {
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+
+  const activeName = useMemo(() => {
+    return locations.find((l) => l.id === activeId)?.name ?? "";
+  }, [locations, activeId]);
 
   useEffect(() => {
     let alive = true;
@@ -33,7 +37,6 @@ export default function LocationSwitcher() {
           if (!alive) return;
           setLocations([]);
           setActiveId("");
-          setLoading(false);
           return;
         }
 
@@ -56,6 +59,9 @@ export default function LocationSwitcher() {
 
         setLocations(locs);
 
+        // Determine active location:
+        // 1) server/localStorage helper
+        // 2) fallback to first location
         const stored = await getActiveLocationIdClient();
         const storedIsValid = stored && locs.some((l) => l.id === stored);
 
@@ -64,14 +70,7 @@ export default function LocationSwitcher() {
           chosen = stored!;
         } else if (locs[0]) {
           chosen = locs[0].id;
-          try {
-            await setActiveLocationIdClient(chosen);
-          } catch (e) {
-            console.error(
-              "[LocationSwitcher] setActiveLocationIdClient(default)",
-              e
-            );
-          }
+          await setActiveLocationIdClient(chosen);
         }
 
         setActiveId(chosen);
@@ -88,71 +87,69 @@ export default function LocationSwitcher() {
     };
   }, []);
 
-  // Single-location auto-store
-  useEffect(() => {
-    if (locations.length === 1) {
-      const only = locations[0];
-      if (only.id !== activeId) {
-        setActiveId(only.id);
-        try {
-          // this is sync (void), so no .catch
-          setActiveLocationIdClient(only.id);
-        } catch (e) {
-          console.error(
-            "[LocationSwitcher] setActiveLocationIdClient(single)",
-            e
-          );
-        }
-      }
-    }
-  }, [locations, activeId]);
+  async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const id = e.target.value;
+    setActiveId(id);
+    await setActiveLocationIdClient(id);
+
+    // simplest way to ensure all screens reload scoped data
+    if (typeof window !== "undefined") window.location.reload();
+  }
 
   if (loading) {
     return (
-      <span className="hidden text-xs text-slate-400 md:inline">
-        Loading sites…
-      </span>
+      <div className="hidden items-center gap-2 md:flex">
+        <span className="text-[11px] uppercase tracking-wide text-slate-500">Current site</span>
+        <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
+          Loading…
+        </span>
+      </div>
     );
   }
 
   if (err || locations.length === 0) {
-    const msg = err ?? "No locations set";
     return (
-      <span className="hidden max-w-[140px] truncate text-xs text-slate-400 md:inline">
-        {msg}
-      </span>
+      <div className="hidden items-center gap-2 md:flex">
+        <span className="text-[11px] uppercase tracking-wide text-slate-500">Current site</span>
+        <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
+          {err ?? "None"}
+        </span>
+      </div>
     );
   }
 
-  if (locations.length === 1) return null;
-
-  async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    const id = e.target.value;
-    setActiveId(id);
-    try {
-      await setActiveLocationIdClient(id);
-      if (typeof window !== "undefined") {
-        window.location.reload();
-      }
-    } catch (error) {
-      console.error("[LocationSwitcher] change", error);
-    }
-  }
+  const multi = locations.length > 1;
 
   return (
-    <div className="flex items-center">
-      <select
-        value={activeId}
-        onChange={handleChange}
-        className="h-8 max-w-[180px] truncate rounded-xl border border-slate-200 bg-slate-50 px-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 md:max-w-[220px]"
-        title="Switch location"
+    <div className="hidden items-center gap-2 md:flex">
+      <span className="text-[11px] uppercase tracking-wide text-slate-500">Current site</span>
+
+      {/* Clear indicator */}
+      <span
+        className={cls(
+          "max-w-[220px] truncate rounded-full px-2 py-1 text-xs font-semibold shadow-sm",
+          "bg-emerald-50 text-emerald-800 border border-emerald-200"
+        )}
+        title={activeName || "—"}
       >
-        {locations.map((loc) => (
-          <option key={loc.id} value={loc.id}>
-            {loc.name}
-          </option>
-        ))}
-      </select>
+        {activeName || "—"}
+      </span>
+
+      {/* Selector only when needed */}
+      {multi && (
+        <select
+          value={activeId}
+          onChange={handleChange}
+          className="h-8 max-w-[180px] truncate rounded-xl border border-slate-200 bg-slate-50 px-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 md:max-w-[220px]"
+          title="Switch site"
+        >
+          {locations.map((loc) => (
+            <option key={loc.id} value={loc.id}>
+              {loc.name}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   );
 }

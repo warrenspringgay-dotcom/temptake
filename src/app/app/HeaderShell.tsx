@@ -67,14 +67,20 @@ export default function HeaderShell() {
           )}
         </div>
 
-        {/* Desktop right: org/location + user menu */}
-        {ready && user && (
-          <div className="hidden items-center gap-3 md:flex">
-            <OrgName />
-            <LocationSwitcher />
-            <UserMenu />
-          </div>
-        )}
+       <div className="hidden items-center gap-3 md:flex">
+  <OrgName />
+
+  {/* Active location indicator */}
+  <div className="flex items-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-1">
+    <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+      Location
+    </span>
+    <LocationSwitcher />
+  </div>
+
+  <UserMenu />
+</div>
+
 
         {/* Mobile: ONE hamburger that includes nav + account */}
         <div className="flex md:hidden">

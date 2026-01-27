@@ -1,6 +1,6 @@
 # TempTake – Application Architecture & System Map
 
-_Last updated: Analytics consent, PostHog, PWA, Google Auth_
+_Last updated: Billing refactor, location gating, Stripe upgrade flows_
 
 ---
 
@@ -11,6 +11,7 @@ TempTake is a UK-focused food safety compliance platform designed to replace SFB
 Core goals:
 - Inspection-ready records
 - Minimal friction for staff
+- Predictable, enforceable billing rules
 - No auth-breaking “clever” caching
 - UK GDPR / PECR compliant by default
 
@@ -18,9 +19,9 @@ Core goals:
 
 ## 2. Tech stack
 
-- **Next.js (App Router)**
+- **Next.js (App Router, v16+)**
 - **Supabase** (Auth, Database, RLS)
-- **Stripe** (Billing)
+- **Stripe** (Subscriptions & Billing Portal)
 - **PostHog (EU)** – consent gated
 - **Vercel** (Hosting)
 - **PWA** with safe service worker rules
@@ -54,11 +55,13 @@ On first successful login:
 - Organisation created
 - Default location created
 - Trial subscription inserted
-- User linked to org
+- User linked to organisation
 
 Endpoints:
 - `/api/org/ensure`
 - `/api/signup/bootstrap`
+
+Every authenticated user always has a valid org and billing context.
 
 ---
 
@@ -76,7 +79,7 @@ Endpoints:
 - `/terms`
 - `/cookies`
 
-### Protected
+### Protected routes
 All other app routes.
 
 Enforced in:
@@ -105,20 +108,19 @@ State stored in `localStorage`.
 ### Provider
 - `src/components/PosthogProvider.tsx`
 
-### Key rules
+### Rules
 - Disabled by default
 - No tracking before consent
 - Explicit opt-in required
 - EU PostHog host
 
 ### Consent storage
-localStorage: tt_consent_v1
+`localStorage: tt_consent_v1`
+```json
 {
-analytics: boolean
+  "analytics": true
 }
-
-yaml
-Copy code
+```
 
 ### Events
 - `$pageview`
@@ -157,27 +159,101 @@ Rules:
 Cache versioning:
 ```js
 const VERSION = "v7";
+```
 
-10. Billing
+---
 
-Stripe subscriptions
+## 10. Billing & subscription architecture
 
-Table: billing_subscriptions
+### Core principle
+**The server is the source of truth.**  
+The client never infers plan limits.
 
-Trial → Active → Past Due
+### Stripe model
+- Subscription-based billing
+- Monthly & annual plans
+- Location-count–based pricing
+- Custom pricing for 6+ locations
 
-Stripe customer created only when required
+### Tables
+- `billing_subscriptions`
+- `billing_customers`
 
-11. Design constraints (intentional)
+### Billing lifecycle
+- Trial → Active → Past Due → Cancelled
+- Stripe customer created only when required
+- Trial rows are auto-healed if missing
 
-No offline auth
+---
 
-No cached HTML
+### Billing status API (authoritative)
 
-No server-side analytics
+Endpoint:
+- `GET /api/billing/status`
 
-No silent consent
+Responsibilities:
+- Authenticate user
+- Resolve organisation
+- Read latest subscription (admin, RLS-safe)
+- Auto-create 14-day trial if missing
+- Derive:
+  - `priceId`
+  - `planName` (UI only)
+  - `maxLocations` (**authoritative gating value**)
+  - `hasValid`, `active`, `onTrial`
 
-No shared staff accounts
+Returned fields include:
+- `priceId`
+- `maxLocations`
+- `planName`
+- `trialEndsAt`
+- `currentPeriodEnd`
 
-These are deliberate.
+No client-side plan parsing.
+
+---
+
+### Location gating
+
+Locations are gated by **server-derived `maxLocations`**, not plan names.
+
+Enforced in:
+- `LocationsManager.tsx`
+- `/api/stripe/upgrade-from-limit`
+
+Behaviour:
+- Users can add locations up to their plan limit
+- Once at limit:
+  - UI disables creation
+  - Upgrade banner shown
+  - Upgrade flow is deterministic
+
+---
+
+### Upgrade flow (single entry point)
+
+Endpoint:
+- `POST /api/stripe/upgrade-from-limit`
+
+Logic:
+- Determines desired location count
+- Selects correct Stripe tier
+- Routes user to:
+  - Stripe Billing Portal (existing subscriptions)
+  - Stripe Checkout (trial / new subscriptions)
+  - Contact flow (custom / 6+ locations)
+
+Return handled via `returnUrl`.
+
+---
+
+## 11. Design constraints (intentional)
+
+- No offline auth
+- No cached HTML
+- No server-side analytics
+- No silent consent
+- No plan-name-based gating
+- No shared staff accounts
+
+These are deliberate decisions.
