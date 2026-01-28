@@ -8,10 +8,17 @@ import { getActiveOrgIdServer } from "@/lib/orgServer";
 
 export type NewFoodTemp = {
   takenAt?: string; // ISO optional
+
+  // "Area" within the site (Kitchen, Delivery, Fridge 1 etc.)
   location: string;
+
   item: string;
   tempC: number;
-  // keep for caller compatibility, but we don't insert it unless your table has this column
+
+  // NEW: explicit site id (source of truth)
+  locationId?: string | null;
+
+  // keep for caller compatibility
   source?: "probe" | "fridge" | "freezer" | "delivery" | "other";
   notes?: string;
 };
@@ -19,47 +26,62 @@ export type NewFoodTemp = {
 type Result = { ok: true } | { ok: false; message: string };
 
 export async function logFoodTemp(payload: NewFoodTemp): Promise<Result> {
-  // ✅ Require authentication
   const user = await requireUser();
   const supabase = await getServerSupabase();
-
-  // ✅ Get organisation ID safely
   const orgId = await getActiveOrgIdServer();
 
-  // ✅ Validate and normalise data
-  const location = (payload.location ?? "").trim();
+  const area = (payload.location ?? "").trim();
   const item = (payload.item ?? "").trim();
   const tempC = Number(payload.tempC);
-  const taken_at = payload.takenAt ?? new Date().toISOString();
+  const atIso = payload.takenAt ?? new Date().toISOString();
   const notes = payload.notes?.trim() || null;
 
-  if (!location) return { ok: false, message: "Location is required." };
+  if (!area) return { ok: false, message: "Location/area is required." };
   if (!item) return { ok: false, message: "Item is required." };
   if (!Number.isFinite(tempC)) return { ok: false, message: "Temperature must be a number." };
 
-  // ✅ Prepare record for insertion
-  // Your Supabase table `food_temp_logs` has columns:
-  // id, org_id, created_by, at, area, target_key, temp_c, status, note, meta, staff_initials
-  const insertRow: any = {
-    org_id: orgId,
-    created_by: user.id,      // correct column name (not user_id)
-    at: taken_at,
-    area: location,
-    note: item,
-    temp_c: tempC,
-    status: "ok",             // required if status column is NOT NULL
-    notes,                    // optional
-  };
+  // Resolve site location_id
+  let location_id: string | null = payload.locationId ?? null;
 
-  // ✅ Insert into Supabase
-  const { error } = await supabase.from("food_temp_logs").insert(insertRow);
+  // If caller didn't send locationId, pick the first active location for this org (server-side fallback).
+  // This matches your client helper behaviour.
+  if (!location_id) {
+    const { data, error } = await supabase
+      .from("locations")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
-  if (error) {
-    return { ok: false, message: error.message };
+    if (error || !data?.id) {
+      return { ok: false, message: "No active site selected (or available). Create/select a location first." };
+    }
+
+    location_id = String(data.id);
   }
 
-  // ✅ Revalidate pages that display this data
-  revalidatePath("/foodtemps");    // correct route
+  // Insert row
+  const insertRow: any = {
+    org_id: orgId,
+    location_id,              // ✅ site scope (critical)
+    created_by: user.id,
+    at: atIso,
+    area,                     // within-site area label
+    note: item,
+    temp_c: tempC,
+    status: "ok",
+    notes,
+  };
+
+  const { error: insErr } = await supabase.from("food_temp_logs").insert(insertRow);
+
+  if (insErr) {
+    return { ok: false, message: insErr.message };
+  }
+
+  revalidatePath("/foodtemps");
   revalidatePath("/dashboard");
   revalidatePath("/");
 

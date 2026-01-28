@@ -67,14 +67,14 @@ export default function HeaderShell() {
           )}
         </div>
 
-        {/* Desktop right: org/location + user menu */}
-        {ready && user && (
-          <div className="hidden items-center gap-2 md:flex">
-            <OrgName />
-            <LocationSwitcher />
-            <UserMenu />
-          </div>
-        )}
+       // Desktop right: org/location + user menu
+{ready && user && (
+  <div className="hidden items-center gap-2 md:flex">
+    <OrgName />
+    <LocationSwitcher />
+    <UserMenu />
+  </div>
+)}
 
         {/* Mobile: ONE hamburger that includes nav + account */}
         <div className="flex md:hidden">
