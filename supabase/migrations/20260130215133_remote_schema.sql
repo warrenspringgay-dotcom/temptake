@@ -1,24 +1,41 @@
-drop policy "daily_signoffs_insert_org" on "public"."daily_signoffs";
+drop policy if exists "daily_signoffs_insert_org" on "public"."daily_signoffs";
 
-drop policy "daily_signoffs_org_read" on "public"."daily_signoffs";
 
-drop policy "daily_signoffs_org_update" on "public"."daily_signoffs";
+drop policy if exists "daily_signoffs_org_read" on "public"."daily_signoffs";
 
-drop policy "daily_signoffs_org_write" on "public"."daily_signoffs";
+drop policy if exists "daily_signoffs_org_update" on "public"."daily_signoffs";
 
-drop policy "daily_signoffs_select_org" on "public"."daily_signoffs";
+drop policy if exists "daily_signoffs_org_write" on "public"."daily_signoffs";
 
-drop policy "daily_signoffs_update_org" on "public"."daily_signoffs";
+drop policy if exists "daily_signoffs_select_org" on "public"."daily_signoffs";
+
+drop policy if exists "daily_signoffs_update_org" on "public"."daily_signoffs";
 
 drop index if exists "public"."daily_signoffs_unique";
 
 alter table "public"."billing_customers" alter column "stripe_customer_id" drop not null;
 
-alter table "public"."billing_subscriptions" add column "cancelled_sent_at" timestamp with time zone;
+alter table "public"."billing_subscriptions" add column if not exists "cancelled_sent_at" timestamp with time zone;
 
-alter table "public"."billing_subscriptions" add column "last_payment_event_id" text;
+alter table "public"."billing_subscriptions" add column if not exists "last_payment_event_id" text;
 
-alter table "public"."billing_subscriptions" add column "payment_failed_sent_at" timestamp with time zone;
+alter table "public"."billing_subscriptions" add column if not exists "payment_failed_sent_at" timestamp with time zone;
+
+-- Drop ALL existing policies on daily_signoffs (prod may have legacy policy names)
+do $$
+declare
+  p record;
+begin
+  for p in
+    select policyname
+    from pg_policies
+    where schemaname = 'public'
+      and tablename  = 'daily_signoffs'
+  loop
+    execute format('drop policy if exists %I on public.daily_signoffs;', p.policyname);
+  end loop;
+end $$;
+
 
 alter table "public"."daily_signoffs" alter column "location_id" set data type uuid using "location_id"::uuid;
 
@@ -75,14 +92,47 @@ with check ((EXISTS ( SELECT 1
   WHERE ((uo.org_id = daily_signoffs.org_id) AND (uo.user_id = auth.uid())))));
 
 
-CREATE TRIGGER objects_delete_delete_prefix AFTER DELETE ON storage.objects FOR EACH ROW EXECUTE FUNCTION storage.delete_prefix_hierarchy_trigger();
+drop trigger if exists objects_delete_delete_prefix on storage.objects;
 
-CREATE TRIGGER objects_insert_create_prefix BEFORE INSERT ON storage.objects FOR EACH ROW EXECUTE FUNCTION storage.objects_insert_prefix_trigger();
+create trigger objects_delete_delete_prefix
+after delete on storage.objects
+for each row
+execute function storage.delete_prefix_hierarchy_trigger();
 
-CREATE TRIGGER objects_update_create_prefix BEFORE UPDATE ON storage.objects FOR EACH ROW WHEN (((new.name <> old.name) OR (new.bucket_id <> old.bucket_id))) EXECUTE FUNCTION storage.objects_update_prefix_trigger();
 
-CREATE TRIGGER prefixes_create_hierarchy BEFORE INSERT ON storage.prefixes FOR EACH ROW WHEN ((pg_trigger_depth() < 1)) EXECUTE FUNCTION storage.prefixes_insert_trigger();
+drop trigger if exists objects_insert_create_prefix on storage.objects;
 
-CREATE TRIGGER prefixes_delete_hierarchy AFTER DELETE ON storage.prefixes FOR EACH ROW EXECUTE FUNCTION storage.delete_prefix_hierarchy_trigger();
+create trigger objects_insert_create_prefix
+before insert on storage.objects
+for each row
+execute function storage.objects_insert_prefix_trigger();
+
+drop trigger if exists objects_update_create_prefix on storage.objects;
+
+create trigger objects_update_create_prefix
+before update on storage.objects
+for each row
+when (((new.name <> old.name) or (new.bucket_id <> old.bucket_id)))
+execute function storage.objects_update_prefix_trigger();
+
+drop trigger if exists prefixes_create_hierarchy on storage.prefixes;
+
+create trigger prefixes_create_hierarchy
+before insert on storage.prefixes
+for each row
+when ((pg_trigger_depth() < 1))
+execute function storage.prefixes_insert_trigger();
+
+drop trigger if exists prefixes_delete_hierarchy on storage.prefixes;
+
+create trigger prefixes_delete_hierarchy
+after delete on storage.prefixes
+for each row
+execute function storage.delete_prefix_hierarchy_trigger();
+
+
+
+
+
 
 
