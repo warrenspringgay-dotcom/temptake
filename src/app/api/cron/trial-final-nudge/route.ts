@@ -37,8 +37,13 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const origin = getOriginFromEnv(req.nextUrl.origin);
-    const billingUrl = `${origin}/pricing`;
+    // IMPORTANT: Deep-link to the app billing screen, not the marketing pricing page.
+    // Set NEXT_PUBLIC_APP_URL in env (e.g. https://app.temptake.com).
+    const appOrigin = (process.env.NEXT_PUBLIC_APP_URL ?? getOriginFromEnv(req.nextUrl.origin)).replace(
+      /\/$/,
+      ""
+    );
+    const billingUrl = `${appOrigin}/settings/billing`;
 
     let sent = 0;
     let skipped = 0;

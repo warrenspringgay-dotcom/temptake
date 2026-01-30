@@ -9,9 +9,17 @@ function getBearerToken(req: NextRequest) {
   return m?.[1] ?? null;
 }
 
-function originFromEnv() {
-  const fromEnv = process.env.NEXT_PUBLIC_SITE_URL;
-  if (fromEnv) return fromEnv.replace(/\/$/, "");
+/**
+ * Prefer the app origin for deep links inside emails.
+ * Set NEXT_PUBLIC_APP_URL in env (e.g. https://app.temptake.com).
+ * Fallbacks are kept for safety.
+ */
+function appOriginFromEnv() {
+  const app = process.env.NEXT_PUBLIC_APP_URL;
+  if (app) return app.replace(/\/$/, "");
+
+  const site = process.env.NEXT_PUBLIC_SITE_URL;
+  if (site) return site.replace(/\/$/, "");
 
   const vercel = process.env.NEXT_PUBLIC_VERCEL_URL;
   if (vercel) {
@@ -19,7 +27,9 @@ function originFromEnv() {
     return base.replace(/\/$/, "");
   }
 
-  return "https://temptake.com";
+  // Last resort: do NOT send users to marketing for billing actions.
+  // If you don’t have an app domain, change this to your actual app URL.
+  return "https://app.temptake.com";
 }
 
 type SubRow = {
@@ -76,8 +86,8 @@ export async function GET(req: NextRequest) {
       return !reminders?.t24; // not sent yet
     });
 
-    const base = originFromEnv();
-    const billingUrl = `${base}/billing`; // change if your billing route differs
+    const appOrigin = appOriginFromEnv();
+    const billingUrl = `${appOrigin}/settings/billing`;
 
     let sent = 0;
     let skipped = 0;
@@ -110,13 +120,17 @@ export async function GET(req: NextRequest) {
             <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.5">
               <h2 style="margin:0 0 12px">Your TempTake trial ends tomorrow</h2>
               <p style="margin:0 0 12px">
-                Your trial is due to end ${trialEnd ? `on <b>${trialEnd.toLocaleString("en-GB", {
-                  day: "2-digit",
-                  month: "2-digit",
-                  year: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}</b>.` : "tomorrow."}
+                Your trial is due to end ${
+                  trialEnd
+                    ? `on <b>${trialEnd.toLocaleString("en-GB", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}</b>.`
+                    : "tomorrow."
+                }
               </p>
               <p style="margin:0 0 12px">
                 To avoid interruption, add your payment details now.
