@@ -1,3 +1,8 @@
+-- Ensure extensions schema exists (Supabase convention)
+create schema if not exists extensions;
+
+-- Enable trigram extension for gin_trgm_ops
+create extension if not exists pg_trgm with schema extensions;
 
 
 SET statement_timeout = 0;
@@ -2224,7 +2229,11 @@ CREATE INDEX "allergen_items_org_idx" ON "public"."allergen_items" USING "btree"
 
 
 
-CREATE INDEX "allergen_matrix_item_trgm" ON "public"."allergen_matrix" USING "gin" ("item" "extensions"."gin_trgm_ops");
+create index if not exists allergen_matrix_item_trgm
+on public.allergen_matrix
+using gin (item extensions.gin_trgm_ops);
+
+
 
 
 
