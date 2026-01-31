@@ -71,6 +71,12 @@ export default function LocationsManager() {
       const bs = await getBillingStatusClient();
       setBilling(bs);
 
+      // ✅ Trial should be "open" (unlimited locations)
+      if (bs?.status === "trialing") {
+        setMaxAllowedLocations(Number.POSITIVE_INFINITY);
+        return;
+      }
+
       const max =
         bs && Number.isFinite(Number(bs.maxLocations)) && Number(bs.maxLocations) > 0
           ? Number(bs.maxLocations)
@@ -97,15 +103,27 @@ export default function LocationsManager() {
     [locations]
   );
 
+  const billingStatus = billing?.status ?? null;
+  const isTrial = billingStatus === "trialing";
+
   const canAddLocation = useMemo(() => {
+    // If billing is still loading, don't block the user.
     if (billingLoading) return true;
+
+    // ✅ Trial: always allow adding locations
+    if (isTrial) return true;
+
     return activeCount < maxAllowedLocations;
-  }, [billingLoading, activeCount, maxAllowedLocations]);
+  }, [billingLoading, isTrial, activeCount, maxAllowedLocations]);
 
   const isAtLimit = useMemo(() => {
     if (billingLoading) return false;
+
+    // ✅ Trial: never show "limit reached"
+    if (isTrial) return false;
+
     return activeCount >= maxAllowedLocations;
-  }, [billingLoading, activeCount, maxAllowedLocations]);
+  }, [billingLoading, isTrial, activeCount, maxAllowedLocations]);
 
   // If they click upgrade, they typically want one more than current usage
   const desiredLocations = Math.max(1, activeCount + 1);
@@ -187,13 +205,17 @@ export default function LocationsManager() {
     )}&returnUrl=${encodeURIComponent("/locations")}`;
   }, [desiredLocations]);
 
-  const billingStatus = billing?.status ?? null;
   const planName = billing?.planName ?? null;
   const priceId = billing?.priceId ?? null;
 
+  const limitLabel =
+    !billingLoading && !Number.isFinite(maxAllowedLocations)
+      ? "Unlimited"
+      : String(maxAllowedLocations);
+
   return (
     <div className="space-y-4">
-      {/* Limit banner */}
+      {/* Limit banner (paid plans only) */}
       {isAtLimit && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -241,7 +263,13 @@ export default function LocationsManager() {
 
           {!billingLoading && (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-              Limit: {maxAllowedLocations}
+              Limit: {limitLabel}
+            </span>
+          )}
+
+          {!billingLoading && isTrial && (
+            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 border border-emerald-200">
+              Trial: all features unlocked
             </span>
           )}
         </div>
@@ -308,7 +336,7 @@ export default function LocationsManager() {
         </form>
 
         {/* Upgrade CTA (NOT nested inside the form) */}
-        {!canAddLocation && !billingLoading && (
+        {!canAddLocation && !billingLoading && !isTrial && (
           <div className="mt-3">
             {isCustomUpgrade ? (
               <a
