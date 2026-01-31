@@ -25,13 +25,25 @@ function fmtDDMMYYYY(d: Date) {
   return `${dd}/${mm}/${yyyy}`;
 }
 
-function getOrigin(req: NextRequest) {
-  const env =
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    (process.env.NEXT_PUBLIC_VERCEL_URL
-      ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`
-      : "");
-  return (env || req.nextUrl.origin).replace(/\/$/, "");
+/**
+ * Prefer the app origin for deep links inside emails.
+ * Set NEXT_PUBLIC_APP_URL in env (e.g. https://app.temptake.com).
+ * Fallbacks are kept for safety.
+ */
+function appOriginFromEnv(req: NextRequest) {
+  const app = process.env.NEXT_PUBLIC_APP_URL;
+  if (app) return app.replace(/\/$/, "");
+
+  const site = process.env.NEXT_PUBLIC_SITE_URL;
+  if (site) return site.replace(/\/$/, "");
+
+  const vercel = process.env.NEXT_PUBLIC_VERCEL_URL;
+  if (vercel) {
+    const base = vercel.startsWith("http") ? vercel : `https://${vercel}`;
+    return base.replace(/\/$/, "");
+  }
+
+  return req.nextUrl.origin.replace(/\/$/, "");
 }
 
 type SubRow = {
@@ -78,7 +90,8 @@ export async function GET(req: NextRequest) {
       return !r.soon;
     });
 
-    const origin = getOrigin(req);
+    const origin = appOriginFromEnv(req);
+    const ctaUrl = `${origin}/settings/billing`;
 
     let sent = 0;
     let skipped = 0;
@@ -104,8 +117,6 @@ export async function GET(req: NextRequest) {
         const trialEnds = new Date(s.trial_ends_at);
         const trialEndsFmt = fmtDDMMYYYY(trialEnds);
 
-        const ctaUrl = `${origin}/pricing`;
-
         await sendEmail({
           to: email,
           subject: "Your TempTake trial ends soon",
@@ -116,11 +127,11 @@ export async function GET(req: NextRequest) {
                 Your TempTake trial is due to end on <strong>${trialEndsFmt}</strong>.
               </p>
               <p style="margin:0 0 16px">
-                To avoid interruption, pick a plan before then.
+                To avoid interruption, add your payment details now.
               </p>
               <p style="margin:0 0 18px">
                 <a href="${ctaUrl}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:10px 14px;border-radius:10px">
-                  Choose a plan
+                  Add payment details
                 </a>
               </p>
               <p style="margin:0;color:#555;font-size:12px">
