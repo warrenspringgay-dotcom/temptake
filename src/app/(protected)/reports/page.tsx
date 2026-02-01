@@ -1012,6 +1012,9 @@ export default function ReportsPage() {
 
   const printRef = useRef<HTMLDivElement>(null);
 
+  // ✅ NEW: track last auto-run location to prevent duplicate firing
+  const lastAutoLocationRef = useRef<string | "all" | null>(null);
+
   const visibleTemps = useMemo(() => {
     if (!temps) return null;
     return showAllTemps ? temps : temps.slice(0, 10);
@@ -1236,9 +1239,35 @@ export default function ReportsPage() {
     if (orgId && !initialRunDone) {
       runInstantAudit90();
       setInitialRunDone(true);
+      // after the first run, set the last auto location so the next change triggers correctly
+      lastAutoLocationRef.current = locationFilter;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
+
+  // ✅ NEW: auto-run when location changes (no more pressing "Run")
+  useEffect(() => {
+    if (!orgId) return;
+    if (!initialRunDone) return;
+    if (loading) return;
+
+    // prevent firing on initial mount / state hydration
+    if (lastAutoLocationRef.current === null) {
+      lastAutoLocationRef.current = locationFilter;
+      return;
+    }
+
+    // only act on real change
+    if (lastAutoLocationRef.current === locationFilter) return;
+
+    lastAutoLocationRef.current = locationFilter;
+
+    const locId = locationFilter !== "all" ? locationFilter : null;
+
+    // location does NOT impact ancillary sections, so skip those for speed
+    runRange(from, to, orgId, locId, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationFilter]);
 
   function downloadCSV() {
     if (!temps?.length) return;
@@ -1354,6 +1383,10 @@ export default function ReportsPage() {
               ))}
             </select>
             <div className="mt-1 text-[11px] text-slate-500">Current: {currentLocationLabel}</div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {/* tiny status hint so users don’t assume it’s broken */}
+              {loading ? "Loading…" : "Auto-runs when you change location."}
+            </div>
           </div>
         </div>
 
@@ -1889,10 +1922,8 @@ export default function ReportsPage() {
             >
               <div>
                 Showing{" "}
-                {showAllEducation
-                  ? staffReviews.length
-                  : Math.min(10, staffReviews.length)}{" "}
-                of {staffReviews.length} entries
+                {showAllEducation ? staffReviews.length : Math.min(10, staffReviews.length)} of{" "}
+                {staffReviews.length} entries
               </div>
               <button
                 type="button"
@@ -1955,9 +1986,7 @@ export default function ReportsPage() {
                         <td className="py-2 pr-3">
                           {r.expires_on ? formatISOToUK(r.expires_on) : "—"}
                           {r.days_until != null && (
-                            <span className="ml-1 text-xs text-slate-500">
-                              ({r.days_until}d)
-                            </span>
+                            <span className="ml-1 text-xs text-slate-500">({r.days_until}d)</span>
                           )}
                         </td>
                         <td className="py-2 pr-3">
@@ -2002,8 +2031,7 @@ export default function ReportsPage() {
               data-hide-on-print
             >
               <div>
-                Showing{" "}
-                {showAllEducation ? education.length : Math.min(10, education.length)} of{" "}
+                Showing {showAllEducation ? education.length : Math.min(10, education.length)} of{" "}
                 {education.length} entries
               </div>
               <button
@@ -2112,12 +2140,10 @@ export default function ReportsPage() {
 
         {/* Allergen review table (next 90 days, placed near allergen edits) */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-2 text-base font-semibold">
-            Allergen reviews (next 90 days)
-          </h3>
+          <h3 className="mb-2 text-base font-semibold">Allergen reviews (next 90 days)</h3>
           <p className="mb-3 text-xs text-slate-500">
-            Upcoming allergen review schedule from{" "}
-            <code>allergen_review_log</code> based on your configured intervals.
+            Upcoming allergen review schedule from <code>allergen_review_log</code> based on your
+            configured intervals.
           </p>
 
           <div className="overflow-x-auto">
@@ -2149,9 +2175,7 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3">
                         {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
                       </td>
-                      <td className="py-2 pr-3">
-                        {r.next_due ? formatISOToUK(r.next_due) : "—"}
-                      </td>
+                      <td className="py-2 pr-3">{r.next_due ? formatISOToUK(r.next_due) : "—"}</td>
                       <td className="py-2 pr-3">{r.days_until ?? "—"}</td>
                       <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
                     </tr>
@@ -2165,8 +2189,7 @@ export default function ReportsPage() {
         {/* Allergen edits table (NEW) */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
-            Allergen edits{" "}
-            {allergenChanges ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+            Allergen edits {allergenChanges ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
           <p className="mb-2 text-xs text-slate-500">
             Change log from <code>allergen_change_logs</code> for the selected range and location.

@@ -18,22 +18,27 @@ export type LogRow = {
   staff_initials: string | null;
   temp_c: number | null;
   status: string | null;
+  location_id?: string | null;
 };
 
 export async function listLogs(
-  opts: { from?: string; to?: string; limit?: number } = {}
+  opts: { from?: string; to?: string; limit?: number; locationId?: string | null } = {}
 ) {
   const sb = await getServerSupabase();
 
   let q = sb
     .from("food_temp_logs")
     .select(
-      "id,at,routine_id,routine_item_id,area,note,target_key,staff_initials,temp_c,status"
+      "id,at,routine_id,routine_item_id,area,note,target_key,staff_initials,temp_c,status,location_id"
     )
     .order("at", { ascending: false });
 
   if (opts.from) q = q.gte("at", opts.from);
   if (opts.to) q = q.lte("at", opts.to);
+
+  // ✅ Location scoping (if provided)
+  if (opts.locationId) q = q.eq("location_id", opts.locationId);
+
   if (opts.limit) q = q.limit(opts.limit);
 
   const { data, error } = await q;
@@ -42,11 +47,11 @@ export async function listLogs(
 }
 
 /* =========================
-   Custom Report (RESTORED)
+   Custom Report
 ========================= */
 
 export type CustomReport = {
-  period: { from?: string; to?: string };
+  period: { from?: string; to?: string; locationId?: string | null };
   totals: {
     total: number;
     fails: number;
@@ -62,7 +67,7 @@ function pct(n: number, d: number) {
 }
 
 export async function getCustomReport(
-  opts: { from?: string; to?: string; limit?: number } = {}
+  opts: { from?: string; to?: string; limit?: number; locationId?: string | null } = {}
 ): Promise<CustomReport> {
   await requireUser();
 
@@ -73,7 +78,7 @@ export async function getCustomReport(
   const pass = total - fails;
 
   return {
-    period: { from: opts.from, to: opts.to },
+    period: { from: opts.from, to: opts.to, locationId: opts.locationId ?? null },
     totals: {
       total,
       fails,
@@ -161,7 +166,7 @@ export type FourWeekTrainingDrift = {
 };
 
 export type FourWeekSummary = {
-  period: { from: string; to: string; days: number };
+  period: { from: string; to: string; days: number; locationId?: string | null };
 
   temperature: {
     total: number;
@@ -188,22 +193,27 @@ export type FourWeekSummary = {
 };
 
 export async function getFourWeeklyReview(
-  opts: { to?: string } = {}
+  opts: { to?: string; locationId?: string | null } = {}
 ): Promise<FourWeekSummary> {
   await requireUser();
   const sb = await getServerSupabase();
 
   const to = (opts.to ?? isoToday()).slice(0, 10);
   const from = addDays(to, -27);
+  const locationId = opts.locationId ?? null;
 
   /* ---------- 1) Temperature trends ---------- */
-  const { data: tempLogs, error: tErr } = await sb
+  let tQ = sb
     .from("food_temp_logs")
-    .select("id,at,area,note,target_key,staff_initials,temp_c,status")
+    .select("id,at,area,note,target_key,staff_initials,temp_c,status,location_id")
     .gte("at", from)
     .lte("at", to)
     .order("at", { ascending: false });
 
+  // ✅ Location scoping (if provided)
+  if (locationId) tQ = tQ.eq("location_id", locationId);
+
+  const { data: tempLogs, error: tErr } = await tQ;
   if (tErr) throw new Error(tErr.message);
 
   const tempRows = (tempLogs ?? []) as any[];
@@ -240,20 +250,28 @@ export async function getFourWeeklyReview(
     }));
 
   /* ---------- 2) Cleaning missed ---------- */
-  const { data: tasksRaw, error: cErr } = await sb
+  // NOTE: We scope tasks + runs by location if you have location_id columns (you do).
+  // If your cleaning_tasks are org-wide templates without location_id, remove the location filter for tasks.
+  let taskQ = sb
     .from("cleaning_tasks")
-    .select("id,task,area,category,frequency,weekday,month_day");
+    .select("id,task,area,category,frequency,weekday,month_day,location_id");
 
+  if (locationId) taskQ = taskQ.eq("location_id", locationId);
+
+  const { data: tasksRaw, error: cErr } = await taskQ;
   if (cErr) throw new Error(cErr.message);
 
   const tasks = (tasksRaw ?? []) as any[];
 
-  const { data: runsRaw, error: rErr } = await sb
+  let runQ = sb
     .from("cleaning_task_runs")
-    .select("task_id,run_on,done_by")
+    .select("task_id,run_on,done_by,location_id")
     .gte("run_on", from)
     .lte("run_on", to);
 
+  if (locationId) runQ = runQ.eq("location_id", locationId);
+
+  const { data: runsRaw, error: rErr } = await runQ;
   if (rErr) throw new Error(rErr.message);
 
   const runs = (runsRaw ?? []) as any[];
@@ -324,7 +342,7 @@ export async function getFourWeeklyReview(
     }));
 
   /* ---------- 3) Training drift ---------- */
-  // If your FK doesn’t exist, Supabase will error; we fail soft and return drift empty.
+  // Usually org-wide, not location-specific. Leaving unscoped unless you actually track training per location.
   const today = isoToday();
   const soon = addDays(today, 30);
 
@@ -404,7 +422,7 @@ export async function getFourWeeklyReview(
   }
 
   return {
-    period: { from, to, days: 28 },
+    period: { from, to, days: 28, locationId },
     temperature: { total: totalTemps, fails, failRatePct: failRate, repeatFailures },
     cleaning: { dueTotal, completedTotal, missedTotal, repeatMisses },
     training: { expired, dueSoon, drift },
