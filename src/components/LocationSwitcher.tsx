@@ -1,7 +1,7 @@
 // src/components/LocationSwitcher.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import {
@@ -35,77 +35,144 @@ export default function LocationSwitcher({
   const [activeId, setActiveId] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
+  // Keep orgId around for realtime filter + reloads
+  const orgIdRef = useRef<string | null>(null);
+
   const activeName = useMemo(() => {
     return locations.find((l) => l.id === activeId)?.name ?? "";
   }, [locations, activeId]);
 
   const multi = locations.length > 1;
 
+  const loadLocations = useCallback(async () => {
+    try {
+      setLoading(true);
+
+      const orgId = await getActiveOrgIdClient();
+      orgIdRef.current = orgId || null;
+
+      if (!orgId) {
+        setLocations([]);
+        setActiveId("");
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("locations")
+        .select("id,name,active")
+        .eq("org_id", orgId)
+        .eq("active", true)
+        .order("name", { ascending: true });
+
+      if (error) throw error;
+
+      const locs: LocationRow[] =
+        data?.map((r: any) => ({
+          id: String(r.id),
+          name: (r.name ?? "Unnamed").toString(),
+        })) ?? [];
+
+      setLocations(locs);
+
+      // pick active: stored -> first
+      const stored = await getActiveLocationIdClient();
+      const storedIsValid = !!stored && locs.some((l) => l.id === stored);
+
+      let chosen = "";
+      if (storedIsValid) chosen = stored as string;
+      else if (locs[0]) {
+        chosen = locs[0].id;
+        await setActiveLocationIdClient(chosen);
+      }
+
+      setActiveId(chosen);
+    } catch (e) {
+      console.error("[LocationSwitcher] load failed", e);
+      setLocations([]);
+      setActiveId("");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let alive = true;
 
     (async () => {
-      try {
-        setLoading(true);
-
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) {
-          if (!alive) return;
-          setLocations([]);
-          setActiveId("");
-          return;
-        }
-
-        const { data, error } = await supabase
-          .from("locations")
-          .select("id,name,active")
-          .eq("org_id", orgId)
-          .eq("active", true)
-          .order("name", { ascending: true });
-
-        if (error) throw error;
-
-        const locs: LocationRow[] =
-          data?.map((r: any) => ({
-            id: String(r.id),
-            name: (r.name ?? "Unnamed").toString(),
-          })) ?? [];
-
-        if (!alive) return;
-
-        setLocations(locs);
-
-        // pick active: stored -> first
-        const stored = await getActiveLocationIdClient();
-        const storedIsValid = !!stored && locs.some((l) => l.id === stored);
-
-        let chosen = "";
-        if (storedIsValid) chosen = stored as string;
-        else if (locs[0]) {
-          chosen = locs[0].id;
-          setActiveLocationIdClient(chosen);
-        }
-
-        setActiveId(chosen);
-      } catch (e) {
-        console.error("[LocationSwitcher] load failed", e);
-        if (!alive) return;
-        setLocations([]);
-        setActiveId("");
-      } finally {
-        if (alive) setLoading(false);
-      }
+      if (!alive) return;
+      await loadLocations();
     })();
 
     return () => {
       alive = false;
     };
-  }, []);
+  }, [loadLocations]);
+
+  // ✅ Realtime: when locations change for this org, refresh the list
+  useEffect(() => {
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
+
+    (async () => {
+      // Ensure we have orgId
+      if (!orgIdRef.current) {
+        const orgId = await getActiveOrgIdClient();
+        orgIdRef.current = orgId || null;
+      }
+
+      const orgId = orgIdRef.current;
+      if (!orgId || cancelled) return;
+
+      // Subscribe to changes in locations for this org
+      channel = supabase
+        .channel(`locations-switcher-${orgId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "locations",
+            filter: `org_id=eq.${orgId}`,
+          },
+          async () => {
+            // reload list and keep active selection valid
+            await loadLocations();
+          }
+        )
+        .subscribe();
+
+      // Also reload when tab regains focus (covers no-realtime setups)
+      const onFocus = async () => {
+        await loadLocations();
+      };
+      window.addEventListener("focus", onFocus);
+
+      // Optional: allow other components to force refresh
+      const onManualRefresh = async () => {
+        await loadLocations();
+      };
+      window.addEventListener("temptake:locations-updated", onManualRefresh);
+
+      return () => {
+        window.removeEventListener("focus", onFocus);
+        window.removeEventListener("temptake:locations-updated", onManualRefresh);
+      };
+    })();
+
+    return () => {
+      cancelled = true;
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [loadLocations]);
 
   async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const id = e.target.value;
     setActiveId(id);
-    setActiveLocationIdClient(id);
+
+    // ✅ make sure it's persisted before any reload/refresh
+    await setActiveLocationIdClient(id);
 
     if (reloadOnChange && typeof window !== "undefined") {
       window.location.reload();
