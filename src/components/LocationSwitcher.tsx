@@ -15,9 +15,9 @@ type LocationRow = {
 };
 
 type Props = {
-  /** show the current-site pill even if there is only one location */
+  /** show something even if there is only one location */
   showWhenSingle?: boolean;
-  /** if true, reload the page after switching (keeps your current “simple” behaviour) */
+  /** if true, reload the page after switching */
   reloadOnChange?: boolean;
   /** optional extra classes for the wrapper */
   className?: string;
@@ -75,7 +75,6 @@ export default function LocationSwitcher({
 
         setLocations(locs);
 
-        // pick active: stored -> first
         const stored = await getActiveLocationIdClient();
         const storedIsValid = !!stored && locs.some((l) => l.id === stored);
 
@@ -113,31 +112,30 @@ export default function LocationSwitcher({
     }
   }
 
-  // Keep header clean: no filler while loading
   if (loading) return null;
-
-  // Nothing available
   if (locations.length === 0 || !activeId) return null;
 
   // If single-location and caller doesn’t want it, hide entirely
   if (!multi && !showWhenSingle) return null;
 
   return (
-    <div className={cls("hidden items-center md:flex", className)}>
-      {/* SINGLE location: show ONLY the pill */}
-      {!multi ? (
+    <div className={cls("hidden items-center gap-2 md:flex", className)}>
+      {/* ✅ Single location: show ONE pill */}
+      {!multi && (
         <span
           className="max-w-[180px] truncate rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900 shadow-sm md:max-w-[220px]"
           title={activeName || "—"}
         >
           {activeName || "—"}
         </span>
-      ) : (
-        /* MULTI location: show ONLY the dropdown (no duplicate pill) */
+      )}
+
+      {/* ✅ Multi location: show ONLY the dropdown (no extra pill) */}
+      {multi && (
         <select
           value={activeId}
           onChange={handleChange}
-          className="h-9 max-w-[180px] truncate rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 md:max-w-[220px]"
+          className="h-9 max-w-[220px] truncate rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
           title="Switch location"
           aria-label="Switch location"
         >
