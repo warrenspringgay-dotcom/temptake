@@ -7,7 +7,6 @@ import Image from "next/image";
 import React, { useEffect, useMemo, useState } from "react";
 
 import NavTabs from "@/components/NavTabs";
-import OrgName from "@/components/OrgName";
 import LocationSwitcher from "@/components/LocationSwitcher";
 import UserMenu from "@/components/UserMenu";
 import MobileMenu from "@/components/MobileMenu";
@@ -70,7 +69,7 @@ export default function HeaderShell() {
         {/* Desktop right: org/location + user menu */}
         {ready && user && (
           <div className="hidden items-center gap-2 md:flex">
-            <OrgName />
+            
             <LocationSwitcher />
             <UserMenu />
           </div>
