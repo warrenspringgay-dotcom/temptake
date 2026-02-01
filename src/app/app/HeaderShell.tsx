@@ -67,10 +67,12 @@ export default function HeaderShell() {
           )}
         </div>
 
-        {/* Desktop right: org/location + user menu */}
+        {/* Desktop right: org + ONE location control + user menu */}
         {ready && user && (
           <div className="hidden items-center gap-2 md:flex">
+            {/* OrgName should be org ONLY. If it currently shows location too, remove it there. */}
             <OrgName />
+            {/* Location shown ONLY here */}
             <LocationSwitcher />
             <UserMenu />
           </div>
