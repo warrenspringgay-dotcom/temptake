@@ -15,27 +15,23 @@ type LocationRow = {
 };
 
 type Props = {
-  /** show the current-site pill even if there is only one location */
-  showWhenSingle?: boolean;
-  /** if true, reload the page after switching (keeps your current “simple” behaviour) */
-  reloadOnChange?: boolean;
   /** optional extra classes for the wrapper */
   className?: string;
+  /** if true, reload the page after switching (keeps your current “simple” behaviour) */
+  reloadOnChange?: boolean;
 };
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
 
 export default function LocationSwitcher({
-  showWhenSingle = true,
-  reloadOnChange = true,
   className,
+  reloadOnChange = true,
 }: Props) {
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
-  // Keep orgId around for realtime filter + reloads
   const orgIdRef = useRef<string | null>(null);
 
   const activeName = useMemo(() => {
@@ -74,7 +70,6 @@ export default function LocationSwitcher({
 
       setLocations(locs);
 
-      // pick active: stored -> first
       const stored = await getActiveLocationIdClient();
       const storedIsValid = !!stored && locs.some((l) => l.id === stored);
 
@@ -97,24 +92,20 @@ export default function LocationSwitcher({
 
   useEffect(() => {
     let alive = true;
-
     (async () => {
       if (!alive) return;
       await loadLocations();
     })();
-
     return () => {
       alive = false;
     };
   }, [loadLocations]);
 
-  // ✅ Realtime: when locations change for this org, refresh the list
   useEffect(() => {
     let channel: ReturnType<typeof supabase.channel> | null = null;
     let cancelled = false;
 
     (async () => {
-      // Ensure we have orgId
       if (!orgIdRef.current) {
         const orgId = await getActiveOrgIdClient();
         orgIdRef.current = orgId || null;
@@ -123,7 +114,6 @@ export default function LocationSwitcher({
       const orgId = orgIdRef.current;
       if (!orgId || cancelled) return;
 
-      // Subscribe to changes in locations for this org
       channel = supabase
         .channel(`locations-switcher-${orgId}`)
         .on(
@@ -135,19 +125,16 @@ export default function LocationSwitcher({
             filter: `org_id=eq.${orgId}`,
           },
           async () => {
-            // reload list and keep active selection valid
             await loadLocations();
           }
         )
         .subscribe();
 
-      // Also reload when tab regains focus (covers no-realtime setups)
       const onFocus = async () => {
         await loadLocations();
       };
       window.addEventListener("focus", onFocus);
 
-      // Optional: allow other components to force refresh
       const onManualRefresh = async () => {
         await loadLocations();
       };
@@ -161,17 +148,13 @@ export default function LocationSwitcher({
 
     return () => {
       cancelled = true;
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
+      if (channel) supabase.removeChannel(channel);
     };
   }, [loadLocations]);
 
   async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const id = e.target.value;
     setActiveId(id);
-
-    // ✅ make sure it's persisted before any reload/refresh
     await setActiveLocationIdClient(id);
 
     if (reloadOnChange && typeof window !== "undefined") {
@@ -179,26 +162,22 @@ export default function LocationSwitcher({
     }
   }
 
-  // Keep header clean: no filler while loading
   if (loading) return null;
-
-  // Nothing available
   if (locations.length === 0 || !activeId) return null;
-
-  // If single-location and caller doesn’t want it, hide entirely
-  if (!multi && !showWhenSingle) return null;
 
   return (
     <div className={cls("hidden items-center gap-2 md:flex", className)}>
-      {/* Current site pill (always) */}
-      <span
-        className="max-w-[180px] truncate rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900 shadow-sm md:max-w-[220px]"
-        title={activeName || "—"}
-      >
-        {activeName || "—"}
-      </span>
+      {/* ✅ SINGLE location: show ONE pill */}
+      {!multi && (
+        <span
+          className="max-w-[180px] truncate rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900 shadow-sm md:max-w-[220px]"
+          title={activeName || "—"}
+        >
+          {activeName || "—"}
+        </span>
+      )}
 
-      {/* Dropdown only if multiple sites */}
+      {/* ✅ MULTI location: show ONLY the dropdown (no extra pill) */}
       {multi && (
         <select
           value={activeId}
