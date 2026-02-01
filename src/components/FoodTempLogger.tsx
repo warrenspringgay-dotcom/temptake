@@ -518,46 +518,54 @@ export default function DashboardPage() {
   /* ---------- loaders ---------- */
 
   async function loadTempsKpi(
-    orgId: string,
-    _locationId: string | null,
-    todayISO: string,
-    cancelled: boolean
-  ) {
-    const since = new Date();
-    since.setDate(since.getDate() - 7);
+  orgId: string,
+  locationId: string | null,
+  todayISO: string,
+  cancelled: boolean
+) {
+  const since = new Date();
+  since.setDate(since.getDate() - 7);
 
-    const { data, error } = await supabase
-      .from("food_temp_logs")
-      .select("at,status,org_id,location_id,temp_c")
-      .eq("org_id", orgId)
-      .order("at", { ascending: false })
-      .limit(400);
+  // Build query
+  let q = supabase
+    .from("food_temp_logs")
+    .select("at,status,org_id,location_id,temp_c")
+    .eq("org_id", orgId)
+    .order("at", { ascending: false })
+    .limit(400);
 
-    if (error) throw error;
-    if (cancelled) return;
-
-    let tempLogsToday = 0;
-    let tempFails7d = 0;
-
-    (data ?? []).forEach((r: any) => {
-      const at = r.at ?? r.created_at ?? null;
-      const d = at ? new Date(at) : null;
-      if (!d || Number.isNaN(d.getTime())) return;
-
-      const iso = d.toISOString().slice(0, 10);
-      const statusRaw: string | null = r.status ?? null;
-      const status = statusRaw ? String(statusRaw).toUpperCase() : null;
-
-      if (iso === todayISO) tempLogsToday += 1;
-      if (d >= since && status === "FAIL") tempFails7d += 1;
-    });
-
-    setKpi((prev) => ({
-      ...prev,
-      tempLogsToday,
-      tempFails7d,
-    }));
+  // ✅ Location scope (only when we have one selected)
+  if (locationId) {
+    q = q.eq("location_id", locationId);
   }
+
+  const { data, error } = await q;
+
+  if (error) throw error;
+  if (cancelled) return;
+
+  let tempLogsToday = 0;
+  let tempFails7d = 0;
+
+  (data ?? []).forEach((r: any) => {
+    const at = r.at ?? r.created_at ?? null;
+    const d = at ? new Date(at) : null;
+    if (!d || Number.isNaN(d.getTime())) return;
+
+    const iso = d.toISOString().slice(0, 10);
+    const statusRaw: string | null = r.status ?? null;
+    const status = statusRaw ? String(statusRaw).toUpperCase() : null;
+
+    if (iso === todayISO) tempLogsToday += 1;
+    if (d >= since && status === "FAIL") tempFails7d += 1;
+  });
+
+  setKpi((prev) => ({
+    ...prev,
+    tempLogsToday,
+    tempFails7d,
+  }));
+}
 
   async function loadCleaningKpi(
     orgId: string,
