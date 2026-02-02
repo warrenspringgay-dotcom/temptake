@@ -7,8 +7,11 @@ import { supabase } from "@/lib/supabaseBrowser";
 type Props = {
   open: boolean;
   onClose: () => void;
+
+  // In your app these are UUID strings, but typed as string
   orgId: string;
   locationId: string;
+
   defaultDate: string; // YYYY-MM-DD
   defaultInitials: string;
   defaultArea?: string | null; // UI-only
@@ -38,11 +41,8 @@ export default function IncidentModal({
 
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => setMounted(true), []);
 
-  // Reset fields on open
   useEffect(() => {
     if (!open) return;
 
@@ -54,6 +54,7 @@ export default function IncidentModal({
     setDetails("");
     setImmediateAction("");
     setPreventiveAction("");
+    setSaving(false);
 
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -65,25 +66,28 @@ export default function IncidentModal({
   if (!open || !mounted) return null;
 
   async function saveIncident() {
-    if (!date) {
-      alert("Date is required.");
-      return;
-    }
-    if (!details.trim()) {
-      alert("Details are required.");
+    if (!date) return alert("Date is required.");
+    if (!details.trim()) return alert("Details are required.");
+
+    // Guard: these must be UUID strings for your NOT NULL uuid columns
+    if (!orgId || !locationId) {
+      alert("Missing org/location. Select a location first.");
       return;
     }
 
     setSaving(true);
     try {
-      // ✅ NO "area" field in payload (table doesn't have it)
-      // Optional: prepend area into details so it still gets stored somewhere
+      // UI-only: fold area into details since DB has no column for it
       const areaPrefix = area.trim() ? `[Area: ${area.trim()}]\n` : "";
       const finalDetails = `${areaPrefix}${details.trim()}`;
 
       const payload = {
+        // Your schema wants BOTH text + uuid columns, all NOT NULL
         org_id: String(orgId),
         location_id: String(locationId),
+        org_id_uuid: String(orgId),
+        location_id_uuid: String(locationId),
+
         happened_on: date,
         type: type || null,
         details: finalDetails || null,
@@ -116,7 +120,6 @@ export default function IncidentModal({
         style={{ maxHeight: "85vh" }}
       >
         <div className="flex h-full flex-col" style={{ maxHeight: "85vh" }}>
-          {/* Header */}
           <div className="flex items-start justify-between border-b border-slate-200 px-4 py-3">
             <div>
               <div className="text-base font-semibold text-slate-900">
@@ -136,7 +139,6 @@ export default function IncidentModal({
             </button>
           </div>
 
-          {/* Body */}
           <div className="flex-1 overflow-y-auto px-4 py-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
@@ -163,7 +165,6 @@ export default function IncidentModal({
                 />
               </div>
 
-              {/* UI-only Area */}
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-semibold text-slate-600">
                   Area (optional)
@@ -240,7 +241,6 @@ export default function IncidentModal({
             </div>
           </div>
 
-          {/* Footer */}
           <div className="flex justify-end gap-2 border-t border-slate-200 px-4 py-3">
             <button
               type="button"
