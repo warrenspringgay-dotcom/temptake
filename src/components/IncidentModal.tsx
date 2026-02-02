@@ -11,7 +11,7 @@ type Props = {
   locationId: string;
   defaultDate: string; // YYYY-MM-DD
   defaultInitials: string;
-  defaultArea?: string | null;
+  defaultArea?: string | null; // UI-only
   onSaved: () => void;
 };
 
@@ -22,14 +22,14 @@ export default function IncidentModal({
   locationId,
   defaultDate,
   defaultInitials,
-  defaultArea, // ✅ YOU MUST DESTRUCTURE THIS
+  defaultArea,
   onSaved,
 }: Props) {
   const [mounted, setMounted] = useState(false);
 
   const [date, setDate] = useState(defaultDate);
   const [initials, setInitials] = useState(defaultInitials || "");
-  const [area, setArea] = useState<string>(defaultArea?.toString() ?? "");
+  const [area, setArea] = useState<string>(defaultArea?.toString() ?? ""); // UI-only
 
   const [type, setType] = useState("General");
   const [details, setDetails] = useState("");
@@ -42,7 +42,7 @@ export default function IncidentModal({
     setMounted(true);
   }, []);
 
-  // ✅ Reset fields on open (single effect, not two half-broken ones)
+  // Reset fields on open
   useEffect(() => {
     if (!open) return;
 
@@ -76,13 +76,17 @@ export default function IncidentModal({
 
     setSaving(true);
     try {
+      // ✅ NO "area" field in payload (table doesn't have it)
+      // Optional: prepend area into details so it still gets stored somewhere
+      const areaPrefix = area.trim() ? `[Area: ${area.trim()}]\n` : "";
+      const finalDetails = `${areaPrefix}${details.trim()}`;
+
       const payload = {
         org_id: String(orgId),
         location_id: String(locationId),
         happened_on: date,
         type: type || null,
-        area: area.trim() || null, // ✅ if your table has area column
-        details: details.trim() || null,
+        details: finalDetails || null,
         immediate_action: immediateAction.trim() || null,
         preventive_action: preventiveAction.trim() || null,
         created_by: initials.trim().toUpperCase() || null,
@@ -159,7 +163,7 @@ export default function IncidentModal({
                 />
               </div>
 
-              {/* ✅ Area (prefilled) */}
+              {/* UI-only Area */}
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-semibold text-slate-600">
                   Area (optional)
@@ -170,6 +174,9 @@ export default function IncidentModal({
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
                   placeholder="e.g. Walk-in fridge"
                 />
+                <div className="mt-1 text-[11px] text-slate-500">
+                  Stored inside “Details” (your incidents table has no area column).
+                </div>
               </div>
 
               <div className="sm:col-span-2">
