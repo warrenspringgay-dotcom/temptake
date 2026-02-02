@@ -4,13 +4,12 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import OnboardingBanner from "@/components/OnboardingBanner";
 import WelcomeGate from "@/components/WelcomeGate";
-import type { User } from "@supabase/supabase-js";
 
 /* ---------- CONFIG ---------- */
 
@@ -70,6 +69,17 @@ type FourWeekBannerState =
       periodTo: string;
       reason: "overdue" | "month_end" | "issues";
     };
+
+type IncidentRow = {
+  id: string;
+  happened_on: string; // date
+  type: string | null;
+  details: string | null;
+  immediate_action: string | null;
+  preventive_action: string | null;
+  created_by: string | null;
+  created_at: string | null;
+};
 
 /* ---------- helpers ---------- */
 
@@ -240,20 +250,20 @@ async function dismissFourWeekReview(args: {
 
   // 1-2 dismisses => 24h, 3rd+ => 28 days
   const hours = nextCount >= 3 ? 24 * 28 : 24;
-  const dismissedUntil = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+  const dismissedUntil = new Date(
+    Date.now() + hours * 60 * 60 * 1000
+  ).toISOString();
 
-  const { error } = await supabase
-    .from("review_dismissals")
-    .upsert(
-      {
-        org_id: orgId,
-        location_id: locationId,
-        review_key: reviewKey,
-        dismissed_until: dismissedUntil,
-        dismiss_count: nextCount,
-      },
-      { onConflict: "org_id,location_id,review_key" }
-    );
+  const { error } = await supabase.from("review_dismissals").upsert(
+    {
+      org_id: orgId,
+      location_id: locationId,
+      review_key: reviewKey,
+      dismissed_until: dismissedUntil,
+      dismiss_count: nextCount,
+    },
+    { onConflict: "org_id,location_id,review_key" }
+  );
 
   if (error) {
     console.warn("[four-week dismiss] upsert failed:", error.message);
@@ -400,13 +410,234 @@ function KpiTile({
 
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} className="block w-full h-full">
+      <button
+        type="button"
+        onClick={onClick}
+        className="block w-full h-full"
+      >
         {inner}
       </button>
     );
   }
 
   return <div className="w-full h-full">{inner}</div>;
+}
+
+/* ---------- Alerts modal ---------- */
+
+function shortSnippet(s: string | null | undefined, n = 140) {
+  const t = (s ?? "").toString().trim();
+  if (!t) return "";
+  return t.length > n ? `${t.slice(0, n).trim()}…` : t;
+}
+
+function AlertsModal({
+  open,
+  onClose,
+  orgId,
+  locationId,
+  incidents,
+  incidentsLoading,
+  incidentsError,
+  rangeDays,
+  setRangeDays,
+  otherAlertsSummary,
+}: {
+  open: boolean;
+  onClose: () => void;
+  orgId: string | null;
+  locationId: string | null;
+  incidents: IncidentRow[];
+  incidentsLoading: boolean;
+  incidentsError: string | null;
+  rangeDays: number;
+  setRangeDays: (n: number) => void;
+  otherAlertsSummary: string;
+}) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (!open || !mounted) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/40 p-3 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxHeight: "85vh" }}
+      >
+        <div className="flex h-full flex-col" style={{ maxHeight: "85vh" }}>
+          <div className="flex items-start justify-between border-b border-slate-200 px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-base font-semibold text-slate-900">
+                Alerts & incidents
+              </div>
+              <div className="mt-0.5 text-xs text-slate-500">
+                Org: <span className="font-mono">{orgId?.slice(0, 8) ?? "—"}…</span>
+                {" · "}
+                Location:{" "}
+                <span className="font-mono">
+                  {locationId ? `${locationId.slice(0, 8)}…` : "—"}
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-xs font-extrabold uppercase tracking-[0.2em] text-slate-600">
+                Other alerts
+              </div>
+              <div className="mt-1 text-sm font-medium text-slate-800">
+                {otherAlertsSummary}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold text-slate-900">
+                Incidents
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="text-[11px] font-semibold text-slate-600">
+                  Range
+                </div>
+                <select
+                  value={rangeDays}
+                  onChange={(e) => setRangeDays(Number(e.target.value))}
+                  className="h-9 rounded-xl border border-slate-300 bg-white px-3 text-sm"
+                >
+                  <option value={7}>Last 7 days</option>
+                  <option value={14}>Last 14 days</option>
+                  <option value={30}>Last 30 days</option>
+                </select>
+
+                <Link
+                  href="/reports"
+                  className="inline-flex h-9 items-center justify-center rounded-xl bg-slate-900 px-3 text-xs font-extrabold text-white hover:bg-black"
+                >
+                  Open reports
+                </Link>
+              </div>
+            </div>
+
+            {incidentsError ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                {incidentsError}
+              </div>
+            ) : incidentsLoading ? (
+              <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-500">
+                Loading incidents…
+              </div>
+            ) : incidents.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
+                No incidents found in the selected range. Either you’re running
+                a tight ship, or nobody’s logging reality.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {incidents.map((i) => (
+                  <div
+                    key={i.id}
+                    className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-extrabold text-slate-900">
+                          {i.type ?? "Incident"}
+                        </div>
+                        <div className="mt-0.5 text-[11px] font-semibold text-slate-500">
+                          Date:{" "}
+                          <span className="font-mono">
+                            {formatDDMMYYYY(i.happened_on) ?? "—"}
+                          </span>
+                          {" · "}
+                          By:{" "}
+                          <span className="font-mono">
+                            {i.created_by ? i.created_by.toUpperCase() : "—"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-extrabold text-slate-700">
+                        {i.created_at
+                          ? formatDDMMYYYY(i.created_at) ?? ""
+                          : ""}
+                      </div>
+                    </div>
+
+                    {i.details ? (
+                      <div className="mt-2 text-sm text-slate-800">
+                        {shortSnippet(i.details)}
+                      </div>
+                    ) : null}
+
+                    {(i.immediate_action || i.preventive_action) && (
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        {i.immediate_action ? (
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                            <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-600">
+                              Immediate action
+                            </div>
+                            <div className="mt-1 text-sm text-slate-800">
+                              {shortSnippet(i.immediate_action, 120)}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {i.preventive_action ? (
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                            <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-600">
+                              Preventive action
+                            </div>
+                            <div className="mt-1 text-sm text-slate-800">
+                              {shortSnippet(i.preventive_action, 120)}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 border-t border-slate-200 px-4 py-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ---------- Component ---------- */
@@ -430,7 +661,7 @@ export default function DashboardPage() {
 
   const headerDate = formatPrettyDate(new Date());
 
-  const [user, setUser] = React.useState<any | null>(null);
+  const [user, setUser] = React.useState<User | null>(null);
   const [authReady, setAuthReady] = React.useState(false);
 
   // Keep active org/location around for banner dismiss persistence
@@ -441,6 +672,13 @@ export default function DashboardPage() {
   const [fourWeekBanner, setFourWeekBanner] = useState<FourWeekBannerState>({
     kind: "none",
   });
+
+  // ✅ Alerts modal state
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [incidents, setIncidents] = useState<IncidentRow[]>([]);
+  const [incidentsLoading, setIncidentsLoading] = useState(false);
+  const [incidentsError, setIncidentsError] = useState<string | null>(null);
+  const [incidentRangeDays, setIncidentRangeDays] = useState<number>(14);
 
   React.useEffect(() => {
     let mounted = true;
@@ -518,54 +756,54 @@ export default function DashboardPage() {
   /* ---------- loaders ---------- */
 
   async function loadTempsKpi(
-  orgId: string,
-  locationId: string | null,
-  todayISO: string,
-  cancelled: boolean
-) {
-  const since = new Date();
-  since.setDate(since.getDate() - 7);
+    orgId: string,
+    locationId: string | null,
+    todayISO: string,
+    cancelled: boolean
+  ) {
+    const since = new Date();
+    since.setDate(since.getDate() - 7);
 
-  // Build query
-  let q = supabase
-    .from("food_temp_logs")
-    .select("at,status,org_id,location_id,temp_c")
-    .eq("org_id", orgId)
-    .order("at", { ascending: false })
-    .limit(400);
+    // Build query
+    let q = supabase
+      .from("food_temp_logs")
+      .select("at,status,org_id,location_id,temp_c")
+      .eq("org_id", orgId)
+      .order("at", { ascending: false })
+      .limit(400);
 
-  // ✅ Location scope (only when we have one selected)
-  if (locationId) {
-    q = q.eq("location_id", locationId);
+    // ✅ Location scope (only when we have one selected)
+    if (locationId) {
+      q = q.eq("location_id", locationId);
+    }
+
+    const { data, error } = await q;
+
+    if (error) throw error;
+    if (cancelled) return;
+
+    let tempLogsToday = 0;
+    let tempFails7d = 0;
+
+    (data ?? []).forEach((r: any) => {
+      const at = r.at ?? r.created_at ?? null;
+      const d = at ? new Date(at) : null;
+      if (!d || Number.isNaN(d.getTime())) return;
+
+      const iso = d.toISOString().slice(0, 10);
+      const statusRaw: string | null = r.status ?? null;
+      const status = statusRaw ? String(statusRaw).toUpperCase() : null;
+
+      if (iso === todayISO) tempLogsToday += 1;
+      if (d >= since && status === "FAIL") tempFails7d += 1;
+    });
+
+    setKpi((prev) => ({
+      ...prev,
+      tempLogsToday,
+      tempFails7d,
+    }));
   }
-
-  const { data, error } = await q;
-
-  if (error) throw error;
-  if (cancelled) return;
-
-  let tempLogsToday = 0;
-  let tempFails7d = 0;
-
-  (data ?? []).forEach((r: any) => {
-    const at = r.at ?? r.created_at ?? null;
-    const d = at ? new Date(at) : null;
-    if (!d || Number.isNaN(d.getTime())) return;
-
-    const iso = d.toISOString().slice(0, 10);
-    const statusRaw: string | null = r.status ?? null;
-    const status = statusRaw ? String(statusRaw).toUpperCase() : null;
-
-    if (iso === todayISO) tempLogsToday += 1;
-    if (d >= since && status === "FAIL") tempFails7d += 1;
-  });
-
-  setKpi((prev) => ({
-    ...prev,
-    tempLogsToday,
-    tempFails7d,
-  }));
-}
 
   async function loadCleaningKpi(
     orgId: string,
@@ -644,10 +882,7 @@ export default function DashboardPage() {
 
     // Training
     try {
-      const { data } = await supabase
-        .from("team_members")
-        .select("*")
-        .eq("org_id", orgId);
+      const { data } = await supabase.from("team_members").select("*").eq("org_id", orgId);
 
       (data ?? []).forEach((r: any) => {
         const raw =
@@ -710,7 +945,9 @@ export default function DashboardPage() {
     try {
       const { data, error } = await supabase
         .from(WALL_TABLE)
-        .select("id, org_id, location_id, author_initials, message, color, created_at")
+        .select(
+          "id, org_id, location_id, author_initials, message, color, created_at"
+        )
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
         .limit(3);
@@ -744,28 +981,25 @@ export default function DashboardPage() {
     try {
       if (typeof window === "undefined") return;
 
-const firstSeenKey = `tt_first_seen_at:${orgId}`;
+      const firstSeenKey = `tt_first_seen_at:${orgId}`;
 
-let firstSeenISO = localStorage.getItem(firstSeenKey);
+      let firstSeenISO = localStorage.getItem(firstSeenKey);
 
-if (!firstSeenISO) {
-  firstSeenISO = new Date().toISOString();
-  localStorage.setItem(firstSeenKey, firstSeenISO);
-}
+      if (!firstSeenISO) {
+        firstSeenISO = new Date().toISOString();
+        localStorage.setItem(firstSeenKey, firstSeenISO);
+      }
 
-// Not eligible until 28 days after first seen
-const eligibleDate = new Date(firstSeenISO);
-eligibleDate.setDate(eligibleDate.getDate() + 28);
+      // Not eligible until 28 days after first seen
+      const eligibleDate = new Date(firstSeenISO);
+      eligibleDate.setDate(eligibleDate.getDate() + 28);
 
-const eligible =
-  eligibleDate.getTime() <= Date.now();
+      const eligible = eligibleDate.getTime() <= Date.now();
 
-if (!eligible) {
-  setFourWeekBanner({ kind: "none" });
-  return;
-}
-
-
+      if (!eligible) {
+        setFourWeekBanner({ kind: "none" });
+        return;
+      }
 
       const reviewedAtRaw = localStorage.getItem("tt_four_week_reviewed_at");
       const lastReviewedISO = reviewedAtRaw ? toISODate(reviewedAtRaw) : null;
@@ -785,21 +1019,29 @@ if (!eligible) {
 
       const reviewKey = makeReviewKey(periodFrom, periodTo);
 
-// check BOTH: scoped + fallback
-const dismissKeyScoped = makeDismissStorageKey({ orgId, locationId, reviewKey });
-const dismissKeyFallback = makeDismissStorageKey({ orgId, locationId: null, reviewKey });
+      // check BOTH: scoped + fallback
+      const dismissKeyScoped = makeDismissStorageKey({
+        orgId,
+        locationId,
+        reviewKey,
+      });
+      const dismissKeyFallback = makeDismissStorageKey({
+        orgId,
+        locationId: null,
+        reviewKey,
+      });
 
-const dismissUntilRaw =
-  localStorage.getItem(dismissKeyScoped) ?? localStorage.getItem(dismissKeyFallback);
+      const dismissUntilRaw =
+        localStorage.getItem(dismissKeyScoped) ??
+        localStorage.getItem(dismissKeyFallback);
 
-if (dismissUntilRaw) {
-  const dismissUntil = new Date(dismissUntilRaw).getTime();
-  if (!Number.isNaN(dismissUntil) && dismissUntil > Date.now()) {
-    setFourWeekBanner({ kind: "none" });
-    return;
-  }
-}
-
+      if (dismissUntilRaw) {
+        const dismissUntil = new Date(dismissUntilRaw).getTime();
+        if (!Number.isNaN(dismissUntil) && dismissUntil > Date.now()) {
+          setFourWeekBanner({ kind: "none" });
+          return;
+        }
+      }
 
       if (cancelled) return;
 
@@ -848,6 +1090,105 @@ if (dismissUntilRaw) {
     }
   }
 
+  // ✅ incidents loader for alerts modal
+  async function loadIncidentsForAlerts(rangeDays: number) {
+    const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
+    const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
+
+    if (!orgId) {
+      setIncidents([]);
+      return;
+    }
+
+    setIncidentsLoading(true);
+    setIncidentsError(null);
+
+    try {
+      const toISO = isoToday();
+      const fromD = new Date();
+      fromD.setDate(fromD.getDate() - Math.max(1, Number(rangeDays) || 14));
+      const fromISO = fromD.toISOString().slice(0, 10);
+
+      // Prefer uuid columns (works fine if your ids are uuid strings)
+      let q = supabase
+        .from("incidents")
+        .select(
+          "id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at"
+        )
+        .gte("happened_on", fromISO)
+        .lte("happened_on", toISO)
+        .order("happened_on", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      // These columns exist in your schema, and are the safest filter
+      q = q.eq("org_id_uuid", orgId);
+
+      if (locationId) {
+        q = q.eq("location_id_uuid", locationId);
+      }
+
+      const { data, error } = await q;
+
+      if (error) {
+        // fallback to text columns if uuid filtering isn't aligned in your DB
+        console.warn("[alerts/incidents] uuid filter failed, trying text:", error.message);
+
+        let q2 = supabase
+          .from("incidents")
+          .select(
+            "id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at"
+          )
+          .gte("happened_on", fromISO)
+          .lte("happened_on", toISO)
+          .order("happened_on", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(50)
+          .eq("org_id", String(orgId));
+
+        if (locationId) q2 = q2.eq("location_id", String(locationId));
+
+        const { data: data2, error: err2 } = await q2;
+        if (err2) throw err2;
+
+        const mapped2: IncidentRow[] =
+          (data2 ?? []).map((r: any) => ({
+            id: String(r.id),
+            happened_on: String(r.happened_on),
+            type: r.type ?? null,
+            details: r.details ?? null,
+            immediate_action: r.immediate_action ?? null,
+            preventive_action: r.preventive_action ?? null,
+            created_by: r.created_by ?? null,
+            created_at: r.created_at ?? null,
+          })) || [];
+
+        setIncidents(mapped2);
+        return;
+      }
+
+      const mapped: IncidentRow[] =
+        (data ?? []).map((r: any) => ({
+          id: String(r.id),
+          happened_on: String(r.happened_on),
+          type: r.type ?? null,
+          details: r.details ?? null,
+          immediate_action: r.immediate_action ?? null,
+          preventive_action: r.preventive_action ?? null,
+          created_by: r.created_by ?? null,
+          created_at: r.created_at ?? null,
+        })) || [];
+
+      setIncidents(mapped);
+    } catch (e: any) {
+      console.error(e);
+      setIncidentsError(e?.message ?? "Failed to load incidents.");
+      setIncidents([]);
+    } finally {
+      setIncidentsLoading(false);
+    }
+  }
+
   /* ---------- derived ---------- */
 
   const alertsCount =
@@ -864,7 +1205,8 @@ if (dismissUntilRaw) {
     const bits: string[] = [];
     if (kpi.tempFails7d > 0) bits.push(`${kpi.tempFails7d} failed temps (7d)`);
     if (kpi.trainingOver > 0) bits.push(`${kpi.trainingOver} training overdue`);
-    if (kpi.allergenOver > 0) bits.push(`${kpi.allergenOver} allergen review overdue`);
+    if (kpi.allergenOver > 0)
+      bits.push(`${kpi.allergenOver} allergen review overdue`);
     if (!bits.length) return "No training, allergen or temperature issues flagged.";
     return bits.join(" · ");
   })();
@@ -902,11 +1244,38 @@ if (dismissUntilRaw) {
         : "border-slate-200 bg-white/80 text-slate-900"
       : "";
 
+  const openAlertsModal = async () => {
+    setAlertsOpen(true);
+    // load incidents on open (and keep it fast by limiting to 50)
+    await loadIncidentsForAlerts(incidentRangeDays);
+  };
+
+  // If the range changes while modal open, reload.
+  useEffect(() => {
+    if (!alertsOpen) return;
+    void loadIncidentsForAlerts(incidentRangeDays);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incidentRangeDays, alertsOpen]);
+
   /* ---------- render ---------- */
   return (
     <>
       <WelcomeGate />
       <OnboardingBanner />
+
+      {/* ✅ Alerts modal */}
+      <AlertsModal
+        open={alertsOpen}
+        onClose={() => setAlertsOpen(false)}
+        orgId={activeOrgId}
+        locationId={activeLocationId}
+        incidents={incidents}
+        incidentsLoading={incidentsLoading}
+        incidentsError={incidentsError}
+        rangeDays={incidentRangeDays}
+        setRangeDays={setIncidentRangeDays}
+        otherAlertsSummary={alertsSummary}
+      />
 
       {/* ✅ Four-week review banner */}
       {fourWeekBanner.kind === "show" && (
@@ -919,7 +1288,9 @@ if (dismissUntilRaw) {
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <div className="text-sm font-extrabold">Four-week review ready</div>
+                <div className="text-sm font-extrabold">
+                  Four-week review ready
+                </div>
 
                 <div className="mt-1 text-xs font-medium opacity-90">
                   Period:{" "}
@@ -952,45 +1323,60 @@ if (dismissUntilRaw) {
                 <button
                   type="button"
                   onClick={async () => {
-  try {
-    // fetch fresh, don't trust state
-    const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
-    const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
+                    try {
+                      // fetch fresh, don't trust state
+                      const orgId =
+                        (await getActiveOrgIdClient()) ?? activeOrgId;
+                      const locationId =
+                        (await getActiveLocationIdClient()) ?? activeLocationId;
 
-    const reviewKey = makeReviewKey(fourWeekBanner.periodFrom, fourWeekBanner.periodTo);
+                      const reviewKey = makeReviewKey(
+                        fourWeekBanner.periodFrom,
+                        fourWeekBanner.periodTo
+                      );
 
-    const dismissKeyScoped = makeDismissStorageKey({ orgId: orgId ?? null, locationId: locationId ?? null, reviewKey });
-    const dismissKeyFallback = makeDismissStorageKey({ orgId: orgId ?? null, locationId: null, reviewKey });
+                      const dismissKeyScoped = makeDismissStorageKey({
+                        orgId: orgId ?? null,
+                        locationId: locationId ?? null,
+                        reviewKey,
+                      });
+                      const dismissKeyFallback = makeDismissStorageKey({
+                        orgId: orgId ?? null,
+                        locationId: null,
+                        reviewKey,
+                      });
 
-    const until = new Date();
-    until.setDate(until.getDate() + 28);
+                      const until = new Date();
+                      until.setDate(until.getDate() + 28);
 
-    // store BOTH so location changes don't resurrect it
-    localStorage.setItem(dismissKeyScoped, until.toISOString());
-    localStorage.setItem(dismissKeyFallback, until.toISOString());
+                      // store BOTH so location changes don't resurrect it
+                      localStorage.setItem(dismissKeyScoped, until.toISOString());
+                      localStorage.setItem(dismissKeyFallback, until.toISOString());
 
-    // also mark reviewed
-    localStorage.setItem("tt_four_week_reviewed_at", new Date().toISOString());
+                      // also mark reviewed
+                      localStorage.setItem(
+                        "tt_four_week_reviewed_at",
+                        new Date().toISOString()
+                      );
 
-    // DB persist only if we genuinely have locationId (table requires NOT NULL)
-    if (orgId && locationId) {
-      await dismissFourWeekReview({
-        orgId,
-        locationId,
-        periodFrom: fourWeekBanner.periodFrom,
-        periodTo: fourWeekBanner.periodTo,
-      });
-    } else {
-      console.warn("[four-week dismiss] skipped DB write because org/location missing", {
-        orgId,
-        locationId,
-      });
-    }
-  } finally {
-    setFourWeekBanner({ kind: "none" });
-  }
-}}
-
+                      // DB persist only if we genuinely have locationId (table requires NOT NULL)
+                      if (orgId && locationId) {
+                        await dismissFourWeekReview({
+                          orgId,
+                          locationId,
+                          periodFrom: fourWeekBanner.periodFrom,
+                          periodTo: fourWeekBanner.periodTo,
+                        });
+                      } else {
+                        console.warn(
+                          "[four-week dismiss] skipped DB write because org/location missing",
+                          { orgId, locationId }
+                        );
+                      }
+                    } finally {
+                      setFourWeekBanner({ kind: "none" });
+                    }
+                  }}
                   className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 text-xs font-extrabold text-slate-900 shadow-sm hover:bg-white"
                 >
                   Dismiss
@@ -1069,6 +1455,7 @@ if (dismissUntilRaw) {
               }
             />
 
+            {/* ✅ Alerts now opens modal (instead of routing to /reports) */}
             <KpiTile
               canHover={canHover}
               title="Alerts"
@@ -1076,7 +1463,7 @@ if (dismissUntilRaw) {
               tone={alertsTone}
               big={alertsCount}
               sub={alertsSummary}
-              href="/reports"
+              onClick={openAlertsModal}
               footer={
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
                   <span>View details</span>
@@ -1097,7 +1484,9 @@ if (dismissUntilRaw) {
           <div className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur flex flex-col">
             <div className="mb-2 flex items-center justify-between gap-2">
               <div>
-                <h2 className="text-sm font-extrabold text-slate-900">Kitchen wall</h2>
+                <h2 className="text-sm font-extrabold text-slate-900">
+                  Kitchen wall
+                </h2>
                 <p className="text-[11px] font-medium text-slate-500">
                   Latest three notes from the team.
                 </p>
@@ -1112,7 +1501,8 @@ if (dismissUntilRaw) {
 
             {wallPosts.length === 0 ? (
               <div className="mt-1 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-xs text-slate-500 flex-1 flex items-center">
-                No posts yet. When the team adds messages on the wall, the latest three will show here.
+                No posts yet. When the team adds messages on the wall, the latest
+                three will show here.
               </div>
             ) : (
               <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -1181,12 +1571,15 @@ if (dismissUntilRaw) {
                 </div>
 
                 <p className="mt-3 text-[11px] font-medium text-amber-900/80">
-                  Based on completed cleaning tasks and temperature logs this month.
+                  Based on completed cleaning tasks and temperature logs this
+                  month.
                 </p>
               </>
             ) : (
               <p className="text-xs font-medium text-amber-900/80">
-                No leaderboard data yet. Once your team completes cleaning tasks and logs temperatures, the top performer will be highlighted here.
+                No leaderboard data yet. Once your team completes cleaning tasks
+                and logs temperatures, the top performer will be highlighted
+                here.
               </p>
             )}
 
@@ -1206,10 +1599,20 @@ if (dismissUntilRaw) {
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <QuickLink href="/routines" label="Routines" icon="📋" canHover={canHover} />
             <QuickLink href="/allergens" label="Allergens" icon="⚠️" canHover={canHover} />
-            <QuickLink href="/cleaning-rota" label="Cleaning rota" icon="🧽" canHover={canHover} />
+            <QuickLink
+              href="/cleaning-rota"
+              label="Cleaning rota"
+              icon="🧽"
+              canHover={canHover}
+            />
             <QuickLink href="/team" label="Team & training" icon="👥" canHover={canHover} />
             <QuickLink href="/reports" label="Reports" icon="📊" canHover={canHover} />
-            <QuickLink href="/locations" label="Locations & sites" icon="📍" canHover={canHover} />
+            <QuickLink
+              href="/locations"
+              label="Locations & sites"
+              icon="📍"
+              canHover={canHover}
+            />
             <QuickLink href="/manager" label="Manager view" icon="💼" canHover={canHover} />
             <QuickLink href="/help" label="Help & support" icon="❓" canHover={canHover} />
           </div>
