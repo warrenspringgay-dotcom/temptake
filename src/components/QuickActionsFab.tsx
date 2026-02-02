@@ -15,6 +15,8 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
+import IncidentModal from "@/components/IncidentModal"; // ✅ ADD (adjust path/name if different)
+
 import {
   Thermometer,
   Brush,
@@ -23,6 +25,7 @@ import {
   ClipboardList,
   CheckSquare,
   MessageSquare,
+  AlertTriangle, // ✅ ADD
 } from "lucide-react";
 import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
 
@@ -142,10 +145,10 @@ function SignoffModal({
               Daily diary sign-off
             </div>
             <div>
-              By signing, I confirm today’s food safety checks were completed and I
-              have reviewed the records for this site (temps, cleaning, allergens
-              and any issues). Any problems found have been recorded with
-              corrective actions and notes.
+              By signing, I confirm today’s food safety checks were completed and
+              I have reviewed the records for this site (temps, cleaning,
+              allergens and any issues). Any problems found have been recorded
+              with corrective actions and notes.
             </div>
             {signedAlready ? (
               <div className="text-xs text-slate-500">
@@ -635,6 +638,10 @@ export default function TempFab() {
   // ✅ Feedback modal state
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
+  // ✅ Incident modal state (NEW)
+  const [incidentOpen, setIncidentOpen] = useState(false);
+  const [incidentArea, setIncidentArea] = useState<string | null>(null);
+
   function closeCorrective() {
     setCorrective((c) => ({ ...c, open: false }));
   }
@@ -797,7 +804,8 @@ export default function TempFab() {
       }
 
       if (orgId !== activeOrgId) setActiveOrgId(orgId ?? null);
-      if (locationId !== activeLocationId) setActiveLocationId(locationId ?? null);
+      if (locationId !== activeLocationId)
+        setActiveLocationId(locationId ?? null);
 
       const todayISO = isoToday();
 
@@ -851,7 +859,8 @@ export default function TempFab() {
         (rData ?? []).map((r: any) => String(r.task_id))
       );
 
-      const openCount = dueToday.filter((t) => !doneIds.has(String(t.id))).length;
+      const openCount = dueToday.filter((t) => !doneIds.has(String(t.id)))
+        .length;
       setOpenCleaning(openCount);
     } catch {
       setOpenCleaning(0);
@@ -1312,7 +1321,7 @@ export default function TempFab() {
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
     await refreshEntriesToday();
 
-    // ✅ If FAIL, open corrective action modal (don’t close everything and pretend it’s fine)
+    // ✅ If FAIL, open corrective action modal
     if (status === "fail" && inserted?.id) {
       const staffIni = (form.staff_initials || "").toUpperCase().trim();
       setCorrective({
@@ -1545,6 +1554,41 @@ export default function TempFab() {
                   </span>
                 </button>
 
+                {/* ✅ Log incident (NEW) */}
+                <button
+                  type="button"
+                  onClick={async () => {
+  setShowMenu(false);
+
+  const orgId = await getActiveOrgIdClient();
+  const locationId = await getActiveLocationIdClient();
+
+  if (!orgId || !locationId) {
+    addToast({
+      title: "Select a location first",
+      message: "You need an active site/location to log an incident.",
+      type: "error",
+    });
+    return;
+  }
+
+  setActiveOrgId(orgId);
+  setActiveLocationId(locationId);
+
+  setIncidentArea(form.location ? String(form.location) : null);
+  setIncidentOpen(true);
+
+  posthog.capture("fab_choose_log_incident");
+}}
+
+                  className="w-full rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:brightness-105"
+                >
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <AlertTriangle className="h-4 w-4" />
+                    Log incident
+                  </span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -1585,6 +1629,22 @@ export default function TempFab() {
         locationId={activeLocationId}
         area={form.location ? String(form.location) : null}
       />
+
+  <IncidentModal
+  open={incidentOpen}
+  onClose={() => setIncidentOpen(false)}
+  orgId={activeOrgId ?? ""}
+  locationId={activeLocationId ?? ""}
+  defaultDate={isoToday()}
+  defaultInitials={form.staff_initials || ""}
+  defaultArea={incidentArea || form.location || null}
+  onSaved={() => {
+    try {
+      window.dispatchEvent(new Event("tt-incidents-changed"));
+    } catch {}
+  }}
+/>
+
 
       {/* Day sign-off modal */}
       <SignoffModal

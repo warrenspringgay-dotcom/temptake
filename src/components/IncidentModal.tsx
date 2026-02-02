@@ -11,6 +11,7 @@ type Props = {
   locationId: string;
   defaultDate: string; // YYYY-MM-DD
   defaultInitials: string;
+  defaultArea?: string | null;
   onSaved: () => void;
 };
 
@@ -21,12 +22,14 @@ export default function IncidentModal({
   locationId,
   defaultDate,
   defaultInitials,
+  defaultArea, // ✅ YOU MUST DESTRUCTURE THIS
   onSaved,
 }: Props) {
   const [mounted, setMounted] = useState(false);
 
   const [date, setDate] = useState(defaultDate);
   const [initials, setInitials] = useState(defaultInitials || "");
+  const [area, setArea] = useState<string>(defaultArea?.toString() ?? "");
 
   const [type, setType] = useState("General");
   const [details, setDetails] = useState("");
@@ -39,24 +42,25 @@ export default function IncidentModal({
     setMounted(true);
   }, []);
 
+  // ✅ Reset fields on open (single effect, not two half-broken ones)
   useEffect(() => {
     if (!open) return;
 
-    // Reset each open to match your other modals
     setDate(defaultDate);
     setInitials(defaultInitials || "");
+    setArea(defaultArea?.toString() ?? "");
+
     setType("General");
     setDetails("");
     setImmediateAction("");
     setPreventiveAction("");
 
-    // Lock background scroll
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [open, defaultDate, defaultInitials]);
+  }, [open, defaultDate, defaultInitials, defaultArea]);
 
   if (!open || !mounted) return null;
 
@@ -77,15 +81,14 @@ export default function IncidentModal({
         location_id: String(locationId),
         happened_on: date,
         type: type || null,
+        area: area.trim() || null, // ✅ if your table has area column
         details: details.trim() || null,
         immediate_action: immediateAction.trim() || null,
         preventive_action: preventiveAction.trim() || null,
         created_by: initials.trim().toUpperCase() || null,
       };
 
-      // ✅ Uses your table: public.incidents
       const { error } = await supabase.from("incidents").insert(payload);
-
       if (error) throw error;
 
       onClose();
@@ -153,6 +156,19 @@ export default function IncidentModal({
                   onChange={(e) => setInitials(e.target.value.toUpperCase())}
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
                   placeholder="e.g. WS"
+                />
+              </div>
+
+              {/* ✅ Area (prefilled) */}
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-slate-600">
+                  Area (optional)
+                </label>
+                <input
+                  value={area}
+                  onChange={(e) => setArea(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
+                  placeholder="e.g. Walk-in fridge"
                 />
               </div>
 
