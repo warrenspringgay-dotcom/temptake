@@ -37,9 +37,11 @@ export default function WelcomePopup({ user }: WelcomePopupProps) {
         <div className="mt-2 text-sm text-slate-600">
           Quick setup:
           <ol className="mt-2 list-decimal space-y-1 pl-5">
-            <li>Add your first location (Sites).</li>
-            <li>Add your team members.</li>
+            <li>Add all your team members.</li>
             <li>Build your temp routines.</li>
+            <li>Setup your cleaning rota.</li>
+            <li>Update your allergen information.</li>
+            <li>Add all your suppliers.</li>
           </ol>
         </div>
 
