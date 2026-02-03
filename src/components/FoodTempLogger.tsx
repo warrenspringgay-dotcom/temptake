@@ -15,8 +15,10 @@ import WelcomeGate from "@/components/WelcomeGate";
 
 const WALL_TABLE = "kitchen_wall";
 
-// ✅ KPI incident window (OPEN incidents only) for alert counting
-const INCIDENT_ALERT_DAYS = 30;
+// KPI incident counting window for performance.
+// Incidents still show in modal by range selector (7/14/30).
+// KPI counts OPEN incidents only (so once resolved, it drops off immediately).
+const INCIDENT_KPI_LOOKBACK_DAYS = 365;
 
 /* ---------- Types ---------- */
 
@@ -83,7 +85,6 @@ type IncidentRow = {
   created_by: string | null;
   created_at: string | null;
 
-  // ✅ optional, enables resolved indicator + action
   resolved_at?: string | null;
   resolved_by?: string | null;
 };
@@ -236,7 +237,7 @@ async function isFourWeekReviewDismissed(args: {
 
   if (error) {
     console.warn("[four-week dismiss] read failed:", error.message);
-    return false; // fail open
+    return false;
   }
 
   if (!data?.dismissed_until) return false;
@@ -501,7 +502,7 @@ function AlertsModal({
                 Alerts & incidents
               </div>
 
-              {/* ✅ NO IDs. Labels only. */}
+              {/* NO IDs. Labels only. */}
               <div className="mt-0.5 text-xs text-slate-500">
                 Org:{" "}
                 <span className="font-semibold text-slate-700">
@@ -688,9 +689,7 @@ function AlertsModal({
 
                         <div className="shrink-0 flex flex-col items-end gap-2">
                           <div className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-extrabold text-slate-700">
-                            {i.created_at
-                              ? formatDDMMYYYY(i.created_at) ?? ""
-                              : ""}
+                            {i.created_at ? formatDDMMYYYY(i.created_at) ?? "" : ""}
                           </div>
 
                           {!resolved ? (
@@ -705,9 +704,7 @@ function AlertsModal({
                                   : "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
                               )}
                             >
-                              {resolvingId === i.id
-                                ? "Resolving…"
-                                : "Mark resolved"}
+                              {resolvingId === i.id ? "Resolving…" : "Mark resolved"}
                             </button>
                           ) : null}
                         </div>
@@ -790,31 +787,27 @@ export default function DashboardPage() {
   const [user, setUser] = React.useState<User | null>(null);
   const [authReady, setAuthReady] = React.useState(false);
 
-  // Keep active org/location around for banner dismiss persistence
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [activeLocationId, setActiveLocationId] = useState<string | null>(null);
 
-  // Org/location labels for modal header (NO IDs)
   const [orgLabel, setOrgLabel] = useState<string | null>(null);
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
 
-  // Four-week banner state
   const [fourWeekBanner, setFourWeekBanner] = useState<FourWeekBannerState>({
     kind: "none",
   });
 
-  // Alerts modal state
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [incidents, setIncidents] = useState<IncidentRow[]>([]);
   const [incidentsLoading, setIncidentsLoading] = useState(false);
   const [incidentsError, setIncidentsError] = useState<string | null>(null);
   const [incidentRangeDays, setIncidentRangeDays] = useState<number>(14);
 
-  // ✅ incident count for KPI (open incidents only, time-windowed)
-  const [openIncidentsCount, setOpenIncidentsCount] = useState<number>(0);
-
   // ✅ resolve action state
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+
+  // ✅ KPI-side incident count (OPEN incidents only)
+  const [openIncidentCount, setOpenIncidentCount] = useState<number>(0);
 
   React.useEffect(() => {
     let mounted = true;
@@ -839,7 +832,6 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // Detect hover capability
   const [canHover, setCanHover] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -877,8 +869,8 @@ export default function DashboardPage() {
           loadWallPosts(orgId, cancelled),
           loadFourWeekBanner(orgId, locationId, today, cancelled),
 
-          // ✅ alerts KPI includes open incidents
-          loadOpenIncidentsCount(orgId, locationId, cancelled),
+          // ✅ incident KPI count
+          loadOpenIncidentCount(orgId, locationId, cancelled),
         ]);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load dashboard.");
@@ -904,7 +896,6 @@ export default function DashboardPage() {
     const since = new Date();
     since.setDate(since.getDate() - 7);
 
-    // Build query
     let q = supabase
       .from("food_temp_logs")
       .select("at,status,org_id,location_id,temp_c")
@@ -912,7 +903,6 @@ export default function DashboardPage() {
       .order("at", { ascending: false })
       .limit(400);
 
-    // ✅ Location scope (only when we have one selected)
     if (locationId) {
       q = q.eq("location_id", locationId);
     }
@@ -1114,7 +1104,6 @@ export default function DashboardPage() {
     }
   }
 
-  // ✅ Four-week review banner logic
   async function loadFourWeekBanner(
     orgId: string,
     locationId: string | null,
@@ -1125,7 +1114,6 @@ export default function DashboardPage() {
       if (typeof window === "undefined") return;
 
       const firstSeenKey = `tt_first_seen_at:${orgId}`;
-
       let firstSeenISO = localStorage.getItem(firstSeenKey);
 
       if (!firstSeenISO) {
@@ -1147,7 +1135,7 @@ export default function DashboardPage() {
       const reviewedAtRaw = localStorage.getItem("tt_four_week_reviewed_at");
       const lastReviewedISO = reviewedAtRaw ? toISODate(reviewedAtRaw) : null;
 
-      // Fetch summary first
+      // Fetch summary first (we need periodFrom/periodTo to build reviewKey)
       const res = await fetch(
         `/four-week-review/summary?to=${encodeURIComponent(todayISO)}`,
         { cache: "no-store" }
@@ -1162,7 +1150,6 @@ export default function DashboardPage() {
 
       const reviewKey = makeReviewKey(periodFrom, periodTo);
 
-      // check BOTH: scoped + fallback
       const dismissKeyScoped = makeDismissStorageKey({
         orgId,
         locationId,
@@ -1233,7 +1220,56 @@ export default function DashboardPage() {
     }
   }
 
-  // ✅ Read a single text field from a table safely
+  // ✅ KPI incident count: OPEN incidents only
+  async function loadOpenIncidentCount(
+    orgId: string,
+    locationId: string | null,
+    cancelled: boolean
+  ) {
+    try {
+      const fromD = new Date();
+      fromD.setDate(fromD.getDate() - INCIDENT_KPI_LOOKBACK_DAYS);
+      const fromISO = fromD.toISOString().slice(0, 10);
+
+      // Use head:true + count to avoid fetching rows
+      let q = supabase
+        .from("incidents")
+        .select("id", { count: "exact", head: true })
+        .gte("happened_on", fromISO)
+        .is("resolved_at", null)
+        .eq("org_id_uuid", orgId);
+
+      if (locationId) {
+        q = q.eq("location_id_uuid", locationId);
+      }
+
+      const { count, error } = await q;
+
+      if (error) {
+        // fallback to text ids if needed
+        let q2 = supabase
+          .from("incidents")
+          .select("id", { count: "exact", head: true })
+          .gte("happened_on", fromISO)
+          .is("resolved_at", null)
+          .eq("org_id", String(orgId));
+
+        if (locationId) q2 = q2.eq("location_id", String(locationId));
+
+        const { count: count2, error: err2 } = await q2;
+        if (err2) throw err2;
+
+        if (!cancelled) setOpenIncidentCount(count2 ?? 0);
+        return;
+      }
+
+      if (!cancelled) setOpenIncidentCount(count ?? 0);
+    } catch (e) {
+      console.warn("[alerts/incidents] failed to count open incidents", e);
+      if (!cancelled) setOpenIncidentCount(0);
+    }
+  }
+
   async function tryGetSingleText(
     table: string,
     select: string,
@@ -1258,7 +1294,6 @@ export default function DashboardPage() {
     }
   }
 
-  // ✅ Resolve org/location labels for modal header
   async function resolveOrgLocationLabels(
     orgId: string | null,
     locationId: string | null
@@ -1272,14 +1307,8 @@ export default function DashboardPage() {
     const org =
       (await tryGetSingleText("orgs", "name", { col: "id", val: orgId })) ||
       (await tryGetSingleText("orgs", "org_name", { col: "id", val: orgId })) ||
-      (await tryGetSingleText("organizations", "name", {
-        col: "id",
-        val: orgId,
-      })) ||
-      (await tryGetSingleText("organisations", "name", {
-        col: "id",
-        val: orgId,
-      })) ||
+      (await tryGetSingleText("organizations", "name", { col: "id", val: orgId })) ||
+      (await tryGetSingleText("organisations", "name", { col: "id", val: orgId })) ||
       null;
 
     setOrgLabel(org);
@@ -1290,74 +1319,15 @@ export default function DashboardPage() {
     }
 
     const loc =
-      (await tryGetSingleText("locations", "name", {
-        col: "id",
-        val: locationId,
-      })) ||
-      (await tryGetSingleText("locations", "label", {
-        col: "id",
-        val: locationId,
-      })) ||
-      (await tryGetSingleText("sites", "name", {
-        col: "id",
-        val: locationId,
-      })) ||
+      (await tryGetSingleText("locations", "name", { col: "id", val: locationId })) ||
+      (await tryGetSingleText("locations", "label", { col: "id", val: locationId })) ||
+      (await tryGetSingleText("sites", "name", { col: "id", val: locationId })) ||
       null;
 
     setLocationLabel(loc);
   }
 
-  // ✅ KPI: count OPEN incidents within last N days
-  async function loadOpenIncidentsCount(
-    orgId: string,
-    locationId: string | null,
-    cancelled: boolean
-  ) {
-    try {
-      const toISO = isoToday();
-      const fromD = new Date();
-      fromD.setDate(fromD.getDate() - Math.max(1, INCIDENT_ALERT_DAYS));
-      const fromISO = fromD.toISOString().slice(0, 10);
-
-      let q = supabase
-        .from("incidents")
-        .select("id", { count: "exact", head: true })
-        .gte("happened_on", fromISO)
-        .lte("happened_on", toISO)
-        .is("resolved_at", null);
-
-      q = q.eq("org_id_uuid", orgId);
-      if (locationId) q = q.eq("location_id_uuid", locationId);
-
-      const { count, error } = await q;
-
-      if (error) {
-        // fallback to text
-        let q2 = supabase
-          .from("incidents")
-          .select("id", { count: "exact", head: true })
-          .gte("happened_on", fromISO)
-          .lte("happened_on", toISO)
-          .is("resolved_at", null)
-          .eq("org_id", String(orgId));
-
-        if (locationId) q2 = q2.eq("location_id", String(locationId));
-
-        const { count: c2, error: e2 } = await q2;
-        if (e2) throw e2;
-
-        if (!cancelled) setOpenIncidentsCount(c2 ?? 0);
-        return;
-      }
-
-      if (!cancelled) setOpenIncidentsCount(count ?? 0);
-    } catch (e) {
-      console.warn("[alerts] open incidents count failed:", (e as any)?.message);
-      if (!cancelled) setOpenIncidentsCount(0);
-    }
-  }
-
-  // ✅ incidents loader for alerts modal (uses dropdown range, shows both open+resolved)
+  // ✅ incidents loader for alerts modal
   async function loadIncidentsForAlerts(rangeDays: number) {
     const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
     const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
@@ -1388,7 +1358,10 @@ export default function DashboardPage() {
         .limit(50);
 
       q = q.eq("org_id_uuid", orgId);
-      if (locationId) q = q.eq("location_id_uuid", locationId);
+
+      if (locationId) {
+        q = q.eq("location_id_uuid", locationId);
+      }
 
       const { data, error } = await q;
 
@@ -1459,25 +1432,25 @@ export default function DashboardPage() {
 
   /* ---------- derived ---------- */
 
-  const openTempModal = () => {
-    if (typeof window === "undefined") return;
-    window.dispatchEvent(new Event("tt-open-temp-modal"));
-  };
-
-  // ✅ alerts: includes OPEN incidents count
-  const alertsCount =
-    kpi.trainingOver +
-    kpi.allergenOver +
-    (kpi.tempFails7d > 0 ? 1 : 0) +
-    openIncidentsCount;
-
   const hasAnyKpiAlert =
     kpi.tempFails7d > 0 ||
     kpi.trainingOver > 0 ||
     kpi.trainingDueSoon > 0 ||
     kpi.allergenOver > 0 ||
     kpi.allergenDueSoon > 0 ||
-    openIncidentsCount > 0;
+    openIncidentCount > 0;
+
+  // ✅ NOW includes open incidents
+  const alertsCount =
+    kpi.trainingOver +
+    kpi.allergenOver +
+    (kpi.tempFails7d > 0 ? 1 : 0) +
+    openIncidentCount;
+
+  const openTempModal = () => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new Event("tt-open-temp-modal"));
+  };
 
   const otherAlerts: AlertItem[] = (() => {
     const items: AlertItem[] = [];
@@ -1523,25 +1496,22 @@ export default function DashboardPage() {
       });
     }
 
-    // we don't list "open incidents" here because incidents are shown below anyway
+    // NOTE: incidents are displayed in the modal section below,
+    // so we don't duplicate them as "Other alerts" cards.
     return items;
   })();
 
   const alertsSummary = (() => {
     const bits: string[] = [];
-    if (openIncidentsCount > 0) {
-      bits.push(
-        `${openIncidentsCount} open incident${
-          openIncidentsCount === 1 ? "" : "s"
-        }`
-      );
-    }
+
+    if (openIncidentCount > 0)
+      bits.push(`${openIncidentCount} open incident${openIncidentCount === 1 ? "" : "s"}`);
+
     if (kpi.tempFails7d > 0) bits.push(`${kpi.tempFails7d} failed temps (7d)`);
     if (kpi.trainingOver > 0) bits.push(`${kpi.trainingOver} training overdue`);
-    if (kpi.allergenOver > 0)
-      bits.push(`${kpi.allergenOver} allergen review overdue`);
-    if (!bits.length)
-      return "No training, allergen, temperature or incident issues flagged.";
+    if (kpi.allergenOver > 0) bits.push(`${kpi.allergenOver} allergen review overdue`);
+
+    if (!bits.length) return "No incidents, training, allergen or temperature issues flagged.";
     return bits.join(" · ");
   })();
 
@@ -1581,14 +1551,8 @@ export default function DashboardPage() {
 
     await resolveOrgLocationLabels(orgId, locationId);
     await loadIncidentsForAlerts(incidentRangeDays);
-
-    // refresh KPI incident count too, so it stays in sync
-    if (orgId) {
-      await loadOpenIncidentsCount(orgId, locationId, false);
-    }
   };
 
-  // If the range changes while modal open, reload.
   useEffect(() => {
     if (!alertsOpen) return;
     void loadIncidentsForAlerts(incidentRangeDays);
@@ -1613,13 +1577,12 @@ export default function DashboardPage() {
 
       if (error) throw error;
 
-      // refresh list
+      // refresh modal list + KPI count
       await loadIncidentsForAlerts(incidentRangeDays);
 
-      // refresh KPI incident count
       const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
       const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
-      if (orgId) await loadOpenIncidentsCount(orgId, locationId, false);
+      if (orgId) await loadOpenIncidentCount(orgId, locationId, false);
     } catch (e: any) {
       console.error(e);
       setIncidentsError(
@@ -1637,7 +1600,6 @@ export default function DashboardPage() {
       <WelcomeGate />
       <OnboardingBanner />
 
-      {/* ✅ Alerts modal */}
       <AlertsModal
         open={alertsOpen}
         onClose={() => setAlertsOpen(false)}
@@ -1653,7 +1615,6 @@ export default function DashboardPage() {
         resolvingId={resolvingId}
       />
 
-      {/* ✅ Four-week review banner */}
       {fourWeekBanner.kind === "show" && (
         <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
           <div
@@ -1700,8 +1661,8 @@ export default function DashboardPage() {
                   type="button"
                   onClick={async () => {
                     try {
-                      // fetch fresh, don't trust state
-                      const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
+                      const orgId =
+                        (await getActiveOrgIdClient()) ?? activeOrgId;
                       const locationId =
                         (await getActiveLocationIdClient()) ?? activeLocationId;
 
@@ -1724,20 +1685,14 @@ export default function DashboardPage() {
                       const until = new Date();
                       until.setDate(until.getDate() + 28);
 
-                      // store BOTH so location changes don't resurrect it
                       localStorage.setItem(dismissKeyScoped, until.toISOString());
-                      localStorage.setItem(
-                        dismissKeyFallback,
-                        until.toISOString()
-                      );
+                      localStorage.setItem(dismissKeyFallback, until.toISOString());
 
-                      // also mark reviewed
                       localStorage.setItem(
                         "tt_four_week_reviewed_at",
                         new Date().toISOString()
                       );
 
-                      // DB persist only if we genuinely have locationId
                       if (orgId && locationId) {
                         await dismissFourWeekReview({
                           orgId,
@@ -1745,11 +1700,6 @@ export default function DashboardPage() {
                           periodFrom: fourWeekBanner.periodFrom,
                           periodTo: fourWeekBanner.periodTo,
                         });
-                      } else {
-                        console.warn(
-                          "[four-week dismiss] skipped DB write because org/location missing",
-                          { orgId, locationId }
-                        );
                       }
                     } finally {
                       setFourWeekBanner({ kind: "none" });
@@ -1833,7 +1783,6 @@ export default function DashboardPage() {
               }
             />
 
-            {/* ✅ Alerts includes open incidents now */}
             <KpiTile
               canHover={canHover}
               title="Alerts"
@@ -1977,54 +1926,14 @@ export default function DashboardPage() {
         <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur space-y-3">
           <h2 className="text-sm font-extrabold text-slate-900">Quick actions</h2>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <QuickLink
-              href="/routines"
-              label="Routines"
-              icon="📋"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/allergens"
-              label="Allergens"
-              icon="⚠️"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/cleaning-rota"
-              label="Cleaning rota"
-              icon="🧽"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/team"
-              label="Team & training"
-              icon="👥"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/reports"
-              label="Reports"
-              icon="📊"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/locations"
-              label="Locations & sites"
-              icon="📍"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/manager"
-              label="Manager view"
-              icon="💼"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/help"
-              label="Help & support"
-              icon="❓"
-              canHover={canHover}
-            />
+            <QuickLink href="/routines" label="Routines" icon="📋" canHover={canHover} />
+            <QuickLink href="/allergens" label="Allergens" icon="⚠️" canHover={canHover} />
+            <QuickLink href="/cleaning-rota" label="Cleaning rota" icon="🧽" canHover={canHover} />
+            <QuickLink href="/team" label="Team & training" icon="👥" canHover={canHover} />
+            <QuickLink href="/reports" label="Reports" icon="📊" canHover={canHover} />
+            <QuickLink href="/locations" label="Locations & sites" icon="📍" canHover={canHover} />
+            <QuickLink href="/manager" label="Manager view" icon="💼" canHover={canHover} />
+            <QuickLink href="/help" label="Help & support" icon="❓" canHover={canHover} />
           </div>
         </section>
 
