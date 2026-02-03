@@ -421,11 +421,7 @@ function KpiTile({
 
   if (onClick) {
     return (
-      <button
-        type="button"
-        onClick={onClick}
-        className="block w-full h-full"
-      >
+      <button type="button" onClick={onClick} className="block w-full h-full">
         {inner}
       </button>
     );
@@ -500,6 +496,8 @@ function AlertsModal({
               <div className="text-base font-semibold text-slate-900">
                 Alerts & incidents
               </div>
+
+              {/* ✅ Labels only. No IDs. */}
               <div className="mt-0.5 text-xs text-slate-500">
                 Org:{" "}
                 <span className="font-semibold text-slate-700">
@@ -782,7 +780,7 @@ export default function DashboardPage() {
   const headerDate = formatPrettyDate(new Date());
 
   const [user, setUser] = React.useState<User | null>(null);
-  const [authReady, setAuthReady] = React.useState(false);
+  const [_authReady, setAuthReady] = React.useState(false);
 
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [activeLocationId, setActiveLocationId] = useState<string | null>(null);
@@ -875,7 +873,7 @@ export default function DashboardPage() {
     };
   }, []);
 
-  /* ---------- loaders (unchanged except incidents select includes resolved fields) ---------- */
+  /* ---------- loaders ---------- */
 
   async function loadTempsKpi(
     orgId: string,
@@ -1000,6 +998,7 @@ export default function DashboardPage() {
     let allergenDueSoon = 0;
     let allergenOver = 0;
 
+    // Training
     try {
       const { data } = await supabase
         .from("team_members")
@@ -1017,6 +1016,7 @@ export default function DashboardPage() {
       });
     } catch {}
 
+    // Allergen review
     try {
       const { data } = await supabase
         .from("allergen_review")
@@ -1092,6 +1092,7 @@ export default function DashboardPage() {
     }
   }
 
+  // ✅ Four-week review banner logic
   async function loadFourWeekBanner(
     orgId: string,
     locationId: string | null,
@@ -1109,6 +1110,7 @@ export default function DashboardPage() {
         localStorage.setItem(firstSeenKey, firstSeenISO);
       }
 
+      // Not eligible until 28 days after first seen
       const eligibleDate = new Date(firstSeenISO);
       eligibleDate.setDate(eligibleDate.getDate() + 28);
 
@@ -1177,6 +1179,7 @@ export default function DashboardPage() {
         return;
       }
 
+      // Optional DB dismissal check
       if (locationId && periodFrom && periodTo) {
         const dismissed = await isFourWeekReviewDismissed({
           orgId,
@@ -1262,6 +1265,7 @@ export default function DashboardPage() {
     setLocationLabel(loc);
   }
 
+  // ✅ incidents loader for alerts modal
   async function loadIncidentsForAlerts(rangeDays: number) {
     const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
     const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
@@ -1287,15 +1291,15 @@ export default function DashboardPage() {
         )
         .gte("happened_on", fromISO)
         .lte("happened_on", toISO)
+        // ✅ open first
+        .order("resolved_at", { ascending: true, nullsFirst: true })
         .order("happened_on", { ascending: false })
         .order("created_at", { ascending: false })
         .limit(50);
 
+      // UUID columns (preferred)
       q = q.eq("org_id_uuid", orgId);
-
-      if (locationId) {
-        q = q.eq("location_id_uuid", locationId);
-      }
+      if (locationId) q = q.eq("location_id_uuid", locationId);
 
       const { data, error } = await q;
 
@@ -1312,6 +1316,7 @@ export default function DashboardPage() {
           )
           .gte("happened_on", fromISO)
           .lte("happened_on", toISO)
+          .order("resolved_at", { ascending: true, nullsFirst: true })
           .order("happened_on", { ascending: false })
           .order("created_at", { ascending: false })
           .limit(50)
@@ -1533,6 +1538,7 @@ export default function DashboardPage() {
         resolvingId={resolvingId}
       />
 
+      {/* ✅ Four-week review banner (unchanged) */}
       {fourWeekBanner.kind === "show" && (
         <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
           <div
@@ -1656,10 +1662,7 @@ export default function DashboardPage() {
                   ? "No temperatures logged yet today."
                   : "At least one temperature check recorded."
               }
-              onClick={() => {
-                if (typeof window === "undefined") return;
-                window.dispatchEvent(new Event("tt-open-temp-modal"));
-              }}
+              onClick={openTempModal}
               footer={
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
                   <span>Tap to log</span>
@@ -1715,9 +1718,7 @@ export default function DashboardPage() {
               footer={
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
                   <span>View details</span>
-                  <span className="opacity-80">
-                    {hasAnyKpiAlert ? "Now" : "OK"}
-                  </span>
+                  <span className="opacity-80">{hasAnyKpiAlert ? "Now" : "OK"}</span>
                 </div>
               }
             />
