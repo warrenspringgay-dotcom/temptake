@@ -81,6 +81,14 @@ type IncidentRow = {
   created_at: string | null;
 };
 
+type AlertItem = {
+  id: string;
+  label: string;
+  tone: "danger" | "warn" | "ok";
+  href?: string;
+  onClick?: () => void;
+};
+
 /* ---------- helpers ---------- */
 
 const isoToday = () => new Date().toISOString().slice(0, 10);
@@ -436,23 +444,27 @@ function AlertsModal({
   onClose,
   orgId,
   locationId,
+  orgLabel,
+  locationLabel,
   incidents,
   incidentsLoading,
   incidentsError,
   rangeDays,
   setRangeDays,
-  otherAlertsSummary,
+  otherAlerts,
 }: {
   open: boolean;
   onClose: () => void;
   orgId: string | null;
   locationId: string | null;
+  orgLabel: string | null;
+  locationLabel: string | null;
   incidents: IncidentRow[];
   incidentsLoading: boolean;
   incidentsError: string | null;
   rangeDays: number;
   setRangeDays: (n: number) => void;
-  otherAlertsSummary: string;
+  otherAlerts: AlertItem[];
 }) {
   const [mounted, setMounted] = useState(false);
 
@@ -485,13 +497,25 @@ function AlertsModal({
               <div className="text-base font-semibold text-slate-900">
                 Alerts & incidents
               </div>
+
               <div className="mt-0.5 text-xs text-slate-500">
-                Org: <span className="font-mono">{orgId?.slice(0, 8) ?? "—"}…</span>
+                Org:{" "}
+                <span className="font-semibold text-slate-700">
+                  {orgLabel ?? "—"}
+                </span>
                 {" · "}
                 Location:{" "}
-                <span className="font-mono">
-                  {locationId ? `${locationId.slice(0, 8)}…` : "—"}
+                <span className="font-semibold text-slate-700">
+                  {locationLabel ?? "—"}
                 </span>
+
+                {(orgId || locationId) && (
+                  <div className="mt-1 text-[10px] text-slate-400">
+                    {orgId ? `org_id: ${orgId}` : ""}
+                    {orgId && locationId ? " · " : ""}
+                    {locationId ? `location_id: ${locationId}` : ""}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -510,9 +534,68 @@ function AlertsModal({
               <div className="text-xs font-extrabold uppercase tracking-[0.2em] text-slate-600">
                 Other alerts
               </div>
-              <div className="mt-1 text-sm font-medium text-slate-800">
-                {otherAlertsSummary}
-              </div>
+
+              {otherAlerts.length === 0 ? (
+                <div className="mt-1 text-sm font-medium text-slate-800">
+                  No other alerts.
+                </div>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  {otherAlerts.map((a) => {
+                    const badge =
+                      a.tone === "danger"
+                        ? "bg-red-100 text-red-800 border-red-200"
+                        : a.tone === "warn"
+                        ? "bg-amber-100 text-amber-900 border-amber-200"
+                        : "bg-emerald-100 text-emerald-900 border-emerald-200";
+
+                    const inner = (
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 hover:bg-slate-50">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-900">
+                            {a.label}
+                          </div>
+                        </div>
+                        <span
+                          className={cls(
+                            "shrink-0 rounded-full border px-2 py-1 text-[10px] font-extrabold uppercase tracking-wide",
+                            badge
+                          )}
+                        >
+                          {a.tone}
+                        </span>
+                      </div>
+                    );
+
+                    if (a.href) {
+                      return (
+                        <Link
+                          key={a.id}
+                          href={a.href}
+                          onClick={onClose}
+                          className="block"
+                        >
+                          {inner}
+                        </Link>
+                      );
+                    }
+
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => {
+                          a.onClick?.();
+                          onClose();
+                        }}
+                        className="block w-full text-left"
+                      >
+                        {inner}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between gap-2">
@@ -667,6 +750,10 @@ export default function DashboardPage() {
   // Keep active org/location around for banner dismiss persistence
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [activeLocationId, setActiveLocationId] = useState<string | null>(null);
+
+  // ✅ Human labels for modal header
+  const [orgLabel, setOrgLabel] = useState<string | null>(null);
+  const [locationLabel, setLocationLabel] = useState<string | null>(null);
 
   // Four-week banner state
   const [fourWeekBanner, setFourWeekBanner] = useState<FourWeekBannerState>({
@@ -882,7 +969,10 @@ export default function DashboardPage() {
 
     // Training
     try {
-      const { data } = await supabase.from("team_members").select("*").eq("org_id", orgId);
+      const { data } = await supabase
+        .from("team_members")
+        .select("*")
+        .eq("org_id", orgId);
 
       (data ?? []).forEach((r: any) => {
         const raw =
@@ -1090,6 +1180,65 @@ export default function DashboardPage() {
     }
   }
 
+  /* ---------- org/location label resolving ---------- */
+
+  async function tryGetSingleText(
+    table: string,
+    select: string,
+    where: { col: string; val: any }
+  ): Promise<string | null> {
+    try {
+      const { data, error } = await supabase
+        .from(table)
+        .select(select)
+        .eq(where.col, where.val)
+        .maybeSingle();
+
+      if (error) return null;
+
+      const firstKey = select.split(",")[0].trim();
+      const v = (data as any)?.[firstKey];
+      if (!v) return null;
+
+      return String(v);
+    } catch {
+      return null;
+    }
+  }
+
+  async function resolveOrgLocationLabels(
+    orgId: string | null,
+    locationId: string | null
+  ) {
+    if (!orgId) {
+      setOrgLabel(null);
+      setLocationLabel(null);
+      return;
+    }
+
+    const org =
+      (await tryGetSingleText("orgs", "name", { col: "id", val: orgId })) ||
+      (await tryGetSingleText("orgs", "org_name", { col: "id", val: orgId })) ||
+      (await tryGetSingleText("organizations", "name", { col: "id", val: orgId })) ||
+      (await tryGetSingleText("organisations", "name", { col: "id", val: orgId })) ||
+      null;
+
+    setOrgLabel(org);
+
+    if (!locationId) {
+      setLocationLabel(null);
+      return;
+    }
+
+    const loc =
+      (await tryGetSingleText("locations", "name", { col: "id", val: locationId })) ||
+      (await tryGetSingleText("locations", "label", { col: "id", val: locationId })) ||
+      (await tryGetSingleText("sites", "name", { col: "id", val: locationId })) ||
+      null;
+
+    setLocationLabel(loc);
+  }
+
   // ✅ incidents loader for alerts modal
   async function loadIncidentsForAlerts(rangeDays: number) {
     const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
@@ -1109,7 +1258,7 @@ export default function DashboardPage() {
       fromD.setDate(fromD.getDate() - Math.max(1, Number(rangeDays) || 14));
       const fromISO = fromD.toISOString().slice(0, 10);
 
-      // Prefer uuid columns (works fine if your ids are uuid strings)
+      // Prefer uuid columns
       let q = supabase
         .from("incidents")
         .select(
@@ -1121,7 +1270,6 @@ export default function DashboardPage() {
         .order("created_at", { ascending: false })
         .limit(50);
 
-      // These columns exist in your schema, and are the safest filter
       q = q.eq("org_id_uuid", orgId);
 
       if (locationId) {
@@ -1131,8 +1279,11 @@ export default function DashboardPage() {
       const { data, error } = await q;
 
       if (error) {
-        // fallback to text columns if uuid filtering isn't aligned in your DB
-        console.warn("[alerts/incidents] uuid filter failed, trying text:", error.message);
+        // fallback to text columns
+        console.warn(
+          "[alerts/incidents] uuid filter failed, trying text:",
+          error.message
+        );
 
         let q2 = supabase
           .from("incidents")
@@ -1201,6 +1352,58 @@ export default function DashboardPage() {
     kpi.allergenOver > 0 ||
     kpi.allergenDueSoon > 0;
 
+  const openTempModal = () => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new Event("tt-open-temp-modal"));
+  };
+
+  const otherAlerts: AlertItem[] = (() => {
+    const items: AlertItem[] = [];
+
+    if (kpi.allergenOver > 0) {
+      items.push({
+        id: "allergen_over",
+        label: `${kpi.allergenOver} allergen review overdue`,
+        tone: "danger",
+        href: "/allergens",
+      });
+    } else if (kpi.allergenDueSoon > 0) {
+      items.push({
+        id: "allergen_soon",
+        label: `${kpi.allergenDueSoon} allergen review due soon`,
+        tone: "warn",
+        href: "/allergens",
+      });
+    }
+
+    if (kpi.trainingOver > 0) {
+      items.push({
+        id: "training_over",
+        label: `${kpi.trainingOver} training overdue`,
+        tone: "danger",
+        href: "/team",
+      });
+    } else if (kpi.trainingDueSoon > 0) {
+      items.push({
+        id: "training_soon",
+        label: `${kpi.trainingDueSoon} training due soon`,
+        tone: "warn",
+        href: "/team",
+      });
+    }
+
+    if (kpi.tempFails7d > 0) {
+      items.push({
+        id: "temp_fails",
+        label: `${kpi.tempFails7d} failed temperatures in last 7 days`,
+        tone: "danger",
+        onClick: openTempModal,
+      });
+    }
+
+    return items;
+  })();
+
   const alertsSummary = (() => {
     const bits: string[] = [];
     if (kpi.tempFails7d > 0) bits.push(`${kpi.tempFails7d} failed temps (7d)`);
@@ -1210,11 +1413,6 @@ export default function DashboardPage() {
     if (!bits.length) return "No training, allergen or temperature issues flagged.";
     return bits.join(" · ");
   })();
-
-  const openTempModal = () => {
-    if (typeof window === "undefined") return;
-    window.dispatchEvent(new Event("tt-open-temp-modal"));
-  };
 
   const cleaningPct =
     kpi.cleaningDueToday > 0
@@ -1246,14 +1444,23 @@ export default function DashboardPage() {
 
   const openAlertsModal = async () => {
     setAlertsOpen(true);
-    // load incidents on open (and keep it fast by limiting to 50)
+
+    const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
+    const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
+
+    await resolveOrgLocationLabels(orgId, locationId);
     await loadIncidentsForAlerts(incidentRangeDays);
   };
 
   // If the range changes while modal open, reload.
   useEffect(() => {
     if (!alertsOpen) return;
-    void loadIncidentsForAlerts(incidentRangeDays);
+    (async () => {
+      const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
+      const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
+      await resolveOrgLocationLabels(orgId, locationId);
+      await loadIncidentsForAlerts(incidentRangeDays);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incidentRangeDays, alertsOpen]);
 
@@ -1269,12 +1476,14 @@ export default function DashboardPage() {
         onClose={() => setAlertsOpen(false)}
         orgId={activeOrgId}
         locationId={activeLocationId}
+        orgLabel={orgLabel}
+        locationLabel={locationLabel}
         incidents={incidents}
         incidentsLoading={incidentsLoading}
         incidentsError={incidentsError}
         rangeDays={incidentRangeDays}
         setRangeDays={setIncidentRangeDays}
-        otherAlertsSummary={alertsSummary}
+        otherAlerts={otherAlerts}
       />
 
       {/* ✅ Four-week review banner */}
@@ -1455,7 +1664,7 @@ export default function DashboardPage() {
               }
             />
 
-            {/* ✅ Alerts now opens modal (instead of routing to /reports) */}
+            {/* ✅ Alerts opens modal */}
             <KpiTile
               canHover={canHover}
               title="Alerts"
@@ -1467,7 +1676,9 @@ export default function DashboardPage() {
               footer={
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
                   <span>View details</span>
-                  <span className="opacity-80">{hasAnyKpiAlert ? "Now" : "OK"}</span>
+                  <span className="opacity-80">
+                    {hasAnyKpiAlert ? "Now" : "OK"}
+                  </span>
                 </div>
               }
             />
@@ -1597,24 +1808,54 @@ export default function DashboardPage() {
         <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur space-y-3">
           <h2 className="text-sm font-extrabold text-slate-900">Quick actions</h2>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <QuickLink href="/routines" label="Routines" icon="📋" canHover={canHover} />
-            <QuickLink href="/allergens" label="Allergens" icon="⚠️" canHover={canHover} />
+            <QuickLink
+              href="/routines"
+              label="Routines"
+              icon="📋"
+              canHover={canHover}
+            />
+            <QuickLink
+              href="/allergens"
+              label="Allergens"
+              icon="⚠️"
+              canHover={canHover}
+            />
             <QuickLink
               href="/cleaning-rota"
               label="Cleaning rota"
               icon="🧽"
               canHover={canHover}
             />
-            <QuickLink href="/team" label="Team & training" icon="👥" canHover={canHover} />
-            <QuickLink href="/reports" label="Reports" icon="📊" canHover={canHover} />
+            <QuickLink
+              href="/team"
+              label="Team & training"
+              icon="👥"
+              canHover={canHover}
+            />
+            <QuickLink
+              href="/reports"
+              label="Reports"
+              icon="📊"
+              canHover={canHover}
+            />
             <QuickLink
               href="/locations"
               label="Locations & sites"
               icon="📍"
               canHover={canHover}
             />
-            <QuickLink href="/manager" label="Manager view" icon="💼" canHover={canHover} />
-            <QuickLink href="/help" label="Help & support" icon="❓" canHover={canHover} />
+            <QuickLink
+              href="/manager"
+              label="Manager view"
+              icon="💼"
+              canHover={canHover}
+            />
+            <QuickLink
+              href="/help"
+              label="Help & support"
+              icon="❓"
+              canHover={canHover}
+            />
           </div>
         </section>
 
