@@ -79,6 +79,10 @@ type IncidentRow = {
   preventive_action: string | null;
   created_by: string | null;
   created_at: string | null;
+
+  // ✅ optional, but enables resolved indicator
+  resolved_at?: string | null;
+  resolved_by?: string | null;
 };
 
 type AlertItem = {
@@ -229,7 +233,7 @@ async function isFourWeekReviewDismissed(args: {
 
   if (error) {
     console.warn("[four-week dismiss] read failed:", error.message);
-    return false; // fail open (show rather than silently hide)
+    return false;
   }
 
   if (!data?.dismissed_until) return false;
@@ -256,7 +260,6 @@ async function dismissFourWeekReview(args: {
   const currentCount = existing?.dismiss_count ?? 0;
   const nextCount = currentCount + 1;
 
-  // 1-2 dismisses => 24h, 3rd+ => 28 days
   const hours = nextCount >= 3 ? 24 * 28 : 24;
   const dismissedUntil = new Date(
     Date.now() + hours * 60 * 60 * 1000
@@ -442,8 +445,6 @@ function shortSnippet(s: string | null | undefined, n = 140) {
 function AlertsModal({
   open,
   onClose,
-  orgId,
-  locationId,
   orgLabel,
   locationLabel,
   incidents,
@@ -452,11 +453,11 @@ function AlertsModal({
   rangeDays,
   setRangeDays,
   otherAlerts,
+  onResolveIncident,
+  resolvingId,
 }: {
   open: boolean;
   onClose: () => void;
-  orgId: string | null;
-  locationId: string | null;
   orgLabel: string | null;
   locationLabel: string | null;
   incidents: IncidentRow[];
@@ -465,6 +466,8 @@ function AlertsModal({
   rangeDays: number;
   setRangeDays: (n: number) => void;
   otherAlerts: AlertItem[];
+  onResolveIncident: (incidentId: string) => Promise<void>;
+  resolvingId: string | null;
 }) {
   const [mounted, setMounted] = useState(false);
 
@@ -497,7 +500,6 @@ function AlertsModal({
               <div className="text-base font-semibold text-slate-900">
                 Alerts & incidents
               </div>
-
               <div className="mt-0.5 text-xs text-slate-500">
                 Org:{" "}
                 <span className="font-semibold text-slate-700">
@@ -508,14 +510,6 @@ function AlertsModal({
                 <span className="font-semibold text-slate-700">
                   {locationLabel ?? "—"}
                 </span>
-
-                {(orgId || locationId) && (
-                  <div className="mt-1 text-[10px] text-slate-400">
-                    {orgId ? `org_id: ${orgId}` : ""}
-                    {orgId && locationId ? " · " : ""}
-                    {locationId ? `location_id: ${locationId}` : ""}
-                  </div>
-                )}
               </div>
             </div>
 
@@ -641,69 +635,112 @@ function AlertsModal({
               </div>
             ) : (
               <div className="space-y-2">
-                {incidents.map((i) => (
-                  <div
-                    key={i.id}
-                    className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-extrabold text-slate-900">
-                          {i.type ?? "Incident"}
+                {incidents.map((i) => {
+                  const resolved = !!i.resolved_at;
+
+                  return (
+                    <div
+                      key={i.id}
+                      className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-extrabold text-slate-900">
+                              {i.type ?? "Incident"}
+                            </div>
+
+                            {resolved ? (
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-900 border border-emerald-200">
+                                Resolved
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-extrabold text-red-900 border border-red-200">
+                                Open
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="mt-0.5 text-[11px] font-semibold text-slate-500">
+                            Date:{" "}
+                            <span className="font-mono">
+                              {formatDDMMYYYY(i.happened_on) ?? "—"}
+                            </span>
+                            {" · "}
+                            By:{" "}
+                            <span className="font-mono">
+                              {i.created_by ? i.created_by.toUpperCase() : "—"}
+                            </span>
+
+                            {resolved && i.resolved_at ? (
+                              <>
+                                {" · "}
+                                Resolved:{" "}
+                                <span className="font-mono">
+                                  {formatDDMMYYYY(i.resolved_at) ?? "—"}
+                                </span>
+                              </>
+                            ) : null}
+                          </div>
                         </div>
-                        <div className="mt-0.5 text-[11px] font-semibold text-slate-500">
-                          Date:{" "}
-                          <span className="font-mono">
-                            {formatDDMMYYYY(i.happened_on) ?? "—"}
-                          </span>
-                          {" · "}
-                          By:{" "}
-                          <span className="font-mono">
-                            {i.created_by ? i.created_by.toUpperCase() : "—"}
-                          </span>
+
+                        <div className="shrink-0 flex flex-col items-end gap-2">
+                          <div className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-extrabold text-slate-700">
+                            {i.created_at ? formatDDMMYYYY(i.created_at) ?? "" : ""}
+                          </div>
+
+                          {!resolved ? (
+                            <button
+                              type="button"
+                              disabled={resolvingId === i.id}
+                              onClick={() => onResolveIncident(i.id)}
+                              className={cls(
+                                "rounded-xl px-3 py-1.5 text-[11px] font-extrabold border",
+                                resolvingId === i.id
+                                  ? "bg-slate-100 text-slate-400 border-slate-200"
+                                  : "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
+                              )}
+                            >
+                              {resolvingId === i.id ? "Resolving…" : "Mark resolved"}
+                            </button>
+                          ) : null}
                         </div>
                       </div>
 
-                      <div className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-extrabold text-slate-700">
-                        {i.created_at
-                          ? formatDDMMYYYY(i.created_at) ?? ""
-                          : ""}
-                      </div>
+                      {i.details ? (
+                        <div className="mt-2 text-sm text-slate-800">
+                          {shortSnippet(i.details)}
+                        </div>
+                      ) : null}
+
+                      {(i.immediate_action || i.preventive_action) && (
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                          {i.immediate_action ? (
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                              <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-600">
+                                Immediate action
+                              </div>
+                              <div className="mt-1 text-sm text-slate-800">
+                                {shortSnippet(i.immediate_action, 120)}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {i.preventive_action ? (
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                              <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-600">
+                                Preventive action
+                              </div>
+                              <div className="mt-1 text-sm text-slate-800">
+                                {shortSnippet(i.preventive_action, 120)}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
-
-                    {i.details ? (
-                      <div className="mt-2 text-sm text-slate-800">
-                        {shortSnippet(i.details)}
-                      </div>
-                    ) : null}
-
-                    {(i.immediate_action || i.preventive_action) && (
-                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                        {i.immediate_action ? (
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                            <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-600">
-                              Immediate action
-                            </div>
-                            <div className="mt-1 text-sm text-slate-800">
-                              {shortSnippet(i.immediate_action, 120)}
-                            </div>
-                          </div>
-                        ) : null}
-
-                        {i.preventive_action ? (
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                            <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-600">
-                              Preventive action
-                            </div>
-                            <div className="mt-1 text-sm text-slate-800">
-                              {shortSnippet(i.preventive_action, 120)}
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -747,25 +784,24 @@ export default function DashboardPage() {
   const [user, setUser] = React.useState<User | null>(null);
   const [authReady, setAuthReady] = React.useState(false);
 
-  // Keep active org/location around for banner dismiss persistence
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [activeLocationId, setActiveLocationId] = useState<string | null>(null);
 
-  // ✅ Human labels for modal header
   const [orgLabel, setOrgLabel] = useState<string | null>(null);
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
 
-  // Four-week banner state
   const [fourWeekBanner, setFourWeekBanner] = useState<FourWeekBannerState>({
     kind: "none",
   });
 
-  // ✅ Alerts modal state
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [incidents, setIncidents] = useState<IncidentRow[]>([]);
   const [incidentsLoading, setIncidentsLoading] = useState(false);
   const [incidentsError, setIncidentsError] = useState<string | null>(null);
   const [incidentRangeDays, setIncidentRangeDays] = useState<number>(14);
+
+  // ✅ resolve action state
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
 
   React.useEffect(() => {
     let mounted = true;
@@ -790,7 +826,6 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // Detect hover capability
   const [canHover, setCanHover] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -840,7 +875,7 @@ export default function DashboardPage() {
     };
   }, []);
 
-  /* ---------- loaders ---------- */
+  /* ---------- loaders (unchanged except incidents select includes resolved fields) ---------- */
 
   async function loadTempsKpi(
     orgId: string,
@@ -851,7 +886,6 @@ export default function DashboardPage() {
     const since = new Date();
     since.setDate(since.getDate() - 7);
 
-    // Build query
     let q = supabase
       .from("food_temp_logs")
       .select("at,status,org_id,location_id,temp_c")
@@ -859,7 +893,6 @@ export default function DashboardPage() {
       .order("at", { ascending: false })
       .limit(400);
 
-    // ✅ Location scope (only when we have one selected)
     if (locationId) {
       q = q.eq("location_id", locationId);
     }
@@ -967,7 +1000,6 @@ export default function DashboardPage() {
     let allergenDueSoon = 0;
     let allergenOver = 0;
 
-    // Training
     try {
       const { data } = await supabase
         .from("team_members")
@@ -985,7 +1017,6 @@ export default function DashboardPage() {
       });
     } catch {}
 
-    // Allergen review
     try {
       const { data } = await supabase
         .from("allergen_review")
@@ -1061,7 +1092,6 @@ export default function DashboardPage() {
     }
   }
 
-  // ✅ Four-week review banner logic (fixed, stable keys, localStorage works)
   async function loadFourWeekBanner(
     orgId: string,
     locationId: string | null,
@@ -1072,7 +1102,6 @@ export default function DashboardPage() {
       if (typeof window === "undefined") return;
 
       const firstSeenKey = `tt_first_seen_at:${orgId}`;
-
       let firstSeenISO = localStorage.getItem(firstSeenKey);
 
       if (!firstSeenISO) {
@@ -1080,7 +1109,6 @@ export default function DashboardPage() {
         localStorage.setItem(firstSeenKey, firstSeenISO);
       }
 
-      // Not eligible until 28 days after first seen
       const eligibleDate = new Date(firstSeenISO);
       eligibleDate.setDate(eligibleDate.getDate() + 28);
 
@@ -1094,7 +1122,6 @@ export default function DashboardPage() {
       const reviewedAtRaw = localStorage.getItem("tt_four_week_reviewed_at");
       const lastReviewedISO = reviewedAtRaw ? toISODate(reviewedAtRaw) : null;
 
-      // Fetch summary first (we need periodFrom/periodTo to build reviewKey)
       const res = await fetch(
         `/four-week-review/summary?to=${encodeURIComponent(todayISO)}`,
         { cache: "no-store" }
@@ -1109,7 +1136,6 @@ export default function DashboardPage() {
 
       const reviewKey = makeReviewKey(periodFrom, periodTo);
 
-      // check BOTH: scoped + fallback
       const dismissKeyScoped = makeDismissStorageKey({
         orgId,
         locationId,
@@ -1151,7 +1177,6 @@ export default function DashboardPage() {
         return;
       }
 
-      // ✅ Optional DB dismissal check (only if we have org+location)
       if (locationId && periodFrom && periodTo) {
         const dismissed = await isFourWeekReviewDismissed({
           orgId,
@@ -1179,8 +1204,6 @@ export default function DashboardPage() {
       setFourWeekBanner({ kind: "none" });
     }
   }
-
-  /* ---------- org/location label resolving ---------- */
 
   async function tryGetSingleText(
     table: string,
@@ -1239,7 +1262,6 @@ export default function DashboardPage() {
     setLocationLabel(loc);
   }
 
-  // ✅ incidents loader for alerts modal
   async function loadIncidentsForAlerts(rangeDays: number) {
     const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
     const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
@@ -1258,11 +1280,10 @@ export default function DashboardPage() {
       fromD.setDate(fromD.getDate() - Math.max(1, Number(rangeDays) || 14));
       const fromISO = fromD.toISOString().slice(0, 10);
 
-      // Prefer uuid columns
       let q = supabase
         .from("incidents")
         .select(
-          "id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at"
+          "id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at,resolved_at,resolved_by"
         )
         .gte("happened_on", fromISO)
         .lte("happened_on", toISO)
@@ -1279,7 +1300,6 @@ export default function DashboardPage() {
       const { data, error } = await q;
 
       if (error) {
-        // fallback to text columns
         console.warn(
           "[alerts/incidents] uuid filter failed, trying text:",
           error.message
@@ -1288,7 +1308,7 @@ export default function DashboardPage() {
         let q2 = supabase
           .from("incidents")
           .select(
-            "id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at"
+            "id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at,resolved_at,resolved_by"
           )
           .gte("happened_on", fromISO)
           .lte("happened_on", toISO)
@@ -1312,6 +1332,8 @@ export default function DashboardPage() {
             preventive_action: r.preventive_action ?? null,
             created_by: r.created_by ?? null,
             created_at: r.created_at ?? null,
+            resolved_at: r.resolved_at ?? null,
+            resolved_by: r.resolved_by ?? null,
           })) || [];
 
         setIncidents(mapped2);
@@ -1328,6 +1350,8 @@ export default function DashboardPage() {
           preventive_action: r.preventive_action ?? null,
           created_by: r.created_by ?? null,
           created_at: r.created_at ?? null,
+          resolved_at: r.resolved_at ?? null,
+          resolved_by: r.resolved_by ?? null,
         })) || [];
 
       setIncidents(mapped);
@@ -1342,15 +1366,15 @@ export default function DashboardPage() {
 
   /* ---------- derived ---------- */
 
-  const alertsCount =
-    kpi.trainingOver + kpi.allergenOver + (kpi.tempFails7d > 0 ? 1 : 0);
-
   const hasAnyKpiAlert =
     kpi.tempFails7d > 0 ||
     kpi.trainingOver > 0 ||
     kpi.trainingDueSoon > 0 ||
     kpi.allergenOver > 0 ||
     kpi.allergenDueSoon > 0;
+
+  const alertsCount =
+    kpi.trainingOver + kpi.allergenOver + (kpi.tempFails7d > 0 ? 1 : 0);
 
   const openTempModal = () => {
     if (typeof window === "undefined") return;
@@ -1452,17 +1476,41 @@ export default function DashboardPage() {
     await loadIncidentsForAlerts(incidentRangeDays);
   };
 
-  // If the range changes while modal open, reload.
   useEffect(() => {
     if (!alertsOpen) return;
-    (async () => {
-      const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
-      const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
-      await resolveOrgLocationLabels(orgId, locationId);
-      await loadIncidentsForAlerts(incidentRangeDays);
-    })();
+    void loadIncidentsForAlerts(incidentRangeDays);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incidentRangeDays, alertsOpen]);
+
+  // ✅ Resolve handler
+  async function resolveIncident(incidentId: string) {
+    try {
+      setResolvingId(incidentId);
+      setIncidentsError(null);
+
+      const uid = user?.id ?? null;
+
+      const { error } = await supabase
+        .from("incidents")
+        .update({
+          resolved_at: new Date().toISOString(),
+          resolved_by: uid,
+        })
+        .eq("id", incidentId);
+
+      if (error) throw error;
+
+      await loadIncidentsForAlerts(incidentRangeDays);
+    } catch (e: any) {
+      console.error(e);
+      setIncidentsError(
+        e?.message ??
+          "Could not resolve incident. (If you haven't added resolved_at/resolved_by columns yet, do that first.)"
+      );
+    } finally {
+      setResolvingId(null);
+    }
+  }
 
   /* ---------- render ---------- */
   return (
@@ -1470,12 +1518,9 @@ export default function DashboardPage() {
       <WelcomeGate />
       <OnboardingBanner />
 
-      {/* ✅ Alerts modal */}
       <AlertsModal
         open={alertsOpen}
         onClose={() => setAlertsOpen(false)}
-        orgId={activeOrgId}
-        locationId={activeLocationId}
         orgLabel={orgLabel}
         locationLabel={locationLabel}
         incidents={incidents}
@@ -1484,9 +1529,10 @@ export default function DashboardPage() {
         rangeDays={incidentRangeDays}
         setRangeDays={setIncidentRangeDays}
         otherAlerts={otherAlerts}
+        onResolveIncident={resolveIncident}
+        resolvingId={resolvingId}
       />
 
-      {/* ✅ Four-week review banner */}
       {fourWeekBanner.kind === "show" && (
         <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
           <div
@@ -1533,7 +1579,6 @@ export default function DashboardPage() {
                   type="button"
                   onClick={async () => {
                     try {
-                      // fetch fresh, don't trust state
                       const orgId =
                         (await getActiveOrgIdClient()) ?? activeOrgId;
                       const locationId =
@@ -1558,17 +1603,14 @@ export default function DashboardPage() {
                       const until = new Date();
                       until.setDate(until.getDate() + 28);
 
-                      // store BOTH so location changes don't resurrect it
                       localStorage.setItem(dismissKeyScoped, until.toISOString());
                       localStorage.setItem(dismissKeyFallback, until.toISOString());
 
-                      // also mark reviewed
                       localStorage.setItem(
                         "tt_four_week_reviewed_at",
                         new Date().toISOString()
                       );
 
-                      // DB persist only if we genuinely have locationId (table requires NOT NULL)
                       if (orgId && locationId) {
                         await dismissFourWeekReview({
                           orgId,
@@ -1576,11 +1618,6 @@ export default function DashboardPage() {
                           periodFrom: fourWeekBanner.periodFrom,
                           periodTo: fourWeekBanner.periodTo,
                         });
-                      } else {
-                        console.warn(
-                          "[four-week dismiss] skipped DB write because org/location missing",
-                          { orgId, locationId }
-                        );
                       }
                     } finally {
                       setFourWeekBanner({ kind: "none" });
@@ -1619,7 +1656,10 @@ export default function DashboardPage() {
                   ? "No temperatures logged yet today."
                   : "At least one temperature check recorded."
               }
-              onClick={openTempModal}
+              onClick={() => {
+                if (typeof window === "undefined") return;
+                window.dispatchEvent(new Event("tt-open-temp-modal"));
+              }}
               footer={
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
                   <span>Tap to log</span>
@@ -1664,7 +1704,6 @@ export default function DashboardPage() {
               }
             />
 
-            {/* ✅ Alerts opens modal */}
             <KpiTile
               canHover={canHover}
               title="Alerts"
@@ -1808,54 +1847,14 @@ export default function DashboardPage() {
         <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur space-y-3">
           <h2 className="text-sm font-extrabold text-slate-900">Quick actions</h2>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <QuickLink
-              href="/routines"
-              label="Routines"
-              icon="📋"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/allergens"
-              label="Allergens"
-              icon="⚠️"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/cleaning-rota"
-              label="Cleaning rota"
-              icon="🧽"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/team"
-              label="Team & training"
-              icon="👥"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/reports"
-              label="Reports"
-              icon="📊"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/locations"
-              label="Locations & sites"
-              icon="📍"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/manager"
-              label="Manager view"
-              icon="💼"
-              canHover={canHover}
-            />
-            <QuickLink
-              href="/help"
-              label="Help & support"
-              icon="❓"
-              canHover={canHover}
-            />
+            <QuickLink href="/routines" label="Routines" icon="📋" canHover={canHover} />
+            <QuickLink href="/allergens" label="Allergens" icon="⚠️" canHover={canHover} />
+            <QuickLink href="/cleaning-rota" label="Cleaning rota" icon="🧽" canHover={canHover} />
+            <QuickLink href="/team" label="Team & training" icon="👥" canHover={canHover} />
+            <QuickLink href="/reports" label="Reports" icon="📊" canHover={canHover} />
+            <QuickLink href="/locations" label="Locations & sites" icon="📍" canHover={canHover} />
+            <QuickLink href="/manager" label="Manager view" icon="💼" canHover={canHover} />
+            <QuickLink href="/help" label="Help & support" icon="❓" canHover={canHover} />
           </div>
         </section>
 
