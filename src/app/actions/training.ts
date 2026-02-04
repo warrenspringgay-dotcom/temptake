@@ -1,69 +1,31 @@
 // src/app/actions/training.ts
 "use server";
 
+import { randomUUID } from "crypto";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { getActiveOrgIdServer } from "@/lib/orgServer";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-/**
- * trainings table columns (per your schema):
- * - provider_name text NULL CHECK (provider_name IN ('Highfield','Other') OR provider_name IS NULL)
- *
- * There is NO `provider` column.
- * So we only write provider_name.
- */
-
-export type ProviderChoice = "Highfield" | "Other";
-
-/* ===================== Inputs ===================== */
-
 export type CreateTrainingInput = {
   id?: string;
 
-  teamMemberId?: string | null;
+  teamMemberId: string;
 
-  staffId?: string | null;
-  staffInitials?: string | null;
-
-  courseType?: string; // preferred
-  courseTitle?: string | null;
-
-  // New (preferred)
-  provider?: ProviderChoice; // UI may send this
-  providerName?: string | null; // free text for "Other" (NOT stored in provider_name)
+  // DB columns
+  type: string; // course title shown to inspector
+  course_key?: string | null; // we’ll use for course type OR “Other provider name”
+  provider_name?: "Highfield" | "Other" | null;
 
   awarded_on: string; // YYYY-MM-DD
   expires_on?: string | null;
 
   certificate_url?: string | null;
   notes?: string | null;
-
-  // ignored, derived server-side
-  orgId?: string | null;
-
-  /* ---- Legacy compatibility (from older TeamManager code) ---- */
-  type?: string; // legacy alias for courseType
-  provider_other?: string | null; // legacy alias for providerName
 };
 
 export type UploadTrainingCertificateInput = {
   file: File;
-
-  teamMemberId?: string | null;
-  staffId?: string | null;
-  staffInitials?: string | null;
-
-  orgId?: string | null; // ignored
 };
-
-export type UploadTrainingCertificateResult = {
-  ok: boolean;
-  url: string | null;
-  path: string | null;
-  message?: string | null;
-};
-
-/* ===================== Helpers ===================== */
 
 function addDaysISO(baseISO: string, days: number) {
   const d = new Date(baseISO);
@@ -71,149 +33,89 @@ function addDaysISO(baseISO: string, days: number) {
   return d.toISOString().slice(0, 10);
 }
 
-function safeExtFromMime(mime: string | undefined) {
-  const m = (mime ?? "").toLowerCase();
-  if (m.includes("pdf")) return "pdf";
-  if (m.includes("png")) return "png";
-  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
-  if (m.includes("webp")) return "webp";
-  return "bin";
-}
-
-function normaliseCourseType(input: CreateTrainingInput): string {
-  const ct = (input.courseType ?? "").trim();
-  if (ct) return ct;
-  return (input.type ?? "").trim();
+function safeIsoDate(s: string) {
+  // Accepts YYYY-MM-DD; if invalid, fallback to today.
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return new Date().toISOString().slice(0, 10);
+  return new Date(d.toISOString().slice(0, 10)).toISOString().slice(0, 10);
 }
 
 /**
- * DB can ONLY store provider_name in: 'Highfield' | 'Other' | NULL
- * Free-text other provider name must go elsewhere (schema doesn't include a column).
- * We'll append it into notes for now.
+ * Upload a certificate to Storage using the service role (no RLS drama).
+ * Returns { url, path } where url is a public URL (bucket should be public),
+ * otherwise it will still upload but the link may not be accessible without signed URLs.
  */
-function normaliseProviderForDb(input: CreateTrainingInput): {
-  provider_name: ProviderChoice;
-  otherProviderText: string | null;
-} {
-  const provider_name: ProviderChoice = input.provider ?? "Highfield";
+export async function uploadTrainingCertificateServer(input: UploadTrainingCertificateInput) {
+  const org_id = await getActiveOrgIdServer();
+  if (!org_id) throw new Error("No org selected.");
 
-  const other =
-    (input.providerName ?? "").trim() ||
-    (input.provider_other ?? "").toString().trim() ||
-    "";
+  const bucket = process.env.NEXT_PUBLIC_TRAINING_BUCKET || "training-certificates";
 
-  return {
-    provider_name,
-    otherProviderText: provider_name === "Other" ? (other || null) : null,
-  };
-}
+  const file = input.file;
+  const arrayBuffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
 
-/* ===================== Upload (Storage) ===================== */
+  const original = file.name || "certificate";
+  const ext = original.includes(".") ? original.split(".").pop() : "bin";
+  const safeExt = (ext || "bin").toLowerCase().slice(0, 10);
 
-export async function uploadTrainingCertificateServer(
-  input: UploadTrainingCertificateInput
-): Promise<UploadTrainingCertificateResult> {
-  try {
-    const org_id = await getActiveOrgIdServer();
-    if (!org_id) {
-      return { ok: false, url: null, path: null, message: "No org selected." };
-    }
+  const path = `${org_id}/${randomUUID()}.${safeExt}`;
 
-    const file = input.file;
-    if (!file) {
-      return { ok: false, url: null, path: null, message: "No file provided." };
-    }
+  const { error: upErr } = await supabaseAdmin.storage
+    .from(bucket)
+    .upload(path, bytes, {
+      contentType: file.type || "application/octet-stream",
+      upsert: true,
+    });
 
-    const maxMB = 15;
-    if (file.size > maxMB * 1024 * 1024) {
-      return {
-        ok: false,
-        url: null,
-        path: null,
-        message: `File too large (max ${maxMB}MB).`,
-      };
-    }
+  if (upErr) throw new Error(`[storage.upload] ${upErr.message}`);
 
-    const ext = safeExtFromMime(file.type);
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  // Public URL (works if bucket is public)
+  const { data: pub } = supabaseAdmin.storage.from(bucket).getPublicUrl(path);
 
-    const who =
-      input.teamMemberId ??
-      input.staffId ??
-      (input.staffInitials ? input.staffInitials.trim().toUpperCase() : "unknown");
-
-    const bucket = "training-certificates";
-    const path = `${org_id}/${who}/${stamp}.${ext}`;
-
-    const buf = Buffer.from(await file.arrayBuffer());
-
-    const { error: upErr } = await supabaseAdmin.storage
-      .from(bucket)
-      .upload(path, buf, {
-        contentType: file.type || "application/octet-stream",
-        upsert: true,
-      });
-
-    if (upErr) {
-      return { ok: false, url: null, path: null, message: upErr.message };
-    }
-
-    const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(path);
-    const url = data?.publicUrl ?? null;
-
-    return { ok: true, url, path, message: null };
-  } catch (e: any) {
-    return { ok: false, url: null, path: null, message: e?.message ?? "Upload failed." };
+  const url = pub?.publicUrl;
+  if (!url) {
+    // Upload succeeded but no public URL (bucket likely private).
+    // Still return path so you can switch to signed URL later if needed.
+    return { url: "", path };
   }
+
+  return { url, path };
 }
 
-/* ===================== Save training row ===================== */
-
+/**
+ * Create/Update a training row for a team member.
+ * Uses the normal server supabase (respects auth), sets org_id explicitly.
+ */
 export async function createTrainingServer(input: CreateTrainingInput) {
   const supabase = await getServerSupabase();
   const org_id = await getActiveOrgIdServer();
   if (!org_id) throw new Error("No org selected.");
 
-  const courseType = normaliseCourseType(input);
-  if (!courseType) throw new Error("Course type is required.");
+  const me = await supabase.auth.getUser();
+  const userId = me.data.user?.id ?? null;
 
-  const awarded_on = (input.awarded_on ?? "").trim();
-  if (!awarded_on) throw new Error("Awarded date is required.");
-
+  const awarded_on = safeIsoDate(input.awarded_on);
   const expires_on =
     input.expires_on && input.expires_on.trim()
-      ? input.expires_on.trim()
+      ? input.expires_on
       : addDaysISO(awarded_on, 365);
 
-  const { provider_name, otherProviderText } = normaliseProviderForDb(input);
+  // Provider enum only: Highfield | Other (DB constraint)
+  const provider_name =
+    input.provider_name === "Other" ? "Other" : "Highfield";
 
-  // Notes: append other provider text (since schema has no provider_other column)
-  const baseNotes = (input.notes ?? "").trim();
-  const extra =
-    otherProviderText && otherProviderText.toLowerCase() !== "other"
-      ? `Provider (other): ${otherProviderText}`
-      : null;
-
-  const mergedNotes =
-    extra && baseNotes
-      ? `${baseNotes}\n${extra}`
-      : extra
-      ? extra
-      : baseNotes || null;
-
-  // Payload matches YOUR table
   const payload: any = {
     org_id,
-    team_member_id: input.teamMemberId ?? null,
-    staff_id: input.staffId ?? null,
-
-    type: courseType,
+    created_by: userId,
+    team_member_id: input.teamMemberId,
+    type: input.type,
+    course_key: input.course_key ?? null,
+    provider_name,
     awarded_on,
     expires_on,
-
-    provider_name, // ✅ correct column name
     certificate_url: input.certificate_url ?? null,
-    notes: mergedNotes,
+    notes: input.notes ?? null,
   };
 
   if (input.id) payload.id = input.id;
@@ -229,5 +131,5 @@ export async function createTrainingServer(input: CreateTrainingInput) {
   return { id: data.id as string };
 }
 
-/** Backwards-compatible alias (older code imported this name). */
+// Backwards-compatible alias if you previously used this name somewhere
 export const saveTrainingServer = createTrainingServer;
