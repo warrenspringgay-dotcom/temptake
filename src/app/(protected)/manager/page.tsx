@@ -1,2289 +1,1758 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
-import IncidentModal from "@/components/IncidentModal";
-import StaffReviewModal from "@/components/StaffReviewModal";
+import ActionMenu from "@/components/ActionMenu";
+import { inviteTeamMemberServer } from "@/app/actions/team";
 
-type LocationOption = { id: string; name: string };
+/* -------------------- Types -------------------- */
+type TrainingArea =
+  | "cross_contamination"
+  | "cleaning"
+  | "chilling"
+  | "cooking"
+  | "allergens"
+  | "management";
 
-type TempSummary = { today: number; fails7d: number };
+const TRAINING_AREAS: { key: TrainingArea; label: string; short: string }[] = [
+  { key: "cross_contamination", label: "Cross-contamination", short: "Cross-contam" },
+  { key: "cleaning", label: "Cleaning", short: "Cleaning" },
+  { key: "chilling", label: "Chilling", short: "Chilling" },
+  { key: "cooking", label: "Cooking", short: "Cooking" },
+  { key: "allergens", label: "Allergens", short: "Allergens" },
+  { key: "management", label: "Management", short: "Management" },
+];
 
-type UnifiedIncidentRow = {
+type Member = {
   id: string;
-  happened_on: string | null;
-  created_at: string | null;
-  type: string | null;
-  details: string | null;
-  immediate_action: string | null;
-  corrective_action: string | null;
-  created_by: string | null;
-  source: "incident" | "temp_fail";
-};
-
-type CleaningCategoryProgress = {
-  category: string;
-  done: number;
-  total: number;
-};
-
-type CleaningActivityRow = {
-  id: string;
-  time: string | null;
-  category: string;
-  staff: string | null;
-  notes: string | null;
-  task: string | null;
-};
-
-type TempLogRow = {
-  id: string;
-  time: string | null;
-  staff: string | null;
-  area: string | null;
-  item: string | null;
-  temp_c: number | null;
-  status: string | null;
-};
-
-type SignoffRow = {
-  id: string;
-  signoff_on: string; // yyyy-mm-dd
-  signed_by: string | null;
-  notes: string | null;
-  created_at: string | null;
-};
-
-type SignoffSummary = {
-  todayCount: number;
-};
-
-type TrainingSummary = {
-  expired: number;
-  dueSoon: number;
-};
-
-type StaffQcReviewRow = {
-  id: string;
-  reviewed_on: string;
-  rating: number;
-  notes: string | null;
-  staff_id: string | null;
-  manager_id: string | null;
-  staff: { initials: string | null; name: string | null } | null;
-  manager: { initials: string | null; name: string | null } | null;
-};
-
-type CleaningTask = {
-  id: string;
-  frequency: "daily" | "weekly" | "monthly";
-  category: string | null;
-  task: string | null;
-  weekday: number | null;
-  month_day: number | null;
-};
-
-type CleaningTaskRun = {
-  id: string;
-  org_id: string;
-  task_id: string;
-  run_on: string;
-  done_by: string | null;
-  done_at: string | null;
-  location_id: string | null;
-};
-
-type TeamMemberOption = {
-  id: string;
-  name: string | null;
   initials: string | null;
+  name: string;
+  email: string | null;
   role: string | null;
+  phone: string | null;
   active: boolean | null;
-  user_id: string | null;
+  notes?: string | null;
+  training_areas?: TrainingArea[] | null; // stored on team_members as text[]
 };
 
-type StaffAssessment = {
-  staffId: string;
-  staffLabel: string;
-  rangeDays: number;
-  cleaningRuns: number;
-  tempLogs: number;
-  tempFails: number;
-  incidents: number;
-  qcAvg30d: number | null;
-  qcCount30d: number;
-};
-
-type AllergenChangeLogRow = {
+type TrainingCert = {
   id: string;
-  created_at: string | null;
-  action: string | null;
-  item_name: string | null;
-  category_before: string | null;
-  category_after: string | null;
-  staff_initials: string | null;
+  type: string | null;
+  awarded_on: string | null;
+  expires_on: string | null;
+  certificate_url: string | null;
+  notes: string | null;
 };
 
-const nowISO = new Date().toISOString().slice(0, 10);
+/* -------------------- Helpers -------------------- */
+function safeInitials(m: Member): string {
+  const fromField = (m.initials ?? "").trim().toUpperCase();
+  if (fromField) return fromField;
 
-function safeDate(val: any): Date | null {
-  if (!val) return null;
-  const d = val instanceof Date ? val : new Date(val);
-  if (Number.isNaN(d.getTime())) return null;
-  return d;
+  const parts = m.name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "";
+  if (parts.length === 1) return parts[0]!.charAt(0).toUpperCase();
+  return (parts[0]!.charAt(0) + parts[1]!.charAt(0)).toUpperCase();
 }
 
-function formatPrettyDate(dmy: string | null): string {
-  if (!dmy) return "—";
-  const d = new Date(dmy);
-  if (Number.isNaN(d.getTime())) return dmy;
-  return d.toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+function prettyRole(role: string | null) {
+  if (!role) return "—";
+  const r = role.toString().toLowerCase();
+  return r.charAt(0).toUpperCase() + r.slice(1);
 }
 
-function toISODate(val: any): string {
-  const d = safeDate(val) ?? new Date();
+function isTrainingArea(x: string): x is TrainingArea {
+  return TRAINING_AREAS.some((a) => a.key === x);
+}
+
+function normalizeAreas(arr: any): TrainingArea[] {
+  if (!Array.isArray(arr)) return [];
+  const cleaned = arr
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean)
+    .filter(isTrainingArea);
+  return Array.from(new Set(cleaned));
+}
+
+function pillClassSelected(selected: boolean) {
+  return selected
+    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
+}
+
+/**
+ * 12-month policy for pills.
+ * If you want "12 months" exactly regardless of leap years,
+ * we do date + 12 months (not 365 days).
+ */
+function addMonthsISODate(months: number) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setMonth(d.getMonth() + months);
   return d.toISOString().slice(0, 10);
 }
 
-async function fetchTempFailuresUnifiedForDay(
-  orgId: string,
-  locationId: string,
-  d0: Date,
-  d1: Date
-) {
-  const { data, error } = await supabase
-    .from("food_temp_logs")
-    .select(
-      `
-      id,
-      at,
-      temp_c,
-      target_key,
-      area,
-      note,
-      staff_initials,
-      status,
-      corrective_action_log:food_temp_corrective_actions!food_temp_corrective_actions_temp_log_id_fkey(
-        id,
-        created_at,
-        recorded_by,
-        action,
-        recheck_temp_c,
-        recheck_at,
-        recheck_status
-      )
-    `
-    )
-    .eq("org_id", orgId)
-    .eq("location_id", locationId)
-    .eq("status", "fail")
-    .gte("at", d0.toISOString())
-    .lt("at", d1.toISOString())
-    .order("at", { ascending: false })
-    .limit(500);
+function todayISODate() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10);
+}
 
-  if (error) throw error;
+/** Global rule: render as DD/MM/YYYY */
+function formatDate(d: string | null | undefined) {
+  if (!d) return "—";
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return d;
+  const day = String(dt.getDate()).padStart(2, "0");
+  const month = String(dt.getMonth() + 1).padStart(2, "0");
+  const year = dt.getFullYear();
+  return `${day}/${month}/${year}`;
+}
 
-  const rows: any[] = (data ?? []) as any[];
+function ModalPortal({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+}
 
-  const logs = rows.map((r) => ({
-    id: r.id,
-    at: r.at ? String(r.at) : null,
-    temp_c: r.temp_c != null ? Number(r.temp_c) : null,
-    target_key: r.target_key ?? null,
-    area: r.area ?? null,
-    note: r.note ?? null,
-    staff_initials: r.staff_initials ?? null,
-  }));
+/* ================= CSV import helpers ================= */
 
-  const corrective = rows.flatMap((r) => {
-    const arr = r.corrective_action_log ?? [];
-    return Array.isArray(arr) ? arr : [];
-  });
+function stripBOM(s: string) {
+  return s.replace(/^\uFEFF/, "");
+}
 
-  const byLog = new Map<string, any>();
-  for (const row of corrective as any[]) {
-    const key = String(row.temp_log_id);
-    const existing = byLog.get(key);
-    if (!existing) byLog.set(key, row);
-    else {
-      const a = safeDate(existing.created_at)?.getTime() ?? 0;
-      const b = safeDate(row.created_at)?.getTime() ?? 0;
-      if (b >= a) byLog.set(key, row);
-    }
+function normalizeHeader(s: string) {
+  return stripBOM(String(s ?? ""))
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[^a-z0-9 _-]/g, "");
+}
+
+function parseDateToISO(val: string): string | null {
+  const raw = String(val ?? "").trim();
+  if (!raw) return null;
+
+  // ISO yyyy-mm-dd
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  // UK dd/mm/yyyy or dd-mm-yyyy
+  const m = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) {
+    const dd = String(m[1]).padStart(2, "0");
+    const mm = String(m[2]).padStart(2, "0");
+    const yyyy = String(m[3]);
+    return `${yyyy}-${mm}-${dd}`;
   }
 
-  return logs.map((l) => {
-    const ca = byLog.get(String(l.id)) ?? null;
+  // Try Date parse
+  const d = new Date(raw);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
 
-    const atISO = l.at ? String(l.at) : null;
-    const happened_on = toISODate(atISO);
+  return null;
+}
 
-    const tempVal = l.temp_c != null ? `${Number(l.temp_c)}°C` : "—";
-    const target = l.target_key ? String(l.target_key) : "—";
-    const details = `${l.area ?? "—"} • ${l.note ?? "—"} • ${tempVal} (target ${target})`;
+/**
+ * Simple CSV parser that supports quoted values.
+ * Not trying to win awards, just trying to not explode.
+ */
+function parseCSV(text: string): string[][] {
+  const rows: string[][] = [];
+  const s = stripBOM(text ?? "");
+  let i = 0;
 
-    let corrective = ca?.action ? String(ca.action) : null;
+  const readCell = () => {
+    let cell = "";
+    let quoted = false;
 
-    if (ca?.recheck_temp_c != null) {
-      const reT = `${Number(ca.recheck_temp_c)}°C`;
-      const reAt = ca.recheck_at
-        ? new Date(String(ca.recheck_at)).toLocaleTimeString("en-GB", {
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        : "—";
-      const reStatus = ca.recheck_status ? String(ca.recheck_status) : "—";
-      const suffix = `Re-check: ${reT} (${reStatus}) at ${reAt}`;
-      corrective = corrective ? `${corrective} • ${suffix}` : suffix;
+    if (s[i] === '"') {
+      quoted = true;
+      i++;
+      while (i < s.length) {
+        const ch = s[i];
+        if (ch === '"') {
+          if (s[i + 1] === '"') {
+            cell += '"';
+            i += 2;
+            continue;
+          }
+          i++; // closing quote
+          break;
+        }
+        cell += ch;
+        i++;
+      }
+      // consume trailing spaces
+      while (i < s.length && s[i] === " ") i++;
+      // consume optional comma handled by caller
+    } else {
+      while (i < s.length) {
+        const ch = s[i];
+        if (ch === "," || ch === "\n" || ch === "\r") break;
+        cell += ch;
+        i++;
+      }
     }
 
-    return {
-      id: `temp_fail_${String(l.id)}`,
-      happened_on,
-      created_at: atISO,
-      type: "Temp failure",
-      created_by: (ca?.recorded_by ?? l.staff_initials ?? null)
-        ? String(ca?.recorded_by ?? l.staff_initials)
-        : null,
-      details,
-      corrective_action: corrective,
-      source: "temp_fail",
-    } as UnifiedIncidentRow;
-  });
+    return quoted ? cell : cell.trim();
+  };
+
+  while (i < s.length) {
+    const row: string[] = [];
+    // skip empty newlines
+    while (i < s.length && (s[i] === "\n" || s[i] === "\r")) i++;
+    if (i >= s.length) break;
+
+    while (i < s.length) {
+      const cell = readCell();
+      row.push(cell);
+
+      if (s[i] === ",") {
+        i++;
+        continue;
+      }
+
+      // end of line
+      if (s[i] === "\r") i++;
+      if (s[i] === "\n") i++;
+      break;
+    }
+
+    // ignore totally empty rows
+    if (row.some((c) => String(c ?? "").trim() !== "")) rows.push(row);
+  }
+
+  return rows;
 }
 
-function formatTimeHM(d: Date | null | undefined): string | null {
-  if (!d) return null;
-  const hours = String(d.getHours()).padStart(2, "0");
-  const mins = String(d.getMinutes()).padStart(2, "0");
-  return `${hours}:${mins}`;
-}
-
-function formatDDMMYYYY(val: any): string {
-  const d = safeDate(val);
-  if (!d) return "—";
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-}
-
-const cls = (...p: Array<string | false | null | undefined>) =>
-  p.filter(Boolean).join(" ");
-
-const isoDate = (d: Date) => d.toISOString().slice(0, 10);
-const addDaysISO = (dmy: string, delta: number) => {
-  const d = new Date(dmy);
-  d.setDate(d.getDate() + delta);
-  return isoDate(d);
+type ImportRow = {
+  email: string;
+  course: string;
+  awarded_on: string | null;
+  expires_on: string | null;
+  certificate_url: string | null;
+  notes: string | null;
 };
 
-const getDow1to7 = (dmy: string) => ((new Date(dmy).getDay() + 6) % 7) + 1;
-const getDom = (dmy: string) => new Date(dmy).getDate();
+function mapCSVToImportRows(csvText: string): { rows: ImportRow[]; errors: string[] } {
+  const errors: string[] = [];
+  const grid = parseCSV(csvText);
 
-function isDueOn(t: CleaningTask, dmy: string) {
-  if (t.frequency === "daily") return true;
-  if (t.frequency === "weekly") return t.weekday === getDow1to7(dmy);
-  return t.month_day === getDom(dmy);
+  if (grid.length < 2) {
+    return { rows: [], errors: ["CSV needs a header row and at least one data row."] };
+  }
+
+  const header = grid[0]!.map(normalizeHeader);
+
+  // flexible header mapping
+  const idx = (keys: string[]) => header.findIndex((h) => keys.includes(h));
+
+  const emailIdx = idx(["email", "email address", "learner email", "learner_email"]);
+  const courseIdx = idx(["course", "course title", "course_name", "title", "learning", "programme"]);
+  const awardedIdx = idx(["completed", "completed on", "completion date", "completed_on", "passed", "date passed", "awarded on", "awarded_on"]);
+  const expiresIdx = idx(["expires", "expiry", "expiry date", "expires_on", "expiration", "certificate expiry", "cert expiry"]);
+  const certUrlIdx = idx(["certificate", "certificate url", "certificate_url", "certificate link", "cert url", "pdf"]);
+
+  if (emailIdx === -1) errors.push("Missing email column. Expected header like: Email / Email address / Learner email.");
+  if (courseIdx === -1) errors.push("Missing course column. Expected header like: Course / Course title / Title.");
+  if (errors.length) return { rows: [], errors };
+
+  const out: ImportRow[] = [];
+
+  for (let r = 1; r < grid.length; r++) {
+    const row = grid[r] ?? [];
+    const email = String(row[emailIdx] ?? "").trim().toLowerCase();
+    const course = String(row[courseIdx] ?? "").trim();
+
+    if (!email || !course) continue;
+
+    const awardedRaw = awardedIdx !== -1 ? String(row[awardedIdx] ?? "").trim() : "";
+    const expiresRaw = expiresIdx !== -1 ? String(row[expiresIdx] ?? "").trim() : "";
+    const certUrlRaw = certUrlIdx !== -1 ? String(row[certUrlIdx] ?? "").trim() : "";
+
+    const awarded_on = parseDateToISO(awardedRaw);
+    const expires_on = parseDateToISO(expiresRaw);
+
+    out.push({
+      email,
+      course,
+      awarded_on,
+      expires_on,
+      certificate_url: certUrlRaw || null,
+      notes: "Imported from Highfield LMS",
+    });
+  }
+
+  if (!out.length) errors.push("No usable rows found. Check the headers and data.");
+  return { rows: out, errors };
 }
 
-/* ---------- KPI Tile ---------- */
+/* ================================================= */
+export default function TeamManager() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
 
-const KPI_HEIGHT = "min-h-[120px]";
-
-function KpiTile({
-  title,
-  value,
-  sub,
-  tone,
-  icon,
-}: {
-  title: string;
-  value: React.ReactNode;
-  sub: React.ReactNode;
-  tone: "neutral" | "ok" | "warn" | "danger";
-  icon?: string;
-}) {
-  const toneCls =
-    tone === "danger"
-      ? "border-red-200 bg-red-50/90"
-      : tone === "warn"
-      ? "border-amber-200 bg-amber-50/90"
-      : tone === "ok"
-      ? "border-emerald-200 bg-emerald-50/90"
-      : "border-slate-200 bg-white/90";
-
-  const accentCls =
-    tone === "danger"
-      ? "bg-red-400"
-      : tone === "warn"
-      ? "bg-amber-400"
-      : tone === "ok"
-      ? "bg-emerald-400"
-      : "bg-slate-300";
-
-  return (
-    <motion.div
-      whileHover={{ y: -3 }}
-      className={cls(
-        "relative rounded-2xl border p-4 shadow-sm overflow-hidden",
-        "flex flex-col",
-        KPI_HEIGHT,
-        toneCls
-      )}
-    >
-      <div
-        className={cls(
-          "absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80",
-          accentCls
-        )}
-      />
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-            {title}
-          </div>
-          <div className="mt-1 flex items-baseline gap-2">
-            <div className="text-2xl font-extrabold text-slate-900 truncate">
-              {value}
-            </div>
-          </div>
-          <div className="mt-1 text-xs text-slate-600 truncate">{sub}</div>
-        </div>
-        {icon ? (
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900/5 text-lg">
-            <span>{icon}</span>
-          </div>
-        ) : null}
-      </div>
-    </motion.div>
-  );
-}
-
-/* ---------- Table footer toggle ---------- */
-
-function TableFooterToggle({
-  total,
-  showingAll,
-  onToggle,
-}: {
-  total: number;
-  showingAll: boolean;
-  onToggle: () => void;
-}) {
-  if (total <= 10) return null;
-  return (
-    <div className="border-t border-slate-100 bg-slate-50/80 px-3 py-2 text-right text-xs text-slate-600">
-      Showing {showingAll ? "all" : "latest 10"} of {total} rows.{" "}
-      <button
-        type="button"
-        onClick={onToggle}
-        className="font-semibold text-indigo-700 hover:underline"
-      >
-        {showingAll ? "Show less" : "Show all"}
-      </button>
-    </div>
-  );
-}
-
-/* ---------- Page ---------- */
-
-export default function ManagerDashboardPage() {
+  const [rows, setRows] = useState<Member[]>([]);
+  const [loading, setLoading] = useState(true);
   const [orgId, setOrgId] = useState<string | null>(null);
-  const [locationId, setLocationId] = useState<string | null>(null);
-  const [locations, setLocations] = useState<LocationOption[]>([]);
-  const [locationLoading, setLocationLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
-  const [selectedDateISO, setSelectedDateISO] = useState(nowISO);
-  const centeredDate = useMemo(
-    () => formatPrettyDate(selectedDateISO),
-    [selectedDateISO]
-  );
+  const [isOwner, setIsOwner] = useState(false);
+  const [q, setQ] = useState("");
 
-  /* ===== Staff review modal ===== */
-  const [staffReviewOpen, setStaffReviewOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState<Member | null>(null);
 
-  /* ===== KPI state ===== */
-  const [tempsSummary, setTempsSummary] = useState<TempSummary>({
-    today: 0,
-    fails7d: 0,
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewFor, setViewFor] = useState<Member | null>(null);
+
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteForm, setInviteForm] = useState({
+    email: "",
+    role: "staff",
   });
-  const [cleaningTotal, setCleaningTotal] = useState(0);
-  const [cleaningDoneTotal, setCleaningDoneTotal] = useState(0);
-  const [incidentsToday, setIncidentsToday] = useState(0);
-  const [incidents7d, setIncidents7d] = useState(0);
-  const [trainingExpired, setTrainingExpired] = useState(0);
-  const [trainingDueSoon, setTrainingDueSoon] = useState(0);
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteInfo, setInviteInfo] = useState<string | null>(null);
 
-  /* ===== Today activity tables ===== */
-  const [todayTemps, setTodayTemps] = useState<TempLogRow[]>([]);
-  const [cleaningActivity, setCleaningActivity] = useState<CleaningActivityRow[]>(
-    []
-  );
-  const [cleaningCategoryProgress, setCleaningCategoryProgress] = useState<
-    CleaningCategoryProgress[]
-  >([]);
-  const [tempFailsToday, setTempFailsToday] = useState<UnifiedIncidentRow[]>([]);
-  const [incidentsHistory, setIncidentsHistory] = useState<UnifiedIncidentRow[]>(
-    []
-  );
+  const [highlightId, setHighlightId] = useState<string | null>(null);
 
-  const [showAllTemps, setShowAllTemps] = useState(false);
-  const [showAllTempFails, setShowAllTempFails] = useState(false);
-  const [showAllCleaning, setShowAllCleaning] = useState(false);
-  const [showAllIncidents, setShowAllIncidents] = useState(false);
+  /* ---------- Certificates state (VIEW modal) ---------- */
+  const [certsLoading, setCertsLoading] = useState(false);
+  const [certs, setCerts] = useState<TrainingCert[]>([]);
 
-  /* ===== Day sign-offs ===== */
-  const [signoffsToday, setSignoffsToday] = useState<SignoffRow[]>([]);
-  const [signoffSummary, setSignoffSummary] = useState<SignoffSummary>({
-    todayCount: 0,
-  });
-  const [showAllSignoffs, setShowAllSignoffs] = useState(false);
-
-  const [signoffOpen, setSignoffOpen] = useState(false);
-  const [signoffInitials, setSignoffInitials] = useState("");
-  const [signoffNotes, setSignoffNotes] = useState("");
-  const [signoffSaving, setSignoffSaving] = useState(false);
-
-  /* ===== Manager QC ===== */
-  const [qcOpen, setQcOpen] = useState(false);
-  const [teamOptions, setTeamOptions] = useState<TeamMemberOption[]>([]);
-  const [qcReviews, setQcReviews] = useState<StaffQcReviewRow[]>([]);
-  const [qcLoading, setQcLoading] = useState(false);
-  const [qcSaving, setQcSaving] = useState(false);
-  const [showAllQc, setShowAllQc] = useState(false);
-
-  const [qcSummaryLoading, setQcSummaryLoading] = useState(false);
-
-  const [managerTeamMember, setManagerTeamMember] =
-    useState<TeamMemberOption | null>(null);
-
-  const [qcForm, setQcForm] = useState({
-    staff_id: "",
-    reviewed_on: nowISO,
-    rating: 3,
+  /* ---------- Certificates state (EDIT modal) ---------- */
+  const [editCertsLoading, setEditCertsLoading] = useState(false);
+  const [editCerts, setEditCerts] = useState<TrainingCert[]>([]);
+  const [editCertForm, setEditCertForm] = useState({
+    type: "Food Hygiene Level 2",
+    awarded_on: "",
+    expires_on: "",
+    certificate_url: "",
     notes: "",
   });
+  const [editCertSaving, setEditCertSaving] = useState(false);
 
-  /* ===== Individual staff assessment modal ===== */
-  const [staffAssessOpen, setStaffAssessOpen] = useState(false);
-  const [staffAssessLoading, setStaffAssessLoading] = useState(false);
-  const [staffAssessErr, setStaffAssessErr] = useState<string | null>(null);
-  const [staffAssessStaffId, setStaffAssessStaffId] = useState<string>("");
-  const [staffAssessDays, setStaffAssessDays] = useState<number>(7);
-  const [staffAssess, setStaffAssess] = useState<StaffAssessment | null>(null);
+  /* ---------- CSV import (Highfield) ---------- */
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [importInfo, setImportInfo] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importPreview, setImportPreview] = useState<ImportRow[]>([]);
+  const [importMissingEmails, setImportMissingEmails] = useState<string[]>([]);
 
-  const [incidentOpen, setIncidentOpen] = useState(false);
+  /* -------------------- Load team + determine owner -------------------- */
+  async function load() {
+    setLoading(true);
+    setIsOwner(false);
 
-  const [allergenLogs, setAllergenLogs] = useState<AllergenChangeLogRow[]>([]);
-  const [showAllAllergenLogs, setShowAllAllergenLogs] = useState(false);
-
-  const lastStaffAssessKeyRef = useRef<string>("");
-
-  useEffect(() => {
-    if (!staffAssessOpen) return;
-    if (!orgId || !locationId) return;
-    if (!staffAssessStaffId) return;
-
-    const key = `${staffAssessStaffId}|${staffAssessDays}|${selectedDateISO}|${locationId}`;
-    if (lastStaffAssessKeyRef.current === key) return;
-    lastStaffAssessKeyRef.current = key;
-
-    void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    staffAssessOpen,
-    staffAssessStaffId,
-    staffAssessDays,
-    selectedDateISO,
-    orgId,
-    locationId,
-  ]);
-
-  function tmLabel(t: { initials: string | null; name: string | null }) {
-    const ini = (t.initials ?? "").toString().trim().toUpperCase();
-    const nm = (t.name ?? "").toString().trim();
-    if (ini && nm) return `${ini} · ${nm}`;
-    if (ini) return ini;
-    return nm || "—";
-  }
-
-  async function loadTeamOptions() {
-    if (!orgId) return;
     try {
-      const { data, error } = await supabase
-        .from("team_members")
-        .select("id,name,initials,role,active,user_id")
-        .eq("org_id", orgId)
-        .eq("active", true)
-        .order("name", { ascending: true })
-        .limit(5000);
+      const [id, userRes] = await Promise.all([
+        getActiveOrgIdClient(),
+        supabase.auth.getUser(),
+      ]);
 
-      if (error) throw error;
-      setTeamOptions((data ?? []) as TeamMemberOption[]);
-    } catch (e) {
-      console.error(e);
-      setTeamOptions([]);
-    }
-  }
+      const userEmail = userRes.data.user?.email?.toLowerCase() ?? null;
+      const userName =
+        (userRes.data.user?.user_metadata as any)?.full_name ??
+        userRes.data.user?.email ??
+        "Owner";
 
-  async function loadLoggedInManager() {
-    if (!orgId) return;
-    try {
-      const {
-        data: { user },
-        error: userErr,
-      } = await supabase.auth.getUser();
+      setOrgId(id ?? null);
 
-      if (userErr || !user) {
-        setManagerTeamMember(null);
+      if (!id) {
+        setRows([]);
+        setLoading(false);
         return;
       }
 
+      let members: Member[] = [];
+      let ownerFlag = false;
+
       const { data, error } = await supabase
         .from("team_members")
-        .select("id,name,initials,role,active,user_id")
-        .eq("org_id", orgId)
-        .eq("user_id", user.id)
-        .maybeSingle();
+        .select("id, initials, name, email, role, phone, active, notes, training_areas")
+        .eq("org_id", id)
+        .order("name", { ascending: true });
 
       if (error) throw error;
 
-      setManagerTeamMember((data as TeamMemberOption) || null);
-    } catch (e) {
-      console.error(e);
-      setManagerTeamMember(null);
-    }
-  }
+      members = (data ?? []).map((m: any) => ({
+        ...m,
+        training_areas: normalizeAreas(m.training_areas),
+      })) as Member[];
 
-  async function loadQcReviews() {
-    if (!orgId || !locationId) return;
-    setQcLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("staff_qc_reviews")
-        .select(
-          `
-          id,
-          reviewed_on,
-          rating,
-          notes,
-          staff_id,
-          manager_id,
-          staff:team_members!staff_qc_reviews_staff_fkey(initials,name),
-          manager:team_members!staff_qc_reviews_manager_fkey(initials,name)
-        `
-        )
-        .eq("org_id", orgId)
-        .eq("location_id", locationId)
-        .order("reviewed_on", { ascending: false })
-        .order("created_at", { ascending: false })
-        .limit(200);
-
-      if (error) throw error;
-      setQcReviews(((data ?? []) as any[]) as StaffQcReviewRow[]);
-      setShowAllQc(false);
-    } catch (e) {
-      console.error(e);
-      setQcReviews([]);
-    } finally {
-      setQcLoading(false);
-    }
-  }
-
-  async function loadQcSummary() {
-    if (!orgId || !locationId) return;
-    setQcSummaryLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("staff_qc_reviews")
-        .select(
-          `
-          id,
-          reviewed_on,
-          rating,
-          notes,
-          staff_id,
-          manager_id,
-          staff:team_members!staff_qc_reviews_staff_fkey(initials,name),
-          manager:team_members!staff_qc_reviews_manager_fkey(initials,name)
-        `
-        )
-        .eq("org_id", orgId)
-        .eq("location_id", locationId)
-        .order("reviewed_on", { ascending: false })
-        .order("created_at", { ascending: false })
-        .limit(50);
-
-      if (error) throw error;
-      setQcReviews(((data ?? []) as any[]) as StaffQcReviewRow[]);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setQcSummaryLoading(false);
-    }
-  }
-
-  async function addQcReview() {
-    if (!orgId || !locationId) return;
-    if (!qcForm.staff_id) return alert("Select staff.");
-    if (!managerTeamMember?.id)
-      return alert(
-        "Your login is not linked to a team member (team_members.user_id)."
-      );
-    if (!qcForm.reviewed_on) return alert("Select date.");
-
-    const rating = Number(qcForm.rating);
-    if (!Number.isFinite(rating) || rating < 1 || rating > 5)
-      return alert("Score must be 1–5.");
-
-    setQcSaving(true);
-    try {
-      const { error } = await supabase.from("staff_qc_reviews").insert({
-        org_id: orgId,
-        staff_id: qcForm.staff_id,
-        manager_id: managerTeamMember.id,
-        location_id: locationId,
-        reviewed_on: qcForm.reviewed_on,
-        rating,
-        notes: qcForm.notes?.trim() || null,
-      });
-
-      if (error) throw error;
-
-      setQcForm((f) => ({
-        ...f,
-        staff_id: "",
-        reviewed_on: selectedDateISO || isoDate(new Date()),
-        rating: 3,
-        notes: "",
-      }));
-
-      await loadQcSummary();
-      await loadQcReviews();
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message ?? "Failed to add QC review.");
-    } finally {
-      setQcSaving(false);
-    }
-  }
-
-  async function deleteQcReview(id: string) {
-    if (!orgId) return;
-    if (!confirm("Delete this QC review?")) return;
-
-    try {
-      const { error } = await supabase
-        .from("staff_qc_reviews")
-        .delete()
-        .eq("id", id)
-        .eq("org_id", orgId);
-      if (error) throw error;
-      await loadQcSummary();
-      await loadQcReviews();
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message ?? "Failed to delete QC review.");
-    }
-  }
-
-  useEffect(() => {
-    (async () => {
-      const oId = await getActiveOrgIdClient();
-      setOrgId(oId ?? null);
-      if (!oId) return;
-
-      setLocationLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("locations")
-          .select("id,name")
-          .eq("org_id", oId)
-          .order("name");
-        if (error) throw error;
-
-        const locs =
-          data?.map((r: any) => ({
-            id: String(r.id),
-            name: r.name ?? "Unnamed",
-          })) ?? [];
-        setLocations(locs);
-
-        const activeLoc = await getActiveLocationIdClient();
-        if (activeLoc) setLocationId(activeLoc);
-        else if (locs[0]) setLocationId(locs[0].id);
-      } catch (e: any) {
-        console.error(e);
-        setErr(e?.message ?? "Failed to load locations.");
-      } finally {
-        setLocationLoading(false);
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
-    if (!orgId) return;
-    void loadTeamOptions();
-    void loadLoggedInManager();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId]);
-
-  useEffect(() => {
-    if (!signoffOpen) return;
-    if (signoffInitials.trim()) return;
-
-    const ini = managerTeamMember?.initials?.trim().toUpperCase() ?? "";
-    if (ini) setSignoffInitials(ini);
-  }, [signoffOpen, managerTeamMember, signoffInitials]);
-
-  useEffect(() => {
-    if (!orgId || !locationId) return;
-    refreshAll();
-    void loadQcReviews();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, locationId, selectedDateISO]);
-
-  async function refreshAll() {
-    if (!orgId || !locationId) return;
-    setLoading(true);
-    setErr(null);
-
-    try {
-      const d0 = new Date(selectedDateISO);
-      d0.setHours(0, 0, 0, 0);
-      const d1 = new Date(d0);
-      d1.setDate(d1.getDate() + 1);
-
-      const sevenDaysAgo = new Date(d0);
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-      const ninetyDaysAgo = new Date(d0);
-      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 89);
-
-      const trainingBase = new Date(nowISO);
-      trainingBase.setHours(0, 0, 0, 0);
-      const thirtyDaysAhead = new Date(trainingBase);
-      thirtyDaysAhead.setDate(thirtyDaysAhead.getDate() + 30);
-
-      const [
-        tempsTodayRes,
-        tempsFails7dRes,
-        todayTempLogsRes,
-        cleaningTasksRes,
-        cleaningRunsDayRes,
-        incidentsListRes,
-        incidentsTodayRes,
-        incidents7dRes,
-        trainingsRes,
-        signoffsDayRes,
-        allergenLogsRes,
-      ] = await Promise.all([
-        supabase
-          .from("food_temp_logs")
-          .select("id", { count: "exact", head: true })
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .gte("at", d0.toISOString())
-          .lt("at", d1.toISOString()),
-
-        supabase
-          .from("food_temp_logs")
-          .select("id", { count: "exact", head: true })
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .eq("status", "fail")
-          .gte("at", sevenDaysAgo.toISOString())
-          .lt("at", d1.toISOString()),
-
-        supabase
-          .from("food_temp_logs")
-          .select("*")
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .gte("at", d0.toISOString())
-          .lt("at", d1.toISOString())
-          .order("at", { ascending: false })
-          .limit(200),
-
-        supabase
-          .from("cleaning_tasks")
-          .select("id, frequency, category, task, weekday, month_day")
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .limit(5000),
-
-        supabase
-          .from("cleaning_task_runs")
-          .select("id, org_id, task_id, run_on, done_at, done_by, location_id")
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .eq("run_on", selectedDateISO)
-          .order("done_at", { ascending: false })
-          .limit(5000),
-
-        supabase
-          .from("incidents")
-          .select(
-            "id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at"
-          )
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .gte("happened_on", isoDate(ninetyDaysAgo))
-          .lte("happened_on", selectedDateISO)
-          .order("happened_on", { ascending: false })
-          .order("created_at", { ascending: false })
-          .limit(500),
-
-        supabase
-          .from("incidents")
-          .select("id", { count: "exact", head: true })
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .eq("happened_on", selectedDateISO),
-
-        supabase
-          .from("incidents")
-          .select("id", { count: "exact", head: true })
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .gte("happened_on", isoDate(sevenDaysAgo))
-          .lte("happened_on", selectedDateISO),
-
-        supabase
-          .from("trainings")
-          .select("id, expires_on")
-          .eq("org_id", orgId)
-          .limit(5000),
-
-        supabase
-          .from("daily_signoffs")
-          .select("id, signoff_on, signed_by, notes, created_at, location_id")
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .eq("signoff_on", selectedDateISO)
-          .order("created_at", { ascending: false })
-          .limit(200),
-
-        supabase
-          .from("allergen_change_logs")
-          .select(
-            "id, created_at, action, item_name, category_before, category_after, staff_initials"
-          )
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .order("created_at", { ascending: false })
-          .limit(500),
-      ]);
-
-      const firstErr =
-        tempsTodayRes.error ||
-        tempsFails7dRes.error ||
-        todayTempLogsRes.error ||
-        cleaningTasksRes.error ||
-        cleaningRunsDayRes.error ||
-        incidentsListRes.error ||
-        incidentsTodayRes.error ||
-        incidents7dRes.error ||
-        trainingsRes.error ||
-        signoffsDayRes.error ||
-        allergenLogsRes.error;
-
-      if (firstErr) throw firstErr;
-
-      setTempsSummary({
-        today: tempsTodayRes.count ?? 0,
-        fails7d: tempsFails7dRes.count ?? 0,
-      });
-
-      const tRows: Array<{ expires_on: string | null }> =
-        (trainingsRes.data as any[]) ?? [];
-      let expired = 0;
-      let dueSoon = 0;
-      for (const t of tRows) {
-        if (!t.expires_on) continue;
-        const exp = new Date(t.expires_on);
-        exp.setHours(0, 0, 0, 0);
-        if (Number.isNaN(exp.getTime())) continue;
-
-        if (exp < trainingBase) expired++;
-        else if (exp <= thirtyDaysAhead) dueSoon++;
-      }
-      setTrainingExpired(expired);
-      setTrainingDueSoon(dueSoon);
-
-      const tasksRaw: any[] = (cleaningTasksRes.data as any[]) ?? [];
-      const tasks: CleaningTask[] = tasksRaw.map((t) => ({
-        id: String(t.id),
-        frequency:
-          (String(t.frequency ?? "daily").toLowerCase() as any) ?? "daily",
-        category: t.category ?? null,
-        task: t.task ?? null,
-        weekday: t.weekday != null ? Number(t.weekday) : null,
-        month_day: t.month_day != null ? Number(t.month_day) : null,
-      }));
-
-      const taskById = new Map<string, CleaningTask>();
-      for (const t of tasks) taskById.set(t.id, t);
-
-      const runsRaw: CleaningTaskRun[] = ((cleaningRunsDayRes.data as any[]) ??
-        []).map((r: any) => ({
-        id: String(r.id),
-        org_id: String(r.org_id),
-        task_id: String(r.task_id),
-        run_on: String(r.run_on),
-        done_by: r.done_by ? String(r.done_by) : null,
-        done_at: r.done_at ? String(r.done_at) : null,
-        location_id: r.location_id ? String(r.location_id) : null,
-      }));
-
-      const dueThatDay = tasks.filter((t) => isDueOn(t, selectedDateISO));
-      const runTaskIds = new Set<string>(runsRaw.map((r) => String(r.task_id)));
-
-      const byCat = new Map<string, { total: number; done: number }>();
-      for (const t of dueThatDay) {
-        const cat = (t.category ?? "Uncategorised").toString();
-        const cur = byCat.get(cat) ?? { total: 0, done: 0 };
-        cur.total += 1;
-        if (runTaskIds.has(t.id)) cur.done += 1;
-        byCat.set(cat, cur);
-      }
-
-      const cleaningCatProg = Array.from(byCat.entries())
-        .map(([category, v]) => ({ category, done: v.done, total: v.total }))
-        .sort((a, b) => a.category.localeCompare(b.category));
-
-      setCleaningCategoryProgress(cleaningCatProg);
-      setCleaningTotal(cleaningCatProg.reduce((acc, c) => acc + c.total, 0));
-      setCleaningDoneTotal(
-        cleaningCatProg.reduce((acc, c) => acc + c.done, 0)
-      );
-
-      setCleaningActivity(
-        runsRaw.map((r) => {
-          const doneAt = r.done_at ? new Date(r.done_at) : null;
-          const t = taskById.get(String(r.task_id));
-          return {
-            id: String(r.id),
-            time: formatTimeHM(doneAt),
-            category: (t?.category ?? "Uncategorised").toString(),
-            staff: r.done_by ? String(r.done_by) : null,
+      // Auto-create owner row if empty
+      if (members.length === 0 && id && userEmail) {
+        const { data: inserted, error: insErr } = await supabase
+          .from("team_members")
+          .insert({
+            org_id: id,
+            initials: null,
+            name: userName,
+            email: userEmail,
+            role: "owner",
+            phone: null,
             notes: null,
-            task: t?.task ?? null,
-          } as CleaningActivityRow;
-        })
-      );
+            active: true,
+            training_areas: [],
+          })
+          .select("id, initials, name, email, role, phone, active, notes, training_areas")
+          .maybeSingle();
 
-      const incRows: any[] = (incidentsListRes.data as any[]) ?? [];
-      setIncidentsHistory(
-        incRows.map((r: any) => ({
-          id: String(r.id),
-          happened_on: String(r.happened_on),
-          created_at: r.created_at ? String(r.created_at) : null,
-          type: r.type ?? "Incident",
-          details: r.details ?? null,
-          immediate_action: r.immediate_action ?? null,
-          corrective_action: r.preventive_action ?? null,
-          created_by: r.created_by ? String(r.created_by) : null,
-          source: "incident",
-        }))
-      );
+        if (!insErr && inserted) {
+          members = [
+            {
+              ...(inserted as any),
+              training_areas: normalizeAreas((inserted as any).training_areas),
+            },
+          ];
+          ownerFlag = true;
+        }
+      }
 
-      setIncidentsToday(incidentsTodayRes.count ?? 0);
-      setIncidents7d(incidents7dRes.count ?? 0);
+      if (!ownerFlag && userEmail && members.length) {
+        const me = members.find((m) => m.email && m.email.toLowerCase() === userEmail);
+        const role = (me?.role ?? "").toLowerCase();
+        ownerFlag = role === "owner" || role === "admin";
+      }
 
-      const todayRows: any[] = (todayTempLogsRes.data as any[]) ?? [];
-      setTodayTemps(
-        todayRows.map((r) => {
-          const at = r.at ? new Date(r.at) : null;
-          return {
-            id: String(r.id),
-            time: at ? formatTimeHM(at) : null,
-            staff: r.staff_initials ? String(r.staff_initials) : null,
-            area: r.area ?? null,
-            item: r.note ?? null,
-            temp_c: r.temp_c != null ? Number(r.temp_c) : null,
-            status: r.status ?? null,
-          } as TempLogRow;
-        })
-      );
-
-      const tempFails = await fetchTempFailuresUnifiedForDay(
-        orgId,
-        locationId,
-        d0,
-        d1
-      );
-      setTempFailsToday(tempFails);
-
-      const signoffRows: any[] = (signoffsDayRes.data as any[]) ?? [];
-      setSignoffsToday(
-        signoffRows.map((r) => ({
-          id: String(r.id),
-          signoff_on: String(r.signoff_on),
-          signed_by: r.signed_by ? String(r.signed_by) : null,
-          notes: r.notes ? String(r.notes) : null,
-          created_at: r.created_at ? String(r.created_at) : null,
-        }))
-      );
-      setSignoffSummary({
-        todayCount: signoffRows.length,
-      });
-
-      const allergenRows: any[] = (allergenLogsRes.data as any[]) ?? [];
-      setAllergenLogs(
-        allergenRows.map((r) => ({
-          id: String(r.id),
-          created_at: r.created_at ? String(r.created_at) : null,
-          action: r.action ?? null,
-          item_name: r.item_name ?? null,
-          category_before: r.category_before ?? null,
-          category_after: r.category_after ?? null,
-          staff_initials: r.staff_initials ?? null,
-        }))
-      );
+      setRows(members);
+      setIsOwner(ownerFlag);
     } catch (e: any) {
-      console.error(e);
-      setErr(e?.message ?? "Failed to load manager dashboard.");
+      alert(e?.message ?? "Failed to load team.");
+      setRows([]);
+      setIsOwner(false);
     } finally {
       setLoading(false);
     }
   }
 
-  const tempsTone: "neutral" | "ok" | "warn" | "danger" =
-    tempsSummary.today === 0
-      ? "warn"
-      : tempsSummary.fails7d > 0
-      ? "danger"
-      : "ok";
+  useEffect(() => {
+    load();
+  }, []);
 
-  const cleaningTone: "neutral" | "ok" | "warn" | "danger" =
-    cleaningTotal === 0
-      ? "neutral"
-      : cleaningDoneTotal === cleaningTotal
-      ? "ok"
-      : "warn";
+  /* -------------------- Deep-link handling (?staff=...) -------------------- */
+  useEffect(() => {
+    const staffParam = searchParams.get("staff");
+    if (!staffParam || !rows.length) return;
 
-  const incidentsTone: "neutral" | "ok" | "warn" | "danger" =
-    incidentsToday > 0 ? "danger" : incidents7d > 0 ? "warn" : "ok";
+    const needle = staffParam.trim().toUpperCase();
 
-  const trainingTone: "neutral" | "ok" | "warn" | "danger" =
-    trainingExpired > 0 ? "danger" : trainingDueSoon > 0 ? "warn" : "ok";
+    const match =
+      rows.find((m) => m.id === staffParam) ??
+      rows.find((m) => safeInitials(m).toUpperCase() === needle);
 
-  const tempsToRender = showAllTemps ? todayTemps : todayTemps.slice(0, 10);
-  const tempFailsToRender = showAllTempFails
-    ? tempFailsToday
-    : tempFailsToday.slice(0, 10);
-  const cleaningToRender = showAllCleaning
-    ? cleaningActivity
-    : cleaningActivity.slice(0, 10);
-  const incidentsToRender = showAllIncidents
-    ? incidentsHistory
-    : incidentsHistory.slice(0, 10);
-  const qcToRender = showAllQc ? qcReviews : qcReviews.slice(0, 10);
-  const signoffsToRender = showAllSignoffs
-    ? signoffsToday
-    : signoffsToday.slice(0, 10);
-  const allergenLogsToRender = showAllAllergenLogs
-    ? allergenLogs
-    : allergenLogs.slice(0, 10);
+    if (!match) return;
 
-  const cleaningAllDone = cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
-  const alreadySignedOff = signoffsToday.length > 0;
+    setViewFor(match);
+    setViewOpen(true);
+    setHighlightId(match.id);
 
-  async function createDaySignoff() {
-    if (!orgId || !locationId) return;
+    router.replace("/team");
+  }, [searchParams, rows, router]);
 
-    if (!cleaningAllDone) {
-      alert("Finish all cleaning tasks due today before signing off.");
-      return;
-    }
+  useEffect(() => {
+    if (!highlightId) return;
+    const timer = setTimeout(() => setHighlightId(null), 8000);
+    return () => clearTimeout(timer);
+  }, [highlightId]);
 
-    if (!signoffInitials.trim()) {
-      alert("Enter your initials.");
-      return;
-    }
+  /* -------------------- Filtering -------------------- */
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter((r) =>
+      [r.initials, r.name, r.email, r.role]
+        .filter(Boolean)
+        .some((s) => (s ?? "").toLowerCase().includes(term))
+    );
+  }, [rows, q]);
 
-    setSignoffSaving(true);
-    try {
-      const { error } = await supabase.from("daily_signoffs").insert({
+  /* -------------------- Member CRUD -------------------- */
+  function openAdd() {
+    setEditing({
+      id: "",
+      initials: "",
+      name: "",
+      email: "",
+      role: "staff",
+      phone: "",
+      active: true,
+      notes: "",
+      training_areas: [],
+    });
+    // reset edit-education state
+    setEditCerts([]);
+    setEditCertsLoading(false);
+    setEditCertSaving(false);
+    setEditCertForm({
+      type: "Food Hygiene Level 2",
+      awarded_on: "",
+      expires_on: "",
+      certificate_url: "",
+      notes: "",
+    });
+    setEditOpen(true);
+  }
+
+  async function openEdit(m: Member) {
+    setEditing({
+      ...m,
+      training_areas: normalizeAreas(m.training_areas),
+    });
+
+    // Load education into EDIT modal
+    await loadEditCertsForMember(m);
+
+    setEditOpen(true);
+  }
+
+  function toggleArea(area: TrainingArea) {
+    if (!editing) return;
+    const current = normalizeAreas(editing.training_areas);
+    const next = current.includes(area)
+      ? current.filter((x) => x !== area)
+      : [...current, area];
+    setEditing({ ...editing, training_areas: next });
+  }
+
+  /**
+   * Keep pills in team_members AND also track due date per pill in team_training_area_status
+   * due_on = today + 12 months.
+   */
+  async function syncTrainingTracking(memberId: string, selectedAreas: TrainingArea[]) {
+    if (!orgId) return;
+
+    const trained_on = todayISODate();
+    const due_on = addMonthsISODate(12);
+
+    // Upsert selected
+    if (selectedAreas.length) {
+      const upserts = selectedAreas.map((area) => ({
         org_id: orgId,
-        location_id: locationId,
-        signoff_on: selectedDateISO,
-        signed_by: signoffInitials.trim().toUpperCase(),
-        notes: signoffNotes.trim() || null,
+        team_member_id: memberId,
+        area,
+        trained_on,
+        due_on,
+      }));
+
+      const { error: upErr } = await supabase
+        .from("team_training_area_status")
+        .upsert(upserts, { onConflict: "team_member_id,area" });
+
+      if (upErr) throw upErr;
+    }
+
+    // Delete unselected
+    const allAreaKeys = TRAINING_AREAS.map((a) => a.key);
+    const unselected = allAreaKeys.filter((a) => !selectedAreas.includes(a));
+
+    if (unselected.length) {
+      const { error: delErr } = await supabase
+        .from("team_training_area_status")
+        .delete()
+        .eq("team_member_id", memberId)
+        .in("area", unselected);
+
+      if (delErr) throw delErr;
+    }
+  }
+
+  async function saveMember() {
+    if (!editing) return;
+    try {
+      if (!orgId) return alert("No organisation found.");
+      if (!editing.name.trim()) return alert("Name is required.");
+
+      const roleValue = (editing.role ?? "").trim().toLowerCase() || "staff";
+      const trainingAreas = normalizeAreas(editing.training_areas);
+
+      if (editing.id) {
+        const updatePayload: any = {
+          initials: editing.initials?.trim() || null,
+          name: editing.name.trim(),
+          email: editing.email?.trim() || null,
+          phone: editing.phone?.trim() || null,
+          notes: editing.notes?.trim() || null,
+          active: editing.active ?? true,
+          training_areas: trainingAreas,
+        };
+
+        if (isOwner) {
+          updatePayload.role = roleValue;
+        }
+
+        const { error } = await supabase
+          .from("team_members")
+          .update(updatePayload)
+          .eq("id", editing.id)
+          .eq("org_id", orgId);
+        if (error) throw error;
+
+        await syncTrainingTracking(editing.id, trainingAreas);
+      } else {
+        if (!isOwner) {
+          alert("Only the owner can add team members.");
+          return;
+        }
+
+        const { data: inserted, error } = await supabase
+          .from("team_members")
+          .insert({
+            org_id: orgId,
+            initials: editing.initials?.trim() || null,
+            name: editing.name.trim(),
+            email: editing.email?.trim() || null,
+            role: roleValue,
+            phone: editing.phone?.trim() || null,
+            notes: editing.notes?.trim() || null,
+            active: true,
+            training_areas: trainingAreas,
+          })
+          .select("id")
+          .single();
+
+        if (error) throw error;
+
+        if (inserted?.id) {
+          await syncTrainingTracking(inserted.id, trainingAreas);
+        }
+      }
+
+      setEditOpen(false);
+      setEditing(null);
+      await load();
+    } catch (e: any) {
+      alert(e?.message ?? "Save failed.");
+    }
+  }
+
+  async function remove(id: string) {
+    if (!isOwner) {
+      alert("Only the owner can delete team members.");
+      return;
+    }
+    if (!confirm("Delete this team member?")) return;
+    try {
+      const { error } = await supabase.from("team_members").delete().eq("id", id);
+      if (error) throw error;
+      await load();
+    } catch (e: any) {
+      alert(e?.message ?? "Delete failed.");
+    }
+  }
+
+  /* -------------------- Certificates / Education (team_members-based) -------------------- */
+  async function loadCertsForMember(m: Member) {
+    setCerts([]);
+    setCertsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("trainings")
+        .select("id,type,awarded_on,expires_on,certificate_url,notes")
+        .eq("team_member_id", m.id)
+        .order("awarded_on", { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+      setCerts((data ?? []) as TrainingCert[]);
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to load education/certificates.");
+      setCerts([]);
+    } finally {
+      setCertsLoading(false);
+    }
+  }
+
+  async function loadEditCertsForMember(m: Member) {
+    setEditCerts([]);
+    setEditCertsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("trainings")
+        .select("id,type,awarded_on,expires_on,certificate_url,notes")
+        .eq("team_member_id", m.id)
+        .order("awarded_on", { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+      setEditCerts((data ?? []) as TrainingCert[]);
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to load education/certificates.");
+      setEditCerts([]);
+    } finally {
+      setEditCertsLoading(false);
+    }
+  }
+
+  async function addEditCertificate() {
+    if (!editing) return;
+    if (!orgId) return alert("No organisation found.");
+
+    const type = (editCertForm.type ?? "").trim();
+    if (!type) return alert("Course type is required.");
+
+    setEditCertSaving(true);
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const created_by = auth.user?.id ?? null;
+
+      const { error } = await supabase.from("trainings").insert({
+        org_id: orgId,
+        team_member_id: editing.id,
+        type,
+        awarded_on: editCertForm.awarded_on || null,
+        expires_on: editCertForm.expires_on || null,
+        certificate_url: editCertForm.certificate_url || null,
+        notes: editCertForm.notes || null,
+        created_by,
       });
 
       if (error) throw error;
 
-      setSignoffInitials("");
-      setSignoffNotes("");
-      setSignoffOpen(false);
-      await refreshAll();
+      setEditCertForm({
+        type: "Food Hygiene Level 2",
+        awarded_on: "",
+        expires_on: "",
+        certificate_url: "",
+        notes: "",
+      });
+
+      await loadEditCertsForMember(editing);
     } catch (e: any) {
-      console.error(e);
-      alert(e?.message ?? "Failed to sign off.");
+      alert(e?.message ?? "Failed to add education/certificate.");
     } finally {
-      setSignoffSaving(false);
+      setEditCertSaving(false);
     }
   }
 
-  async function loadStaffAssessment(staffId: string, days: number) {
-    if (!orgId || !locationId) return;
-    setStaffAssessLoading(true);
-    setStaffAssessErr(null);
+  async function openCard(m: Member) {
+    setViewFor(m);
+    setViewOpen(true);
+    await loadCertsForMember(m);
+  }
+
+  /* -------------------- Invite flow -------------------- */
+  function openInvite() {
+    setInviteForm({ email: "", role: "staff" });
+    setInviteError(null);
+    setInviteInfo(null);
+    setInviteOpen(true);
+  }
+
+  async function sendInvite() {
+    setInviteError(null);
+    setInviteInfo(null);
+
+    const cleanEmail = inviteForm.email.trim().toLowerCase();
+    const role = (inviteForm.role.trim() || "staff").toLowerCase();
+
+    if (!cleanEmail) {
+      setInviteError("Enter an email to invite.");
+      return;
+    }
 
     try {
-      const staff = teamOptions.find((t) => t.id === staffId);
-      if (!staff) throw new Error("Staff not found in options.");
+      setInviteSending(true);
 
-      const initials = staff.initials?.trim().toUpperCase() || "";
-      if (!initials) throw new Error("Staff initials are required for assessment.");
-
-      const end = new Date(selectedDateISO);
-      end.setHours(23, 59, 59, 999);
-      const start = new Date(end);
-      start.setDate(start.getDate() - (days - 1));
-
-      const startIsoDate = isoDate(start);
-      const endIsoDate = isoDate(end);
-
-      const qcStart = new Date(selectedDateISO);
-      qcStart.setHours(0, 0, 0, 0);
-      const tmp = new Date(qcStart);
-      tmp.setDate(tmp.getDate() - 29);
-      const qcStartIso = isoDate(tmp);
-
-      const [cleaningRunsRes, tempLogsRes, tempFailsRes, incidentsRes, qcRes] =
-        await Promise.all([
-          supabase
-            .from("cleaning_task_runs")
-            .select("id", { count: "exact", head: true })
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .eq("done_by", initials)
-            .gte("run_on", startIsoDate)
-            .lte("run_on", endIsoDate),
-
-          supabase
-            .from("food_temp_logs")
-            .select("id", { count: "exact", head: true })
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .eq("staff_initials", initials)
-            .gte("at", start.toISOString())
-            .lte("at", end.toISOString()),
-
-          supabase
-            .from("food_temp_logs")
-            .select("id", { count: "exact", head: true })
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .eq("staff_initials", initials)
-            .eq("status", "fail")
-            .gte("at", start.toISOString())
-            .lte("at", end.toISOString()),
-
-          supabase
-            .from("incidents")
-            .select("id", { count: "exact", head: true })
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .eq("created_by", initials)
-            .gte("happened_on", startIsoDate)
-            .lte("happened_on", endIsoDate),
-
-          supabase
-            .from("staff_qc_reviews")
-            .select("rating, reviewed_on")
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .eq("staff_id", staffId)
-            .gte("reviewed_on", qcStartIso)
-            .lte("reviewed_on", selectedDateISO)
-            .limit(500),
-        ]);
-
-      const firstErr2 =
-        cleaningRunsRes.error ||
-        tempLogsRes.error ||
-        tempFailsRes.error ||
-        incidentsRes.error ||
-        qcRes.error;
-
-      if (firstErr2) throw firstErr2;
-
-      const qcRows = (qcRes.data ?? []) as Array<{ rating: number }>;
-      const qcCount30d = qcRows.length;
-      const qcAvg30d =
-        qcCount30d > 0
-          ? Math.round(
-              (qcRows.reduce((a, r) => a + Number(r.rating || 0), 0) /
-                qcCount30d) *
-                10
-            ) / 10
-          : null;
-
-      setStaffAssess({
-        staffId,
-        staffLabel: tmLabel({ initials: staff.initials, name: staff.name }),
-        rangeDays: days,
-        cleaningRuns: cleaningRunsRes.count ?? 0,
-        tempLogs: tempLogsRes.count ?? 0,
-        tempFails: tempFailsRes.count ?? 0,
-        incidents: incidentsRes.count ?? 0,
-        qcAvg30d,
-        qcCount30d,
+      const res = await inviteTeamMemberServer({
+        email: cleanEmail,
+        role,
       });
+
+      if (!res.ok) {
+        setInviteError(res.message ?? "Failed to send invite.");
+      } else {
+        setInviteInfo("Invite sent. They’ll get an email to set their password and log in.");
+        await load();
+      }
     } catch (e: any) {
-      console.error(e);
-      setStaffAssessErr(e?.message ?? "Failed to load staff assessment.");
+      setInviteError(e?.message ?? "Failed to send invite.");
     } finally {
-      setStaffAssessLoading(false);
+      setInviteSending(false);
     }
   }
 
+  /* -------------------- Highfield CSV Import -------------------- */
+  function openImport() {
+    if (!isOwner) {
+      alert("Only the owner/admin can import training records.");
+      return;
+    }
+    setImportError(null);
+    setImportInfo(null);
+    setImportText("");
+    setImportPreview([]);
+    setImportMissingEmails([]);
+    setImportOpen(true);
+  }
+
+  function updatePreview(text: string) {
+    setImportText(text);
+    setImportError(null);
+    setImportInfo(null);
+
+    if (!text.trim()) {
+      setImportPreview([]);
+      setImportMissingEmails([]);
+      return;
+    }
+
+    const mapped = mapCSVToImportRows(text);
+    if (mapped.errors.length) {
+      setImportPreview([]);
+      setImportMissingEmails([]);
+      setImportError(mapped.errors.join(" "));
+      return;
+    }
+
+    const preview = mapped.rows.slice(0, 50);
+    setImportPreview(preview);
+
+    const known = new Set(
+      rows
+        .map((m) => (m.email ?? "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+
+    const missing = Array.from(
+      new Set(preview.map((r) => r.email).filter((e) => e && !known.has(e)))
+    );
+    setImportMissingEmails(missing);
+  }
+
+  async function onPickFile(file: File | null) {
+    if (!file) return;
+    const text = await file.text();
+    updatePreview(text);
+  }
+
+  async function upsertTrainingRow(
+    org_id: string,
+    team_member_id: string,
+    type: string,
+    awarded_on: string | null,
+    expires_on: string | null,
+    certificate_url: string | null,
+    notes: string | null
+  ) {
+    // Try to find an existing record for same course+awarded_on
+    const { data: existing, error: selErr } = await supabase
+      .from("trainings")
+      .select("id")
+      .eq("org_id", org_id)
+      .eq("team_member_id", team_member_id)
+      .eq("type", type)
+      .eq("awarded_on", awarded_on)
+      .maybeSingle();
+
+    if (selErr) throw selErr;
+
+    if (existing?.id) {
+      const { error: upErr } = await supabase
+        .from("trainings")
+        .update({
+          expires_on,
+          certificate_url,
+          notes,
+        })
+        .eq("id", existing.id)
+        .eq("org_id", org_id);
+
+      if (upErr) throw upErr;
+      return "updated";
+    }
+
+    const { error: insErr } = await supabase.from("trainings").insert({
+      org_id,
+      team_member_id,
+      type,
+      awarded_on,
+      expires_on,
+      certificate_url,
+      notes,
+    });
+
+    if (insErr) throw insErr;
+    return "inserted";
+  }
+
+  async function runImport() {
+    if (!orgId) return alert("No organisation found.");
+    if (!isOwner) return alert("Only the owner/admin can import training records.");
+    if (!importText.trim()) return alert("Paste CSV or upload a CSV file.");
+
+    setImportBusy(true);
+    setImportError(null);
+    setImportInfo(null);
+
+    try {
+      const mapped = mapCSVToImportRows(importText);
+      if (mapped.errors.length) {
+        setImportError(mapped.errors.join(" "));
+        return;
+      }
+
+      // Build email->member map
+      const memberByEmail = new Map<string, Member>();
+      for (const m of rows) {
+        const em = (m.email ?? "").trim().toLowerCase();
+        if (em) memberByEmail.set(em, m);
+      }
+
+      const missing: string[] = [];
+      let inserted = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      // Chunking to avoid hammering
+      const allRows = mapped.rows;
+
+      for (let i = 0; i < allRows.length; i++) {
+        const r = allRows[i]!;
+        const m = memberByEmail.get(r.email);
+        if (!m) {
+          missing.push(r.email);
+          skipped++;
+          continue;
+        }
+
+        const type = r.course.trim();
+        const awarded_on = r.awarded_on;
+        const expires_on = r.expires_on;
+        const certificate_url = r.certificate_url;
+        const notes = r.notes;
+
+        const res = await upsertTrainingRow(
+          orgId,
+          m.id,
+          type,
+          awarded_on,
+          expires_on,
+          certificate_url,
+          notes
+        );
+
+        if (res === "inserted") inserted++;
+        else updated++;
+      }
+
+      setImportMissingEmails(Array.from(new Set(missing)));
+
+      setImportInfo(
+        `Import complete: ${inserted} inserted, ${updated} updated, ${skipped} skipped (no matching team member email).`
+      );
+
+      // Refresh any open card lists
+      if (viewFor) await loadCertsForMember(viewFor);
+      if (editing?.id) await loadEditCertsForMember(editing);
+
+    } catch (e: any) {
+      setImportError(e?.message ?? "Import failed.");
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  /* -------------------- Render -------------------- */
   return (
-    <>
-      <header className="py-2">
-        <div className="text-center">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Today
-          </div>
-          <h1 className="mt-1 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-            {centeredDate}
-          </h1>
-        </div>
-      </header>
+    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2">
+        <h1 className="text-lg font-semibold text-slate-900">Team</h1>
 
-      {err && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
-          {err}
-        </div>
-      )}
-
-      <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiTile
-            title="Temps"
-            icon="🌡"
-            tone={tempsTone}
-            value={tempsSummary.today}
-            sub={
-              <>
-                Fails (7d):{" "}
-                <span
-                  className={cls(
-                    "font-semibold",
-                    tempsSummary.fails7d > 0 && "text-red-700")
-                  }
-                >
-                  {tempsSummary.fails7d}
-                </span>
-              </>
-            }
+        <div className="ml-auto flex min-w-0 items-center gap-2">
+          <input
+            className="h-9 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900 placeholder:text-slate-400 md:w-64"
+            placeholder="Search…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
           />
-          <KpiTile
-            title="Cleaning"
-            icon="🧼"
-            tone={cleaningTone}
-            value={`${cleaningDoneTotal}/${cleaningTotal}`}
-            sub="Tasks completed today"
-          />
-          <KpiTile
-            title="Incidents"
-            icon="⚠️"
-            tone={incidentsTone}
-            value={incidentsToday}
-            sub={`Last 7d: ${incidents7d}`}
-          />
-          <KpiTile
-            title="Training"
-            icon="🎓"
-            tone={trainingTone}
-            value={`${trainingExpired} expired`}
-            sub={`${trainingDueSoon} due in 30d`}
-          />
+
+          {isOwner && (
+            <>
+              <button
+                onClick={openImport}
+                className="whitespace-nowrap rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                title="Import Highfield LMS training CSV"
+              >
+                Import training CSV
+              </button>
+
+              <button
+                onClick={openInvite}
+                className="whitespace-nowrap rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Invite by email
+              </button>
+              <button
+                onClick={openAdd}
+                className="whitespace-nowrap rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                + Add member
+              </button>
+            </>
+          )}
         </div>
+      </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-slate-600">
-              Location
-            </label>
-            <select
-              value={locationId ?? ""}
-              onChange={(e) => setLocationId(e.target.value || null)}
-              className="h-9 rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-              disabled={locationLoading || locations.length === 0}
-            >
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-slate-600">Date</label>
-            <input
-              type="date"
-              value={selectedDateISO}
-              onChange={(e) => setSelectedDateISO(e.target.value || nowISO)}
-              className="h-9 rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-            />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedDateISO(addDaysISO(selectedDateISO, -1))}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              ◀ Previous
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedDateISO(nowISO)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              Today
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedDateISO(addDaysISO(selectedDateISO, 1))}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              Next ▶
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIncidentOpen(true)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              Log incident
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStaffAssessOpen(true)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              Staff assessment
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setSignoffOpen(true)}
-              disabled={!cleaningAllDone || alreadySignedOff}
-              className={cls(
-                "rounded-xl px-3 py-1.5 text-xs font-semibold shadow-sm",
-                !cleaningAllDone || alreadySignedOff
-                  ? "bg-slate-200 text-slate-500 cursor-not-allowed"
-                  : "bg-indigo-600 text-white hover:bg-indigo-700"
-              )}
-            >
-              {alreadySignedOff ? "Signed off" : "Sign off day"}
-            </button>
-
-            {/* REPLACED: Refresh button -> Log staff review */}
-            <button
-              type="button"
-              onClick={() => setStaffReviewOpen(true)}
-              disabled={!orgId || !locationId}
-              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-            >
-              Log staff review
-            </button>
-          </div>
+      {/* Card grid */}
+      {loading ? (
+        <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
+          Loading…
         </div>
-      </section>
+      ) : filtered.length ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((m) => {
+            const initials = safeInitials(m) || "—";
+            const roleLabel = prettyRole(m.role);
+            const activeLabel = m.active ? "Active" : "Inactive";
+            const areas = normalizeAreas(m.training_areas);
 
-      {/* Cleaning category progress */}
-      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Cleaning progress
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            By category (selected day)
-          </div>
-        </div>
-
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-          <table className="min-w-full text-xs">
-            <thead className="bg-slate-50">
-              <tr className="text-left text-slate-500">
-                <th className="px-3 py-2">Category</th>
-                <th className="px-3 py-2">Done</th>
-                <th className="px-3 py-2">Total</th>
-                <th className="px-3 py-2">Completion</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cleaningCategoryProgress.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={4}
-                    className="px-3 py-4 text-center text-slate-500"
-                  >
-                    No cleaning tasks scheduled for this day.
-                  </td>
-                </tr>
-              ) : (
-                cleaningCategoryProgress.map((r) => {
-                  const pct =
-                    r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
-                  const pill =
-                    pct === 100
-                      ? "bg-emerald-100 text-emerald-800"
-                      : pct >= 50
-                      ? "bg-amber-100 text-amber-800"
-                      : "bg-red-100 text-red-800";
-
-                  return (
-                    <tr
-                      key={r.category}
-                      className="border-t border-slate-100 text-slate-800"
-                    >
-                      <td className="px-3 py-2 font-semibold">{r.category}</td>
-                      <td className="px-3 py-2">{r.done}</td>
-                      <td className="px-3 py-2">{r.total}</td>
-                      <td className="px-3 py-2">
-                        <span
-                          className={cls(
-                            "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                            pill
-                          )}
-                        >
-                          {pct}%
+            return (
+              <div
+                key={m.id}
+                className={`flex h-full flex-col rounded-2xl border border-slate-200 bg-white/90 p-3 text-sm text-slate-900 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
+                  highlightId === m.id
+                    ? "bg-emerald-50/80 ring-1 ring-emerald-300/60 animate-pulse"
+                    : ""
+                }`}
+              >
+                {/* Header */}
+                <div className="mb-2 flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                      {initials}
+                    </div>
+                    <div>
+                      <button
+                        className="text-sm font-semibold text-slate-900 hover:text-emerald-700"
+                        onClick={() => void openCard(m)}
+                      >
+                        {m.name || "Unnamed"}
+                      </button>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">
+                          {roleLabel}
                         </span>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* Incidents */}
-      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Incidents
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Incident log & corrective actions (last 90 days)
-          </div>
-        </div>
-
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-          <table className="min-w-full text-xs">
-            <thead className="bg-slate-50">
-              <tr className="text-left text-slate-500">
-                <th className="px-3 py-2">Date</th>
-                <th className="px-3 py-2">Time</th>
-                <th className="px-3 py-2">Type</th>
-                <th className="px-3 py-2">By</th>
-                <th className="px-3 py-2">Details</th>
-                <th className="px-3 py-2">Corrective</th>
-              </tr>
-            </thead>
-            <tbody>
-              {incidentsToRender.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={6}
-                    className="px-3 py-4 text-center text-slate-500"
-                  >
-                    No incidents logged.
-                  </td>
-                </tr>
-              ) : (
-                incidentsToRender.map((r) => (
-                  <tr
-                    key={r.id}
-                    className="border-t border-slate-100 text-slate-800"
-                  >
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {formatDDMMYYYY(r.happened_on)}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {r.created_at
-                        ? new Date(r.created_at).toLocaleTimeString("en-GB", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
-                        : "—"}
-                    </td>
-                    <td className="px-3 py-2 font-semibold">
-                      {r.type ?? "Incident"}
-                    </td>
-                    <td className="px-3 py-2">
-                      {r.created_by?.toUpperCase() ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 max-w-[18rem] truncate">
-                      {r.details ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 max-w-[18rem] truncate">
-                      {r.immediate_action ?? "—"}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <TableFooterToggle
-          total={incidentsHistory.length}
-          showingAll={showAllIncidents}
-          onToggle={() => setShowAllIncidents((v) => !v)}
-        />
-      </section>
-
-      {/* Activity */}
-      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Today&apos;s activity
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Temps + cleaning (category-based)
-          </div>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-              Temperature logs
-            </h3>
-
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-500">
-                    <th className="px-3 py-2">Time</th>
-                    <th className="px-3 py-2">Staff</th>
-                    <th className="px-3 py-2">Area</th>
-                    <th className="px-3 py-2">Item</th>
-                    <th className="px-3 py-2">Temp</th>
-                    <th className="px-3 py-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {todayTemps.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={6}
-                        className="px-3 py-4 text-center text-slate-500"
-                      >
-                        No temperature logs.
-                      </td>
-                    </tr>
-                  ) : (
-                    tempsToRender.map((r) => (
-                      <tr
-                        key={r.id}
-                        className="border-t border-slate-100 text-slate-800"
-                      >
-                        <td className="px-3 py-2">{r.time}</td>
-                        <td className="px-3 py-2">{r.staff}</td>
-                        <td className="px-3 py-2">{r.area}</td>
-                        <td className="px-3 py-2">{r.item}</td>
-                        <td className="px-3 py-2">
-                          {r.temp_c != null ? `${r.temp_c}°C` : "—"}
-                        </td>
-                        <td className="px-3 py-2">
-                          {r.status ? (
-                            <span
-                              className={cls(
-                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                                r.status === "pass"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-red-100 text-red-800"
-                              )}
-                            >
-                              {r.status}
-                            </span>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <TableFooterToggle
-              total={todayTemps.length}
-              showingAll={showAllTemps}
-              onToggle={() => setShowAllTemps((v) => !v)}
-            />
-
-            {/* Temp failures & corrective actions */}
-            <h3 className="mt-4 mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-              Temp failures & corrective actions
-            </h3>
-
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-500">
-                    <th className="px-3 py-2">Time</th>
-                    <th className="px-3 py-2">By</th>
-                    <th className="px-3 py-2">Details</th>
-                    <th className="px-3 py-2">Corrective</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tempFailsToRender.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={4}
-                        className="px-3 py-4 text-center text-slate-500"
-                      >
-                        No temp failures.
-                      </td>
-                    </tr>
-                  ) : (
-                    tempFailsToRender.map((r) => (
-                      <tr
-                        key={r.id}
-                        className="border-t border-slate-100 text-slate-800"
-                      >
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {r.created_at
-                            ? new Date(r.created_at).toLocaleTimeString("en-GB", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
-                            : "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {r.created_by?.toUpperCase() ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 max-w-[18rem] truncate">
-                          {r.details ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 max-w-[18rem] truncate">
-                          {r.corrective_action ?? "—"}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <TableFooterToggle
-              total={tempFailsToday.length}
-              showingAll={showAllTempFails}
-              onToggle={() => setShowAllTempFails((v) => !v)}
-            />
-          </div>
-
-          <div>
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-              Cleaning runs
-            </h3>
-
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-500">
-                    <th className="px-3 py-2">Time</th>
-                    <th className="px-3 py-2">Category</th>
-                    <th className="px-3 py-2">Staff</th>
-                    <th className="px-3 py-2">Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cleaningToRender.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={4}
-                        className="px-3 py-4 text-center text-slate-500"
-                      >
-                        No cleaning tasks completed.
-                      </td>
-                    </tr>
-                  ) : (
-                    cleaningToRender.map((r) => (
-                      <tr
-                        key={r.id}
-                        className="border-t border-slate-100 text-slate-800"
-                      >
-                        <td className="px-3 py-2">{r.time ?? "—"}</td>
-                        <td className="px-3 py-2">
-                          <div className="font-semibold">{r.category}</div>
-                          {r.task ? (
-                            <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">
-                              {r.task}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="px-3 py-2">{r.staff ?? "—"}</td>
-                        <td className="px-3 py-2 max-w-[14rem] truncate">
-                          {r.notes ?? "—"}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <TableFooterToggle
-              total={cleaningActivity.length}
-              showingAll={showAllCleaning}
-              onToggle={() => setShowAllCleaning((v) => !v)}
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* Day sign-offs table */}
-      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Day sign-offs
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Daily sign-offs for selected day · Total: {signoffSummary.todayCount}
-          </div>
-        </div>
-
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-          <table className="min-w-full text-xs">
-            <thead className="bg-slate-50">
-              <tr className="text-left text-slate-500">
-                <th className="px-3 py-2">Date</th>
-                <th className="px-3 py-2">Time</th>
-                <th className="px-3 py-2">Signed by</th>
-                <th className="px-3 py-2">Notes / corrective actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {signoffsToRender.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
-                    No sign-offs logged for this day.
-                  </td>
-                </tr>
-              ) : (
-                signoffsToRender.map((r) => {
-                  const t = r.created_at ? formatTimeHM(new Date(r.created_at)) : null;
-                  return (
-                    <tr
-                      key={r.id}
-                      className="border-t border-slate-100 text-slate-800"
-                    >
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {formatDDMMYYYY(r.signoff_on)}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">{t ?? "—"}</td>
-                      <td className="px-3 py-2 font-semibold whitespace-nowrap">
-                        {r.signed_by ? r.signed_by.toUpperCase() : "—"}
-                      </td>
-                      <td className="px-3 py-2 max-w-[28rem] truncate">
-                        {r.notes ?? "—"}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <TableFooterToggle
-          total={signoffsToday.length}
-          showingAll={showAllSignoffs}
-          onToggle={() => setShowAllSignoffs((v) => !v)}
-        />
-      </section>
-
-      {/* Manager QC Summary table */}
-      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-              Manager QC
-            </div>
-            <div className="mt-0.5 text-sm font-semibold text-slate-900">
-              Recent QC reviews (selected location)
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={async () => {
-              if (!orgId || !locationId) return;
-              setQcForm((f) => ({
-                ...f,
-                reviewed_on: selectedDateISO || f.reviewed_on,
-              }));
-              setQcOpen(true);
-              await Promise.all([loadTeamOptions(), loadLoggedInManager(), loadQcReviews()]);
-            }}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-          >
-            Open QC
-          </button>
-        </div>
-
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-          <table className="min-w-full text-xs">
-            <thead className="bg-slate-50">
-              <tr className="text-left text-slate-500">
-                <th className="px-3 py-2">Date</th>
-                <th className="px-3 py-2">Staff</th>
-                <th className="px-3 py-2">Manager</th>
-                <th className="px-3 py-2">Score</th>
-                <th className="px-3 py-2">Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {qcSummaryLoading ? (
-                <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                    Loading…
-                  </td>
-                </tr>
-              ) : qcToRender.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                    No QC reviews logged.
-                  </td>
-                </tr>
-              ) : (
-                qcToRender.map((r) => {
-                  const pill =
-                    r.rating >= 4
-                      ? "bg-emerald-100 text-emerald-800"
-                      : r.rating === 3
-                      ? "bg-amber-100 text-amber-800"
-                      : "bg-red-100 text-red-800";
-
-                  return (
-                    <tr
-                      key={r.id}
-                      className="border-t border-slate-100 text-slate-800"
-                    >
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {formatDDMMYYYY(r.reviewed_on)}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {tmLabel(r.staff ?? { initials: null, name: "—" })}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {tmLabel(r.manager ?? { initials: null, name: "—" })}
-                      </td>
-                      <td className="px-3 py-2">
                         <span
-                          className={cls(
-                            "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                            pill
-                          )}
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                            m.active
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                              : "bg-slate-50 text-slate-500 border border-slate-100"
+                          }`}
                         >
-                          {r.rating}/5
+                          {activeLabel}
                         </span>
-                      </td>
-                      <td className="px-3 py-2 max-w-[24rem] truncate">
-                        {r.notes ?? "—"}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                      </div>
+                    </div>
+                  </div>
 
-        <TableFooterToggle
-          total={qcReviews.length}
-          showingAll={showAllQc}
-          onToggle={() => setShowAllQc((v) => !v)}
-        />
-      </section>
-
-      {/* Allergen edit log */}
-      <section className="mt-4 mb-6 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Allergens
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Allergen edit log (this location)
-          </div>
-        </div>
-
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-          <table className="min-w-full text-xs">
-            <thead className="bg-slate-50">
-              <tr className="text-left text-slate-500">
-                <th className="px-3 py-2">Date</th>
-                <th className="px-3 py-2">Time</th>
-                <th className="px-3 py-2">Item</th>
-                <th className="px-3 py-2">Action</th>
-                <th className="px-3 py-2">Category change</th>
-                <th className="px-3 py-2">By</th>
-              </tr>
-            </thead>
-            <tbody>
-              {allergenLogsToRender.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
-                    No allergen edits logged.
-                  </td>
-                </tr>
-              ) : (
-                allergenLogsToRender.map((r) => (
-                  <tr
-                    key={r.id}
-                    className="border-t border-slate-100 text-slate-800"
-                  >
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {formatDDMMYYYY(r.created_at)}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {formatTimeHM(safeDate(r.created_at)) ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 max-w-[14rem] truncate">
-                      {r.item_name ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {r.action ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 max-w-[16rem] truncate">
-                      {(r.category_before ?? "—") + " → " + (r.category_after ?? "—")}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {r.staff_initials?.toUpperCase() ?? "—"}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <TableFooterToggle
-          total={allergenLogs.length}
-          showingAll={showAllAllergenLogs}
-          onToggle={() => setShowAllAllergenLogs((v) => !v)}
-        />
-      </section>
-
-      {/* Sign-off modal */}
-      {signoffOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setSignoffOpen(false)}
-        >
-          <div
-            className={cls(
-              "mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
-            )}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-base font-semibold">Sign off day</div>
-                <div className="mt-0.5 text-xs text-slate-500">
-                  {formatDDMMYYYY(selectedDateISO)} ·{" "}
-                  {locations.find((l) => l.id === locationId)?.name ?? "—"}
-                </div>
-              </div>
-              <button
-                onClick={() => setSignoffOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </div>
-
-            {!cleaningAllDone && (
-              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                You can’t sign off until all cleaning tasks due today are completed.
-              </div>
-            )}
-
-            {alreadySignedOff && (
-              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                This day is already signed off.
-              </div>
-            )}
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Initials
-                </label>
-                <input
-                  value={signoffInitials}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    setSignoffInitials(e.target.value.toUpperCase())
-                  }
-                  placeholder="WS"
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Notes (optional)
-                </label>
-                <input
-                  value={signoffNotes}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    setSignoffNotes(e.target.value)
-                  }
-                  placeholder="Any corrective actions / comments…"
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                />
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setSignoffOpen(false)}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={createDaySignoff}
-                disabled={!cleaningAllDone || alreadySignedOff || signoffSaving}
-                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
-              >
-                {signoffSaving ? "Signing…" : "Sign off"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Individual staff assessment modal */}
-      {staffAssessOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
-          onClick={() => setStaffAssessOpen(false)}
-        >
-          <div
-            className={cls(
-              "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
-            )}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-base font-semibold">
-                  Individual staff assessment
-                </div>
-                <div className="mt-0.5 text-xs text-slate-500">
-                  Manager view of individual performance.
-                </div>
-              </div>
-              <button
-                onClick={() => setStaffAssessOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </div>
-
-            {staffAssessErr && (
-              <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                {staffAssessErr}
-              </div>
-            )}
-
-            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
-              <div className="grid gap-3 md:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Staff
-                  </label>
-                  <select
-                    value={staffAssessStaffId}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
-                      setStaffAssessStaffId(e.target.value);
-                    }}
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    <option value="">Select staff…</option>
-                    {teamOptions.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {tmLabel(t)}
-                      </option>
-                    ))}
-                  </select>
+                  <ActionMenu
+                    items={[
+                      { label: "View card", onClick: () => void openCard(m) },
+                      { label: "Edit", onClick: () => void openEdit(m) },
+                      ...(isOwner
+                        ? [
+                            {
+                              label: "Delete",
+                              onClick: () => void remove(m.id),
+                              variant: "danger" as const,
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
                 </div>
 
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">
-                    Range (days)
-                  </label>
-                  <select
-                    value={staffAssessDays}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                      setStaffAssessDays(Number(e.target.value) || 7)
-                    }
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    {[7, 14, 30, 60, 90].map((n) => (
-                      <option key={n} value={n}>
-                        Last {n} days
-                      </option>
-                    ))}
-                  </select>
+                {/* Training pills row */}
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {areas.length ? (
+                    areas.map((a) => {
+                      const meta = TRAINING_AREAS.find((x) => x.key === a);
+                      if (!meta) return null;
+                      return (
+                        <span
+                          key={a}
+                          className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800"
+                          title={meta.label}
+                        >
+                          {meta.short}
+                        </span>
+                      );
+                    })
+                  ) : (
+                    <span className="text-[11px] text-slate-400">No training selected</span>
+                  )}
                 </div>
 
-                <div className="flex items-end">
+                {/* Body */}
+                <div className="space-y-1 text-xs text-slate-800">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-500">Email</span>
+                    <span className="max-w-[70%] truncate text-right">{m.email ?? "—"}</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-500">Phone</span>
+                    <span className="max-w-[70%] truncate text-right">{m.phone ?? "—"}</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-500">Initials</span>
+                    <span className="text-right">{m.initials ?? initials ?? "—"}</span>
+                  </div>
+                </div>
+
+                {m.notes && (
+                  <div className="mt-2 rounded-xl bg-slate-50 px-2 py-1.5 text-xs text-slate-600">
+                    {m.notes}
+                  </div>
+                )}
+
+                {/* Footer */}
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   <button
-                    type="button"
-                    onClick={() => {
-                      if (!staffAssessStaffId) {
-                        alert("Select staff first.");
-                        return;
-                      }
-                      void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
-                    }}
-                    disabled={staffAssessLoading || !orgId || !locationId}
-                    className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                    onClick={() => void openEdit(m)}
                   >
-                    {staffAssessLoading ? "Loading…" : "Load"}
+                    Edit training
+                  </button>
+                  <button
+                    className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                    onClick={() => void openCard(m)}
+                  >
+                    View profile →
                   </button>
                 </div>
               </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
+          No team members yet.
+        </div>
+      )}
 
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <KpiTile
-                  title="Cleaning runs"
-                  icon="🧼"
-                  tone="neutral"
-                  value={staffAssess?.cleaningRuns ?? "—"}
-                  sub={
-                    staffAssess
-                      ? `Completed in last ${staffAssess.rangeDays}d`
-                      : "Select staff + load"
-                  }
-                />
-                <KpiTile
-                  title="Temp logs"
-                  icon="🌡"
-                  tone="neutral"
-                  value={staffAssess?.tempLogs ?? "—"}
-                  sub={staffAssess ? `Recorded in last ${staffAssess.rangeDays}d` : "—"}
-                />
-                <KpiTile
-                  title="Temp fails"
-                  icon="🚫"
-                  tone={staffAssess && staffAssess.tempFails > 0 ? "danger" : "ok"}
-                  value={staffAssess?.tempFails ?? "—"}
-                  sub={staffAssess ? `Fails in last ${staffAssess.rangeDays}d` : "—"}
-                />
-                <KpiTile
-                  title="Incidents"
-                  icon="⚠️"
-                  tone={staffAssess && staffAssess.incidents > 0 ? "warn" : "ok"}
-                  value={staffAssess?.incidents ?? "—"}
-                  sub={staffAssess ? `Logged in last ${staffAssess.rangeDays}d` : "—"}
-                />
-                <KpiTile
-                  title="QC avg (30d)"
-                  icon="📋"
-                  tone="neutral"
-                  value={
-                    staffAssess
-                      ? staffAssess.qcAvg30d != null
-                        ? `${staffAssess.qcAvg30d}/5`
-                        : "—"
-                      : "—"
-                  }
-                  sub={staffAssess ? `Based on ${staffAssess.qcCount30d} reviews` : "—"}
-                />
-                <KpiTile
-                  title="Staff"
-                  icon="👤"
-                  tone="neutral"
-                  value={staffAssess?.staffLabel ?? "—"}
-                  sub="Selected team member"
-                />
+      {/* ================= Highfield CSV Import modal ================= */}
+      {importOpen && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setImportOpen(false)}>
+            <div
+              className="mx-auto mt-12 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-6rem)] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <div className="text-base font-semibold">Import training CSV</div>
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    Export from Highfield LMS reports, then paste/upload here. Matching is by team member email.
+                  </div>
+                </div>
+                <button
+                  onClick={() => setImportOpen(false)}
+                  className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
               </div>
 
-              <div className="mt-4 text-xs text-slate-500">
-                Note: this uses initials across logs (done_by, staff_initials, created_by).
-                If you switch to IDs everywhere later, this becomes rock-solid.
+              <div className="grid gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer">
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      className="hidden"
+                      onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
+                    />
+                    Upload CSV
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportText("");
+                      setImportPreview([]);
+                      setImportMissingEmails([]);
+                      setImportError(null);
+                      setImportInfo(null);
+                    }}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    Clear
+                  </button>
+
+                  <div className="ml-auto text-xs text-slate-500">
+                    Expected headers: <span className="font-medium">Email</span>,{" "}
+                    <span className="font-medium">Course</span>,{" "}
+                    <span className="font-medium">Completed</span>,{" "}
+                    <span className="font-medium">Expiry</span>,{" "}
+                    <span className="font-medium">Certificate URL</span>
+                  </div>
+                </div>
+
+                <textarea
+                  className="min-h-[180px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-xs font-mono"
+                  placeholder="Paste CSV here…"
+                  value={importText}
+                  onChange={(e) => updatePreview(e.target.value)}
+                />
+
+                {importError && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                    {importError}
+                  </div>
+                )}
+
+                {importInfo && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                    {importInfo}
+                  </div>
+                )}
+
+                {!!importMissingEmails.length && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <div className="font-semibold">Skipped (no matching team member email):</div>
+                    <div className="mt-1 text-xs">
+                      {importMissingEmails.slice(0, 12).join(", ")}
+                      {importMissingEmails.length > 12 ? ` (+${importMissingEmails.length - 12} more)` : ""}
+                    </div>
+                    <div className="mt-1 text-[11px] text-amber-900/80">
+                      Fix: add these emails to Team members first (or correct the emails in the CSV), then re-import.
+                    </div>
+                  </div>
+                )}
+
+                {importPreview.length ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-sm font-semibold">Preview (first {Math.min(50, importPreview.length)} rows)</div>
+                      <div className="text-xs text-slate-500">We’ll upsert into trainings</div>
+                    </div>
+                    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-slate-50 text-slate-500">
+                          <tr className="text-left">
+                            <th className="px-3 py-2">Email</th>
+                            <th className="px-3 py-2">Course</th>
+                            <th className="px-3 py-2">Awarded</th>
+                            <th className="px-3 py-2">Expires</th>
+                            <th className="px-3 py-2">Cert</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {importPreview.map((r, idx) => (
+                            <tr key={`${r.email}_${idx}`} className="border-t border-slate-100 text-slate-800">
+                              <td className="px-3 py-2 whitespace-nowrap">{r.email}</td>
+                              <td className="px-3 py-2">{r.course}</td>
+                              <td className="px-3 py-2 whitespace-nowrap">{formatDate(r.awarded_on)}</td>
+                              <td className="px-3 py-2 whitespace-nowrap">{formatDate(r.expires_on)}</td>
+                              <td className="px-3 py-2">
+                                {r.certificate_url ? (
+                                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium">
+                                    link
+                                  </span>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setImportOpen(false)}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    disabled={importBusy}
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void runImport()}
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                    disabled={importBusy}
+                  >
+                    {importBusy ? "Importing…" : "Run import"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
-      {/* QC modal */}
-      {qcOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
-          onClick={() => setQcOpen(false)}
-        >
-          <div
-            className={cls(
-              "mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
-            )}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* (QC modal content unchanged) */}
-            {/* ... your existing QC modal code remains exactly as you pasted it ... */}
+      {/* Edit / Add modal */}
+      {editOpen && editing && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setEditOpen(false)}>
+            <div
+              className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-6rem)] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-base font-semibold">{editing.id ? "Edit member" : "Add member"}</div>
+                <button onClick={() => setEditOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
+                  ✕
+                </button>
+              </div>
+
+              <div className="grid gap-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-slate-500">Initials</label>
+                    <input
+                      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                      value={editing.initials ?? ""}
+                      onChange={(e) => setEditing({ ...editing, initials: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="mb-1 block text-xs text-slate-500">Name *</label>
+                    <input
+                      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                      value={editing.name}
+                      onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-slate-500">Email</label>
+                    <input
+                      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                      value={editing.email ?? ""}
+                      onChange={(e) => setEditing({ ...editing, email: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-slate-500">Phone</label>
+                    <input
+                      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                      value={editing.phone ?? ""}
+                      onChange={(e) => setEditing({ ...editing, phone: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-slate-500">Role</label>
+                    {isOwner ? (
+                      <select
+                        className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                        value={(editing.role ?? "staff").toLowerCase()}
+                        onChange={(e) => setEditing({ ...editing, role: e.target.value })}
+                      >
+                        <option value="staff">Staff</option>
+                        <option value="manager">Manager</option>
+                        <option value="owner">Owner</option>
+                      </select>
+                    ) : (
+                      <input
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm"
+                        value={prettyRole(editing.role ?? "staff")}
+                        disabled
+                      />
+                    )}
+                  </div>
+
+                  <label className="mt-6 flex items-center gap-2 text-sm text-slate-800">
+                    <input
+                      type="checkbox"
+                      className="accent-emerald-600"
+                      checked={!!editing.active}
+                      onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
+                    />
+                    Active
+                  </label>
+                </div>
+
+                {/* Training areas selector */}
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Training areas</label>
+                  <div className="flex flex-wrap gap-2">
+                    {TRAINING_AREAS.map((a) => {
+                      const selected = normalizeAreas(editing.training_areas).includes(a.key);
+                      return (
+                        <button
+                          key={a.key}
+                          type="button"
+                          onClick={() => toggleArea(a.key)}
+                          className={[
+                            "rounded-full border px-3 py-1 text-xs font-medium transition",
+                            pillClassSelected(selected),
+                          ].join(" ")}
+                          title={a.label}
+                        >
+                          {a.short}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Tap to toggle. Each selected area is recorded as trained today and given a due date in 12 months.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Notes</label>
+                  <textarea
+                    className="min-h-[80px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
+                    value={editing.notes ?? ""}
+                    onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
+                  />
+                </div>
+
+                {/* Education moved HERE (Edit modal) */}
+                {editing.id ? (
+                  <div className="mt-1 rounded-2xl border border-slate-200 bg-white/80 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="text-sm font-semibold text-slate-900">Education / Courses</div>
+                      <button
+                        onClick={() => void loadEditCertsForMember(editing)}
+                        className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                        type="button"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+
+                    {editCertsLoading ? (
+                      <div className="text-xs text-slate-500">Loading…</div>
+                    ) : editCerts.length ? (
+                      <div className="space-y-2">
+                        {editCerts.map((c) => (
+                          <div
+                            key={c.id}
+                            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="text-xs font-semibold text-slate-900">
+                                {c.type ?? "—"}
+                              </div>
+                              {c.certificate_url ? (
+                                <a
+                                  href={c.certificate_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                                >
+                                  View →
+                                </a>
+                              ) : null}
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-600">
+                              Awarded: {formatDate(c.awarded_on)} · Expires: {formatDate(c.expires_on)}
+                            </div>
+                            {c.notes ? (
+                              <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-500">No courses recorded.</div>
+                    )}
+
+                    {/* Add course form */}
+                    <div className="mt-3 grid gap-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                          value={editCertForm.type}
+                          onChange={(e) => setEditCertForm((p) => ({ ...p, type: e.target.value }))}
+                          placeholder="Type (e.g. Food Hygiene Level 2)"
+                        />
+                        <input
+                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                          value={editCertForm.certificate_url}
+                          onChange={(e) =>
+                            setEditCertForm((p) => ({ ...p, certificate_url: e.target.value }))
+                          }
+                          placeholder="Certificate URL (optional)"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-medium text-slate-600">
+                            Date passed
+                          </label>
+                          <input
+                            type="date"
+                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                            value={editCertForm.awarded_on}
+                            onChange={(e) =>
+                              setEditCertForm((p) => ({ ...p, awarded_on: e.target.value }))
+                            }
+                            aria-label="Date passed"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-medium text-slate-600">
+                            Date expired
+                          </label>
+                          <input
+                            type="date"
+                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                            value={editCertForm.expires_on}
+                            onChange={(e) =>
+                              setEditCertForm((p) => ({ ...p, expires_on: e.target.value }))
+                            }
+                            aria-label="Date expired"
+                          />
+                        </div>
+                      </div>
+
+                      <input
+                        className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                        value={editCertForm.notes}
+                        onChange={(e) => setEditCertForm((p) => ({ ...p, notes: e.target.value }))}
+                        placeholder="Notes (optional)"
+                      />
+
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => void addEditCertificate()}
+                          disabled={editCertSaving}
+                          className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                          type="button"
+                        >
+                          {editCertSaving ? "Saving…" : "Add education"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => setEditOpen(false)}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                    onClick={() => void saveMember()}
+                    type="button"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
-      {/* Incident modal – with defaultInitials */}
-      {incidentOpen && orgId && locationId && (
-        <IncidentModal
-          open={incidentOpen}
-          onClose={() => setIncidentOpen(false)}
-          defaultDate={selectedDateISO}
-          orgId={orgId}
-          locationId={locationId}
-          defaultInitials={managerTeamMember?.initials?.toUpperCase() ?? ""}
-          onSaved={refreshAll}
-        />
+      {/* View modal */}
+      {viewOpen && viewFor && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setViewOpen(false)}>
+            <div
+              className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-6rem)] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-slate-900 px-4 py-3 text-white">
+                <div className="text-sm opacity-80">Team member</div>
+                <div className="text-xl font-semibold">{viewFor.name}</div>
+                <div className="opacity-80">{viewFor.active ? "Active" : "Inactive"}</div>
+              </div>
+
+              <div className="space-y-2 p-4 text-sm">
+                <div>
+                  <span className="font-medium">Initials:</span>{" "}
+                  {viewFor.initials ?? safeInitials(viewFor) ?? "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Role:</span> {prettyRole(viewFor.role)}
+                </div>
+                <div>
+                  <span className="font-medium">Email:</span> {viewFor.email ?? "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Phone:</span> {viewFor.phone ?? "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Training areas:</span>{" "}
+                  {normalizeAreas(viewFor.training_areas).length
+                    ? normalizeAreas(viewFor.training_areas)
+                        .map((k) => TRAINING_AREAS.find((a) => a.key === k)?.label ?? k)
+                        .join(", ")
+                    : "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Notes:</span> {viewFor.notes ?? "—"}
+                </div>
+
+                {/* Education / certificates (READ ONLY) */}
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-slate-900">Education / Courses</div>
+                    <button
+                      onClick={() => void loadCertsForMember(viewFor)}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                      type="button"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+
+                  {certsLoading ? (
+                    <div className="text-xs text-slate-500">Loading…</div>
+                  ) : certs.length ? (
+                    <div className="space-y-2">
+                      {certs.map((c) => (
+                        <div
+                          key={c.id}
+                          className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="text-xs font-semibold text-slate-900">
+                              {c.type ?? "—"}
+                            </div>
+                            {c.certificate_url ? (
+                              <a
+                                href={c.certificate_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                              >
+                                View →
+                              </a>
+                            ) : null}
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-600">
+                            Awarded: {formatDate(c.awarded_on)} · Expires: {formatDate(c.expires_on)}
+                          </div>
+                          {c.notes ? (
+                            <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-500">No courses recorded.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
+                <button
+                  onClick={() => {
+                    setViewOpen(false);
+                    void openEdit(viewFor);
+                  }}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                  type="button"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => setViewOpen(false)}
+                  className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+                  type="button"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
       )}
 
-      {/* Staff Review modal */}
-      <StaffReviewModal
-        open={staffReviewOpen}
-        onClose={() => setStaffReviewOpen(false)}
-        onSaved={refreshAll}
-      />
-    </>
+      {/* Invite modal */}
+      {inviteOpen && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setInviteOpen(false)}>
+            <div
+              className="mx-auto mt-16 w-full max-w-md rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-6rem)] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-base font-semibold">Invite team member</div>
+                <button onClick={() => setInviteOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-3 text-sm">
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Email</label>
+                  <input
+                    type="email"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                    placeholder="team@example.com"
+                    value={inviteForm.email}
+                    onChange={(e) => setInviteForm((f) => ({ ...f, email: e.target.value }))}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Role</label>
+                  <select
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                    value={inviteForm.role}
+                    onChange={(e) => setInviteForm((f) => ({ ...f, role: e.target.value }))}
+                  >
+                    <option value="staff">Staff</option>
+                    <option value="manager">Manager</option>
+                    <option value="owner">Owner</option>
+                  </select>
+                </div>
+
+                <p className="text-xs text-slate-500">
+                  We’ll add them to this business and send a sign-in link.
+                </p>
+
+                {inviteError && (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    {inviteError}
+                  </div>
+                )}
+                {inviteInfo && (
+                  <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                    {inviteInfo}
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => setInviteOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                    disabled={inviteSending}
+                    onClick={() => void sendInvite()}
+                  >
+                    {inviteSending ? "Sending…" : "Send invite"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
+    </div>
   );
 }
