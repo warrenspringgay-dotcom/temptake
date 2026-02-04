@@ -6,18 +6,17 @@ import { getActiveOrgIdServer } from "@/lib/orgServer";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 /**
- * This file intentionally supports BOTH:
- *  - "new" payload shape: courseType / providerName
- *  - "legacy" payload shape: type / provider_other
+ * trainings table columns (per your schema):
+ * - provider_name text NULL CHECK (provider_name IN ('Highfield','Other') OR provider_name IS NULL)
  *
- * So TeamManager.tsx doesn't need changing to compile.
+ * There is NO `provider` column.
+ * So we only write provider_name.
  */
 
 export type ProviderChoice = "Highfield" | "Other";
 
 /* ===================== Inputs ===================== */
 
-// New shape (preferred)
 export type CreateTrainingInput = {
   id?: string;
 
@@ -29,8 +28,9 @@ export type CreateTrainingInput = {
   courseType?: string; // preferred
   courseTitle?: string | null;
 
-  provider?: ProviderChoice; // preferred
-  providerName?: string | null; // preferred (when provider === "Other")
+  // New (preferred)
+  provider?: ProviderChoice; // UI may send this
+  providerName?: string | null; // free text for "Other" (NOT stored in provider_name)
 
   awarded_on: string; // YYYY-MM-DD
   expires_on?: string | null;
@@ -38,15 +38,14 @@ export type CreateTrainingInput = {
   certificate_url?: string | null;
   notes?: string | null;
 
-  // UI sometimes passes this; we ignore and derive server-side
+  // ignored, derived server-side
   orgId?: string | null;
 
-  /* ---- Legacy compatibility ---- */
+  /* ---- Legacy compatibility (from older TeamManager code) ---- */
   type?: string; // legacy alias for courseType
   provider_other?: string | null; // legacy alias for providerName
 };
 
-// Upload input (keep simple)
 export type UploadTrainingCertificateInput = {
   file: File;
 
@@ -54,7 +53,7 @@ export type UploadTrainingCertificateInput = {
   staffId?: string | null;
   staffInitials?: string | null;
 
-  orgId?: string | null; // ignored, derived server-side
+  orgId?: string | null; // ignored
 };
 
 export type UploadTrainingCertificateResult = {
@@ -81,32 +80,32 @@ function safeExtFromMime(mime: string | undefined) {
   return "bin";
 }
 
-function normaliseProvider(input: CreateTrainingInput): {
-  provider: ProviderChoice;
-  providerName: string | null;
-} {
-  // provider defaults to Highfield
-  const provider: ProviderChoice = input.provider ?? "Highfield";
+function normaliseCourseType(input: CreateTrainingInput): string {
+  const ct = (input.courseType ?? "").trim();
+  if (ct) return ct;
+  return (input.type ?? "").trim();
+}
 
-  // providerName can come from new field OR legacy provider_other
-  const rawOther =
+/**
+ * DB can ONLY store provider_name in: 'Highfield' | 'Other' | NULL
+ * Free-text other provider name must go elsewhere (schema doesn't include a column).
+ * We'll append it into notes for now.
+ */
+function normaliseProviderForDb(input: CreateTrainingInput): {
+  provider_name: ProviderChoice;
+  otherProviderText: string | null;
+} {
+  const provider_name: ProviderChoice = input.provider ?? "Highfield";
+
+  const other =
     (input.providerName ?? "").trim() ||
     (input.provider_other ?? "").toString().trim() ||
     "";
 
-  // If provider is Other, keep providerName; else null it
-  const providerName = provider === "Other" ? (rawOther || null) : null;
-
-  return { provider, providerName };
-}
-
-function normaliseCourseType(input: CreateTrainingInput): string {
-  // courseType preferred, fallback to legacy "type"
-  const ct = (input.courseType ?? "").trim();
-  if (ct) return ct;
-
-  const legacy = (input.type ?? "").trim();
-  return legacy;
+  return {
+    provider_name,
+    otherProviderText: provider_name === "Other" ? (other || null) : null,
+  };
 }
 
 /* ===================== Upload (Storage) ===================== */
@@ -143,7 +142,6 @@ export async function uploadTrainingCertificateServer(
       input.staffId ??
       (input.staffInitials ? input.staffInitials.trim().toUpperCase() : "unknown");
 
-    // If your bucket name is different, change it here.
     const bucket = "training-certificates";
     const path = `${org_id}/${who}/${stamp}.${ext}`;
 
@@ -187,30 +185,35 @@ export async function createTrainingServer(input: CreateTrainingInput) {
       ? input.expires_on.trim()
       : addDaysISO(awarded_on, 365);
 
-  const { provider, providerName } = normaliseProvider(input);
+  const { provider_name, otherProviderText } = normaliseProviderForDb(input);
 
-  // Payload (match your DB columns)
+  // Notes: append other provider text (since schema has no provider_other column)
+  const baseNotes = (input.notes ?? "").trim();
+  const extra =
+    otherProviderText && otherProviderText.toLowerCase() !== "other"
+      ? `Provider (other): ${otherProviderText}`
+      : null;
+
+  const mergedNotes =
+    extra && baseNotes
+      ? `${baseNotes}\n${extra}`
+      : extra
+      ? extra
+      : baseNotes || null;
+
+  // Payload matches YOUR table
   const payload: any = {
     org_id,
-
     team_member_id: input.teamMemberId ?? null,
     staff_id: input.staffId ?? null,
 
-    // trainings.type is your course name column
     type: courseType,
-
-    // Optional fields: keep if they exist in your DB, remove if not
-    course_title: input.courseTitle?.trim() || null,
-
-    // These MUST satisfy trainings_provider_chk
-    provider,
-    provider_name: providerName,
-
     awarded_on,
     expires_on,
 
+    provider_name, // ✅ correct column name
     certificate_url: input.certificate_url ?? null,
-    notes: input.notes?.trim() || null,
+    notes: mergedNotes,
   };
 
   if (input.id) payload.id = input.id;
@@ -228,4 +231,3 @@ export async function createTrainingServer(input: CreateTrainingInput) {
 
 /** Backwards-compatible alias (older code imported this name). */
 export const saveTrainingServer = createTrainingServer;
-
