@@ -37,12 +37,13 @@ export default function WelcomePopup({ user }: WelcomePopupProps) {
         <div className="mt-2 text-sm text-slate-600">
           Quick setup:
           <ol className="mt-2 list-decimal space-y-1 pl-5">
-            <li>Use the FAB Plus for quick tasks (floating bottom corner)</li>
+            <li>Use the FAB + button for quick tasks (floating bottom corner)</li>
             <li>Add all your team members.</li>
             <li>Build your temp routines.</li>
             <li>Setup your cleaning rota.</li>
             <li>Update your allergen information.</li>
             <li>Add all your suppliers.</li>
+            <li>This is a beta. If anything feels confusing or clunky, use Feedback in FAB + button to tell us</li>
           </ol>
         </div>
 
