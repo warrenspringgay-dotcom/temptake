@@ -1,12 +1,16 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import ActionMenu from "@/components/ActionMenu";
 import { inviteTeamMemberServer } from "@/app/actions/team";
+import {
+  createTrainingServer,
+  uploadTrainingCertificateServer,
+} from "@/app/actions/training";
 
 /* -------------------- Types -------------------- */
 type TrainingArea =
@@ -46,37 +50,11 @@ type TrainingCert = {
   certificate_url: string | null;
   notes: string | null;
 
-  // Optional new columns if you add them in SQL
+  // Optional newer fields (safe if not present, just won’t display)
   provider?: string | null;
-  course_key?: string | null;
+  provider_name?: string | null;
+  course_title?: string | null;
 };
-
-/* -------------------- Highfield course presets -------------------- */
-/**
- * Keep this list tight: it’s what you’ll sell + report on.
- * Users can still type a custom name if needed.
- */
-type CoursePresetKey =
-  | "highfield_food_safety_l1"
-  | "highfield_food_safety_l2"
-  | "highfield_food_safety_l3"
-  | "highfield_allergens_intro"
-  | "custom";
-
-const COURSE_PRESETS: {
-  key: CoursePresetKey;
-  provider: "Highfield";
-  label: string;
-  defaultValidityMonths: number; // policy default, editable by user
-}[] = [
-  { key: "highfield_food_safety_l2", provider: "Highfield", label: "Food Safety Level 2", defaultValidityMonths: 36 },
-  { key: "highfield_food_safety_l1", provider: "Highfield", label: "Food Safety Level 1", defaultValidityMonths: 36 },
-  { key: "highfield_allergens_intro", provider: "Highfield", label: "Introduction to Allergens", defaultValidityMonths: 36 },
-  { key: "highfield_food_safety_l3", provider: "Highfield", label: "Food Safety Level 3", defaultValidityMonths: 36 },
-  { key: "custom", provider: "Highfield", label: "Custom (type your own)", defaultValidityMonths: 36 },
-];
-
-const TRAINING_CERT_BUCKET = "training-certificates";
 
 /* -------------------- Helpers -------------------- */
 function safeInitials(m: Member): string {
@@ -119,14 +97,6 @@ function pillClassSelected(selected: boolean) {
  * If you want "12 months" exactly regardless of leap years,
  * we do date + 12 months (not 365 days).
  */
-function addMonthsISODateFrom(baseISO: string, months: number) {
-  const d = new Date(baseISO);
-  if (Number.isNaN(d.getTime())) return "";
-  d.setHours(0, 0, 0, 0);
-  d.setMonth(d.getMonth() + months);
-  return d.toISOString().slice(0, 10);
-}
-
 function addMonthsISODate(months: number) {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -195,17 +165,18 @@ export default function TeamManager() {
   const [editCertsLoading, setEditCertsLoading] = useState(false);
   const [editCerts, setEditCerts] = useState<TrainingCert[]>([]);
   const [editCertForm, setEditCertForm] = useState({
-    provider: "Highfield",
-    course_key: "highfield_food_safety_l2" as CoursePresetKey,
-    type: "Food Safety Level 2",
+    courseType: "Food Safety Level 2",
+    courseTitle: "Food Safety Level 2",
+    provider: "Highfield" as "Highfield" | "Other",
+    providerName: "",
     awarded_on: "",
     expires_on: "",
     certificate_url: "",
     notes: "",
   });
+
+  const [editCertFile, setEditCertFile] = useState<File | null>(null);
   const [editCertSaving, setEditCertSaving] = useState(false);
-  const [certUploading, setCertUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   /* -------------------- Load team + determine owner -------------------- */
   async function load() {
@@ -348,19 +319,23 @@ export default function TeamManager() {
       notes: "",
       training_areas: [],
     });
+
     // reset edit-education state
     setEditCerts([]);
     setEditCertsLoading(false);
     setEditCertSaving(false);
+    setEditCertFile(null);
     setEditCertForm({
+      courseType: "Food Safety Level 2",
+      courseTitle: "Food Safety Level 2",
       provider: "Highfield",
-      course_key: "highfield_food_safety_l2",
-      type: "Food Safety Level 2",
+      providerName: "",
       awarded_on: "",
       expires_on: "",
       certificate_url: "",
       notes: "",
     });
+
     setEditOpen(true);
   }
 
@@ -370,7 +345,6 @@ export default function TeamManager() {
       training_areas: normalizeAreas(m.training_areas),
     });
 
-    // Load education into EDIT modal
     await loadEditCertsForMember(m);
 
     setEditOpen(true);
@@ -385,17 +359,12 @@ export default function TeamManager() {
     setEditing({ ...editing, training_areas: next });
   }
 
-  /**
-   * Keep pills in team_members AND also track due date per pill in team_training_area_status
-   * due_on = today + 12 months.
-   */
   async function syncTrainingTracking(memberId: string, selectedAreas: TrainingArea[]) {
     if (!orgId) return;
 
     const trained_on = todayISODate();
     const due_on = addMonthsISODate(12);
 
-    // Upsert selected
     if (selectedAreas.length) {
       const upserts = selectedAreas.map((area) => ({
         org_id: orgId,
@@ -412,7 +381,6 @@ export default function TeamManager() {
       if (upErr) throw upErr;
     }
 
-    // Delete unselected
     const allAreaKeys = TRAINING_AREAS.map((a) => a.key);
     const unselected = allAreaKeys.filter((a) => !selectedAreas.includes(a));
 
@@ -511,14 +479,14 @@ export default function TeamManager() {
     }
   }
 
-  /* -------------------- Certificates / Education (team_members-based) -------------------- */
+  /* -------------------- Certificates / Education -------------------- */
   async function loadCertsForMember(m: Member) {
     setCerts([]);
     setCertsLoading(true);
     try {
       const { data, error } = await supabase
         .from("trainings")
-        .select("id,type,awarded_on,expires_on,certificate_url,notes,provider,course_key")
+        .select("id,type,awarded_on,expires_on,certificate_url,notes,provider,provider_name,course_title")
         .eq("team_member_id", m.id)
         .order("awarded_on", { ascending: false })
         .limit(10);
@@ -539,7 +507,7 @@ export default function TeamManager() {
     try {
       const { data, error } = await supabase
         .from("trainings")
-        .select("id,type,awarded_on,expires_on,certificate_url,notes,provider,course_key")
+        .select("id,type,awarded_on,expires_on,certificate_url,notes,provider,provider_name,course_title")
         .eq("team_member_id", m.id)
         .order("awarded_on", { ascending: false })
         .limit(10);
@@ -554,99 +522,94 @@ export default function TeamManager() {
     }
   }
 
-  function applyCoursePreset(key: CoursePresetKey) {
-    const preset = COURSE_PRESETS.find((p) => p.key === key) ?? COURSE_PRESETS[0]!;
-    const awarded = editCertForm.awarded_on || todayISODate();
-    const expires = addMonthsISODateFrom(awarded, preset.defaultValidityMonths);
+  // ✅ Replace your existing "save/add training" handler block with this
 
-    setEditCertForm((p) => ({
-      ...p,
-      provider: preset.provider,
-      course_key: key,
-      type: preset.key === "custom" ? p.type : preset.label,
-      awarded_on: p.awarded_on || awarded,
-      expires_on: p.expires_on || expires,
-    }));
-  }
+async function addEditCertificate() {
+  if (!editing) return;
+  if (!orgId) return alert("No organisation found.");
 
-  async function uploadCertificateForEditingMember(file: File) {
-    if (!editing?.id) return;
-    if (!orgId) return alert("No organisation found.");
+  const courseType = (editCertForm.courseType ?? "").trim();
+  const courseTitle = (editCertForm.courseTitle ?? "").trim();
 
-    // Keep it simple: PDFs preferred, but don’t hard-block if someone uploads an image.
-    const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
-    const path = `${orgId}/team/${editing.id}/${Date.now()}_${safeName}`;
+  if (!courseType) return alert("Course type is required.");
+  if (!courseTitle) return alert("Course title is required.");
 
-    setCertUploading(true);
-    try {
-      const { error: upErr } = await supabase.storage
-        .from(TRAINING_CERT_BUCKET)
-        .upload(path, file, { upsert: true, contentType: file.type });
+  // ✅ Combine into the single `type` field the DB/server action expects
+  // Keep it consistent + searchable.
+  const type = `${courseType}: ${courseTitle}`;
 
-      if (upErr) throw upErr;
+  // ✅ Provider defaulting
+  const provider: "Highfield" | "Other" =
+    (editCertForm.provider as any) === "Other" ? "Other" : "Highfield";
 
-      // Bucket set to PUBLIC: we can store a public URL directly.
-      const { data } = supabase.storage.from(TRAINING_CERT_BUCKET).getPublicUrl(path);
+  const provider_other =
+    provider === "Other" ? (editCertForm.providerName ?? "").trim() || null : null;
 
-      const url = data?.publicUrl ?? "";
-      if (!url) throw new Error("Upload succeeded but failed to generate public URL.");
+  setEditCertSaving(true);
 
-      setEditCertForm((p) => ({ ...p, certificate_url: url }));
-    } catch (e: any) {
-      alert(e?.message ?? "Failed to upload certificate.");
-    } finally {
-      setCertUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  }
+  try {
+    // 1) Optional upload (file)
+    let certificate_url: string | null =
+      (editCertForm.certificate_url ?? "").trim() || null;
 
-  async function addEditCertificate() {
-    if (!editing) return;
-    if (!orgId) return alert("No organisation found.");
-
-    const type = (editCertForm.type ?? "").trim();
-    if (!type) return alert("Course title is required.");
-
-    setEditCertSaving(true);
-    try {
-      const { data: auth } = await supabase.auth.getUser();
-      const created_by = auth.user?.id ?? null;
-
-      const payload: any = {
-        org_id: orgId,
-        team_member_id: editing.id,
-        type,
-        awarded_on: editCertForm.awarded_on || null,
-        expires_on: editCertForm.expires_on || null,
-        certificate_url: editCertForm.certificate_url || null,
-        notes: editCertForm.notes || null,
-        created_by,
-      };
-
-      // Only include these if you added columns
-      payload.provider = editCertForm.provider || "Highfield";
-      payload.course_key = editCertForm.course_key || null;
-
-      const { error } = await supabase.from("trainings").insert(payload);
-      if (error) throw error;
-
-      setEditCertForm({
-        provider: "Highfield",
-        course_key: "highfield_food_safety_l2",
-        type: "Food Safety Level 2",
-        awarded_on: "",
-        expires_on: "",
-        certificate_url: "",
-        notes: "",
+    // If you have a file in state (likely `editCertFile`), upload it.
+    // IMPORTANT: your upload action returns { url, path } (no ok/message).
+    if (typeof editCertFile !== "undefined" && editCertFile) {
+      const up = await uploadTrainingCertificateServer({
+        staffId: null, // keep contract happy if it expects staff fields
+        staffInitials: null,
+        file: editCertFile,
       });
 
-      await loadEditCertsForMember(editing);
-    } catch (e: any) {
-      alert(e?.message ?? "Failed to add education/certificate.");
-    } finally {
-      setEditCertSaving(false);
+      // ✅ Fix: handle return shape { url, path }
+      if (!up?.url) {
+        throw new Error("Certificate upload failed (no URL returned).");
+      }
+
+      certificate_url = up.url;
     }
+
+    // 2) Save training row
+    // ❌ Do NOT pass orgId, server derives it
+    const awarded_on =
+      (editCertForm.awarded_on ?? "").trim() || new Date().toISOString().slice(0, 10);
+
+    const expires_on = (editCertForm.expires_on ?? "").trim() || null;
+
+    await createTrainingServer({
+      teamMemberId: editing.id,
+      type,
+      provider,
+      provider_other,
+      awarded_on,
+      expires_on,
+      certificate_url,
+      notes: (editCertForm.notes ?? "").trim() || null,
+    });
+
+    // 3) Reset form + file
+    setEditCertForm({
+      courseType: "Food Safety",
+      courseTitle: "Level 2",
+      provider: "Highfield",
+      providerName: "",
+      awarded_on: "",
+      expires_on: "",
+      certificate_url: "",
+      notes: "",
+    });
+
+    if (typeof setEditCertFile !== "undefined") {
+      setEditCertFile(null);
+    }
+
+    await loadEditCertsForMember(editing);
+  } catch (e: any) {
+    alert(e?.message ?? "Failed to add education/certificate.");
+  } finally {
+    setEditCertSaving(false);
   }
+}
 
   async function openCard(m: Member) {
     setViewFor(m);
@@ -989,7 +952,7 @@ export default function TeamManager() {
                   />
                 </div>
 
-                {/* ✅ Highfield Training Certificates */}
+                {/* Education / Courses */}
                 {editing.id ? (
                   <div className="mt-1 rounded-2xl border border-slate-200 bg-white/80 p-3">
                     <div className="mb-2 flex items-center justify-between gap-2">
@@ -1008,10 +971,13 @@ export default function TeamManager() {
                     ) : editCerts.length ? (
                       <div className="space-y-2">
                         {editCerts.map((c) => (
-                          <div key={c.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div
+                            key={c.id}
+                            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                          >
                             <div className="flex items-start justify-between gap-2">
                               <div className="text-xs font-semibold text-slate-900">
-                                {(c.provider ? `${c.provider}: ` : "") + (c.type ?? "—")}
+                                {(c.provider ? `${c.provider}: ` : "") + (c.course_title ?? c.type ?? "—")}
                               </div>
                               {c.certificate_url ? (
                                 <a
@@ -1020,14 +986,16 @@ export default function TeamManager() {
                                   rel="noreferrer"
                                   className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
                                 >
-                                  Certificate →
+                                  View →
                                 </a>
                               ) : null}
                             </div>
                             <div className="mt-1 text-[11px] text-slate-600">
                               Passed: {formatDate(c.awarded_on)} · Expires: {formatDate(c.expires_on)}
                             </div>
-                            {c.notes ? <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div> : null}
+                            {c.notes ? (
+                              <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
+                            ) : null}
                           </div>
                         ))}
                       </div>
@@ -1035,61 +1003,67 @@ export default function TeamManager() {
                       <div className="text-xs text-slate-500">No training recorded.</div>
                     )}
 
-                    {/* Add training form */}
+                    {/* Add course form */}
                     <div className="mt-3 grid gap-2">
                       <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className="block text-[11px] font-medium text-slate-600">Course</label>
+                        <label className="block">
+                          <span className="mb-1 block text-[11px] font-medium text-slate-600">Course</span>
                           <select
                             className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                            value={editCertForm.course_key}
-                            onChange={(e) => {
-                              const key = e.target.value as CoursePresetKey;
-                              setEditCertForm((p) => ({ ...p, course_key: key }));
-                              applyCoursePreset(key);
-                            }}
+                            value={editCertForm.courseType}
+                            onChange={(e) =>
+                              setEditCertForm((p) => ({
+                                ...p,
+                                courseType: e.target.value,
+                                courseTitle: e.target.value,
+                              }))
+                            }
                           >
-                            {COURSE_PRESETS.map((p) => (
-                              <option key={p.key} value={p.key}>
-                                {p.label}
-                              </option>
-                            ))}
+                            <option value="Food Safety Level 2">Food Safety Level 2</option>
+                            <option value="Food Safety Level 1">Food Safety Level 1</option>
+                            <option value="Introduction to Allergens">Introduction to Allergens</option>
+                            <option value="Food Hygiene Level 2">Food Hygiene Level 2</option>
+                            <option value="Other">Other</option>
                           </select>
-                        </div>
+                        </label>
 
-                        <div className="space-y-1">
-                          <label className="block text-[11px] font-medium text-slate-600">Provider</label>
-                          <input
-                            className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs"
+                        <label className="block">
+                          <span className="mb-1 block text-[11px] font-medium text-slate-600">Provider</span>
+                          <select
+                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
                             value={editCertForm.provider}
-                            disabled
-                          />
-                        </div>
+                            onChange={(e) =>
+                              setEditCertForm((p) => ({
+                                ...p,
+                                provider: e.target.value as any,
+                              }))
+                            }
+                          >
+                            <option value="Highfield">Highfield</option>
+                            <option value="Other">Other</option>
+                          </select>
+                        </label>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className="block text-[11px] font-medium text-slate-600">
-                            Course title (shown to inspector)
-                          </label>
-                          <input
-                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                            value={editCertForm.type}
-                            onChange={(e) => setEditCertForm((p) => ({ ...p, type: e.target.value }))}
-                            placeholder="Course title"
-                          />
-                        </div>
+                      {editCertForm.provider === "Other" ? (
+                        <input
+                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                          value={editCertForm.providerName}
+                          onChange={(e) =>
+                            setEditCertForm((p) => ({ ...p, providerName: e.target.value }))
+                          }
+                          placeholder="Provider name (e.g. CIEH)"
+                        />
+                      ) : null}
 
-                        <div className="space-y-1">
-                          <label className="block text-[11px] font-medium text-slate-600">Certificate URL</label>
-                          <input
-                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                            value={editCertForm.certificate_url}
-                            onChange={(e) => setEditCertForm((p) => ({ ...p, certificate_url: e.target.value }))}
-                            placeholder="Paste link or upload PDF"
-                          />
-                        </div>
-                      </div>
+                      <input
+                        className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                        value={editCertForm.courseTitle}
+                        onChange={(e) =>
+                          setEditCertForm((p) => ({ ...p, courseTitle: e.target.value }))
+                        }
+                        placeholder="Course title (shown to inspector)"
+                      />
 
                       <div className="grid grid-cols-2 gap-2">
                         <div className="space-y-1">
@@ -1098,14 +1072,9 @@ export default function TeamManager() {
                             type="date"
                             className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
                             value={editCertForm.awarded_on}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setEditCertForm((p) => {
-                                const preset = COURSE_PRESETS.find((x) => x.key === p.course_key) ?? COURSE_PRESETS[0]!;
-                                const expires = p.expires_on || (v ? addMonthsISODateFrom(v, preset.defaultValidityMonths) : "");
-                                return { ...p, awarded_on: v, expires_on: expires };
-                              });
-                            }}
+                            onChange={(e) =>
+                              setEditCertForm((p) => ({ ...p, awarded_on: e.target.value }))
+                            }
                             aria-label="Date passed"
                           />
                         </div>
@@ -1116,57 +1085,54 @@ export default function TeamManager() {
                             type="date"
                             className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
                             value={editCertForm.expires_on}
-                            onChange={(e) => setEditCertForm((p) => ({ ...p, expires_on: e.target.value }))}
+                            onChange={(e) =>
+                              setEditCertForm((p) => ({ ...p, expires_on: e.target.value }))
+                            }
                             aria-label="Expiry date"
                           />
                         </div>
                       </div>
 
-                      <div className="grid gap-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-[11px] text-slate-500">
-                            Upload the Highfield PDF certificate and we’ll store it against this staff member.
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <input
-                              ref={fileInputRef}
-                              type="file"
-                              accept="application/pdf,image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                const f = e.target.files?.[0];
-                                if (f) void uploadCertificateForEditingMember(f);
-                              }}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => fileInputRef.current?.click()}
-                              disabled={certUploading}
-                              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                            >
-                              {certUploading ? "Uploading…" : "Upload certificate"}
-                            </button>
-                          </div>
-                        </div>
-
+                      <div className="grid grid-cols-2 gap-2">
                         <input
                           className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                          value={editCertForm.notes}
-                          onChange={(e) => setEditCertForm((p) => ({ ...p, notes: e.target.value }))}
-                          placeholder="Notes (optional)"
+                          value={editCertForm.certificate_url}
+                          onChange={(e) =>
+                            setEditCertForm((p) => ({ ...p, certificate_url: e.target.value }))
+                          }
+                          placeholder="Certificate URL (optional)"
                         />
+                        <input
+                          type="file"
+                          accept=".pdf,image/*"
+                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs pt-1"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0] ?? null;
+                            setEditCertFile(f);
+                          }}
+                        />
+                      </div>
 
-                        <div className="flex justify-end">
-                          <button
-                            onClick={() => void addEditCertificate()}
-                            disabled={editCertSaving}
-                            className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                            type="button"
-                          >
-                            {editCertSaving ? "Saving…" : "Add training"}
-                          </button>
-                        </div>
+                      <input
+                        className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                        value={editCertForm.notes}
+                        onChange={(e) => setEditCertForm((p) => ({ ...p, notes: e.target.value }))}
+                        placeholder="Notes (optional)"
+                      />
+
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => void addEditCertificate()}
+                          disabled={editCertSaving}
+                          className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                          type="button"
+                        >
+                          {editCertSaving ? "Saving…" : "Add training"}
+                        </button>
+                      </div>
+
+                      <div className="text-[11px] text-slate-500">
+                        Upload supports PDF or image. If you paste a URL, that’s fine too.
                       </div>
                     </div>
                   </div>
@@ -1237,7 +1203,7 @@ export default function TeamManager() {
                 {/* Education / certificates (READ ONLY) */}
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <div className="text-sm font-semibold text-slate-900">Training</div>
+                    <div className="text-sm font-semibold text-slate-900">Education / Courses</div>
                     <button
                       onClick={() => void loadCertsForMember(viewFor)}
                       className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
@@ -1252,10 +1218,13 @@ export default function TeamManager() {
                   ) : certs.length ? (
                     <div className="space-y-2">
                       {certs.map((c) => (
-                        <div key={c.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                        <div
+                          key={c.id}
+                          className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                        >
                           <div className="flex items-start justify-between gap-2">
                             <div className="text-xs font-semibold text-slate-900">
-                              {(c.provider ? `${c.provider}: ` : "") + (c.type ?? "—")}
+                              {(c.provider ? `${c.provider}: ` : "") + (c.course_title ?? c.type ?? "—")}
                             </div>
                             {c.certificate_url ? (
                               <a
@@ -1264,19 +1233,21 @@ export default function TeamManager() {
                                 rel="noreferrer"
                                 className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
                               >
-                                Certificate →
+                                View →
                               </a>
                             ) : null}
                           </div>
                           <div className="mt-1 text-[11px] text-slate-600">
                             Passed: {formatDate(c.awarded_on)} · Expires: {formatDate(c.expires_on)}
                           </div>
-                          {c.notes ? <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div> : null}
+                          {c.notes ? (
+                            <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
+                          ) : null}
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <div className="text-xs text-slate-500">No training recorded.</div>
+                    <div className="text-xs text-slate-500">No courses recorded.</div>
                   )}
                 </div>
               </div>

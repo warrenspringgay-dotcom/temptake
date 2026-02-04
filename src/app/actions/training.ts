@@ -3,17 +3,68 @@
 
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { getActiveOrgIdServer } from "@/lib/orgServer";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-export type TrainingInput = {
+/**
+ * This file intentionally supports BOTH:
+ *  - "new" payload shape: courseType / providerName
+ *  - "legacy" payload shape: type / provider_other
+ *
+ * So TeamManager.tsx doesn't need changing to compile.
+ */
+
+export type ProviderChoice = "Highfield" | "Other";
+
+/* ===================== Inputs ===================== */
+
+// New shape (preferred)
+export type CreateTrainingInput = {
   id?: string;
-  staffId?: string | null;        // staff.id
-  staffInitials?: string | null;  // fallback: create/lookup by initials
-  type: string;
-  awarded_on: string;             // YYYY-MM-DD
+
+  teamMemberId?: string | null;
+
+  staffId?: string | null;
+  staffInitials?: string | null;
+
+  courseType?: string; // preferred
+  courseTitle?: string | null;
+
+  provider?: ProviderChoice; // preferred
+  providerName?: string | null; // preferred (when provider === "Other")
+
+  awarded_on: string; // YYYY-MM-DD
   expires_on?: string | null;
+
   certificate_url?: string | null;
   notes?: string | null;
+
+  // UI sometimes passes this; we ignore and derive server-side
+  orgId?: string | null;
+
+  /* ---- Legacy compatibility ---- */
+  type?: string; // legacy alias for courseType
+  provider_other?: string | null; // legacy alias for providerName
 };
+
+// Upload input (keep simple)
+export type UploadTrainingCertificateInput = {
+  file: File;
+
+  teamMemberId?: string | null;
+  staffId?: string | null;
+  staffInitials?: string | null;
+
+  orgId?: string | null; // ignored, derived server-side
+};
+
+export type UploadTrainingCertificateResult = {
+  ok: boolean;
+  url: string | null;
+  path: string | null;
+  message?: string | null;
+};
+
+/* ===================== Helpers ===================== */
 
 function addDaysISO(baseISO: string, days: number) {
   const d = new Date(baseISO);
@@ -21,108 +72,148 @@ function addDaysISO(baseISO: string, days: number) {
   return d.toISOString().slice(0, 10);
 }
 
-/**
- * Ensure there is a row in the `staff` table for this staffId/initials,
- * and return the REAL `staff.id` to use as trainings.staff_id.
- *
- * NOTE: staff table has NO org_id column, so we don't filter by org.
- */
-async function ensureStaffExists(
-  supabase: any,
-  opts: { staffId?: string | null; staffInitials?: string | null }
-): Promise<string> {
-  const { staffId, staffInitials } = opts;
-
-  // 1) If staffId was explicitly passed, verify it exists in `staff`
-  if (staffId) {
-    const { data, error } = await supabase
-      .from("staff")
-      .select("id")
-      .eq("id", staffId)
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(`Failed to verify staff: ${error.message}`);
-    }
-    if (!data?.id) {
-      throw new Error("Selected staff not found.");
-    }
-
-    return String(data.id);
-  }
-
-  // 2) Fallback: use initials to find/create staff row
-  const ini = staffInitials?.trim().toUpperCase() ?? "";
-  if (!ini) {
-    throw new Error("No staff selected: provide staffId or staffInitials.");
-  }
-
-  // Look up existing staff by initials (no org filter – staff has no org_id)
-  const { data, error } = await supabase
-    .from("staff")
-    .select("id")
-    .eq("initials", ini)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Failed to lookup staff by initials: ${error.message}`);
-  }
-
-  if (data?.id) {
-    return String(data.id);
-  }
-
-  // Create new staff row if not found
-  const { data: created, error: createErr } = await supabase
-    .from("staff")
-    .insert({
-      initials: ini,
-      name: ini,
-    })
-    .select("id")
-    .single();
-
-  if (createErr) {
-    throw new Error(`Failed to create staff: ${createErr.message}`);
-  }
-  if (!created?.id) {
-    throw new Error("Failed to create staff (no id returned).");
-  }
-
-  return String(created.id);
+function safeExtFromMime(mime: string | undefined) {
+  const m = (mime ?? "").toLowerCase();
+  if (m.includes("pdf")) return "pdf";
+  if (m.includes("png")) return "png";
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  if (m.includes("webp")) return "webp";
+  return "bin";
 }
 
-export async function saveTrainingServer(input: TrainingInput) {
+function normaliseProvider(input: CreateTrainingInput): {
+  provider: ProviderChoice;
+  providerName: string | null;
+} {
+  // provider defaults to Highfield
+  const provider: ProviderChoice = input.provider ?? "Highfield";
+
+  // providerName can come from new field OR legacy provider_other
+  const rawOther =
+    (input.providerName ?? "").trim() ||
+    (input.provider_other ?? "").toString().trim() ||
+    "";
+
+  // If provider is Other, keep providerName; else null it
+  const providerName = provider === "Other" ? (rawOther || null) : null;
+
+  return { provider, providerName };
+}
+
+function normaliseCourseType(input: CreateTrainingInput): string {
+  // courseType preferred, fallback to legacy "type"
+  const ct = (input.courseType ?? "").trim();
+  if (ct) return ct;
+
+  const legacy = (input.type ?? "").trim();
+  return legacy;
+}
+
+/* ===================== Upload (Storage) ===================== */
+
+export async function uploadTrainingCertificateServer(
+  input: UploadTrainingCertificateInput
+): Promise<UploadTrainingCertificateResult> {
+  try {
+    const org_id = await getActiveOrgIdServer();
+    if (!org_id) {
+      return { ok: false, url: null, path: null, message: "No org selected." };
+    }
+
+    const file = input.file;
+    if (!file) {
+      return { ok: false, url: null, path: null, message: "No file provided." };
+    }
+
+    const maxMB = 15;
+    if (file.size > maxMB * 1024 * 1024) {
+      return {
+        ok: false,
+        url: null,
+        path: null,
+        message: `File too large (max ${maxMB}MB).`,
+      };
+    }
+
+    const ext = safeExtFromMime(file.type);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+    const who =
+      input.teamMemberId ??
+      input.staffId ??
+      (input.staffInitials ? input.staffInitials.trim().toUpperCase() : "unknown");
+
+    // If your bucket name is different, change it here.
+    const bucket = "training-certificates";
+    const path = `${org_id}/${who}/${stamp}.${ext}`;
+
+    const buf = Buffer.from(await file.arrayBuffer());
+
+    const { error: upErr } = await supabaseAdmin.storage
+      .from(bucket)
+      .upload(path, buf, {
+        contentType: file.type || "application/octet-stream",
+        upsert: true,
+      });
+
+    if (upErr) {
+      return { ok: false, url: null, path: null, message: upErr.message };
+    }
+
+    const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(path);
+    const url = data?.publicUrl ?? null;
+
+    return { ok: true, url, path, message: null };
+  } catch (e: any) {
+    return { ok: false, url: null, path: null, message: e?.message ?? "Upload failed." };
+  }
+}
+
+/* ===================== Save training row ===================== */
+
+export async function createTrainingServer(input: CreateTrainingInput) {
   const supabase = await getServerSupabase();
   const org_id = await getActiveOrgIdServer();
-
   if (!org_id) throw new Error("No org selected.");
 
-  // ✅ Always resolve to a real staff.id in `staff`
-  const staff_id = await ensureStaffExists(supabase, {
-    staffId: input.staffId,
-    staffInitials: input.staffInitials,
-  });
+  const courseType = normaliseCourseType(input);
+  if (!courseType) throw new Error("Course type is required.");
+
+  const awarded_on = (input.awarded_on ?? "").trim();
+  if (!awarded_on) throw new Error("Awarded date is required.");
 
   const expires_on =
     input.expires_on && input.expires_on.trim()
-      ? input.expires_on
-      : addDaysISO(input.awarded_on, 365);
+      ? input.expires_on.trim()
+      : addDaysISO(awarded_on, 365);
 
+  const { provider, providerName } = normaliseProvider(input);
+
+  // Payload (match your DB columns)
   const payload: any = {
     org_id,
-    staff_id,
-    type: input.type,
-    awarded_on: input.awarded_on,
+
+    team_member_id: input.teamMemberId ?? null,
+    staff_id: input.staffId ?? null,
+
+    // trainings.type is your course name column
+    type: courseType,
+
+    // Optional fields: keep if they exist in your DB, remove if not
+    course_title: input.courseTitle?.trim() || null,
+
+    // These MUST satisfy trainings_provider_chk
+    provider,
+    provider_name: providerName,
+
+    awarded_on,
     expires_on,
+
     certificate_url: input.certificate_url ?? null,
-    notes: input.notes ?? null,
+    notes: input.notes?.trim() || null,
   };
 
-  // Only include id when updating (upsert on PK)
-  if (input.id) {
-    payload.id = input.id;
-  }
+  if (input.id) payload.id = input.id;
 
   const { data, error } = await supabase
     .from("trainings")
@@ -134,3 +225,7 @@ export async function saveTrainingServer(input: TrainingInput) {
 
   return { id: data.id as string };
 }
+
+/** Backwards-compatible alias (older code imported this name). */
+export const saveTrainingServer = createTrainingServer;
+
