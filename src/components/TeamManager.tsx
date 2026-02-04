@@ -809,7 +809,7 @@ export default function TeamManager() {
                     className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
                     onClick={() => void openEdit(m)}
                   >
-                    Edit training
+                    Edit profile
                   </button>
                   <button
                     className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
