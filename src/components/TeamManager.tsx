@@ -1106,20 +1106,7 @@ export default function TeamManager() {
                           placeholder="Certificate URL (optional)"
                         />
                        {/* Certificate link + upload (clear labels) */}
-<div className="grid grid-cols-2 gap-2">
-  <label className="block">
-    <span className="mb-1 block text-[11px] font-medium text-slate-600">
-      Certificate URL (optional)
-    </span>
-    <input
-      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-      value={editCertForm.certificate_url}
-      onChange={(e) =>
-        setEditCertForm((p) => ({ ...p, certificate_url: e.target.value }))
-      }
-      placeholder="Paste a link to the certificate"
-    />
-  </label>
+<div>
 
   <label className="block">
     <span className="mb-1 block text-[11px] font-medium text-slate-600">
