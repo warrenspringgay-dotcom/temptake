@@ -1152,10 +1152,6 @@ export default function TeamManager() {
                           {editCertSaving ? "Saving…" : "Add training"}
                         </button>
                       </div>
-
-                      <div className="text-[11px] text-slate-500">
-                        Upload supports PDF or image. If you paste a URL, that’s fine too.
-                      </div>
                     </div>
                   </div>
                 ) : null}
