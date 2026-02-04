@@ -1105,15 +1105,47 @@ export default function TeamManager() {
                           }
                           placeholder="Certificate URL (optional)"
                         />
-                        <input
-                          type="file"
-                          accept=".pdf,image/*"
-                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs pt-1"
-                          onChange={(e) => {
-                            const f = e.target.files?.[0] ?? null;
-                            setEditCertFile(f);
-                          }}
-                        />
+                       {/* Certificate link + upload (clear labels) */}
+<div className="grid grid-cols-2 gap-2">
+  <label className="block">
+    <span className="mb-1 block text-[11px] font-medium text-slate-600">
+      Certificate URL (optional)
+    </span>
+    <input
+      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+      value={editCertForm.certificate_url}
+      onChange={(e) =>
+        setEditCertForm((p) => ({ ...p, certificate_url: e.target.value }))
+      }
+      placeholder="Paste a link to the certificate"
+    />
+  </label>
+
+  <label className="block">
+    <span className="mb-1 block text-[11px] font-medium text-slate-600">
+      Certificate file (PDF or photo)
+    </span>
+    <input
+      type="file"
+      accept=".pdf,image/*"
+      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs pt-1"
+      onChange={(e) => {
+        const f = e.target.files?.[0] ?? null;
+        setEditCertFile(f);
+      }}
+    />
+    <span className="mt-1 block text-[10px] text-slate-500">
+      Upload the staff member’s training certificate (PDF preferred). Stored for inspections.
+    </span>
+
+    {editCertFile ? (
+      <span className="mt-1 block text-[10px] text-slate-600">
+        Selected: <span className="font-medium">{editCertFile.name}</span>
+      </span>
+    ) : null}
+  </label>
+</div>
+
                       </div>
 
                       <input
