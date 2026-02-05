@@ -93,42 +93,107 @@ with check ((EXISTS ( SELECT 1
 
 
 drop trigger if exists objects_delete_delete_prefix on storage.objects;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'storage'
+      AND p.proname = 'delete_prefix_hierarchy_trigger'
+  ) THEN
+    -- Drop first to avoid "already exists" if rerun
+    EXECUTE 'DROP TRIGGER IF EXISTS objects_delete_delete_prefix ON storage.objects';
+    EXECUTE '
+      CREATE TRIGGER objects_delete_delete_prefix
+      AFTER DELETE ON storage.objects
+      FOR EACH ROW
+      EXECUTE FUNCTION storage.delete_prefix_hierarchy_trigger()
+    ';
+  END IF;
+END $$;
 
-create trigger objects_delete_delete_prefix
-after delete on storage.objects
-for each row
-execute function storage.delete_prefix_hierarchy_trigger();
 
 
 drop trigger if exists objects_insert_create_prefix on storage.objects;
 
-create trigger objects_insert_create_prefix
-before insert on storage.objects
-for each row
-execute function storage.objects_insert_prefix_trigger();
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'storage'
+      AND p.proname = 'objects_insert_prefix_trigger'
+  ) THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS objects_insert_create_prefix ON storage.objects';
+    EXECUTE '
+      CREATE TRIGGER objects_insert_create_prefix
+      BEFORE INSERT ON storage.objects
+      FOR EACH ROW
+      EXECUTE FUNCTION storage.objects_insert_prefix_trigger()
+    ';
+  END IF;
+END $$;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'storage'
+      AND p.proname = 'objects_update_prefix_trigger'
+  ) THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS objects_update_create_prefix ON storage.objects';
+    EXECUTE '
+      CREATE TRIGGER objects_update_create_prefix
+      BEFORE UPDATE ON storage.objects
+      FOR EACH ROW
+      WHEN (((NEW.name <> OLD.name) OR (NEW.bucket_id <> OLD.bucket_id)))
+      EXECUTE FUNCTION storage.objects_update_prefix_trigger()
+    ';
+  END IF;
+END $$;
 
-drop trigger if exists objects_update_create_prefix on storage.objects;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'storage'
+      AND p.proname = 'prefixes_insert_trigger'
+  ) THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS prefixes_create_hierarchy ON storage.prefixes';
+    EXECUTE '
+      CREATE TRIGGER prefixes_create_hierarchy
+      BEFORE INSERT ON storage.prefixes
+      FOR EACH ROW
+      WHEN ((pg_trigger_depth() < 1))
+      EXECUTE FUNCTION storage.prefixes_insert_trigger()
+    ';
+  END IF;
+END $$;
 
-create trigger objects_update_create_prefix
-before update on storage.objects
-for each row
-when (((new.name <> old.name) or (new.bucket_id <> old.bucket_id)))
-execute function storage.objects_update_prefix_trigger();
 
-drop trigger if exists prefixes_create_hierarchy on storage.prefixes;
-
-create trigger prefixes_create_hierarchy
-before insert on storage.prefixes
-for each row
-when ((pg_trigger_depth() < 1))
-execute function storage.prefixes_insert_trigger();
-
-drop trigger if exists prefixes_delete_hierarchy on storage.prefixes;
-
-create trigger prefixes_delete_hierarchy
-after delete on storage.prefixes
-for each row
-execute function storage.delete_prefix_hierarchy_trigger();
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'storage'
+      AND p.proname = 'delete_prefix_hierarchy_trigger'
+  ) THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS prefixes_delete_hierarchy ON storage.prefixes';
+    EXECUTE '
+      CREATE TRIGGER prefixes_delete_hierarchy
+      AFTER DELETE ON storage.prefixes
+      FOR EACH ROW
+      EXECUTE FUNCTION storage.delete_prefix_hierarchy_trigger()
+    ';
+  END IF;
+END $$;
 
 
 
