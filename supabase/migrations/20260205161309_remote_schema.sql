@@ -1,26 +1,22 @@
 -- 20260205161309_remote_schema.sql
 -- Fixes:
---  - Ensure pg_trgm exists in a predictable schema (extensions)
---  - Use gin_trgm_ops correctly (extensions.gin_trgm_ops, guarded)
+--  - Install pg_trgm in a predictable schema (extensions)
+--  - Create TRGM index using the correct schema-qualified gin_trgm_ops (auto-detected)
+--  - Guard constraints properly (Postgres does NOT support ADD CONSTRAINT IF NOT EXISTS)
+--  - Handle "index exists" by using USING INDEX
 --  - Ensure functions exist BEFORE triggers reference them
 --  - Guard storage triggers so missing functions don't hard-fail migrations
 
 -- =========================
 -- Extensions
 -- =========================
-
--- Make sure extensions schema exists
 create schema if not exists extensions;
-
--- Install pg_trgm into extensions schema
 create extension if not exists pg_trgm with schema extensions;
 
 -- =========================
 -- DDL changes
 -- =========================
-
 drop trigger if exists "trg_set_org_id_food" on "public"."food_temp_logs";
-
 drop index if exists "public"."allergen_matrix_item_trgm";
 
 create table if not exists "public"."location_staff" (
@@ -61,7 +57,6 @@ alter table "public"."trainings" add column if not exists "provider_name" text;
 -- =========================
 -- Indexes
 -- =========================
-
 create index if not exists cleaning_task_runs_loc_run_on_idx
   on public.cleaning_task_runs using btree (org_id, location_id, run_on);
 
@@ -117,14 +112,16 @@ create unique index if not exists location_staff_initials_unique
   on public.location_staff using btree (org_id, location_id, lower(initials))
   where (initials is not null);
 
+-- These two might already exist as indexes in one env or the other.
+-- We keep them as indexes, and constraints below will attach USING INDEX if needed.
 create unique index if not exists location_staff_location_id_staff_profile_id_key
   on public.location_staff using btree (location_id, staff_profile_id);
 
-create index if not exists location_staff_lookup
-  on public.location_staff using btree (org_id, location_id, active, initials);
-
 create unique index if not exists location_staff_pkey
   on public.location_staff using btree (id);
+
+create index if not exists location_staff_lookup
+  on public.location_staff using btree (org_id, location_id, active, initials);
 
 create unique index if not exists staff_profiles_org_email_unique
   on public.staff_profiles using btree (org_id, lower(email))
@@ -136,122 +133,228 @@ create unique index if not exists team_members_id_org_loc_unique
 create unique index if not exists team_members_id_org_loc_uq
   on public.team_members using btree (id, org_id, location_id);
 
--- ✅ TRGM index (guarded, no fancy introspection)
+-- ✅ TRGM index: detect schema for gin_trgm_ops and build safely
 drop index if exists public.allergen_matrix_item_trgm;
 
 do $$
+declare
+  sch text;
 begin
-  -- Try opclass in extensions schema (common when pg_trgm installed there)
-  begin
-    execute '
-      create index if not exists allergen_matrix_item_trgm
-      on public.allergen_matrix
-      using gin (item extensions.gin_trgm_ops)
-    ';
-    return;
-  exception when undefined_object then
-    -- try next
-    null;
-  end;
+  select n.nspname
+    into sch
+  from pg_opclass oc
+  join pg_namespace n on n.oid = oc.opcnamespace
+  join pg_am am on am.oid = oc.opcmethod
+  where oc.opcname = 'gin_trgm_ops'
+    and am.amname = 'gin'
+  limit 1;
 
-  -- Try unqualified (if pg_trgm is on search_path / default)
-  begin
-    execute '
-      create index if not exists allergen_matrix_item_trgm
-      on public.allergen_matrix
-      using gin (item gin_trgm_ops)
-    ';
-    return;
-  exception when undefined_object then
-    null;
-  end;
-
-  raise notice 'gin_trgm_ops not available; skipping allergen_matrix_item_trgm index';
+  if sch is not null then
+    execute format(
+      'create index if not exists allergen_matrix_item_trgm on public.allergen_matrix using gin (item %I.gin_trgm_ops);',
+      sch
+    );
+  else
+    raise notice 'Skipping allergen_matrix_item_trgm: gin_trgm_ops not found.';
+  end if;
 end $$;
 
-
 -- =========================
--- Constraints / FKs
+-- Constraints / FKs (Postgres-safe guards + USING INDEX)
 -- =========================
 
-alter table "public"."location_staff"
-  add constraint if not exists "location_staff_pkey"
-  primary key using index "location_staff_pkey";
+-- PK: location_staff_pkey (attach using existing index if present)
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'location_staff_pkey'
+      and conrelid = 'public.location_staff'::regclass
+  ) then
+    if exists (
+      select 1
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where c.relname = 'location_staff_pkey'
+        and n.nspname = 'public'
+    ) then
+      alter table public.location_staff
+        add constraint location_staff_pkey primary key using index location_staff_pkey;
+    else
+      alter table public.location_staff
+        add constraint location_staff_pkey primary key (id);
+    end if;
+  end if;
+end $$;
 
-alter table "public"."cleaning_task_runs"
-  add constraint if not exists "cleaning_task_runs_location_staff_fk"
-  foreign key (location_staff_id)
-  references public.location_staff(id)
-  on delete set null not valid;
+-- UNIQUE: location_staff_location_id_staff_profile_id_key (attach using existing index if present)
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'location_staff_location_id_staff_profile_id_key'
+      and conrelid = 'public.location_staff'::regclass
+  ) then
+    if exists (
+      select 1
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where c.relname = 'location_staff_location_id_staff_profile_id_key'
+        and n.nspname = 'public'
+    ) then
+      alter table public.location_staff
+        add constraint location_staff_location_id_staff_profile_id_key
+        unique using index location_staff_location_id_staff_profile_id_key;
+    else
+      alter table public.location_staff
+        add constraint location_staff_location_id_staff_profile_id_key
+        unique (location_id, staff_profile_id);
+    end if;
+  end if;
+end $$;
 
-alter table "public"."cleaning_task_runs"
-  validate constraint "cleaning_task_runs_location_staff_fk";
+-- UNIQUE: team_members_id_org_loc_unique (attach using existing index if present)
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'team_members_id_org_loc_unique'
+      and conrelid = 'public.team_members'::regclass
+  ) then
+    if exists (
+      select 1
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where c.relname = 'team_members_id_org_loc_unique'
+        and n.nspname = 'public'
+    ) then
+      alter table public.team_members
+        add constraint team_members_id_org_loc_unique
+        unique using index team_members_id_org_loc_unique;
+    else
+      alter table public.team_members
+        add constraint team_members_id_org_loc_unique
+        unique (id, org_id, location_id);
+    end if;
+  end if;
+end $$;
 
-alter table "public"."food_temp_logs"
-  add constraint if not exists "food_temp_logs_team_member_same_loc_fk"
-  foreign key (team_member_id, org_id, location_id)
-  references public.team_members(id, org_id, location_id)
-  on delete set null not valid;
+-- CHECK: trainings_provider_chk
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'trainings_provider_chk'
+      and conrelid = 'public.trainings'::regclass
+  ) then
+    alter table public.trainings
+      add constraint trainings_provider_chk
+      check (
+        (provider_name is null)
+        or (provider_name = any (array['Highfield'::text, 'Other'::text]))
+      );
+  end if;
+end $$;
 
-alter table "public"."food_temp_logs"
-  validate constraint "food_temp_logs_team_member_same_loc_fk";
+-- FK: cleaning_task_runs_location_staff_fk
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'cleaning_task_runs_location_staff_fk'
+      and conrelid = 'public.cleaning_task_runs'::regclass
+  ) then
+    alter table public.cleaning_task_runs
+      add constraint cleaning_task_runs_location_staff_fk
+      foreign key (location_staff_id)
+      references public.location_staff(id)
+      on delete set null;
+  end if;
+end $$;
 
-alter table "public"."location_staff"
-  add constraint if not exists "location_staff_location_id_fkey"
-  foreign key (location_id)
-  references public.locations(id)
-  on delete cascade not valid;
+-- FK: food_temp_logs_team_member_same_loc_fk
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'food_temp_logs_team_member_same_loc_fk'
+      and conrelid = 'public.food_temp_logs'::regclass
+  ) then
+    alter table public.food_temp_logs
+      add constraint food_temp_logs_team_member_same_loc_fk
+      foreign key (team_member_id, org_id, location_id)
+      references public.team_members(id, org_id, location_id)
+      on delete set null;
+  end if;
+end $$;
 
-alter table "public"."location_staff"
-  validate constraint "location_staff_location_id_fkey";
+-- FK: location_staff_location_id_fkey
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'location_staff_location_id_fkey'
+      and conrelid = 'public.location_staff'::regclass
+  ) then
+    alter table public.location_staff
+      add constraint location_staff_location_id_fkey
+      foreign key (location_id)
+      references public.locations(id)
+      on delete cascade;
+  end if;
+end $$;
 
-alter table "public"."location_staff"
-  add constraint if not exists "location_staff_location_id_staff_profile_id_key"
-  unique using index "location_staff_location_id_staff_profile_id_key";
+-- FK: location_staff_org_id_fkey
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'location_staff_org_id_fkey'
+      and conrelid = 'public.location_staff'::regclass
+  ) then
+    alter table public.location_staff
+      add constraint location_staff_org_id_fkey
+      foreign key (org_id)
+      references public.orgs(id)
+      on delete cascade;
+  end if;
+end $$;
 
-alter table "public"."location_staff"
-  add constraint if not exists "location_staff_org_id_fkey"
-  foreign key (org_id)
-  references public.orgs(id)
-  on delete cascade not valid;
-
-alter table "public"."location_staff"
-  validate constraint "location_staff_org_id_fkey";
-
-alter table "public"."location_staff"
-  add constraint if not exists "location_staff_staff_profile_id_fkey"
-  foreign key (staff_profile_id)
-  references public.staff_profiles(id)
-  on delete cascade not valid;
-
-alter table "public"."location_staff"
-  validate constraint "location_staff_staff_profile_id_fkey";
-
-alter table "public"."team_members"
-  add constraint if not exists "team_members_id_org_loc_unique"
-  unique using index "team_members_id_org_loc_unique";
-
-alter table "public"."trainings"
-  add constraint if not exists "trainings_provider_chk"
-  check (
-    (provider_name is null)
-    or (provider_name = any (array['Highfield'::text, 'Other'::text]))
-  ) not valid;
-
-alter table "public"."trainings"
-  validate constraint "trainings_provider_chk";
+-- FK: location_staff_staff_profile_id_fkey
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'location_staff_staff_profile_id_fkey'
+      and conrelid = 'public.location_staff'::regclass
+  ) then
+    alter table public.location_staff
+      add constraint location_staff_staff_profile_id_fkey
+      foreign key (staff_profile_id)
+      references public.staff_profiles(id)
+      on delete cascade;
+  end if;
+end $$;
 
 -- =========================
 -- Functions (MUST come before triggers)
 -- =========================
-
 set check_function_bodies = off;
 
-CREATE OR REPLACE FUNCTION public.can_add_location(p_org_id uuid)
-RETURNS boolean
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $function$
+create or replace function public.can_add_location(p_org_id uuid)
+returns boolean
+language plpgsql
+security definer
+as $function$
 declare
   allowed integer;
   used integer;
@@ -273,10 +376,10 @@ begin
 end;
 $function$;
 
-CREATE OR REPLACE FUNCTION public.food_temp_logs_set_context()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $function$
+create or replace function public.food_temp_logs_set_context()
+returns trigger
+language plpgsql
+as $function$
 begin
   if new.created_by is null then
     new.created_by := auth.uid();
@@ -294,43 +397,43 @@ begin
 end;
 $function$;
 
-CREATE OR REPLACE FUNCTION public.get_active_location_id()
-RETURNS uuid
-LANGUAGE sql
-STABLE
-AS $function$
+create or replace function public.get_active_location_id()
+returns uuid
+language sql
+stable
+as $function$
   select p.active_location_id
   from public.profiles p
   where p.id = auth.uid()
 $function$;
 
-CREATE OR REPLACE FUNCTION public.get_active_org_id()
-RETURNS uuid
-LANGUAGE sql
-STABLE
-AS $function$
+create or replace function public.get_active_org_id()
+returns uuid
+language sql
+stable
+as $function$
   select p.org_id
   from public.profiles p
   where p.id = auth.uid()
 $function$;
 
-CREATE OR REPLACE FUNCTION public.fill_cleaning_logs_calendar()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $function$
-BEGIN
-  NEW.week    := COALESCE(NEW.week,    EXTRACT(WEEK  FROM NEW.date)::int);
-  NEW.year    := COALESCE(NEW.year,    EXTRACT(YEAR  FROM NEW.date)::int);
-  NEW.month   := COALESCE(NEW.month,   EXTRACT(MONTH FROM NEW.date)::int);
-  NEW.weekday := COALESCE(NEW.weekday, ((EXTRACT(DOW FROM NEW.date)::int + 6) % 7) + 1);
-  RETURN NEW;
-END
+create or replace function public.fill_cleaning_logs_calendar()
+returns trigger
+language plpgsql
+as $function$
+begin
+  new.week    := coalesce(new.week,    extract(week  from new.date)::int);
+  new.year    := coalesce(new.year,    extract(year  from new.date)::int);
+  new.month   := coalesce(new.month,   extract(month from new.date)::int);
+  new.weekday := coalesce(new.weekday, ((extract(dow from new.date)::int + 6) % 7) + 1);
+  return new;
+end
 $function$;
 
-CREATE OR REPLACE FUNCTION public.food_temp_logs_autofill()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $function$
+create or replace function public.food_temp_logs_autofill()
+returns trigger
+language plpgsql
+as $function$
 begin
   if new.status is null then
     new.status := 'pass';
@@ -344,23 +447,23 @@ begin
 end;
 $function$;
 
-create or replace view "public"."report_events_90d" as
-SELECT
-  (id)::text AS id,
-  'temps'::text AS section,
-  taken_at AS at,
-  item AS title,
-  format('%.1f°C • %s • %s'::text, temp_c, COALESCE(location, 'Unknown'::text), source) AS details,
+create or replace view public.report_events_90d as
+select
+  (id)::text as id,
+  'temps'::text as section,
+  taken_at as at,
+  item as title,
+  format('%.1f°C • %s • %s'::text, temp_c, coalesce(location, 'Unknown'::text), source) as details,
   org_id
-FROM public.food_temps ft
-WHERE (taken_at >= (now() - '90 days'::interval));
+from public.food_temps ft
+where (taken_at >= (now() - '90 days'::interval));
 
-CREATE OR REPLACE FUNCTION public.seed_org_defaults(p_org_id uuid)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path TO 'public'
-AS $function$
+create or replace function public.seed_org_defaults(p_org_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
 declare
   v_routine_id uuid;
 begin
@@ -393,159 +496,72 @@ end;
 $function$;
 
 -- =========================
--- Grants (as you had them)
--- =========================
-
-grant delete on table "public"."location_staff" to "anon";
-grant insert on table "public"."location_staff" to "anon";
-grant references on table "public"."location_staff" to "anon";
-grant select on table "public"."location_staff" to "anon";
-grant trigger on table "public"."location_staff" to "anon";
-grant truncate on table "public"."location_staff" to "anon";
-grant update on table "public"."location_staff" to "anon";
-
-grant delete on table "public"."location_staff" to "authenticated";
-grant insert on table "public"."location_staff" to "authenticated";
-grant references on table "public"."location_staff" to "authenticated";
-grant select on table "public"."location_staff" to "authenticated";
-grant trigger on table "public"."location_staff" to "authenticated";
-grant truncate on table "public"."location_staff" to "authenticated";
-grant update on table "public"."location_staff" to "authenticated";
-
-grant delete on table "public"."location_staff" to "service_role";
-grant insert on table "public"."location_staff" to "service_role";
-grant references on table "public"."location_staff" to "service_role";
-grant select on table "public"."location_staff" to "service_role";
-grant trigger on table "public"."location_staff" to "service_role";
-grant truncate on table "public"."location_staff" to "service_role";
-grant update on table "public"."location_staff" to "service_role";
-
--- =========================
--- Policies (as you had them)
--- =========================
-
-create policy "food_temp_logs_insert_loc"
-on "public"."food_temp_logs"
-as permissive
-for insert
-to authenticated
-with check (((org_id = public.get_active_org_id()) AND (location_id = public.get_active_location_id())));
-
-create policy "food_temp_logs_org_location_access"
-on "public"."food_temp_logs"
-as permissive
-for all
-to public
-using (
-  (exists (select 1 from public.profiles p where ((p.id = auth.uid()) and (p.org_id = food_temp_logs.org_id))))
-  and
-  (exists (select 1 from public.locations l where ((l.id = food_temp_logs.location_id) and (l.org_id = food_temp_logs.org_id) and (l.active = true))))
-)
-with check (
-  (exists (select 1 from public.profiles p where ((p.id = auth.uid()) and (p.org_id = food_temp_logs.org_id))))
-  and
-  (exists (select 1 from public.locations l where ((l.id = food_temp_logs.location_id) and (l.org_id = food_temp_logs.org_id) and (l.active = true))))
-);
-
-create policy "food_temp_logs_select_loc"
-on "public"."food_temp_logs"
-as permissive
-for select
-to authenticated
-using (((org_id = public.get_active_org_id()) AND (location_id = public.get_active_location_id())));
-
-create policy "food_temp_logs_update_loc"
-on "public"."food_temp_logs"
-as permissive
-for update
-to authenticated
-using (((org_id = public.get_active_org_id()) AND (location_id = public.get_active_location_id())))
-with check (((org_id = public.get_active_org_id()) AND (location_id = public.get_active_location_id())));
-
-create policy "incidents_update_authenticated"
-on "public"."incidents"
-as permissive
-for update
-to authenticated
-using (true)
-with check (true);
-
-create policy "locations_insert_within_plan_limit"
-on "public"."locations"
-as permissive
-for insert
-to authenticated
-with check (public.can_add_location(org_id));
-
--- =========================
 -- Triggers (function-first ordering fixed)
 -- =========================
-
 drop trigger if exists trg_food_temp_logs_set_context on public.food_temp_logs;
 
-CREATE TRIGGER trg_food_temp_logs_set_context
-BEFORE INSERT ON public.food_temp_logs
-FOR EACH ROW
-EXECUTE FUNCTION public.food_temp_logs_set_context();
+create trigger trg_food_temp_logs_set_context
+before insert on public.food_temp_logs
+for each row
+execute function public.food_temp_logs_set_context();
 
 -- =========================
--- Storage triggers (guarded so staging/prod differences don't brick the migration)
+-- Storage triggers (guarded)
 -- =========================
-
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'storage'
-      AND p.proname = 'delete_prefix_hierarchy_trigger'
-  ) THEN
-    EXECUTE 'DROP TRIGGER IF EXISTS objects_delete_delete_prefix ON storage.objects';
-    EXECUTE '
-      CREATE TRIGGER objects_delete_delete_prefix
-      AFTER DELETE ON storage.objects
-      FOR EACH ROW
-      EXECUTE FUNCTION storage.delete_prefix_hierarchy_trigger()
+do $$
+begin
+  if exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'storage'
+      and p.proname = 'delete_prefix_hierarchy_trigger'
+  ) then
+    execute 'drop trigger if exists objects_delete_delete_prefix on storage.objects';
+    execute '
+      create trigger objects_delete_delete_prefix
+      after delete on storage.objects
+      for each row
+      execute function storage.delete_prefix_hierarchy_trigger()
     ';
-  END IF;
-END $$;
+  end if;
+end $$;
 
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'storage'
-      AND p.proname = 'objects_insert_prefix_trigger'
-  ) THEN
-    EXECUTE 'DROP TRIGGER IF EXISTS objects_insert_create_prefix ON storage.objects';
-    EXECUTE '
-      CREATE TRIGGER objects_insert_create_prefix
-      BEFORE INSERT ON storage.objects
-      FOR EACH ROW
-      EXECUTE FUNCTION storage.objects_insert_prefix_trigger()
+do $$
+begin
+  if exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'storage'
+      and p.proname = 'objects_insert_prefix_trigger'
+  ) then
+    execute 'drop trigger if exists objects_insert_create_prefix on storage.objects';
+    execute '
+      create trigger objects_insert_create_prefix
+      before insert on storage.objects
+      for each row
+      execute function storage.objects_insert_prefix_trigger()
     ';
-  END IF;
-END $$;
+  end if;
+end $$;
 
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'storage'
-      AND p.proname = 'objects_update_prefix_trigger'
-  ) THEN
-    EXECUTE 'DROP TRIGGER IF EXISTS objects_update_create_prefix ON storage.objects';
-    EXECUTE '
-      CREATE TRIGGER objects_update_create_prefix
-      BEFORE UPDATE ON storage.objects
-      FOR EACH ROW
-      WHEN ((new.name <> old.name) OR (new.bucket_id <> old.bucket_id))
-      EXECUTE FUNCTION storage.objects_update_prefix_trigger()
+do $$
+begin
+  if exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'storage'
+      and p.proname = 'objects_update_prefix_trigger'
+  ) then
+    execute 'drop trigger if exists objects_update_create_prefix on storage.objects';
+    execute '
+      create trigger objects_update_create_prefix
+      before update on storage.objects
+      for each row
+      when ((new.name <> old.name) or (new.bucket_id <> old.bucket_id))
+      execute function storage.objects_update_prefix_trigger()
     ';
-  END IF;
-END $$;
+  end if;
+end $$;
