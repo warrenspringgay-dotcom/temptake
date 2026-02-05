@@ -2415,55 +2415,7 @@ export default function ManagerDashboardPage() {
                   </select>
                 </div>
 
-              <div className="grid gap-3 md:grid-cols-4">
-  <div>
-    <label className="mb-1 block text-xs text-slate-500">Staff</label>
-    <select
-      value={qcForm.staff_id}
-      onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-        setQcForm((f) => ({ ...f, staff_id: e.target.value }))
-      }
-      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-    >
-      <option value="">Select…</option>
-      {teamOptions.map((t) => (
-        <option key={t.id} value={t.id}>
-          {tmLabel(t)}
-        </option>
-      ))}
-    </select>
-  </div>
-
-  <div>
-    <label className="mb-1 block text-xs text-slate-500">Date</label>
-    <input
-      type="date"
-      value={qcForm.reviewed_on}
-      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-        setQcForm((f) => ({ ...f, reviewed_on: e.target.value }))
-      }
-      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-    />
-  </div>
-
-  <div>
-    <label className="mb-1 block text-xs text-slate-500">Score</label>
-    <select
-      value={qcForm.rating}
-      onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-        setQcForm((f) => ({ ...f, rating: Number(e.target.value) }))
-      }
-      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-    >
-      {[1, 2, 3, 4, 5].map((n) => (
-        <option key={n} value={n}>
-          {n}/5
-        </option>
-      ))}
-    </select>
-  </div>
-
-  {/* Notes: big box, full width */}
+              {/* Notes: big box, full width */}
   <div className="md:col-span-4">
     <label className="mb-1 block text-xs text-slate-500">Notes</label>
     <textarea
@@ -2476,8 +2428,6 @@ export default function ManagerDashboardPage() {
       className="w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm leading-5 resize-y min-h-[96px]"
     />
   </div>
-</div>
-
               </div>
 
               <div className="mt-3 flex items-center justify-end gap-2">
