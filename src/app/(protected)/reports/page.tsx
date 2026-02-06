@@ -1406,7 +1406,10 @@ export default function ReportsPage() {
       {/* Printable content root */}
       <div ref={printRef} id="audit-print-root" className="space-y-6">
         {/* Four-weekly review card */}
-        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+        <Card
+          data-hide-on-print
+          className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm"
+        >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h3 className="text-base font-semibold">Four-Weekly Review (SFBB)</h3>
@@ -1423,7 +1426,7 @@ export default function ReportsPage() {
               </ul>
             </div>
 
-            <div className="flex flex-col gap-2 sm:min-w-[260px]" data-hide-on-print>
+            <div className="flex flex-col gap-2 sm:min-w-[260px]">
               <Button
                 onClick={downloadFourWeekPDF}
                 className="w-full rounded-xl bg-slate-900 text-sm font-medium text-white hover:bg-slate-800"
@@ -1894,9 +1897,7 @@ export default function ReportsPage() {
                         </td>
                         <td className="py-2 pr-3 whitespace-nowrap">{staffLabel}</td>
                         <td className="py-2 pr-3 whitespace-nowrap">{r.reviewer ?? "—"}</td>
-                        <td className="py-2 pr-3 whitespace-nowrap">
-                          {r.location_name ?? "—"}
-                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{r.location_name ?? "—"}</td>
                         <td className="py-2 pr-3">
                           <span
                             className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${pill}`}
@@ -1996,7 +1997,7 @@ export default function ReportsPage() {
                             {r.status === "no-expiry"
                               ? "No expiry"
                               : r.status === "expired"
-                              ? "Expired"
+                                                           ? "Expired"
                               : "Valid"}
                           </span>
                         </td>
