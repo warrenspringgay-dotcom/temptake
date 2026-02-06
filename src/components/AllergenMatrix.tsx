@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 
 const CARD = "rounded-2xl border border-gray-200 bg-white shadow-sm";
 
@@ -13,6 +14,14 @@ type Row = {
   notes: string | null;
   updated_by: string | null;
   updated_at: string;
+};
+
+type ChangeRow = {
+  id: string;
+  created_at: string;
+  action: string;
+  item_name: string | null;
+  staff_initials: string | null;
 };
 
 const ALLERGENS = [
@@ -37,14 +46,35 @@ function cls(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+function fmtDDMMYYYY(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function fmtHM(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
 export default function AllergenMatrix() {
   const [loading, setLoading] = useState(true);
   const [orgId, setOrgId] = useState<string | null>(null);
+  const [locationId, setLocationId] = useState<string | null>(null);
 
   const [rows, setRows] = useState<Row[]>([]);
   const [filter, setFilter] = useState("");
   const [initials, setInitials] = useState<string[]>([]);
   const [ini, setIni] = useState<string>("");
+
+  // Recent changes
+  const [recentChanges, setRecentChanges] = useState<ChangeRow[]>([]);
 
   // Review meta
   const [intervalDays, setIntervalDays] = useState<number>(90);
@@ -64,36 +94,90 @@ export default function AllergenMatrix() {
     return { status: "ok" as const, label: "OK" as const };
   }, [lastReviewed, intervalDays]);
 
+  async function loadRecentChanges(oid: string, locId: string | null) {
+    // If you want "org-wide changes" regardless of location, remove the loc filter.
+    let q = supabase
+      .from("allergen_change_logs")
+      .select("id, created_at, action, item_name, staff_initials")
+      .eq("org_id", oid)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    // If your allergen matrix is location-specific, keep this filter on.
+    // If not, comment it out so you still see logs when location_id is null.
+    if (locId) q = q.eq("location_id", locId);
+
+    const { data, error } = await q;
+    if (!error && data) {
+      setRecentChanges(
+        (data as any[]).map((r) => ({
+          id: String(r.id),
+          created_at: String(r.created_at),
+          action: String(r.action),
+          item_name: r.item_name ?? null,
+          staff_initials: r.staff_initials ?? null,
+        }))
+      );
+    }
+  }
+
+  async function logChange(args: {
+    action: "create" | "update" | "delete";
+    item_id: string | null;
+    item_name: string | null;
+    flags_before: Record<string, boolean> | null;
+    flags_after: Record<string, boolean> | null;
+    notes_before: string | null;
+    notes_after: string | null;
+  }) {
+    if (!orgId) return;
+
+    // Don’t let logging failures block the core action. This is audit trail, not a rocket launch.
+    await supabase.from("allergen_change_logs").insert({
+      org_id: orgId,
+      location_id: locationId,
+      action: args.action,
+      item_id: args.item_id,
+      item_name: args.item_name,
+      flags_before: args.flags_before,
+      flags_after: args.flags_after,
+      notes_before: args.notes_before,
+      notes_after: args.notes_after,
+      staff_initials: ini || null,
+    });
+  }
+
   useEffect(() => {
     (async () => {
       setLoading(true);
+
       const oid = await getActiveOrgIdClient();
       setOrgId(oid ?? null);
-// initials (for updated_by and convenience)
-if (oid) {
-  const { data, error } = await supabase
-    .from("team_members")
-    .select("initials")
-    .eq("org_id", oid)
-    .order("initials");
 
-  if (!error && data) {
-    // data is { initials: string | null }[]
-    const list: string[] = Array.from(
-      new Set(
-        (data as { initials: string | null }[])
-          .map((r) => (r.initials ?? "").toString().toUpperCase().trim())
-          .filter((v): v is string => v.length > 0)
-      )
-    );
+      const loc = await getActiveLocationIdClient();
+      setLocationId(loc ?? null);
 
-    setInitials(list);
-    if (!ini && list[0]) {
-      setIni(list[0]);
-    }
-  }
-}
+      // initials (for updated_by and convenience)
+      if (oid) {
+        const { data, error } = await supabase
+          .from("team_members")
+          .select("initials")
+          .eq("org_id", oid)
+          .order("initials");
 
+        if (!error && data) {
+          const list: string[] = Array.from(
+            new Set(
+              (data as { initials: string | null }[])
+                .map((r) => (r.initials ?? "").toString().toUpperCase().trim())
+                .filter((v): v is string => v.length > 0)
+            )
+          );
+
+          setInitials(list);
+          if (!ini && list[0]) setIni(list[0]);
+        }
+      }
 
       // allergen matrix
       if (oid) {
@@ -102,6 +186,7 @@ if (oid) {
           .select("id,item,flags,notes,updated_by,updated_at")
           .eq("org_id", oid)
           .order("item", { ascending: true });
+
         setRows(
           (data ?? []).map((r: any) => ({
             id: String(r.id),
@@ -112,6 +197,9 @@ if (oid) {
             updated_at: r.updated_at ?? new Date().toISOString(),
           }))
         );
+
+        // recent changes
+        await loadRecentChanges(oid, loc ?? null);
       }
 
       // review meta
@@ -138,7 +226,13 @@ if (oid) {
 
   async function upsertRow(partial: Partial<Row> & { id?: string; item?: string }) {
     if (!orgId) return;
-    const existing = rows.find((r) => r.id === partial.id);
+
+    const existing = partial.id ? rows.find((r) => r.id === partial.id) : undefined;
+
+    const beforeFlags = existing ? existing.flags ?? {} : null;
+    const beforeNotes = existing ? existing.notes ?? null : null;
+    const beforeItem = existing ? existing.item ?? "" : null;
+
     const next: Row =
       existing
         ? {
@@ -150,15 +244,16 @@ if (oid) {
         : {
             id: crypto.randomUUID(),
             item: partial.item || "",
-            flags: (partial.flags as any) || {},
+            flags: (partial.flags as any) || Object.fromEntries(ALLERGENS.map((k) => [k, false])),
             notes: partial.notes ?? null,
             updated_by: ini || null,
             updated_at: new Date().toISOString(),
           };
 
     // persist
+    // IMPORTANT: include id for create as well, so logs can reference item_id consistently.
     const payload = {
-      id: existing ? existing.id : undefined,
+      id: existing ? existing.id : next.id,
       org_id: orgId,
       item: next.item,
       flags: next.flags,
@@ -179,22 +274,56 @@ if (oid) {
       return;
     }
 
-    const id = data?.id || next.id;
+    const id = String(data?.id ?? payload.id);
+
+    // update UI state first
     if (existing) {
       setRows((prev) => prev.map((r) => (r.id === id ? { ...next, id } : r)));
     } else {
       setRows((prev) => [{ ...next, id }, ...prev].sort((a, b) => a.item.localeCompare(b.item)));
     }
+
+    // log change
+    const action: "create" | "update" = existing ? "update" : "create";
+
+    await logChange({
+      action,
+      item_id: id,
+      item_name: next.item ?? null,
+      flags_before: beforeFlags,
+      flags_after: next.flags ?? null,
+      notes_before: beforeNotes,
+      notes_after: next.notes ?? null,
+    });
+
+    // refresh recent changes
+    await loadRecentChanges(orgId, locationId);
   }
 
   async function deleteRow(id: string) {
     if (!orgId) return;
+
+    const existing = rows.find((r) => r.id === id);
+
     const { error } = await supabase.from("allergen_matrix").delete().eq("org_id", orgId).eq("id", id);
     if (error) {
       alert(error.message);
       return;
     }
+
     setRows((prev) => prev.filter((r) => r.id !== id));
+
+    await logChange({
+      action: "delete",
+      item_id: id,
+      item_name: existing?.item ?? null,
+      flags_before: existing?.flags ?? null,
+      flags_after: null,
+      notes_before: existing?.notes ?? null,
+      notes_after: null,
+    });
+
+    await loadRecentChanges(orgId, locationId);
   }
 
   async function toggleFlag(id: string, key: AllergenKey) {
@@ -209,7 +338,12 @@ if (oid) {
     const today = new Date().toISOString().slice(0, 10);
     const { error } = await supabase
       .from("allergen_review")
-      .upsert({ org_id: orgId, last_reviewed: today, interval_days: intervalDays, updated_at: new Date().toISOString() });
+      .upsert({
+        org_id: orgId,
+        last_reviewed: today,
+        interval_days: intervalDays,
+        updated_at: new Date().toISOString(),
+      });
     if (error) {
       alert(error.message);
       return;
@@ -218,9 +352,7 @@ if (oid) {
   }
 
   return (
-    
-  <div className="space-y-6 -mx-3 sm:mx-0">
-
+    <div className="space-y-6 -mx-3 sm:mx-0">
       {/* Header / Controls */}
       <div className={CARD + " p-4"}>
         <div className="flex flex-wrap items-center gap-2">
@@ -293,7 +425,12 @@ if (oid) {
               if (orgId) {
                 await supabase
                   .from("allergen_review")
-                  .upsert({ org_id: orgId, last_reviewed: lastReviewed, interval_days: v, updated_at: new Date().toISOString() });
+                  .upsert({
+                    org_id: orgId,
+                    last_reviewed: lastReviewed,
+                    interval_days: v,
+                    updated_at: new Date().toISOString(),
+                  });
               }
             }}
             className="h-8 rounded-lg border border-gray-200 px-2 text-xs"
@@ -333,7 +470,9 @@ if (oid) {
                   <td className="px-3 py-2">
                     <input
                       value={r.item}
-                      onChange={(e) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, item: e.target.value } : x)))}
+                      onChange={(e) =>
+                        setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, item: e.target.value } : x)))
+                      }
                       onBlur={() => upsertRow({ id: r.id, item: rows.find((x) => x.id === r.id)?.item })}
                       className="w-full rounded-lg border border-gray-200 px-2 py-1.5"
                     />
@@ -369,6 +508,7 @@ if (oid) {
                       className="w-full rounded-lg border border-gray-200 px-2 py-1.5"
                     />
                   </td>
+
                   <td className="px-3 py-2 text-right">
                     <button
                       className="rounded-lg border border-gray-200 px-2 py-1 text-xs hover:bg-gray-50"
@@ -382,6 +522,35 @@ if (oid) {
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* Recent allergen changes */}
+      <div className={CARD + " p-4"}>
+        <h3 className="text-sm font-semibold">Recent allergen changes</h3>
+        <div className="mt-3 space-y-2">
+          {loading ? (
+            <div className="text-sm text-gray-500">Loading…</div>
+          ) : recentChanges.length === 0 ? (
+            <div className="text-sm text-gray-500">No recent allergen changes logged yet.</div>
+          ) : (
+            recentChanges.map((c) => {
+              const label =
+                c.action === "create" ? "Added" : c.action === "update" ? "Updated" : c.action === "delete" ? "Deleted" : c.action;
+              return (
+                <div key={c.id} className="flex items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
+                  <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-xs font-medium">
+                    {label}
+                  </span>
+                  <span className="font-medium">{c.item_name ?? "—"}</span>
+                  <span className="ml-auto text-xs text-gray-500">
+                    {fmtDDMMYYYY(c.created_at)} {fmtHM(c.created_at)}
+                    {c.staff_initials ? ` • ${c.staff_initials}` : ""}
+                  </span>
+                </div>
+              );
+            })
+          )}
+        </div>
       </div>
     </div>
   );
