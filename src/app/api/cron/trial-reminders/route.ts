@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
     });
 
     const origin = appOriginFromEnv(req);
-    const ctaUrl = `${origin}/settings/billing`;
+    const ctaUrl = `${origin}/billing`;
 
     let sent = 0;
     let skipped = 0;

@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     // IMPORTANT: the CTA should deep-link to the app, not the marketing site.
     // Set NEXT_PUBLIC_APP_URL in env (e.g. https://app.temptake.com).
     const appOrigin = process.env.NEXT_PUBLIC_APP_URL ?? getOriginFromEnv(req.nextUrl.origin);
-    const billingUrl = `${appOrigin}/settings/billing`;
+    const billingUrl = `${appOrigin}/billing`;
 
     let sent = 0;
     let skipped = 0;

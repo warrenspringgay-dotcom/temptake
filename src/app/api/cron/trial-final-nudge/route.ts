@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
       /\/$/,
       ""
     );
-    const billingUrl = `${appOrigin}/settings/billing`;
+    const billingUrl = `${appOrigin}/billing`;
 
     let sent = 0;
     let skipped = 0;
