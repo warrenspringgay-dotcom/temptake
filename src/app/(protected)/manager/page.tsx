@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -489,17 +490,55 @@ export default function ManagerDashboardPage() {
 
   /* ===== Actions dropdown (top bar) ===== */
   const [actionsOpen, setActionsOpen] = useState(false);
-  const actionsRef = useRef<HTMLDivElement | null>(null);
+  const actionsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const actionsMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const [portalReady, setPortalReady] = useState(false);
+  const [actionsPos, setActionsPos] = useState<{ top: number; right: number } | null>(
+    null
+  );
+
+  useEffect(() => setPortalReady(true), []);
+
+  const updateActionsPos = () => {
+    const btn = actionsBtnRef.current;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const right = Math.max(8, window.innerWidth - r.right);
+    const top = r.bottom + 8;
+    setActionsPos({ top, right });
+  };
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+    updateActionsPos();
+
+    const onScroll = () => updateActionsPos();
+    const onResize = () => updateActionsPos();
+
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [actionsOpen]);
 
   useEffect(() => {
     if (!actionsOpen) return;
 
     const onDown = (ev: MouseEvent) => {
-      const el = actionsRef.current;
-      if (!el) return;
-      if (ev.target instanceof Node && !el.contains(ev.target)) {
-        setActionsOpen(false);
-      }
+      const t = ev.target;
+      if (!(t instanceof Node)) return;
+
+      const btn = actionsBtnRef.current;
+      const menu = actionsMenuRef.current;
+
+      if (btn && btn.contains(t)) return;
+      if (menu && menu.contains(t)) return;
+
+      setActionsOpen(false);
     };
 
     document.addEventListener("mousedown", onDown);
@@ -1390,96 +1429,113 @@ export default function ManagerDashboardPage() {
             </button>
           </div>
 
-         {/* ✅ Single Actions button + dropdown */}
-<div className="relative z-50" ref={actionsRef}>
-  <button
-    type="button"
-    onClick={() => setActionsOpen((v) => !v)}
-    className={cls(
-      "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm",
-      "bg-indigo-600 text-white hover:bg-indigo-700"
-    )}
-  >
-    Actions ▾
-  </button>
+          {/* ✅ Actions button (menu is PORTALED to body so it can't hide behind layout/overflow) */}
+          <div className="relative">
+            <button
+              ref={actionsBtnRef}
+              type="button"
+              onClick={() => {
+                setActionsOpen((v) => !v);
+                // if opening, position will be calculated in effect
+              }}
+              className={cls(
+                "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm",
+                "bg-indigo-600 text-white hover:bg-indigo-700"
+              )}
+            >
+              Actions ▾
+            </button>
 
-  {actionsOpen && (
-    <div className="absolute right-0 top-full mt-2 z-50 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
-      <button
-        type="button"
-        onClick={() => {
-          setActionsOpen(false);
-          setIncidentOpen(true);
-        }}
-        className="w-full px-4 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"
-      >
-        Log incident
-      </button>
+            {portalReady && actionsOpen && actionsPos
+              ? createPortal(
+                  <>
+                    {/* Click-catcher overlay */}
+                    <div
+                      className="fixed inset-0 z-[9998]"
+                      onClick={() => setActionsOpen(false)}
+                    />
+                    <div
+                      ref={actionsMenuRef}
+                      className="fixed z-[9999] w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
+                      style={{ top: actionsPos.top, right: actionsPos.right }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActionsOpen(false);
+                          setIncidentOpen(true);
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                      >
+                        Log incident
+                      </button>
 
-      <button
-        type="button"
-        onClick={() => {
-          setActionsOpen(false);
-          setStaffAssessOpen(true);
-        }}
-        className="w-full px-4 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"
-      >
-        Staff assessment
-      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActionsOpen(false);
+                          setStaffAssessOpen(true);
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                      >
+                        Staff assessment
+                      </button>
 
-      <button
-        type="button"
-        onClick={openQcFromActions}
-        disabled={!orgId || !locationId}
-        className={cls(
-          "w-full px-4 py-2 text-left text-sm font-semibold",
-          !orgId || !locationId
-            ? "text-slate-400 cursor-not-allowed"
-            : "text-slate-800 hover:bg-slate-50"
-        )}
-      >
-        Staff QC (Manager QC)
-      </button>
+                      <button
+                        type="button"
+                        onClick={openQcFromActions}
+                        disabled={!orgId || !locationId}
+                        className={cls(
+                          "w-full px-4 py-2 text-left text-sm font-semibold",
+                          !orgId || !locationId
+                            ? "text-slate-400 cursor-not-allowed"
+                            : "text-slate-800 hover:bg-slate-50"
+                        )}
+                      >
+                        Staff QC (Manager QC)
+                      </button>
 
-      <button
-        type="button"
-        onClick={() => {
-          setActionsOpen(false);
-          setSignoffOpen(true);
-        }}
-        disabled={!cleaningAllDone || alreadySignedOff}
-        className={cls(
-          "w-full px-4 py-2 text-left text-sm font-semibold",
-          !cleaningAllDone || alreadySignedOff
-            ? "text-slate-400 cursor-not-allowed"
-            : "text-slate-800 hover:bg-slate-50"
-        )}
-      >
-        {alreadySignedOff ? "Signed off" : "Sign off day"}
-      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActionsOpen(false);
+                          setSignoffOpen(true);
+                        }}
+                        disabled={!cleaningAllDone || alreadySignedOff}
+                        className={cls(
+                          "w-full px-4 py-2 text-left text-sm font-semibold",
+                          !cleaningAllDone || alreadySignedOff
+                            ? "text-slate-400 cursor-not-allowed"
+                            : "text-slate-800 hover:bg-slate-50"
+                        )}
+                      >
+                        {alreadySignedOff ? "Signed off" : "Sign off day"}
+                      </button>
 
-      <div className="my-1 border-t border-slate-100" />
+                      <div className="my-1 border-t border-slate-100" />
 
-      <button
-        type="button"
-        onClick={() => {
-          setActionsOpen(false);
-          void refreshAll();
-        }}
-        disabled={loading || !orgId || !locationId}
-        className={cls(
-          "w-full px-4 py-2 text-left text-sm font-semibold",
-          loading || !orgId || !locationId
-            ? "text-slate-400 cursor-not-allowed"
-            : "text-slate-700 hover:bg-slate-50"
-        )}
-      >
-        {loading ? "Refreshing…" : "Refresh"}
-      </button>
-    </div>
-  )}
-</div>
-
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActionsOpen(false);
+                          void refreshAll();
+                        }}
+                        disabled={loading || !orgId || !locationId}
+                        className={cls(
+                          "w-full px-4 py-2 text-left text-sm font-semibold",
+                          loading || !orgId || !locationId
+                            ? "text-slate-400 cursor-not-allowed"
+                            : "text-slate-700 hover:bg-slate-50"
+                        )}
+                      >
+                        {loading ? "Refreshing…" : "Refresh"}
+                      </button>
+                    </div>
+                  </>,
+                  document.body
+                )
+              : null}
+          </div>
         </div>
       </section>
 
@@ -2163,7 +2219,6 @@ export default function ManagerDashboardPage() {
             onClick={(e) => e.stopPropagation()}
           >
             {/* ... unchanged ... */}
-            {/* (kept exactly as your original below to avoid accidental UI drift) */}
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <div className="text-base font-semibold">
