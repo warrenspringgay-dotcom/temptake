@@ -1,5 +1,6 @@
 "use client";
 
+import React, { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -13,8 +14,44 @@ type HelpSectionProps = {
   intro: string;
   bullets: string[];
   imageSrc?: string;
+  keywords?: string[];
 };
 
+function cls(...p: Array<string | false | null | undefined>) {
+  return p.filter(Boolean).join(" ");
+}
+
+function escapeRegExp(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function Highlight({ text, q }: { text: string; q: string }) {
+  const query = q.trim();
+  if (!query) return <>{text}</>;
+
+  const re = new RegExp(`(${escapeRegExp(query)})`, "ig");
+  const parts = text.split(re);
+
+  return (
+    <>
+      {parts.map((part, idx) => {
+        const match = part.toLowerCase() === query.toLowerCase();
+        return match ? (
+          <mark
+            key={idx}
+            className="rounded bg-amber-200/70 px-1 py-0.5 text-slate-900"
+          >
+            {part}
+          </mark>
+        ) : (
+          <span key={idx}>{part}</span>
+        );
+      })}
+    </>
+  );
+}
+
+/** Accordion help section with "TL;DR + Show more" */
 function HelpSection({
   id,
   title,
@@ -22,38 +59,158 @@ function HelpSection({
   intro,
   bullets,
   imageSrc,
-}: HelpSectionProps) {
+  keywords = [],
+  query,
+  isOpen,
+  onToggle,
+}: HelpSectionProps & {
+  query: string;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const q = query.trim().toLowerCase();
+
+  const matches = useMemo(() => {
+    if (!q) return bullets.map((b) => ({ b, match: false }));
+    return bullets.map((b) => ({ b, match: b.toLowerCase().includes(q) }));
+  }, [bullets, q]);
+
+  const matchedCount = matches.filter((m) => m.match).length;
+
+  const collapsedBullets = useMemo(() => {
+    if (!q) return matches.slice(0, 4);
+
+    const onlyMatches = matches.filter((m) => m.match);
+    if (onlyMatches.length > 0) return onlyMatches;
+
+    return matches.slice(0, 6);
+  }, [matches, q]);
+
   return (
     <section id={id} className={CARD}>
-      <div className="flex flex-col gap-4 md:flex-row md:items-start">
-        <div className="flex-1 space-y-2">
-          <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
-            <span className="text-xl">{icon}</span>
-            <span>{title}</span>
-          </h2>
-          <p className="text-sm text-slate-700">{intro}</p>
-          <ul className="mt-2 space-y-1.5 text-sm text-slate-700">
-            {bullets.map((b) => (
-              <li key={b} className="flex gap-2">
-                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
-                <span>{b}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full text-left"
+        aria-expanded={isOpen}
+        aria-controls={`${id}-panel`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+              <span className="text-xl">{icon}</span>
+              <span className="truncate">
+                <Highlight text={title} q={query} />
+              </span>
+            </h2>
 
-        {imageSrc && (
-          <div className="relative mt-2 h-32 w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80 md:mt-0 md:h-32 md:w-56">
-            <Image
-              src={imageSrc}
-              alt={title}
-              fill
-              className="object-cover"
-              sizes="224px"
-            />
+            <p className="text-sm text-slate-700">
+              <Highlight text={intro} q={query} />
+            </p>
+
+            {query.trim() && (
+              <div className="text-xs text-slate-500">
+                {matchedCount > 0
+                  ? `${matchedCount} matching point${matchedCount === 1 ? "" : "s"}`
+                  : "No direct bullet matches (but section may still be relevant)."}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+
+          <div className="shrink-0">
+            <span
+              className={cls(
+                "inline-flex items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold shadow-sm",
+                "border-slate-300 bg-white/80 text-slate-800"
+              )}
+            >
+              {isOpen ? "Hide" : "Open"}
+            </span>
+          </div>
+        </div>
+      </button>
+
+      {/* TL;DR bullets always visible */}
+      <ul className="mt-3 space-y-1.5 text-sm text-slate-700">
+        {collapsedBullets.map(({ b }) => (
+          <li key={b} className="flex gap-2">
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+            <span>
+              <Highlight text={b} q={query} />
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      {/* Expanded panel */}
+      {isOpen && (
+        <div id={`${id}-panel`} className="mt-4">
+          <div className="grid gap-4 md:grid-cols-[1fr,224px]">
+            <div>
+              {(!query.trim() || matchedCount === 0) && bullets.length > 4 && (
+                <>
+                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                    More detail
+                  </div>
+                  <ul className="mt-2 space-y-1.5 text-sm text-slate-700">
+                    {bullets.slice(4).map((b) => (
+                      <li key={b} className="flex gap-2">
+                        <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+                        <span>{b}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+
+              {query.trim() && (
+                <>
+                  <div className="mt-1 text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                    All points (filtered)
+                  </div>
+                  <ul className="mt-2 space-y-1.5 text-sm text-slate-700">
+                    {matches
+                      .filter((m) => !q || m.match)
+                      .map(({ b }) => (
+                        <li key={b} className="flex gap-2">
+                          <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+                          <span>
+                            <Highlight text={b} q={query} />
+                          </span>
+                        </li>
+                      ))}
+                  </ul>
+                </>
+              )}
+
+              {keywords.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {keywords.map((k) => (
+                    <span
+                      key={k}
+                      className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700"
+                    >
+                      {k}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {imageSrc && (
+              <div className="relative h-32 w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80 md:h-32 md:w-56">
+                <Image
+                  src={imageSrc}
+                  alt={title}
+                  fill
+                  className="object-cover"
+                  sizes="224px"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -88,13 +245,7 @@ function StepCard({
   );
 }
 
-function MiniCallout({
-  title,
-  items,
-}: {
-  title: string;
-  items: string[];
-}) {
+function MiniCallout({ title, items }: { title: string; items: string[] }) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-xl backdrop-blur-sm md:p-5">
       <div className="text-sm font-semibold text-slate-900">{title}</div>
@@ -110,84 +261,603 @@ function MiniCallout({
   );
 }
 
-export default function HelpPage() {
+/* ---------- FAQ (Troubleshooting) ---------- */
+
+type FaqItem = {
+  id: string;
+  q: string;
+  a: string[];
+  tags: string[];
+};
+
+function FaqSection({
+  query,
+}: {
+  query: string;
+}) {
+  const [openFaqId, setOpenFaqId] = useState<string | null>(null);
+  const [tag, setTag] = useState<string>("All");
+
+  const faqs: FaqItem[] = [
+    {
+      id: "faq-initials-missing",
+      q: "Initials are missing in dropdowns. Where did they go?",
+      a: [
+        "Go to Team and confirm the staff member exists and has initials set.",
+        "Use uppercase initials and avoid dots (use WS not W.S.).",
+        "If you have duplicates, fix them. The app can’t guess which ‘AA’ you meant.",
+        "Refresh the page after changes if the list doesn’t update instantly.",
+      ],
+      tags: ["Team", "Initials", "Setup"],
+    },
+    {
+      id: "faq-duplicate-initials",
+      q: "We’ve got duplicate initials. What’s the correct approach?",
+      a: [
+        "Initials must be unique per person. Pick a consistent scheme (e.g. WS, WSP, WS1).",
+        "Keep them uppercase and no punctuation.",
+        "Remove old/leaver records from Team so the list stays clean.",
+      ],
+      tags: ["Team", "Initials"],
+    },
+    {
+      id: "faq-wrong-location",
+      q: "Logs are showing under the wrong location. How do we fix it?",
+      a: [
+        "Check the selected location on Dashboard before logging (it’s sticky per session).",
+        "If you run multiple venues, standardise naming so staff can’t confuse them.",
+        "Manager tip: set a default location in Settings to reduce wrong-location entries.",
+      ],
+      tags: ["Locations", "Settings"],
+    },
+    {
+      id: "faq-routines-ignored",
+      q: "Staff aren’t using routines. They keep typing random temperatures.",
+      a: [
+        "Your routine probably doesn’t match real checks. Rename items to match equipment/areas staff recognise.",
+        "Keep routines short and obvious. People won’t scroll a 40-item checklist mid-shift.",
+        "Make routines the default expectation: ‘temps = routines’. No exceptions.",
+      ],
+      tags: ["Routines", "Temps", "Operations"],
+    },
+    {
+      id: "faq-temps-failing",
+      q: "Temperatures are failing. What’s the ‘correct’ workflow?",
+      a: [
+        "Record the fail, take corrective action immediately, and re-check.",
+        "If fails repeat: it’s usually equipment, loading, door discipline, or hot-hold practice. Fix the process.",
+        "Use reports weekly to spot patterns by area/equipment.",
+      ],
+      tags: ["Temps", "Reports", "Operations"],
+    },
+    {
+      id: "faq-cleaning-not-done",
+      q: "Cleaning rota tasks aren’t being completed. What usually fixes it?",
+      a: [
+        "Reduce daily tasks to what’s realistic. Push deep cleans into weekly/monthly.",
+        "Rewrite vague tasks into clear actions (what/where/how).",
+        "Assign ownership by shift (opening vs close).",
+        "Managers: spot-check weekly/monthly tasks. Otherwise they quietly rot.",
+      ],
+      tags: ["Cleaning", "Operations"],
+    },
+    {
+      id: "faq-allergens-not-trusted",
+      q: "Front-of-house doesn’t trust the allergen matrix. How do we make it reliable?",
+      a: [
+        "Set a review cadence you actually follow (monthly is common).",
+        "Assign one owner responsible for updates when recipes/suppliers change.",
+        "After any menu change, update allergens immediately then mark reviewed.",
+      ],
+      tags: ["Allergens", "Reviews", "Operations"],
+    },
+    {
+      id: "faq-reports-missing",
+      q: "Reports are missing data. What’s the usual reason?",
+      a: [
+        "Wrong filters: check date range and selected location first.",
+        "Data logged under the wrong location won’t appear where you expect.",
+        "If you have multiple sites, confirm staff are not switching locations mid-day.",
+      ],
+      tags: ["Reports", "Locations"],
+    },
+    {
+      id: "faq-billing-past-due",
+      q: "Billing is past due. What happens and what do we do?",
+      a: [
+        "Update payment method in the Stripe billing portal ASAP.",
+        "If you’re locked out of features, it’s because the subscription status is limiting access.",
+        "Don’t leave this until you need reports for an inspection. That’s… a choice.",
+      ],
+      tags: ["Billing"],
+    },
+  ];
+
+  const allTags = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of faqs) for (const t of f.tags) s.add(t);
+    return ["All", ...Array.from(s).sort((a, b) => a.localeCompare(b))];
+  }, [faqs]);
+
+  const q = query.trim().toLowerCase();
+
+  const filteredFaqs = useMemo(() => {
+    return faqs.filter((f) => {
+      const tagHit = tag === "All" ? true : f.tags.includes(tag);
+      if (!tagHit) return false;
+
+      if (!q) return true;
+
+      const inQ = f.q.toLowerCase().includes(q);
+      const inA = f.a.some((x) => x.toLowerCase().includes(q));
+      const inTags = f.tags.some((t) => t.toLowerCase().includes(q));
+      return inQ || inA || inTags;
+    });
+  }, [faqs, q, tag]);
+
+  useEffect(() => {
+    // If the current open FAQ is filtered out, close it
+    if (openFaqId && !filteredFaqs.some((f) => f.id === openFaqId)) {
+      setOpenFaqId(null);
+    }
+  }, [filteredFaqs, openFaqId]);
+
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 text-slate-900">
-      {/* Page header */}
-      <header className="space-y-3 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-xl backdrop-blur-sm md:p-5">
-        <div className="space-y-2">
-          <h1 className="text-2xl font-semibold text-slate-900">
-            Help &amp; Full Setup Guide
-          </h1>
-          <p className="max-w-3xl text-sm text-slate-700">
-            TempTake replaces paper food safety records with a simple, auditable
-            digital system. If you set it up properly, day-to-day logging becomes
-            fast and consistent, and inspections become boring (which is the dream).
+    <section id="troubleshooting" className={CARD}>
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="space-y-1">
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+            <span className="text-xl">🛠️</span>
+            <span>
+              <Highlight text="Troubleshooting FAQs" q={query} />
+            </span>
+          </h2>
+          <p className="text-sm text-slate-700">
+            <Highlight
+              text="Short answers, clear fixes. No one has time for essays mid-shift."
+              q={query}
+            />
           </p>
         </div>
 
-        <nav className="mt-3 flex flex-wrap gap-2 text-xs">
-          {[
-            ["setup", "First-time setup"],
-            ["day1", "Day 1 workflow"],
-            ["dashboard", "Dashboard"],
-            ["routines", "Routines"],
-            ["allergens", "Allergens"],
-            ["cleaning", "Cleaning rota"],
-            ["team", "Team"],
-            ["locations", "Locations"],
-            ["suppliers", "Suppliers"],
-            ["reports", "Reports"],
-            ["billing", "Billing"],
-            ["settings", "Settings"],
-            ["troubleshooting", "Troubleshooting"],
-            ["glossary", "Glossary"],
-          ].map(([id, label]) => (
-            <a
-              key={id}
-              href={`#${id}`}
-              className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-slate-800 shadow-sm hover:bg-slate-50"
+        <div className="flex flex-wrap gap-2 text-xs">
+          {allTags.map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTag(t)}
+              className={cls(
+                "rounded-full border px-3 py-1 shadow-sm",
+                tag === t
+                  ? "border-slate-400 bg-slate-900/5 text-slate-900 font-semibold"
+                  : "border-slate-300 bg-white/80 text-slate-800 hover:bg-slate-50"
+              )}
             >
-              {label}
-            </a>
+              {t}
+            </button>
           ))}
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        {filteredFaqs.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 text-sm text-slate-700">
+            No FAQ matches your search/tag. Try: initials, reports, allergens,
+            routines, location.
+          </div>
+        ) : (
+          filteredFaqs.map((f) => {
+            const open = openFaqId === f.id;
+            return (
+              <div
+                key={f.id}
+                className="rounded-2xl border border-slate-200 bg-white/80 shadow-sm"
+              >
+                <button
+                  type="button"
+                  onClick={() => setOpenFaqId((cur) => (cur === f.id ? null : f.id))}
+                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left"
+                  aria-expanded={open}
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-900">
+                      <Highlight text={f.q} q={query} />
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {f.tags.map((t) => (
+                        <span
+                          key={t}
+                          className="rounded-full border border-slate-300 bg-white/70 px-2 py-0.5 text-[11px] font-semibold text-slate-700"
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <span className="shrink-0 rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">
+                    {open ? "Hide" : "Open"}
+                  </span>
+                </button>
+
+                {open && (
+                  <div className="border-t border-slate-200 px-4 py-3">
+                    <ul className="space-y-2 text-sm text-slate-700">
+                      {f.a.map((line) => (
+                        <li key={line} className="flex gap-2">
+                          <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+                          <span>
+                            <Highlight text={line} q={query} />
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
+}
+
+type HelpSectionData = HelpSectionProps & {
+  navLabel: string;
+};
+
+export default function HelpPage() {
+  const navItems: Array<[string, string]> = [
+    ["setup", "First-time setup"],
+    ["day1", "Day 1 workflow"],
+    ["dashboard", "Dashboard"],
+    ["routines", "Routines"],
+    ["allergens", "Allergens"],
+    ["cleaning", "Cleaning rota"],
+    ["team", "Team"],
+    ["locations", "Locations"],
+    ["suppliers", "Suppliers"],
+    ["reports", "Reports"],
+    ["billing", "Billing"],
+    ["settings", "Settings"],
+    ["troubleshooting", "Troubleshooting"],
+    ["glossary", "Glossary"],
+  ];
+
+  const sections: HelpSectionData[] = [
+    {
+      id: "dashboard",
+      navLabel: "Dashboard",
+      title: "Dashboard",
+      icon: "📊",
+      intro: "The control panel. If something’s overdue or failing, it should show here.",
+      bullets: [
+        "Shift start: check for overdue temps, incomplete cleaning, expired training, overdue allergen review.",
+        "Shift end: confirm today’s temps + cleaning are complete for the selected location.",
+        "Treat failures as action items: fix, record corrective action, re-check.",
+        "If the dashboard is green, you’re inspection-ready. If it’s red, you’re rolling the dice.",
+        "Managers: use it as your daily compliance checklist, not a nice-to-have.",
+      ],
+      imageSrc: "/help/dashboard.jpg",
+      keywords: ["overdue", "alerts", "kpi", "compliance", "checklist"],
+    },
+    {
+      id: "routines",
+      navLabel: "Routines",
+      title: "Routines",
+      icon: "⏱️",
+      intro: "Pre-built temp checks. Less thinking, fewer mistakes, better audit trail.",
+      bullets: [
+        "Create routines that match real checks: fridges/freezers, deliveries, cooking, hot holding, cooling.",
+        "Name clearly: ‘Walk-in fridge – RTE shelf’, not ‘Fridge 1’ if you have five of them.",
+        "Set targets that match your policy/SFBB controls.",
+        "If staff keep failing temps, fix the process (equipment, loading, door discipline) not the logging.",
+        "Review routines when equipment/menu changes or quarterly.",
+        "Multi-site: keep naming consistent across locations so reporting stays clean.",
+      ],
+      imageSrc: "/help/routines.jpg",
+      keywords: ["temperature", "targets", "fridge", "freezer", "hot holding"],
+    },
+    {
+      id: "allergens",
+      navLabel: "Allergens",
+      title: "Allergens",
+      icon: "⚠️",
+      intro: "Accurate + reviewed = defensible. Outdated = liability.",
+      bullets: [
+        "Record allergens per menu item so FOH can answer quickly and consistently.",
+        "Use consistent item names (avoid duplicates like ‘Chips’ vs ‘Fries’ unless they’re different).",
+        "Use ‘safe food’ search to find items that exclude selected allergens.",
+        "Set a review interval you’ll actually follow (monthly is common).",
+        "Mark as reviewed to create an audit trail you maintain the matrix.",
+        "When recipes/suppliers change, update allergens immediately then re-review.",
+      ],
+      imageSrc: "/help/allergens.jpg",
+      keywords: ["matrix", "review", "safe food", "menu", "EHO"],
+    },
+    {
+      id: "cleaning",
+      navLabel: "Cleaning rota",
+      title: "Cleaning rota",
+      icon: "🧽",
+      intro: "Real cleaning records with timestamps and initials.",
+      bullets: [
+        "Create tasks by shift/category: Opening, Mid, Close, FOH, Weekly, Monthly.",
+        "Keep daily tasks realistic. Weekly/monthly cover deep cleans.",
+        "Complete tasks as they’re done. End-of-day mass ticking is obvious and useless.",
+        "Initials matter: it proves accountability and training gaps.",
+        "If tasks aren’t being done: reduce volume, improve clarity, enforce expectations.",
+        "Managers: spot-check weekly/monthly tasks. Otherwise they quietly drift incomplete.",
+      ],
+      imageSrc: "/help/cleaning.jpg",
+      keywords: ["rota", "tasks", "daily", "weekly", "monthly"],
+    },
+    {
+      id: "team",
+      navLabel: "Team",
+      title: "Team",
+      icon: "👥",
+      intro: "Initials, accountability, and training status live here.",
+      bullets: [
+        "Add every staff member who logs temps or completes cleaning tasks.",
+        "Initials are the signature across the app. Keep them unique and consistent (no dots).",
+        "Track training expiry so you don’t discover you’re non-compliant during an inspection.",
+        "Clean up leavers monthly so your initials list stays usable.",
+        "If initials don’t show up elsewhere: the user isn’t added, or initials are blank/duplicated.",
+      ],
+      imageSrc: "/help/team.jpg",
+      keywords: ["initials", "training", "expiry", "staff", "signature"],
+    },
+    {
+      id: "locations",
+      navLabel: "Locations",
+      title: "Locations",
+      icon: "📍",
+      intro: "Keeps records attributed to the correct site or kitchen.",
+      bullets: [
+        "Single-site: one clear location name is fine.",
+        "Multi-site: use one location per venue so reports don’t blend operations.",
+        "If staff log to the wrong location, your audit trail becomes messy fast.",
+        "Location limits depend on your subscription band.",
+        "Standardise names across sites to keep reporting clean.",
+      ],
+      imageSrc: "/help/locations.jpg",
+      keywords: ["site", "venue", "multi-site", "reporting"],
+    },
+    {
+      id: "suppliers",
+      navLabel: "Suppliers",
+      title: "Suppliers",
+      icon: "🚚",
+      intro: "Traceability and due diligence when something goes wrong.",
+      bullets: [
+        "Record supplier name + contact details + product categories supplied.",
+        "Use notes for ordering rules: cut-off times, delivery days, minimum order.",
+        "Useful for delivery disputes, recalls, and sourcing questions.",
+      ],
+      imageSrc: "/help/suppliers.jpg",
+      keywords: ["traceability", "recall", "contact", "deliveries"],
+    },
+    {
+      id: "reports",
+      navLabel: "Reports",
+      title: "Reports",
+      icon: "📑",
+      intro: "Turns daily logging into inspection-ready evidence.",
+      bullets: [
+        "Generate a report for a date range and location to show temps + cleaning + training evidence.",
+        "Use filters to answer targeted questions quickly (equipment, staff initials, date range).",
+        "Weekly reports help spot patterns: repeat failures, missed checks, weak shifts.",
+        "If you can’t prove it, it doesn’t count. Reports are your proof pack.",
+      ],
+      imageSrc: "/help/reports.jpg",
+      keywords: ["audit", "export", "pdf", "evidence", "inspection"],
+    },
+    {
+      id: "billing",
+      navLabel: "Billing",
+      title: "Billing & subscription",
+      icon: "💳",
+      intro: "Stripe runs payments. TempTake gates features based on subscription status.",
+      bullets: [
+        "Check plan status: trial, active, past due.",
+        "Upgrade band to unlock more locations where applicable.",
+        "Use Stripe billing portal for invoices + payment method changes.",
+        "Fix ‘past due’ early, not when you need access urgently.",
+      ],
+      imageSrc: "/help/billing.jpg",
+      keywords: ["stripe", "invoices", "plan", "trial", "upgrade"],
+    },
+    {
+      id: "settings",
+      navLabel: "Settings",
+      title: "Settings",
+      icon: "⚙️",
+      intro: "Organisation-level config. Set once, adjust when reality changes.",
+      bullets: [
+        "Set organisation name so staff know they’re in the correct account.",
+        "Set default location to reduce wrong-location logging.",
+        "More workflow controls will land here over time.",
+      ],
+      imageSrc: "/help/settings.jpg",
+      keywords: ["organisation", "defaults", "config"],
+    },
+    {
+      id: "glossary",
+      navLabel: "Glossary",
+      title: "Glossary",
+      icon: "📚",
+      intro: "Short definitions so staff don’t interpret things creatively.",
+      bullets: [
+        "Initials: staff signature used to attribute temps/cleaning/sign-offs.",
+        "Routine: pre-built checklist of temp checks (items + targets).",
+        "Target range: acceptable temperature range used for pass/fail.",
+        "Pass/Fail: whether a logged temp meets the target range.",
+        "Review interval: how often allergens should be confirmed and marked reviewed.",
+        "Audit trail: dated evidence of what was done, when, and by whom.",
+      ],
+      keywords: ["definitions", "terms", "audit"],
+    },
+  ];
+
+  const [query, setQuery] = useState("");
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  // Auto-open first relevant section when searching
+  useEffect(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return;
+
+    // If query looks like a troubleshooting query, scroll attention there by opening nothing else
+    // (We still filter FAQs in that section.)
+    const first = sections.find((s) => {
+      const hitTitle =
+        s.title.toLowerCase().includes(q) || s.intro.toLowerCase().includes(q);
+      const hitKeywords = (s.keywords ?? []).some((k) =>
+        k.toLowerCase().includes(q)
+      );
+      const hitBullets = s.bullets.some((b) => b.toLowerCase().includes(q));
+      return hitTitle || hitKeywords || hitBullets;
+    });
+
+    if (first) setOpenId(first.id);
+  }, [query]); // intentional: only depends on query
+
+  const filteredSections = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return sections;
+
+    return sections.filter((s) => {
+      const hitTitle =
+        s.title.toLowerCase().includes(q) || s.intro.toLowerCase().includes(q);
+      const hitKeywords = (s.keywords ?? []).some((k) =>
+        k.toLowerCase().includes(q)
+      );
+      const hitBullets = s.bullets.some((b) => b.toLowerCase().includes(q));
+      return hitTitle || hitKeywords || hitBullets;
+    });
+  }, [query, sections]);
+
+  return (
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 text-slate-900">
+      {/* Page header */}
+      <header className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-xl backdrop-blur-sm md:p-5">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold text-slate-900">
+            Help &amp; Setup Guide
+          </h1>
+          <p className="max-w-3xl text-sm text-slate-700">
+            Built for scanning. Find the section, grab the answer, move on.
+          </p>
+        </div>
+
+        {/* Search */}
+        <div className="grid gap-3 md:grid-cols-[1fr,auto] md:items-center">
+          <div className="relative">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search… e.g. ‘initials’, ‘reports’, ‘allergens’, ‘fail temp’, ‘wrong location’"
+              className="h-11 w-full rounded-2xl border border-slate-300 bg-white/80 px-4 pr-10 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-400"
+            />
+            {query.trim() ? (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xl border border-slate-300 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                aria-label="Clear search"
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+
+          <div className="text-xs text-slate-500">
+            {query.trim()
+              ? "Search filters sections + FAQs"
+              : "Tip: search is faster than scrolling."}
+          </div>
+        </div>
+
+        {/* Sticky nav */}
+        <nav className="sticky top-2 z-10 rounded-2xl border border-slate-200 bg-white/80 p-2 shadow-sm backdrop-blur-sm">
+          <div className="flex flex-wrap gap-2 text-xs">
+            {navItems.map(([id, label]) => (
+              <a
+                key={id}
+                href={`#${id}`}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {label}
+              </a>
+            ))}
+          </div>
         </nav>
       </header>
+
+      {/* Quick actions */}
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <MiniCallout
+          title="Quick actions"
+          items={[
+            "Missing initials? Team → set initials → refresh.",
+            "Temp fail? Corrective action + re-check immediately.",
+            "Need evidence? Reports → date range + location → export.",
+          ]}
+        />
+        <MiniCallout
+          title="Manager defaults"
+          items={[
+            "Dashboard twice daily (open + close).",
+            "Allergen review on a fixed cadence (monthly).",
+            "Training expiry check weekly (it always sneaks up).",
+          ]}
+        />
+        <MiniCallout
+          title="If you’re setting up today"
+          items={[
+            "Add locations + team first (otherwise dropdowns are empty).",
+            "Create routines that match real checks.",
+            "Keep daily cleaning realistic. Deep cleans weekly/monthly.",
+          ]}
+        />
+      </section>
 
       {/* FIRST TIME SETUP */}
       <section id="setup" className="space-y-4">
         <StepCard
           title="First-time setup (do this once)"
-          subtitle="This is the sequence that prevents 90% of issues later. Don’t skip it."
+          subtitle="This sequence prevents most later pain."
           steps={[
-            "Create your account and sign in (use a manager/admin login, not a shared staff account).",
-            "Set up your organisation name in Settings so the team sees the correct business name.",
-            "Create (or confirm) your Location(s) so logs are always tied to a real site/kitchen.",
-            "Add your Team members (name + initials). Initials are your digital ‘signature’.",
-            "Build your Temperature Routines (fridges/freezers, cooking, hot holding, deliveries). This is what makes daily logging quick.",
-            "Set up your Cleaning rota tasks (daily/weekly/monthly). Make them realistic, not fantasy.",
-            "Create or import your Allergen matrix (menu items + allergens). Then set review interval and mark it reviewed.",
-            "Run a test day: log a few temperatures, complete a few cleaning tasks, and generate a report to confirm everything shows up.",
+            "Create account and sign in (use a manager/admin login).",
+            "Set organisation name in Settings.",
+            "Create Location(s) so all logs are tied to a real site.",
+            "Add Team members (name + unique initials).",
+            "Build Temperature Routines (fridges/freezers, cooking, hot holding, deliveries).",
+            "Set up Cleaning rota tasks (daily/weekly/monthly). Keep daily realistic.",
+            "Create/import Allergen matrix, set review interval, mark reviewed.",
+            "Run a test day and generate a report to confirm everything appears correctly.",
           ]}
         />
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <MiniCallout
-            title="What ‘good setup’ looks like"
+            title="What good setup looks like"
             items={[
-              "Every routine matches a real check your team already does (or should be doing).",
-              "Initials list matches real staff and doesn’t include random duplicates like ‘AA’, ‘A.A.’, ‘Aa’.",
-              "Cleaning tasks are split by frequency (daily/weekly/monthly) so daily isn’t overloaded.",
-              "Allergen matrix is complete enough that front-of-house can trust it.",
+              "Routines match real checks staff already do.",
+              "Initials are unique and consistent (uppercase, no dots).",
+              "Daily cleaning is achievable. Deep cleans live in weekly/monthly.",
+              "Allergen matrix is maintained and reviewable.",
             ]}
           />
           <MiniCallout
-            title="Avoid these predictable mistakes"
+            title="Common mistakes"
             items={[
-              "Leaving routines empty and expecting staff to freestyle temperature targets (they won’t).",
-              "Not adding the team first, then wondering why initials aren’t available everywhere.",
-              "Creating 50 daily cleaning tasks and then acting shocked no one finishes them.",
-              "Not reviewing allergens and having no proof you maintain the matrix.",
+              "No routines, then staff freestyle targets.",
+              "Team not added first, then nothing shows in dropdowns.",
+              "50 daily cleaning tasks and zero completions.",
+              "Allergen matrix not reviewed, no proof it’s maintained.",
             ]}
           />
         </div>
@@ -197,223 +867,39 @@ export default function HelpPage() {
       <section id="day1" className="space-y-4">
         <StepCard
           title="Day 1 workflow (what staff actually do)"
-          subtitle="This is the standard operating rhythm. Print it mentally and enforce it."
+          subtitle="This is the minimum viable rhythm."
           steps={[
-            "Open TempTake at the start of shift and check the Dashboard: anything overdue, failed, or incomplete is now the priority.",
-            "Log required temperature checks using Routines (fridges/freezers first, then service checks during the day).",
-            "If a temperature fails, take corrective action immediately and re-check (don’t ‘fix it later’).",
-            "Complete Cleaning tasks as you go. Don’t batch them at the end unless you enjoy chaos.",
-            "Before close: check Dashboard again to confirm today’s cleaning and temperature records are complete.",
-            "Managers: once per week, review training expiry + allergen review status and update anything due.",
-          ]}
-        />
-
-        <MiniCallout
-          title="If you want compliance to stick"
-          items={[
-            "Make it part of the shift handover: ‘temps + cleaning done?’ is a normal question now.",
-            "Don’t let staff share initials. That kills accountability and audit value.",
-            "Use routines so entries are consistent (same wording, same targets, fewer mistakes).",
+            "Start of shift: open Dashboard, deal with anything overdue/failing first.",
+            "Log temps using Routines (fridges/freezers first, then service checks).",
+            "If a temp fails: corrective action + re-check immediately.",
+            "Complete cleaning tasks as you go (timestamps matter).",
+            "Before close: Dashboard check that today is complete for this location.",
+            "Managers: weekly review training expiry + allergen review status.",
           ]}
         />
       </section>
 
-      {/* Dashboard */}
-      <HelpSection
-        id="dashboard"
-        title="Dashboard"
-        icon="📊"
-        intro="Your daily control panel. If something’s wrong, it should show here first."
-        bullets={[
-          "Use the dashboard as a shift-start and shift-end checklist: are temps logged and cleaning done?",
-          "Watch failures: a failed temp is a risk signal and should trigger corrective action and re-check.",
-          "KPI tiles highlight due/overdue items (training and allergen reviews) so nothing quietly expires.",
-          "Managers should treat this as the ‘single source of truth’ for daily compliance status.",
-          "Operational tip: if the dashboard is green, you’re defensible in an inspection. If it’s red, you’re gambling.",
-        ]}
-        imageSrc="/help/dashboard.jpg"
-      />
+      {/* Help sections (filtered + accordion) */}
+      <div className="space-y-4">
+        {filteredSections.map((s) => (
+          <HelpSection
+            key={s.id}
+            {...s}
+            query={query}
+            isOpen={openId === s.id}
+            onToggle={() => setOpenId((cur) => (cur === s.id ? null : s.id))}
+          />
+        ))}
+      </div>
 
-      {/* Routines */}
-      <HelpSection
-        id="routines"
-        title="Routines"
-        icon="⏱️"
-        intro="Routines make temperature logging fast and consistent, which is the whole point."
-        bullets={[
-          "Build routines for each real-world process: fridges/freezers, deliveries, cooking core temps, hot holding, cooling, etc.",
-          "Each routine line should include a clear location and item name (e.g. ‘Walk-in fridge – Ready-to-eat shelf’).",
-          "Targets should match your policy/SFBB controls (e.g. chilled storage, hot holding, cooking limits).",
-          "When staff use a routine, they’re basically completing a pre-defined checklist. Less thinking, fewer errors.",
-          "Manager best practice: review routines quarterly or when equipment/menu changes.",
-          "If you have multiple sites, keep routine naming consistent across sites (standardisation = easier reporting).",
-        ]}
-        imageSrc="/help/routines.jpg"
-      />
+      {/* TROUBLESHOOTING as FAQs */}
+      <FaqSection query={query} />
 
-      {/* Allergens */}
-      <HelpSection
-        id="allergens"
-        title="Allergens"
-        icon="⚠️"
-        intro="Your allergen matrix is only useful if it’s accurate and reviewed."
-        bullets={[
-          "Record allergen content for each menu item (starter/main/side/dessert/drink) so staff can find it quickly.",
-          "Use consistent naming (e.g. don’t have ‘Chips’ and ‘Fries’ unless they are actually different products).",
-          "Use the safe-food query to find items that do NOT include selected allergens (helpful for customer questions).",
-          "Set a review interval that matches your reality (monthly is common; adjust if menu changes frequently).",
-          "When you mark reviewed, you create a dated audit trail showing maintenance of allergen controls.",
-          "Practical: print the matrix for FOH if you want belt-and-braces, but treat the app as your live master copy.",
-        ]}
-        imageSrc="/help/allergens.jpg"
-      />
-
-      {/* Cleaning rota */}
-      <HelpSection
-        id="cleaning"
-        title="Cleaning rota"
-        icon="🧽"
-        intro="Cleaning records need to be real, timely, and attributable. That’s what this rota enforces."
-        bullets={[
-          "Create tasks grouped by category or shift (Opening, Mid-shift, Close, FOH, Weekly, Monthly).",
-          "Set frequency correctly: daily tasks should be the minimum required; weekly/monthly catch deeper cleans.",
-          "Staff should complete tasks as they’re done (not end-of-day mass ticking). The timestamp matters.",
-          "Each completion should have initials so you can prove who did what (accountability and training gaps).",
-          "Manager routine: check weekly/monthly tasks don’t silently drift incomplete (they always do without oversight).",
-          "If tasks aren’t being completed, the fix is usually: reduce volume, improve clarity, and enforce standards. Not more nagging.",
-        ]}
-        imageSrc="/help/cleaning.jpg"
-      />
-
-      {/* Team */}
-      <HelpSection
-        id="team"
-        title="Team"
-        icon="👥"
-        intro="The Team area is where accountability and training records live."
-        bullets={[
-          "Add every staff member who will log temps or complete cleaning tasks. No ghost users.",
-          "Initials are the ‘signature’ used across the app. Keep them unique and consistent.",
-          "Use training records to track food hygiene certifications and expiry dates.",
-          "If you have frequent staff changes, update this monthly so your initials list stays clean.",
-          "Manager use-case: training due soon = schedule refresh training before you’re non-compliant.",
-          "Inspection reality: being able to show training status per staff member is a big credibility win.",
-        ]}
-        imageSrc="/help/team.jpg"
-      />
-
-      {/* Locations */}
-      <HelpSection
-        id="locations"
-        title="Locations"
-        icon="📍"
-        intro="Locations represent your physical site(s). They keep records separated and correctly attributed."
-        bullets={[
-          "Single-site: keep one clear location name (e.g. ‘Main Kitchen’).",
-          "Multi-site: create a location per venue so reports don’t blend unrelated operations.",
-          "If staff can’t tell which site they’re logging for, your data becomes messy fast.",
-          "Location limits are controlled by your subscription band (upgrade to add more).",
-          "Best practice: standardise naming conventions across sites (e.g. ‘Site A’, ‘Site B’).",
-        ]}
-        imageSrc="/help/locations.jpg"
-      />
-
-      {/* Suppliers */}
-      <HelpSection
-        id="suppliers"
-        title="Suppliers"
-        icon="🚚"
-        intro="Supplier records support traceability and due diligence when something goes wrong."
-        bullets={[
-          "Record supplier name, contact, phone, email and product categories supplied.",
-          "Use notes for ordering quirks (cut-off times, minimum order, delivery days).",
-          "Helpful for delivery disputes, credit notes, and recalls (and yes, those do happen).",
-          "If an EHO asks about sourcing, being able to pull supplier details quickly looks organised.",
-        ]}
-        imageSrc="/help/suppliers.jpg"
-      />
-
-      {/* Reports */}
-      <HelpSection
-        id="reports"
-        title="Reports"
-        icon="📑"
-        intro="Reports turn day-to-day logging into inspection-ready evidence."
-        bullets={[
-          "Use reports to compile temperature logs, cleaning records, and training evidence for a chosen period.",
-          "Instant audit gives a ready-made pack for managers and inspections (useful before an EHO visit).",
-          "Filters let you answer targeted questions: specific date range, location, equipment, or staff initials.",
-          "Operational: generate a report weekly and spot patterns (repeat failures, missed checks, weak shifts).",
-          "If you’re doing everything right but can’t prove it, it doesn’t count. Reports are the proof.",
-        ]}
-        imageSrc="/help/reports.jpg"
-      />
-
-      {/* Billing */}
-      <HelpSection
-        id="billing"
-        title="Billing & subscription"
-        icon="💳"
-        intro="Stripe handles payments. TempTake controls access based on your subscription status."
-        bullets={[
-          "Check your plan status (trial, active, past due) in the billing area.",
-          "Upgrade your band to unlock additional locations where applicable.",
-          "Use Stripe billing portal to update payment method and download invoices.",
-          "If billing is past due, some features may be limited. Fix it early, not on payroll day.",
-        ]}
-        imageSrc="/help/billing.jpg"
-      />
-
-      {/* Settings */}
-      <HelpSection
-        id="settings"
-        title="Settings"
-        icon="⚙️"
-        intro="Organisation-level configuration. Set it once, then only touch when something changes."
-        bullets={[
-          "Set your company/organisation name so staff know they’re in the correct account.",
-          "Choose default location to speed up logging and reduce wrong-location entries.",
-          "As the product grows, more settings will land here (formatting, audit controls, and workflow defaults).",
-        ]}
-        imageSrc="/help/settings.jpg"
-      />
-
-      {/* TROUBLESHOOTING */}
-      <HelpSection
-        id="troubleshooting"
-        title="Troubleshooting"
-        icon="🛠️"
-        intro="The boring but necessary part. Here’s what usually goes wrong and how to fix it."
-        bullets={[
-          "Initials missing in dropdowns: confirm the staff member is added in Team and has initials set.",
-          "Too many duplicate initials: standardise initials (uppercase, no dots) and remove duplicates from Team.",
-          "Routines not being used: routines are only useful if they match real checks. Update routine items to match actual equipment and process.",
-          "Cleaning not getting completed: reduce daily volume, improve task clarity (what/where/how), and assign responsibility by shift.",
-          "Allergen matrix doesn’t feel trusted: enforce a review cadence and make one person accountable for updates when menu changes.",
-          "Reports missing data: confirm you’re filtering the correct date range and location, and that entries are being saved under the right site.",
-        ]}
-      />
-
-      {/* GLOSSARY */}
-      <HelpSection
-        id="glossary"
-        title="Glossary"
-        icon="📚"
-        intro="Quick definitions so staff don’t interpret things creatively."
-        bullets={[
-          "Initials: the staff member’s signature used to attribute actions (temps, cleaning, sign-offs).",
-          "Routine: a pre-built checklist of temperature checks (items + targets) that staff run quickly.",
-          "Target range: acceptable temperature range for a check (used to determine pass/fail).",
-          "Pass/Fail: whether a logged temperature meets the target range (fail should trigger corrective action).",
-          "Review interval: how often allergen information should be confirmed and marked reviewed.",
-          "Audit trail: dated evidence of what was done, when, and by whom (what EHOs care about).",
-        ]}
-      />
-
+      {/* GLOSSARY (kept in main sections, but anchor still in nav) */}
       {/* Footer */}
       <footer className="mt-4 border-t border-slate-200 pt-4 text-xs text-slate-500">
         <div>
-          Need more help or want to suggest a new feature?{" "}
+          Need more help or want to suggest a feature?{" "}
           <Link href="mailto:info@temptake.com" className="underline">
             Contact support
           </Link>{" "}
