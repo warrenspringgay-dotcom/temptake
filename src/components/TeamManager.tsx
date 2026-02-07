@@ -940,17 +940,6 @@ export default function TeamManager() {
                   </div>
                 </label>
 
-                {allowLogin && editing.id && !editing.user_id ? (
-                  <label className="mt-3 flex items-center gap-2 text-xs text-slate-700">
-                    <input
-                      type="checkbox"
-                      className="accent-emerald-600"
-                      checked={inviteOnSave}
-                      onChange={(e) => setInviteOnSave(e.target.checked)}
-                    />
-                    Send invite link on save
-                  </label>
-                ) : null}
               </div>
 
               <div className="grid gap-3">
