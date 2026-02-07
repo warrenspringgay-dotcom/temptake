@@ -56,14 +56,43 @@ type TrainingCert = {
 };
 
 /* -------------------- Helpers -------------------- */
+
+function normalizeInitials(s: string) {
+  return (s || "")
+    .toUpperCase()
+    .replace(/\./g, "")
+    .replace(/[^A-Z0-9]/g, "")
+    .trim();
+}
+
+function makeInitialsFromName(name: string) {
+  const parts = (name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return (parts[0]?.slice(0, 2) ?? "").toUpperCase();
+
+  const first = parts[0]?.[0] ?? "";
+  const last = parts[parts.length - 1]?.[0] ?? "";
+  return (first + last).toUpperCase();
+}
+
+function validateInitials(s: string) {
+  const v = normalizeInitials(s);
+  if (!v) return "Initials are required.";
+  if (v.length < 2) return "Initials must be at least 2 characters.";
+  if (v.length > 4) return "Initials must be 4 characters or less.";
+  return null;
+}
+
 function safeInitials(m: Member): string {
-  const fromField = (m.initials ?? "").trim().toUpperCase();
+  const fromField = normalizeInitials(m.initials ?? "");
   if (fromField) return fromField;
 
-  const parts = m.name.trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "";
-  if (parts.length === 1) return parts[0]!.charAt(0).toUpperCase();
-  return (parts[0]!.charAt(0) + parts[1]!.charAt(0)).toUpperCase();
+  const gen = makeInitialsFromName(m.name);
+  return gen;
 }
 
 function prettyRole(role: string | null) {
@@ -234,11 +263,13 @@ export default function TeamManager() {
 
       // Auto-create owner row if empty
       if (members.length === 0 && id && userEmail) {
+        const ownerInitials = normalizeInitials(makeInitialsFromName(userName)) || "OW";
+
         const { data: inserted, error: insErr } = await supabase
           .from("team_members")
           .insert({
             org_id: id,
-            initials: null,
+            initials: ownerInitials, // ✅ NOT NULL
             name: userName,
             email: userEmail,
             role: "owner",
@@ -412,18 +443,27 @@ export default function TeamManager() {
     if (!editing) return;
     try {
       if (!orgId) return alert("No organisation found.");
-      if (!editing.name.trim()) return alert("Name is required.");
+
+      const nameClean = (editing.name ?? "").trim();
+      if (!nameClean) return alert("Name is required.");
+
+      // ✅ initials must never be null (DB NOT NULL)
+      let initialsClean = normalizeInitials(editing.initials ?? "");
+      if (!initialsClean) initialsClean = normalizeInitials(makeInitialsFromName(nameClean));
+
+      const initialsErr = validateInitials(initialsClean);
+      if (initialsErr) return alert(initialsErr);
 
       const roleValue = (editing.role ?? "").trim().toLowerCase() || "staff";
       const trainingAreas = normalizeAreas(editing.training_areas);
 
       if (editing.id) {
         const updatePayload: any = {
-          initials: editing.initials?.trim() || null,
-          name: editing.name.trim(),
-          email: editing.email?.trim() || null,
-          phone: editing.phone?.trim() || null,
-          notes: editing.notes?.trim() || null,
+          initials: initialsClean,
+          name: nameClean,
+          email: (editing.email ?? "").trim() || null,
+          phone: (editing.phone ?? "").trim() || null,
+          notes: (editing.notes ?? "").trim() || null,
           active: editing.active ?? true,
           training_areas: trainingAreas,
         };
@@ -450,12 +490,12 @@ export default function TeamManager() {
           .from("team_members")
           .insert({
             org_id: orgId,
-            initials: editing.initials?.trim() || null,
-            name: editing.name.trim(),
-            email: editing.email?.trim() || null,
+            initials: initialsClean, // ✅ NOT NULL
+            name: nameClean,
+            email: (editing.email ?? "").trim() || null,
             role: roleValue,
-            phone: editing.phone?.trim() || null,
-            notes: editing.notes?.trim() || null,
+            phone: (editing.phone ?? "").trim() || null,
+            notes: (editing.notes ?? "").trim() || null,
             active: true,
             training_areas: trainingAreas,
           })
@@ -793,7 +833,7 @@ export default function TeamManager() {
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-slate-500">Initials</span>
-                    <span className="text-right">{m.initials ?? initials ?? "—"}</span>
+                    <span className="text-right">{normalizeInitials(m.initials ?? "") || initials || "—"}</span>
                   </div>
                 </div>
 
@@ -851,19 +891,43 @@ export default function TeamManager() {
               <div className="grid gap-3">
                 <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <label className="mb-1 block text-xs text-slate-500">Initials</label>
+                    <label className="mb-1 block text-xs text-slate-500">Initials *</label>
                     <input
                       className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                       value={editing.initials ?? ""}
-                      onChange={(e) => setEditing({ ...editing, initials: e.target.value })}
+                      onChange={(e) =>
+                        setEditing({
+                          ...editing,
+                          initials: normalizeInitials(e.target.value),
+                        })
+                      }
+                      placeholder="e.g. WS"
                     />
+                    <div className="mt-1 text-[10px] text-slate-500">
+                      2–4 chars. Uppercase. No dots.
+                    </div>
                   </div>
+
                   <div className="col-span-2">
                     <label className="mb-1 block text-xs text-slate-500">Name *</label>
                     <input
                       className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                       value={editing.name}
-                      onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                      onChange={(e) => {
+                        const nextName = e.target.value;
+                        setEditing((cur) => {
+                          if (!cur) return cur;
+
+                          const curInitials = normalizeInitials(cur.initials ?? "");
+                          // Auto-fill initials only if empty
+                          if (!curInitials) {
+                            const gen = makeInitialsFromName(nextName);
+                            return { ...cur, name: nextName, initials: gen };
+                          }
+
+                          return { ...cur, name: nextName };
+                        });
+                      }}
                     />
                   </div>
                 </div>
@@ -1105,34 +1169,32 @@ export default function TeamManager() {
                           }
                           placeholder="Certificate URL (optional)"
                         />
-                       {/* Certificate link + upload (clear labels) */}
-<div>
+                        {/* Certificate link + upload (clear labels) */}
+                        <div>
+                          <label className="block">
+                            <span className="mb-1 block text-[11px] font-medium text-slate-600">
+                              Certificate file (PDF or photo)
+                            </span>
+                            <input
+                              type="file"
+                              accept=".pdf,image/*"
+                              className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs pt-1"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0] ?? null;
+                                setEditCertFile(f);
+                              }}
+                            />
+                            <span className="mt-1 block text-[10px] text-slate-500">
+                              Upload the staff member’s training certificate (PDF preferred). Stored for inspections.
+                            </span>
 
-  <label className="block">
-    <span className="mb-1 block text-[11px] font-medium text-slate-600">
-      Certificate file (PDF or photo)
-    </span>
-    <input
-      type="file"
-      accept=".pdf,image/*"
-      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs pt-1"
-      onChange={(e) => {
-        const f = e.target.files?.[0] ?? null;
-        setEditCertFile(f);
-      }}
-    />
-    <span className="mt-1 block text-[10px] text-slate-500">
-      Upload the staff member’s training certificate (PDF preferred). Stored for inspections.
-    </span>
-
-    {editCertFile ? (
-      <span className="mt-1 block text-[10px] text-slate-600">
-        Selected: <span className="font-medium">{editCertFile.name}</span>
-      </span>
-    ) : null}
-  </label>
-</div>
-
+                            {editCertFile ? (
+                              <span className="mt-1 block text-[10px] text-slate-600">
+                                Selected: <span className="font-medium">{editCertFile.name}</span>
+                              </span>
+                            ) : null}
+                          </label>
+                        </div>
                       </div>
 
                       <input
@@ -1195,7 +1257,7 @@ export default function TeamManager() {
               <div className="space-y-2 p-4 text-sm">
                 <div>
                   <span className="font-medium">Initials:</span>{" "}
-                  {viewFor.initials ?? safeInitials(viewFor) ?? "—"}
+                  {normalizeInitials(viewFor.initials ?? "") || safeInitials(viewFor) || "—"}
                 </div>
                 <div>
                   <span className="font-medium">Role:</span> {prettyRole(viewFor.role)}
