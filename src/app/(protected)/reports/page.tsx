@@ -123,6 +123,13 @@ type TrainingAreaRow = {
   status: TrainingAreaStatus;
 };
 
+type HygieneRating = {
+  rating: number | null; // 0-5
+  rated_on: string | null; // ISO date/datetime
+  scheme: "FHRS" | "FHIS" | null;
+};
+
+
 // Unified incidents row used by the UI table (includes temp failures too)
 type UnifiedIncidentRow = {
   id: string;
@@ -974,6 +981,7 @@ export default function ReportsPage() {
   const [to, setTo] = useState(toISODate(today));
 
   const [orgId, setOrgId] = useState<string | null>(null);
+const [hygiene, setHygiene] = useState<HygieneRating | null>(null);
 
   const [locationFilter, setLocationFilter] = useState<string | "all">("all");
   const [locations, setLocations] = useState<LocationOption[]>([]);
@@ -1076,6 +1084,39 @@ export default function ReportsPage() {
   }, [trainingMatrix, showAllTrainingAreas]);
 
   /* ---------- boot: org + locations ---------- */
+async function fetchFoodHygieneRating(
+  orgId: string,
+  locationId: string | null
+): Promise<HygieneRating | null> {
+  // Only meaningful when a specific location is selected
+  if (!locationId) return null;
+
+  const { data, error } = await supabase
+    .from("locations")
+    .select("id, food_hygiene_rating, food_hygiene_rating_date, country")
+    .eq("org_id", orgId)
+    .eq("id", locationId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+
+  // Optional: infer scheme based on country (Scotland uses FHIS scheme)
+  const country = (data as any).country ? String((data as any).country) : "";
+  const scheme: HygieneRating["scheme"] =
+    country.toLowerCase().includes("scotland") ? "FHIS" : "FHRS";
+
+  return {
+    rating:
+      (data as any).food_hygiene_rating != null ? Number((data as any).food_hygiene_rating) : null,
+    rated_on: (data as any).food_hygiene_rating_date
+      ? String((data as any).food_hygiene_rating_date)
+      : null,
+    scheme,
+  };
+}
+
+
 
   useEffect(() => {
     (async () => {
@@ -1175,25 +1216,30 @@ export default function ReportsPage() {
       setShowAllCleaningRuns(false);
 
       if (includeAncillary) {
-        const withinDays = 90;
-        const [m, a, e, ta] = await Promise.all([
-          fetchTeamDue(withinDays, orgIdValue),
-          fetchAllergenLog(withinDays, orgIdValue),
-          fetchEducation(orgIdValue),
-          fetchTrainingAreasReport(orgIdValue),
-        ]);
+  const withinDays = 90;
+  const [m, a, e, ta, hy] = await Promise.all([
+    fetchTeamDue(withinDays, orgIdValue),
+    fetchAllergenLog(withinDays, orgIdValue),
+    fetchEducation(orgIdValue),
+    fetchTrainingAreasReport(orgIdValue),
+    fetchFoodHygieneRating(orgIdValue, locationId),
+  ]);
 
-        setTeamDue(m);
-        setAllergenLog(a);
-        setEducation(e);
-        setTrainingAreas(ta);
+  setTeamDue(m);
+  setAllergenLog(a);
+  setEducation(e);
+  setTrainingAreas(ta);
+  setHygiene(hy);
 
-        setShowAllEducation(false);
-        setShowAllTrainingAreas(false);
-      }
+  setShowAllEducation(false);
+  setShowAllTrainingAreas(false);
+}
+
     } catch (e: any) {
       setErr(e?.message ?? "Failed to run report.");
       setTemps(null);
+      setHygiene(null);
+
       setTeamDue(null);
       setAllergenLog(null);
       setAllergenChanges(null);
@@ -1440,6 +1486,39 @@ export default function ReportsPage() {
             </div>
           </div>
         </Card>
+
+<Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+  <h3 className="mb-2 text-base font-semibold">Food hygiene rating</h3>
+
+  {locationFilter === "all" ? (
+    <p className="text-sm text-slate-600">
+      Select a location to show its rating.
+    </p>
+  ) : !hygiene ? (
+    <p className="text-sm text-slate-600">
+      No rating saved for this location.
+    </p>
+  ) : (
+    <div className="flex flex-col gap-1 text-sm">
+      <div>
+        <span className="text-slate-500">Rating:</span>{" "}
+        <span className="font-semibold">
+          {hygiene.rating != null ? `${hygiene.rating}/5` : "—"}
+        </span>{" "}
+        {hygiene.scheme ? (
+          <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+            {hygiene.scheme}
+          </span>
+        ) : null}
+      </div>
+      <div className="text-slate-600">
+        <span className="text-slate-500">Rated on:</span>{" "}
+        {hygiene.rated_on ? formatISOToUK(hygiene.rated_on) : "—"}
+      </div>
+    </div>
+  )}
+</Card>
+
 
         {/* Temperature Logs */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
