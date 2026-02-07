@@ -40,8 +40,6 @@ type Member = {
   active: boolean | null;
   notes?: string | null;
   training_areas?: TrainingArea[] | null; // stored on team_members as text[]
-  login_enabled?: boolean | null; // new column (default true)
-  user_id?: string | null; // optional if you select it
 };
 
 type TrainingCert = {
@@ -57,19 +55,14 @@ type TrainingCert = {
 };
 
 /* -------------------- Helpers -------------------- */
-function deriveInitialsFromName(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "";
-  if (parts.length === 1) return parts[0]!.charAt(0).toUpperCase();
-  return (parts[0]!.charAt(0) + parts[1]!.charAt(0)).toUpperCase();
-}
-
 function safeInitials(m: Member): string {
   const fromField = (m.initials ?? "").trim().toUpperCase();
   if (fromField) return fromField;
 
-  const fromName = deriveInitialsFromName(m.name ?? "");
-  return fromName;
+  const parts = m.name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "";
+  if (parts.length === 1) return parts[0]!.charAt(0).toUpperCase();
+  return (parts[0]!.charAt(0) + parts[1]!.charAt(0)).toUpperCase();
 }
 
 function prettyRole(role: string | null) {
@@ -97,6 +90,11 @@ function pillClassSelected(selected: boolean) {
     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
 }
 
+/**
+ * 12-month policy for pills.
+ * If you want "12 months" exactly regardless of leap years,
+ * we do date + 12 months (not 365 days).
+ */
 function addMonthsISODate(months: number) {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -139,9 +137,17 @@ function certTitle(c: TrainingCert) {
   return `${providerLabel} · ${courseLabel}`;
 }
 
-function isValidEmail(email: string) {
-  // good enough for UI gating
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim().toLowerCase());
+function cleanEmail(val: string | null | undefined) {
+  const e = (val ?? "").trim().toLowerCase();
+  return e || "";
+}
+
+function requireInitialsOrDerive(editing: Member) {
+  const forced = (editing.initials ?? "").trim().toUpperCase();
+  if (forced) return forced;
+
+  const derived = safeInitials({ ...editing, initials: "" });
+  return derived.trim().toUpperCase();
 }
 
 /* ================================================= */
@@ -159,21 +165,12 @@ export default function TeamManager() {
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
 
-  // New: login toggle in the modal
-  const [allowLogin, setAllowLogin] = useState(true);
-  const [inviteOnSave, setInviteOnSave] = useState(false);
+  // NEW: add-member login toggle
+  const [allowLogin, setAllowLogin] = useState<boolean>(false);
+  const [sendingInviteOnSave, setSendingInviteOnSave] = useState(false);
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewFor, setViewFor] = useState<Member | null>(null);
-
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteForm, setInviteForm] = useState({
-    email: "",
-    role: "staff",
-  });
-  const [inviteSending, setInviteSending] = useState(false);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [inviteInfo, setInviteInfo] = useState<string | null>(null);
 
   const [highlightId, setHighlightId] = useState<string | null>(null);
 
@@ -230,7 +227,7 @@ export default function TeamManager() {
 
       const { data, error } = await supabase
         .from("team_members")
-        .select("id, initials, name, email, role, phone, active, notes, training_areas, login_enabled, user_id")
+        .select("id, initials, name, email, role, phone, active, notes, training_areas")
         .eq("org_id", id)
         .order("name", { ascending: true });
 
@@ -243,12 +240,23 @@ export default function TeamManager() {
 
       // Auto-create owner row if empty
       if (members.length === 0 && id && userEmail) {
-        const initials = deriveInitialsFromName(userName) || "OW";
+        const derivedInitials = requireInitialsOrDerive({
+          id: "",
+          initials: null,
+          name: userName,
+          email: userEmail,
+          role: "owner",
+          phone: null,
+          active: true,
+          notes: null,
+          training_areas: [],
+        });
+
         const { data: inserted, error: insErr } = await supabase
           .from("team_members")
           .insert({
             org_id: id,
-            initials, // avoid NOT NULL crash
+            initials: derivedInitials, // NOT NULL in DB
             name: userName,
             email: userEmail,
             role: "owner",
@@ -256,9 +264,8 @@ export default function TeamManager() {
             notes: null,
             active: true,
             training_areas: [],
-            login_enabled: true,
           })
-          .select("id, initials, name, email, role, phone, active, notes, training_areas, login_enabled, user_id")
+          .select("id, initials, name, email, role, phone, active, notes, training_areas")
           .maybeSingle();
 
         if (!insErr && inserted) {
@@ -342,13 +349,13 @@ export default function TeamManager() {
       active: true,
       notes: "",
       training_areas: [],
-      login_enabled: true,
-      user_id: null,
     });
 
-    setAllowLogin(true);
-    setInviteOnSave(false);
+    // NEW default: no login unless they explicitly tick it
+    setAllowLogin(false);
+    setSendingInviteOnSave(false);
 
+    // reset edit-education state
     setEditCerts([]);
     setEditCertsLoading(false);
     setEditCertSaving(false);
@@ -373,10 +380,9 @@ export default function TeamManager() {
       training_areas: normalizeAreas(m.training_areas),
     });
 
-    const loginEnabled = m.login_enabled ?? true;
-    setAllowLogin(loginEnabled);
-    // Only auto-invite-on-save if they are not linked yet
-    setInviteOnSave(loginEnabled && !m.user_id);
+    // Editing existing staff: login linking is not handled here
+    setAllowLogin(false);
+    setSendingInviteOnSave(false);
 
     await loadEditCertsForMember(m);
 
@@ -428,20 +434,47 @@ export default function TeamManager() {
     }
   }
 
-  async function maybeInviteLogin(email: string, role: string) {
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanRole = (role.trim() || "staff").toLowerCase();
+  async function ensureMemberRowByEmail(params: {
+    orgId: string;
+    email: string;
+    payload: any;
+  }): Promise<string> {
+    const { orgId, email, payload } = params;
 
-    if (!cleanEmail) throw new Error("Email is required to allow login.");
-    if (!isValidEmail(cleanEmail)) throw new Error("Enter a valid email address.");
+    // Try find existing by org+email
+    const { data: existing, error: selErr } = await supabase
+      .from("team_members")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("email", email)
+      .maybeSingle();
 
-    const res = await inviteTeamMemberServer({ email: cleanEmail, role: cleanRole });
+    if (selErr) throw selErr;
 
-    if (!res.ok) throw new Error(res.message ?? "Failed to send invite.");
+    if (existing?.id) {
+      const { error: upErr } = await supabase
+        .from("team_members")
+        .update(payload)
+        .eq("id", existing.id)
+        .eq("org_id", orgId);
+
+      if (upErr) throw upErr;
+      return String(existing.id);
+    }
+
+    const { data: inserted, error: insErr } = await supabase
+      .from("team_members")
+      .insert(payload)
+      .select("id")
+      .single();
+
+    if (insErr) throw insErr;
+    return String(inserted.id);
   }
 
   async function saveMember() {
     if (!editing) return;
+
     try {
       if (!orgId) return alert("No organisation found.");
       if (!editing.name.trim()) return alert("Name is required.");
@@ -449,79 +482,116 @@ export default function TeamManager() {
       const roleValue = (editing.role ?? "").trim().toLowerCase() || "staff";
       const trainingAreas = normalizeAreas(editing.training_areas);
 
-      const derivedInitials = deriveInitialsFromName(editing.name.trim());
-      const initialsToSave = (editing.initials ?? "").trim().toUpperCase() || derivedInitials || "—";
+      // DB is NOT NULL on initials, so we always derive something.
+      const initialsToSave = requireInitialsOrDerive(editing);
+      if (!initialsToSave) return alert("Initials are required (or enter a name we can derive from).");
 
-      // Decide login behaviour
-      const login_enabled = !!allowLogin;
-
-      // If login enabled, email is required
-      const emailToSave = (editing.email ?? "").trim().toLowerCase() || null;
-      if (login_enabled && (!emailToSave || !isValidEmail(emailToSave))) {
-        return alert("Email is required (and must be valid) if login is enabled.");
-      }
+      const emailNormalized = cleanEmail(editing.email);
 
       if (editing.id) {
         const updatePayload: any = {
-          initials: initialsToSave, // avoid NOT NULL crash
+          initials: initialsToSave,
           name: editing.name.trim(),
-          email: emailToSave,
-          phone: editing.phone?.trim() || null,
-          notes: editing.notes?.trim() || null,
+          email: emailNormalized || null,
+          phone: (editing.phone ?? "").trim() || null,
+          notes: (editing.notes ?? "").trim() || null,
           active: editing.active ?? true,
           training_areas: trainingAreas,
-          login_enabled,
         };
 
-        if (isOwner) {
-          updatePayload.role = roleValue;
-        }
+        if (isOwner) updatePayload.role = roleValue;
 
         const { error } = await supabase
           .from("team_members")
           .update(updatePayload)
           .eq("id", editing.id)
           .eq("org_id", orgId);
+
         if (error) throw error;
 
         await syncTrainingTracking(editing.id, trainingAreas);
 
-        // Invite if: login enabled + not linked + user chose to invite (or default true for unlinked)
-        if (login_enabled && (inviteOnSave || !editing.user_id)) {
-          await maybeInviteLogin(emailToSave!, roleValue);
-        }
-      } else {
-        if (!isOwner) {
-          alert("Only the owner can add team members.");
+        setEditOpen(false);
+        setEditing(null);
+        await load();
+        return;
+      }
+
+      // Adding a new member
+      if (!isOwner) {
+        alert("Only the owner can add team members.");
+        return;
+      }
+
+      // If they want login, require email and send invite on Save.
+      if (allowLogin) {
+        if (!emailNormalized) {
+          alert("Email is required to allow login.");
           return;
         }
 
-        const { data: inserted, error } = await supabase
-          .from("team_members")
-          .insert({
-            org_id: orgId,
-            initials: initialsToSave, // avoid NOT NULL crash
-            name: editing.name.trim(),
-            email: emailToSave,
-            role: roleValue,
-            phone: editing.phone?.trim() || null,
-            notes: editing.notes?.trim() || null,
-            active: true,
-            training_areas: trainingAreas,
-            login_enabled,
-          })
-          .select("id")
-          .single();
+        setSendingInviteOnSave(true);
 
-        if (error) throw error;
+        // 1) Send invite (creates auth user + whatever your server action does)
+        const res = await inviteTeamMemberServer({
+          email: emailNormalized,
+          role: roleValue,
+        });
 
-        if (inserted?.id) {
-          await syncTrainingTracking(inserted.id, trainingAreas);
+        if (!res.ok) {
+          throw new Error(res.message ?? "Failed to send invite.");
         }
 
-        if (login_enabled) {
-          await maybeInviteLogin(emailToSave!, roleValue);
-        }
+        // 2) Ensure the team_members row exists and has the full profile fields you entered
+        const payload: any = {
+          org_id: orgId,
+          initials: initialsToSave,
+          name: editing.name.trim(),
+          email: emailNormalized,
+          role: roleValue,
+          phone: (editing.phone ?? "").trim() || null,
+          notes: (editing.notes ?? "").trim() || null,
+          active: true,
+          training_areas: trainingAreas,
+        };
+
+        const memberId = await ensureMemberRowByEmail({
+          orgId,
+          email: emailNormalized,
+          payload,
+        });
+
+        await syncTrainingTracking(memberId, trainingAreas);
+
+        alert("Invite sent. They’ll get an email to set their password and log in.");
+
+        setEditOpen(false);
+        setEditing(null);
+        await load();
+        return;
+      }
+
+      // No login: create staff record only
+      const { data: inserted, error } = await supabase
+        .from("team_members")
+        .insert({
+          org_id: orgId,
+          initials: initialsToSave,
+          name: editing.name.trim(),
+          email: emailNormalized || null,
+          role: roleValue,
+          phone: (editing.phone ?? "").trim() || null,
+          notes: (editing.notes ?? "").trim() || null,
+          active: true,
+          training_areas: trainingAreas,
+        })
+        .select("id")
+        .single();
+
+      if (error) throw error;
+
+      if (inserted?.id) {
+        await syncTrainingTracking(String(inserted.id), trainingAreas);
       }
 
       setEditOpen(false);
@@ -529,6 +599,8 @@ export default function TeamManager() {
       await load();
     } catch (e: any) {
       alert(e?.message ?? "Save failed.");
+    } finally {
+      setSendingInviteOnSave(false);
     }
   }
 
@@ -665,47 +737,6 @@ export default function TeamManager() {
     await loadCertsForMember(m);
   }
 
-  /* -------------------- Invite flow (standalone modal) -------------------- */
-  function openInvite() {
-    setInviteForm({ email: "", role: "staff" });
-    setInviteError(null);
-    setInviteInfo(null);
-    setInviteOpen(true);
-  }
-
-  async function sendInvite() {
-    setInviteError(null);
-    setInviteInfo(null);
-
-    const cleanEmail = inviteForm.email.trim().toLowerCase();
-    const role = (inviteForm.role.trim() || "staff").toLowerCase();
-
-    if (!cleanEmail) {
-      setInviteError("Enter an email to invite.");
-      return;
-    }
-
-    try {
-      setInviteSending(true);
-
-      const res = await inviteTeamMemberServer({
-        email: cleanEmail,
-        role,
-      });
-
-      if (!res.ok) {
-        setInviteError(res.message ?? "Failed to send invite.");
-      } else {
-        setInviteInfo("Invite sent. They’ll get an email to set their password and log in.");
-        await load();
-      }
-    } catch (e: any) {
-      setInviteError(e?.message ?? "Failed to send invite.");
-    } finally {
-      setInviteSending(false);
-    }
-  }
-
   /* -------------------- Render -------------------- */
   return (
     <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
@@ -722,20 +753,12 @@ export default function TeamManager() {
           />
 
           {isOwner && (
-            <>
-              <button
-                onClick={openInvite}
-                className="whitespace-nowrap rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-              >
-                Invite by email
-              </button>
-              <button
-                onClick={openAdd}
-                className="whitespace-nowrap rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-              >
-                + Add member
-              </button>
-            </>
+            <button
+              onClick={openAdd}
+              className="whitespace-nowrap rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+            >
+              + Add member
+            </button>
           )}
         </div>
       </div>
@@ -752,18 +775,6 @@ export default function TeamManager() {
             const roleLabel = prettyRole(m.role);
             const activeLabel = m.active ? "Active" : "Inactive";
             const areas = normalizeAreas(m.training_areas);
-            const loginEnabled = m.login_enabled ?? true;
-            const loginBadge =
-              loginEnabled
-                ? (m.user_id ? "Linked" : "Invite pending")
-                : "No login";
-
-            const loginBadgeCls =
-              !loginEnabled
-                ? "bg-slate-50 text-slate-600 border border-slate-200"
-                : m.user_id
-                ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
-                : "bg-amber-50 text-amber-800 border border-amber-200";
 
             return (
               <div
@@ -799,10 +810,6 @@ export default function TeamManager() {
                           }`}
                         >
                           {activeLabel}
-                        </span>
-
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${loginBadgeCls}`}>
-                          {loginBadge}
                         </span>
                       </div>
                     </div>
@@ -913,35 +920,6 @@ export default function TeamManager() {
                 </button>
               </div>
 
-              {/* Login toggle */}
-              <div className="mb-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
-                <label className="flex items-start gap-3">
-                  <input
-                    type="checkbox"
-                    className="mt-1 accent-emerald-600"
-                    checked={allowLogin}
-                    onChange={(e) => {
-                      const next = e.target.checked;
-                      setAllowLogin(next);
-                      setInviteOnSave(next); // if enabling login, default to inviting on save
-                      setEditing((cur) =>
-                        cur ? { ...cur, login_enabled: next } : cur
-                      );
-                    }}
-                  />
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-slate-900">
-                      Allow this person to log in
-                    </div>
-                    <div className="text-xs text-slate-600">
-                      If enabled, an email is required and we’ll send them an invite link on save.
-                      If disabled, they are staff-only (no login).
-                    </div>
-                  </div>
-                </label>
-
-              </div>
-
               <div className="grid gap-3">
                 <div className="grid grid-cols-3 gap-3">
                   <div>
@@ -952,9 +930,9 @@ export default function TeamManager() {
                       onChange={(e) => setEditing({ ...editing, initials: e.target.value })}
                       placeholder="WS"
                     />
-                    <div className="mt-1 text-[11px] text-slate-500">
-                      If blank, we’ll auto-generate from the name.
-                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Required (auto-derived from name if left blank).
+                    </p>
                   </div>
                   <div className="col-span-2">
                     <label className="mb-1 block text-xs text-slate-500">Name *</label>
@@ -966,10 +944,30 @@ export default function TeamManager() {
                   </div>
                 </div>
 
+                {/* NEW: Allow login (only when adding) */}
+                {!editing.id && (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+                    <label className="flex items-start gap-3 text-sm text-slate-800">
+                      <input
+                        type="checkbox"
+                        className="mt-1 accent-emerald-600"
+                        checked={allowLogin}
+                        onChange={(e) => setAllowLogin(e.target.checked)}
+                      />
+                      <span>
+                        <span className="font-semibold">Allow user to log in</span>
+                        <div className="mt-0.5 text-[11px] text-slate-600">
+                          If enabled, we’ll send them an invite email on Save. If disabled, this is a staff record only (no login).
+                        </div>
+                      </span>
+                    </label>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="mb-1 block text-xs text-slate-500">
-                      Email {allowLogin ? "*" : ""}
+                      Email{!editing.id && allowLogin ? " *" : ""}
                     </label>
                     <input
                       className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
@@ -977,9 +975,11 @@ export default function TeamManager() {
                       onChange={(e) => setEditing({ ...editing, email: e.target.value })}
                       placeholder="team@example.com"
                     />
-                    {allowLogin && editing.email && !isValidEmail(editing.email) ? (
-                      <div className="mt-1 text-[11px] text-rose-700">Email looks invalid.</div>
-                    ) : null}
+                    {!editing.id && allowLogin && (
+                      <p className="mt-1 text-[11px] text-slate-600">
+                        Required to send invite.
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-slate-500">Phone</label>
@@ -1267,11 +1267,12 @@ export default function TeamManager() {
                     Cancel
                   </button>
                   <button
-                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
                     onClick={() => void saveMember()}
+                    disabled={sendingInviteOnSave}
                     type="button"
                   >
-                    Save
+                    {sendingInviteOnSave ? "Sending invite…" : "Save"}
                   </button>
                 </div>
               </div>
@@ -1307,12 +1308,6 @@ export default function TeamManager() {
                 </div>
                 <div>
                   <span className="font-medium">Phone:</span> {viewFor.phone ?? "—"}
-                </div>
-                <div>
-                  <span className="font-medium">Login:</span>{" "}
-                  {(viewFor.login_enabled ?? true)
-                    ? (viewFor.user_id ? "Linked" : "Invite pending")
-                    : "No login"}
                 </div>
                 <div>
                   <span className="font-medium">Training areas:</span>{" "}
@@ -1396,85 +1391,6 @@ export default function TeamManager() {
                 >
                   Close
                 </button>
-              </div>
-            </div>
-          </div>
-        </ModalPortal>
-      )}
-
-      {/* Invite modal */}
-      {inviteOpen && (
-        <ModalPortal>
-          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setInviteOpen(false)}>
-            <div
-              className="mx-auto mt-16 w-full max-w-md rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-6rem)] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="mb-3 flex items-center justify-between">
-                <div className="text-base font-semibold">Invite team member</div>
-                <button
-                  onClick={() => setInviteOpen(false)}
-                  className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="space-y-3 text-sm">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Email</label>
-                  <input
-                    type="email"
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                    placeholder="team@example.com"
-                    value={inviteForm.email}
-                    onChange={(e) => setInviteForm((f) => ({ ...f, email: e.target.value }))}
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Role</label>
-                  <select
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                    value={inviteForm.role}
-                    onChange={(e) => setInviteForm((f) => ({ ...f, role: e.target.value }))}
-                  >
-                    <option value="staff">Staff</option>
-                    <option value="manager">Manager</option>
-                    <option value="owner">Owner</option>
-                  </select>
-                </div>
-
-                <p className="text-xs text-slate-500">
-                  We’ll add them to this business and send a sign-in link.
-                </p>
-
-                {inviteError && (
-                  <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                    {inviteError}
-                  </div>
-                )}
-                {inviteInfo && (
-                  <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-                    {inviteInfo}
-                  </div>
-                )}
-
-                <div className="flex justify-end gap-2 pt-1">
-                  <button
-                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                    onClick={() => setInviteOpen(false)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-                    disabled={inviteSending}
-                    onClick={() => void sendInvite()}
-                  >
-                    {inviteSending ? "Sending…" : "Send invite"}
-                  </button>
-                </div>
               </div>
             </div>
           </div>
