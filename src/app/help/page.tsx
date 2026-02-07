@@ -521,7 +521,7 @@ export default function HelpPage() {
       navLabel: "Dashboard",
       title: "Dashboard",
       icon: "📊",
-      intro: "The control panel. If something’s overdue or failing, it should show here.",
+      intro: "Snapshot of how your business is performing.",
       bullets: [
         "Shift start: check for overdue temps, incomplete cleaning, expired training, overdue allergen review.",
         "Shift end: confirm today’s temps + cleaning are complete for the selected location.",
@@ -554,7 +554,7 @@ export default function HelpPage() {
       navLabel: "Allergens",
       title: "Allergens",
       icon: "⚠️",
-      intro: "Accurate + reviewed = defensible. Outdated = liability.",
+      intro: "Keeping allergy info up-to-date and customers safe.",
       bullets: [
         "Record allergens per menu item so FOH can answer quickly and consistently.",
         "Use consistent item names (avoid duplicates like ‘Chips’ vs ‘Fries’ unless they’re different).",
@@ -571,7 +571,7 @@ export default function HelpPage() {
       navLabel: "Cleaning rota",
       title: "Cleaning rota",
       icon: "🧽",
-      intro: "Real cleaning records with timestamps and initials.",
+      intro: "Checking and recording cleaning tasks.",
       bullets: [
         "Create tasks by shift/category: Opening, Mid, Close, FOH, Weekly, Monthly.",
         "Keep daily tasks realistic. Weekly/monthly cover deep cleans.",
@@ -604,7 +604,7 @@ export default function HelpPage() {
       navLabel: "Locations",
       title: "Locations",
       icon: "📍",
-      intro: "Keeps records attributed to the correct site or kitchen.",
+      intro: "Multi site - setup each location here.",
       bullets: [
         "Single-site: one clear location name is fine.",
         "Multi-site: use one location per venue so reports don’t blend operations.",
@@ -649,7 +649,7 @@ export default function HelpPage() {
       navLabel: "Billing",
       title: "Billing & subscription",
       icon: "💳",
-      intro: "Stripe runs payments. TempTake gates features based on subscription status.",
+      intro: "Check and update your subscription status.",
       bullets: [
         "Check plan status: trial, active, past due.",
         "Upgrade band to unlock more locations where applicable.",
