@@ -6,14 +6,11 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
-import ManageCleaningTasksModal, {
-  CLEANING_CATEGORIES,
-} from "@/components/ManageCleaningTasksModal";
+import ManageCleaningTasksModal, { CLEANING_CATEGORIES } from "@/components/ManageCleaningTasksModal";
 
 const PAGE = "w-full px-3 sm:px-4 md:mx-auto md:max-w-[1100px]";
 
-const CARD =
-  "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md";
+const CARD = "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md";
 
 type Frequency = "daily" | "weekly" | "monthly";
 
@@ -90,20 +87,18 @@ function isDueOn(task: Task, date: Date) {
   return false;
 }
 
+/** Pick the most reliable initials value (userInitials wins). */
+function bestInitials(userInitials: string, initials: string) {
+  return (userInitials || initials).trim().toUpperCase();
+}
+
 /** Classic confetti overlay (no emojis) using framer-motion only. */
 function ClassicConfetti({ show }: { show: boolean }) {
   const pieces = useMemo(() => Array.from({ length: 34 }, (_, i) => i), []);
 
   if (!show) return null;
 
-  const colors = [
-    "bg-emerald-400",
-    "bg-amber-400",
-    "bg-sky-400",
-    "bg-rose-400",
-    "bg-indigo-400",
-    "bg-lime-400",
-  ];
+  const colors = ["bg-emerald-400", "bg-amber-400", "bg-sky-400", "bg-rose-400", "bg-indigo-400", "bg-lime-400"];
 
   return (
     <div className="pointer-events-none fixed inset-0 z-[9999] overflow-hidden">
@@ -290,7 +285,6 @@ export default function CleaningRotaPage() {
             const ini = String((tm as any).initials).trim().toUpperCase();
             if (ini) {
               setUserInitials(ini);
-
               // only set the header initials if the user hasn't already typed something
               setInitials((prev) => (prev.trim() ? prev : ini));
             }
@@ -352,6 +346,13 @@ export default function CleaningRotaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ✅ If we later discover userInitials, ensure header initials is defaulted (unless user already typed)
+  useEffect(() => {
+    const ini = userInitials.trim().toUpperCase();
+    if (!ini) return;
+    setInitials((prev) => (prev.trim() ? prev : ini));
+  }, [userInitials]);
+
   const dueToday = useMemo(() => {
     return tasks.filter((t) => isDueEffective(t, today));
   }, [tasks, today, deferralsFromMap, deferralsToMap]);
@@ -384,7 +385,7 @@ export default function CleaningRotaPage() {
 
       // auto-open signoff prompt if not already signed off
       if (!signoff) {
-        const best = (userInitials || initials).trim().toUpperCase();
+        const best = bestInitials(userInitials, initials);
         setSignoffInitials((prev) => (prev.trim() ? prev : best));
         setSignoffNotes("");
         setSignoffOpen(true);
@@ -433,12 +434,14 @@ export default function CleaningRotaPage() {
 
     userActionRef.current = true;
 
+    const doneBy = bestInitials(userInitials, initials) || null;
+
     const payload = {
       org_id: orgId,
       location_id: locationId,
       task_id: taskId,
       run_on: todayIso,
-      done_by: initials?.trim() || null,
+      done_by: doneBy,
     };
 
     const { data, error } = await supabase
@@ -527,7 +530,7 @@ export default function CleaningRotaPage() {
     userActionRef.current = true;
 
     const nowIso = new Date().toISOString();
-    const doneBy = initials?.trim() || null;
+    const doneBy = bestInitials(userInitials, initials) || null;
 
     const payloads = idsToDo.map((task_id) => ({
       org_id: orgId,
@@ -627,7 +630,7 @@ export default function CleaningRotaPage() {
     if (!signoffOpen) return;
     if (signoffInitials.trim()) return;
 
-    const best = (userInitials || initials).trim().toUpperCase();
+    const best = bestInitials(userInitials, initials);
     if (!best) return;
 
     setSignoffInitials(best);
@@ -649,17 +652,17 @@ export default function CleaningRotaPage() {
     );
   }
 
+  const doneCountDisplay = `${runsByTask.size}/${dueToday.length}`;
+
   return (
     <div className={PAGE}>
       <ClassicConfetti show={showConfetti} />
 
       <div className={`${CARD} p-4 sm:p-5`}>
-        {/* Header: mobile-safe wrapping (buttons were overflowing the viewport) */}
+        {/* Header: mobile-safe wrapping */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="text-lg font-semibold text-slate-900">
-              Cleaning rota
-            </div>
+            <div className="text-lg font-semibold text-slate-900">Cleaning rota</div>
             <div className="text-xs text-slate-500">{todayIso}</div>
           </div>
 
@@ -674,7 +677,7 @@ export default function CleaningRotaPage() {
             {/* ✅ Sign off button */}
             <button
               onClick={() => {
-                const best = (userInitials || initials).trim().toUpperCase();
+                const best = bestInitials(userInitials, initials);
                 setSignoffInitials((prev) => (prev.trim() ? prev : best));
                 setSignoffNotes("");
                 setSignoffOpen(true);
@@ -688,13 +691,7 @@ export default function CleaningRotaPage() {
                   ? "bg-slate-200 text-slate-700 opacity-70"
                   : "bg-emerald-600 text-white hover:bg-emerald-700",
               ].join(" ")}
-              title={
-                signoff
-                  ? "Day signed off"
-                  : allDone
-                  ? "Sign off the day"
-                  : "Complete all tasks first"
-              }
+              title={signoff ? "Day signed off" : allDone ? "Sign off the day" : "Complete all tasks first"}
             >
               {signoff ? "Day signed off" : "Sign off day"}
             </button>
@@ -710,7 +707,7 @@ export default function CleaningRotaPage() {
             </div>
 
             <div className="flex h-9 items-center whitespace-nowrap rounded-full bg-slate-900 px-3 text-xs font-semibold leading-none text-white">
-              {doneCount}/{dueToday.length}
+              {doneCountDisplay}
             </div>
 
             <button
@@ -723,8 +720,7 @@ export default function CleaningRotaPage() {
         </div>
 
         <div className="mt-4 text-xs text-slate-500">
-          Tip: On phones you can swipe a task card left to complete and right to
-          undo, or just use the Tick / Undo buttons.
+          Tip: On phones you can swipe a task card left to complete and right to undo, or just use the Tick / Undo buttons.
         </div>
 
         {/* Optional hint banner when all done but not signed off */}
@@ -741,10 +737,7 @@ export default function CleaningRotaPage() {
             const isCollapsed = collapsed[category] ?? false;
 
             return (
-              <div
-                key={category}
-                className="rounded-2xl border border-slate-200 bg-white p-3"
-              >
+              <div key={category} className="rounded-2xl border border-slate-200 bg-white p-3">
                 {/* Collapsible header */}
                 <div className="flex items-start justify-between gap-3">
                   <button
@@ -754,17 +747,11 @@ export default function CleaningRotaPage() {
                     aria-expanded={!isCollapsed}
                   >
                     <span className="mt-0.5 text-slate-500">
-                      {isCollapsed ? (
-                        <ChevronRight className="h-4 w-4" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4" />
-                      )}
+                      {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                     </span>
 
                     <div className="flex-1">
-                      <div className="text-sm font-semibold text-slate-900">
-                        {category}
-                      </div>
+                      <div className="text-sm font-semibold text-slate-900">{category}</div>
                       <div className="text-xs text-slate-500">
                         {catDone}/{list.length} complete · {open} open
                       </div>
@@ -785,8 +772,7 @@ export default function CleaningRotaPage() {
                       const run = runsByTask.get(t.id);
                       const done = !!run;
 
-                      const deferredFromToday =
-                        deferralsFromMap.get(todayIso)?.has(t.id) ?? false;
+                      const deferredFromToday = deferralsFromMap.get(todayIso)?.has(t.id) ?? false;
 
                       return (
                         <motion.div
@@ -798,9 +784,7 @@ export default function CleaningRotaPage() {
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <div className="text-sm font-semibold text-slate-900">
-                                {t.task}
-                              </div>
+                              <div className="text-sm font-semibold text-slate-900">{t.task}</div>
                               <div className="text-xs text-slate-500">
                                 {t.area ?? "—"} · {t.frequency}
                               </div>
@@ -812,9 +796,7 @@ export default function CleaningRotaPage() {
                               )}
 
                               {done && (
-                                <div className="mt-1 text-xs text-slate-500">
-                                  Done by {run?.done_by || "—"}
-                                </div>
+                                <div className="mt-1 text-xs text-slate-500">Done by {run?.done_by || "—"}</div>
                               )}
                             </div>
 
@@ -857,18 +839,11 @@ export default function CleaningRotaPage() {
         </div>
       </div>
 
-      <ManageCleaningTasksModal
-        open={manageOpen}
-        onClose={() => setManageOpen(false)}
-        onSaved={loadAll}
-      />
+      <ManageCleaningTasksModal open={manageOpen} onClose={() => setManageOpen(false)} onSaved={loadAll} />
 
       {/* ✅ Sign-off modal */}
       {signoffOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setSignoffOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
           <div
             className="mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
@@ -901,9 +876,7 @@ export default function CleaningRotaPage() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Initials
-                </label>
+                <label className="mb-1 block text-xs text-slate-500">Initials</label>
                 <input
                   value={signoffInitials}
                   onChange={(e) => setSignoffInitials(e.target.value.toUpperCase())}
@@ -913,9 +886,7 @@ export default function CleaningRotaPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Notes (optional)
-                </label>
+                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
                 <input
                   value={signoffNotes}
                   onChange={(e) => setSignoffNotes(e.target.value)}
