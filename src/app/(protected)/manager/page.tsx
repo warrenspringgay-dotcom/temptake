@@ -592,34 +592,77 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  async function loadLoggedInManager() {
-    if (!orgId) return;
-    try {
-      const {
-        data: { user },
-        error: userErr,
-      } = await supabase.auth.getUser();
+ async function loadLoggedInManager() {
+  if (!orgId) return;
 
-      if (userErr || !user) {
-        setManagerTeamMember(null);
-        return;
-      }
+  try {
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
 
-      const { data, error } = await supabase
-        .from("team_members")
-        .select("id,name,initials,role,active,user_id")
-        .eq("org_id", orgId)
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (error) throw error;
-
-      setManagerTeamMember((data as TeamMemberOption) || null);
-    } catch (e) {
-      console.error(e);
+    if (userErr || !user) {
       setManagerTeamMember(null);
+      return;
     }
+
+    // 1) Primary: already linked by user_id
+    const byUser = await supabase
+      .from("team_members")
+      .select("id,name,initials,role,active,user_id,email")
+      .eq("org_id", orgId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (byUser.error) throw byUser.error;
+
+    if (byUser.data) {
+      setManagerTeamMember(byUser.data as any);
+      return;
+    }
+
+    // 2) Fallback: try match by email (one-time link)
+    const email = (user.email ?? "").trim().toLowerCase();
+    if (!email) {
+      setManagerTeamMember(null);
+      return;
+    }
+
+    const byEmail = await supabase
+      .from("team_members")
+      .select("id,name,initials,role,active,user_id,email")
+      .eq("org_id", orgId)
+      .ilike("email", email)
+      .maybeSingle();
+
+    if (byEmail.error) throw byEmail.error;
+
+    if (!byEmail.data) {
+      setManagerTeamMember(null);
+      return;
+    }
+
+    // 3) If found but not linked, link it now
+    if (!byEmail.data.user_id) {
+      const upd = await supabase
+        .from("team_members")
+        .update({ user_id: user.id })
+        .eq("org_id", orgId)
+        .eq("id", byEmail.data.id)
+        .is("user_id", null); // prevent overwriting existing links
+
+      if (upd.error) throw upd.error;
+    }
+
+    setManagerTeamMember({
+      ...byEmail.data,
+      user_id: user.id,
+    } as any);
+  } catch (e) {
+    console.error(e);
+    setManagerTeamMember(null);
   }
+}
 
   async function loadQcReviews() {
     if (!orgId || !locationId) return;
