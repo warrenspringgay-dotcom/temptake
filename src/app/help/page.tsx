@@ -51,7 +51,11 @@ function Highlight({ text, q }: { text: string; q: string }) {
   );
 }
 
-/** Accordion help section with "TL;DR + Show more" */
+/**
+ * Help section:
+ * - Always shows header + intro + TL;DR bullets + image/full info block.
+ * - "Open/Hide" only controls the extra bullet detail area.
+ */
 function HelpSection({
   id,
   title,
@@ -78,6 +82,7 @@ function HelpSection({
   const matchedCount = matches.filter((m) => m.match).length;
 
   const collapsedBullets = useMemo(() => {
+    // TL;DR behavior stays the same
     if (!q) return matches.slice(0, 4);
 
     const onlyMatches = matches.filter((m) => m.match);
@@ -86,51 +91,68 @@ function HelpSection({
     return matches.slice(0, 6);
   }, [matches, q]);
 
+  const showExtraBlock = useMemo(() => {
+    // If searching, extra block is still useful but optional.
+    // If not searching, extra block only matters when there are more than 4 bullets.
+    if (q) return true;
+    return bullets.length > 4;
+  }, [q, bullets.length]);
+
   return (
     <section id={id} className={CARD}>
-      <button
-        type="button"
-        onClick={onToggle}
-        className="w-full text-left"
-        aria-expanded={isOpen}
-        aria-controls={`${id}-panel`}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
-              <span className="text-xl">{icon}</span>
-              <span className="truncate">
-                <Highlight text={title} q={query} />
-              </span>
-            </h2>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+            <span className="text-xl">{icon}</span>
+            <span className="truncate">
+              <Highlight text={title} q={query} />
+            </span>
+          </h2>
 
-            <p className="text-sm text-slate-700">
-              <Highlight text={intro} q={query} />
-            </p>
+          <p className="text-sm text-slate-700">
+            <Highlight text={intro} q={query} />
+          </p>
 
-            {query.trim() && (
-              <div className="text-xs text-slate-500">
-                {matchedCount > 0
-                  ? `${matchedCount} matching point${matchedCount === 1 ? "" : "s"}`
-                  : "No direct bullet matches (but section may still be relevant)."}
-              </div>
-            )}
+          {query.trim() && (
+            <div className="text-xs text-slate-500">
+              {matchedCount > 0
+                ? `${matchedCount} matching point${matchedCount === 1 ? "" : "s"}`
+                : "No direct bullet matches (but section may still be relevant)."}
+            </div>
+          )}
+        </div>
+
+        {showExtraBlock ? (
+          <div className="shrink-0">
+            <button
+              type="button"
+              onClick={onToggle}
+              className={cls(
+                "inline-flex items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold shadow-sm",
+                "border-slate-300 bg-white/80 text-slate-800 hover:bg-slate-50"
+              )}
+              aria-expanded={isOpen}
+              aria-controls={`${id}-panel`}
+            >
+              {isOpen ? "Hide" : "Open"}
+            </button>
           </div>
-
+        ) : (
           <div className="shrink-0">
             <span
               className={cls(
                 "inline-flex items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold shadow-sm",
-                "border-slate-300 bg-white/80 text-slate-800"
+                "border-slate-200 bg-slate-50 text-slate-600"
               )}
+              title="No extra details in this section"
             >
-              {isOpen ? "Hide" : "Open"}
+              Info
             </span>
           </div>
-        </div>
-      </button>
+        )}
+      </div>
 
-      {/* TL;DR bullets always visible */}
+      {/* Always visible: TL;DR bullets */}
       <ul className="mt-3 space-y-1.5 text-sm text-slate-700">
         {collapsedBullets.map(({ b }) => (
           <li key={b} className="flex gap-2">
@@ -142,11 +164,56 @@ function HelpSection({
         ))}
       </ul>
 
-      {/* Expanded panel */}
-      {isOpen && (
-        <div id={`${id}-panel`} className="mt-4">
-          <div className="grid gap-4 md:grid-cols-[1fr,224px]">
-            <div>
+      {/* Always visible: image + keywords + (optional) context */}
+      <div className="mt-4 grid gap-4 md:grid-cols-[1fr,224px]">
+        <div>
+          {keywords.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {keywords.map((k) => (
+                <span
+                  key={k}
+                  className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700"
+                >
+                  {k}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Small hint row */}
+          <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 text-xs text-slate-700">
+            <span className="font-semibold">Use this section for:</span>{" "}
+            <Highlight
+              text={
+                title === "Dashboard"
+                  ? "checking alerts, overdue items, and whether today is complete."
+                  : title === "Routines"
+                  ? "fast, consistent temperature checks with a proper audit trail."
+                  : title === "Allergens"
+                  ? "maintaining a reviewed matrix you can defend."
+                  : title === "Cleaning rota"
+                  ? "timestamped cleaning records tied to initials."
+                  : title === "Team"
+                  ? "initials, accountability and training expiry."
+                  : title === "Locations"
+                  ? "keeping records attributed to the right site."
+                  : title === "Suppliers"
+                  ? "traceability and due diligence."
+                  : title === "Reports"
+                  ? "inspection-ready evidence and exporting."
+                  : title === "Billing & subscription"
+                  ? "payments, invoices, plan status."
+                  : title === "Settings"
+                  ? "org defaults and configuration."
+                  : "definitions staff keep getting wrong."
+              }
+              q={query}
+            />
+          </div>
+
+          {/* Expanded panel: only extra bullet content */}
+          {showExtraBlock && isOpen && (
+            <div id={`${id}-panel`} className="mt-4">
               {(!query.trim() || matchedCount === 0) && bullets.length > 4 && (
                 <>
                   <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
@@ -182,35 +249,27 @@ function HelpSection({
                   </ul>
                 </>
               )}
-
-              {keywords.length > 0 && (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {keywords.map((k) => (
-                    <span
-                      key={k}
-                      className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700"
-                    >
-                      {k}
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
-
-            {imageSrc && (
-              <div className="relative h-32 w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80 md:h-32 md:w-56">
-                <Image
-                  src={imageSrc}
-                  alt={title}
-                  fill
-                  className="object-cover"
-                  sizes="224px"
-                />
-              </div>
-            )}
-          </div>
+          )}
         </div>
-      )}
+
+        {imageSrc ? (
+          <div className="space-y-2">
+            <div className="relative h-44 w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80 md:h-44 md:w-56">
+              <Image
+                src={imageSrc}
+                alt={title}
+                fill
+                className="object-cover"
+                sizes="224px"
+              />
+            </div>
+            <div className="text-[11px] text-slate-500">
+              Screenshot example for <span className="font-semibold">{title}</span>.
+            </div>
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -270,11 +329,7 @@ type FaqItem = {
   tags: string[];
 };
 
-function FaqSection({
-  query,
-}: {
-  query: string;
-}) {
+function FaqSection({ query }: { query: string }) {
   const [openFaqId, setOpenFaqId] = useState<string | null>(null);
   const [tag, setTag] = useState<string>("All");
 
@@ -396,7 +451,6 @@ function FaqSection({
   }, [faqs, q, tag]);
 
   useEffect(() => {
-    // If the current open FAQ is filtered out, close it
     if (openFaqId && !filteredFaqs.some((f) => f.id === openFaqId)) {
       setOpenFaqId(null);
     }
@@ -704,19 +758,14 @@ export default function HelpPage() {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
 
-  // Auto-open first relevant section when searching
   useEffect(() => {
     const q = query.trim().toLowerCase();
     if (!q) return;
 
-    // If query looks like a troubleshooting query, scroll attention there by opening nothing else
-    // (We still filter FAQs in that section.)
     const first = sections.find((s) => {
       const hitTitle =
         s.title.toLowerCase().includes(q) || s.intro.toLowerCase().includes(q);
-      const hitKeywords = (s.keywords ?? []).some((k) =>
-        k.toLowerCase().includes(q)
-      );
+      const hitKeywords = (s.keywords ?? []).some((k) => k.toLowerCase().includes(q));
       const hitBullets = s.bullets.some((b) => b.toLowerCase().includes(q));
       return hitTitle || hitKeywords || hitBullets;
     });
@@ -731,9 +780,7 @@ export default function HelpPage() {
     return sections.filter((s) => {
       const hitTitle =
         s.title.toLowerCase().includes(q) || s.intro.toLowerCase().includes(q);
-      const hitKeywords = (s.keywords ?? []).some((k) =>
-        k.toLowerCase().includes(q)
-      );
+      const hitKeywords = (s.keywords ?? []).some((k) => k.toLowerCase().includes(q));
       const hitBullets = s.bullets.some((b) => b.toLowerCase().includes(q));
       return hitTitle || hitKeywords || hitBullets;
     });
@@ -895,7 +942,6 @@ export default function HelpPage() {
       {/* TROUBLESHOOTING as FAQs */}
       <FaqSection query={query} />
 
-      {/* GLOSSARY (kept in main sections, but anchor still in nav) */}
       {/* Footer */}
       <footer className="mt-4 border-t border-slate-200 pt-4 text-xs text-slate-500">
         <div>
