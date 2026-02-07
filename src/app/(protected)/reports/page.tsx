@@ -135,13 +135,6 @@ type UnifiedIncidentRow = {
   source: "incident" | "temp_fail";
 };
 
-// NEW: Food hygiene ratings
-type FoodHygieneRatingRow = {
-  id: string;
-  rating: number; // 0..5
-  visit_date: string; // yyyy-mm-dd
-};
-
 /* ===================== Date helpers ===================== */
 
 function safeDate(val: any): Date | null {
@@ -400,48 +393,6 @@ async function fetchTrainingAreasReport(orgId: string): Promise<TrainingAreaRow[
   }
 
   return rows;
-}
-
-/* ===================== Food hygiene helpers ===================== */
-
-function starsString(rating: number) {
-  const r = Math.max(0, Math.min(5, Number(rating) || 0));
-  const full = "★".repeat(r);
-  const empty = "☆".repeat(5 - r);
-  return `${full}${empty}`;
-}
-
-function ratingTone(rating: number) {
-  if (rating >= 4) return "good";
-  if (rating === 3) return "mid";
-  return "low";
-}
-
-async function fetchFoodHygieneRatings(orgId: string, locationId: string | null) {
-  // Location-aware:
-  // - If locationId is set: use that location's ratings
-  // - If locationId is null: use org-level rows (location_id IS NULL)
-  let q = supabase
-    .from("food_hygiene_ratings")
-    .select("id,rating,visit_date")
-    .eq("org_id", orgId)
-    .order("visit_date", { ascending: false })
-    .limit(25);
-
-  if (locationId) q = q.eq("location_id", locationId);
-  else q = q.is("location_id", null);
-
-  const { data, error } = await q;
-  if (error) throw error;
-
-  const history = ((data ?? []) as any[]).map((r) => ({
-    id: String(r.id),
-    rating: Number(r.rating),
-    visit_date: String(r.visit_date),
-  })) as FoodHygieneRatingRow[];
-
-  const current = history.length ? history[0] : null;
-  return { current, history };
 }
 
 /* ===================== Data fetch helpers ===================== */
@@ -1064,10 +1015,6 @@ export default function ReportsPage() {
   // ✅ NEW: track last auto-run location to prevent duplicate firing
   const lastAutoLocationRef = useRef<string | "all" | null>(null);
 
-  // ✅ NEW: Food hygiene rating state
-  const [fhrCurrent, setFhrCurrent] = useState<FoodHygieneRatingRow | null>(null);
-  const [fhrHistory, setFhrHistory] = useState<FoodHygieneRatingRow[] | null>(null);
-
   const visibleTemps = useMemo(() => {
     if (!temps) return null;
     return showAllTemps ? temps : temps.slice(0, 10);
@@ -1164,9 +1111,6 @@ export default function ReportsPage() {
       setErr(null);
       setLoading(true);
 
-      // ratings are small + fast; always pull so the printable report stays consistent
-      const ratingsPromise = fetchFoodHygieneRatings(orgIdValue, locationId);
-
       const [
         t,
         cleanCount,
@@ -1177,7 +1121,6 @@ export default function ReportsPage() {
         so,
         cr,
         allergenEditRows,
-        ratings,
       ] = await Promise.all([
         fetchTemps(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningCount(rangeFrom, rangeTo, orgIdValue, locationId),
@@ -1193,7 +1136,6 @@ export default function ReportsPage() {
         fetchSignoffsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningRunsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchAllergenChanges(rangeFrom, rangeTo, orgIdValue, locationId),
-        ratingsPromise,
       ]);
 
       setTemps(t);
@@ -1202,9 +1144,6 @@ export default function ReportsPage() {
 
       setLoggedIncidents(loggedInc);
       setAllergenChanges(allergenEditRows);
-
-      setFhrCurrent(ratings.current);
-      setFhrHistory(ratings.history);
 
       const unified: UnifiedIncidentRow[] = [
         ...(incForUnified ?? []).map((r) => ({
@@ -1266,8 +1205,6 @@ export default function ReportsPage() {
       setLoggedIncidents(null);
       setSignoffs(null);
       setCleaningRuns(null);
-      setFhrCurrent(null);
-      setFhrHistory(null);
     } finally {
       setLoading(false);
     }
@@ -1302,22 +1239,25 @@ export default function ReportsPage() {
     if (orgId && !initialRunDone) {
       runInstantAudit90();
       setInitialRunDone(true);
+      // after the first run, set the last auto location so the next change triggers correctly
       lastAutoLocationRef.current = locationFilter;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
-  // ✅ auto-run when location changes
+  // ✅ NEW: auto-run when location changes (no more pressing "Run")
   useEffect(() => {
     if (!orgId) return;
     if (!initialRunDone) return;
     if (loading) return;
 
+    // prevent firing on initial mount / state hydration
     if (lastAutoLocationRef.current === null) {
       lastAutoLocationRef.current = locationFilter;
       return;
     }
 
+    // only act on real change
     if (lastAutoLocationRef.current === locationFilter) return;
 
     lastAutoLocationRef.current = locationFilter;
@@ -1356,37 +1296,6 @@ export default function ReportsPage() {
     locationFilter === "all"
       ? "All locations"
       : locations.find((l) => l.id === locationFilter)?.name ?? "This location";
-
-  /* ---------- Food hygiene UI ---------- */
-  const fhrTone = fhrCurrent ? ratingTone(fhrCurrent.rating) : null;
-  const bigStars = fhrCurrent ? fhrCurrent.rating >= 4 : false;
-
-  const fhrBorder =
-    fhrTone === "good"
-      ? "border-emerald-200"
-      : fhrTone === "mid"
-      ? "border-amber-200"
-      : fhrTone === "low"
-      ? "border-red-200"
-      : "border-slate-200";
-
-  const fhrBg =
-    fhrTone === "good"
-      ? "bg-emerald-50/70"
-      : fhrTone === "mid"
-      ? "bg-amber-50/70"
-      : fhrTone === "low"
-      ? "bg-red-50/70"
-      : "bg-white/90";
-
-  const fhrStarClass =
-    fhrTone === "good"
-      ? "text-emerald-700"
-      : fhrTone === "mid"
-      ? "text-amber-700"
-      : fhrTone === "low"
-      ? "text-red-700"
-      : "text-slate-700";
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
@@ -1474,7 +1383,10 @@ export default function ReportsPage() {
               ))}
             </select>
             <div className="mt-1 text-[11px] text-slate-500">Current: {currentLocationLabel}</div>
-            <div className="mt-1 text-[11px] text-slate-500">{loading ? "Loading…" : "Auto-runs when you change location."}</div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {/* tiny status hint so users don’t assume it’s broken */}
+              {loading ? "Loading…" : "Auto-runs when you change location."}
+            </div>
           </div>
         </div>
 
@@ -1493,85 +1405,6 @@ export default function ReportsPage() {
 
       {/* Printable content root */}
       <div ref={printRef} id="audit-print-root" className="space-y-6">
-        {/* ✅ Food Hygiene Rating (top of report) */}
-        {(fhrCurrent || (fhrHistory && fhrHistory.length)) && (
-          <Card className={`rounded-2xl border ${fhrBorder} ${fhrBg} p-4 text-slate-900 shadow-sm backdrop-blur-sm`}>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0">
-                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Food Hygiene Rating
-                </div>
-
-                {fhrCurrent ? (
-                  <div className="mt-1">
-                    <div className="flex items-end gap-3">
-                      <div
-                        className={[
-                          "leading-none font-semibold",
-                          bigStars ? "text-4xl sm:text-5xl" : "text-2xl sm:text-3xl",
-                          fhrStarClass,
-                        ].join(" ")}
-                        aria-label={`Food hygiene rating ${fhrCurrent.rating} out of 5`}
-                      >
-                        {starsString(fhrCurrent.rating)}
-                      </div>
-                      <div className="pb-1 text-sm font-semibold text-slate-800">
-                        {fhrCurrent.rating}/5
-                      </div>
-                    </div>
-                    <div className="mt-1 text-xs text-slate-600">
-                      Visit date: <span className="font-semibold text-slate-800">{formatISOToUK(fhrCurrent.visit_date)}</span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-1 text-sm text-slate-600">No current rating recorded.</div>
-                )}
-              </div>
-
-              {/* History (compact) */}
-              {fhrHistory && fhrHistory.length > 1 && (
-                <div className="w-full sm:max-w-sm">
-                  <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
-                    Rating history
-                  </div>
-                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-white/70">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-50/80">
-                        <tr className="text-left text-slate-500">
-                          <th className="px-3 py-2">Date</th>
-                          <th className="px-3 py-2 text-right">Rating</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {fhrHistory.slice(0, 8).map((r) => (
-                          <tr key={r.id} className="border-t border-slate-100">
-                            <td className="px-3 py-2">{formatISOToUK(r.visit_date)}</td>
-                            <td className="px-3 py-2 text-right font-semibold">
-                              <span className="mr-2 text-slate-500">{starsString(r.rating)}</span>
-                              {r.rating}/5
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  {fhrHistory.length > 8 && (
-                    <div className="mt-1 text-[11px] text-slate-500">
-                      Showing latest 8 of {fhrHistory.length}.
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {locationFilter === "all" && (
-              <div className="mt-3 text-[11px] text-slate-500">
-                Note: showing org-level rating records (where location is not set). Select a specific location to show its rating.
-              </div>
-            )}
-          </Card>
-        )}
-
         {/* Four-weekly review card */}
         <Card
           data-hide-on-print
@@ -2012,46 +1845,454 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* (rest of your file continues unchanged...) */}
+        {/* Manager QC reviews (reports view of QC table) */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Manager QC reviews{" "}
+            {staffReviews ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
 
-        <style jsx global>{`
-          @media print {
-            nav,
-            header,
-            footer,
-            [data-hide-on-print],
-            button {
-              display: none !important;
-            }
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Manager</th>
+                  <th className="py-2 pr-3">Location</th>
+                  <th className="py-2 pr-3">Score</th>
+                  <th className="py-2 pr-3">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!staffReviews ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : staffReviews.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 text-center text-slate-500">
+                      No QC reviews for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  (showAllEducation ? staffReviews : staffReviews.slice(0, 10)).map((r) => {
+                    const pill =
+                      r.rating >= 4
+                        ? "bg-emerald-100 text-emerald-800"
+                        : r.rating === 3
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-red-100 text-red-800";
 
-            [data-compliance-indicator],
-            #tt-compliance-indicator,
-            .tt-compliance-indicator,
-            [data-fab],
-            #tt-fab,
-            .tt-fab {
-              display: none !important;
-              visibility: hidden !important;
-            }
+                    const staffLabel = r.staff_initials
+                      ? `${r.staff_initials.toUpperCase()} · ${r.staff_name}`
+                      : r.staff_name;
 
-            * {
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3 whitespace-nowrap">
+                          {formatISOToUK(r.reviewed_on)}
+                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{staffLabel}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{r.reviewer ?? "—"}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{r.location_name ?? "—"}</td>
+                        <td className="py-2 pr-3">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${pill}`}
+                          >
+                            {r.rating}/5
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 max-w-xl">
+                          {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
 
-            a {
-              text-decoration: none;
-              color: inherit;
-            }
-            body {
-              background: white !important;
-            }
-            .shadow-sm {
-              box-shadow: none !important;
-            }
-          }
-        `}</style>
+          {staffReviews && staffReviews.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllEducation ? staffReviews.length : Math.min(10, staffReviews.length)} of{" "}
+                {staffReviews.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllEducation((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllEducation ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Education / training table */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">Training & certificates</h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Course</th>
+                  <th className="py-2 pr-3">Awarded</th>
+                  <th className="py-2 pr-3">Expires</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Notes</th>
+                  <th className="py-2 pr-3">Certificate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!education ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : education.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      No training records
+                    </td>
+                  </tr>
+                ) : (
+                  visibleEducation!.map((r) => {
+                    let pill = "bg-slate-100 text-slate-700";
+                    if (r.status === "expired") pill = "bg-red-100 text-red-800";
+                    else if (r.status === "valid") pill = "bg-emerald-100 text-emerald-800";
+
+                    const staffLabel = r.staff_initials
+                      ? `${r.staff_initials.toUpperCase()} · ${r.staff_name}`
+                      : r.staff_name;
+
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3">{staffLabel}</td>
+                        <td className="py-2 pr-3">{r.type ?? "—"}</td>
+                        <td className="py-2 pr-3">
+                          {r.awarded_on ? formatISOToUK(r.awarded_on) : "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {r.expires_on ? formatISOToUK(r.expires_on) : "—"}
+                          {r.days_until != null && (
+                            <span className="ml-1 text-xs text-slate-500">({r.days_until}d)</span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${pill}`}
+                          >
+                            {r.status === "no-expiry"
+                              ? "No expiry"
+                              : r.status === "expired"
+                                                           ? "Expired"
+                              : "Valid"}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 max-w-xs">
+                          {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {r.certificate_url ? (
+                            <a
+                              href={r.certificate_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs font-medium text-blue-700 underline"
+                            >
+                              View
+                            </a>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {education && education.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing {showAllEducation ? education.length : Math.min(10, education.length)} of{" "}
+                {education.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllEducation((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllEducation ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* SFBB training areas matrix */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-2 text-base font-semibold">Training areas (SFBB coverage)</h3>
+          <p className="mb-3 text-xs text-slate-500">
+            Each tick shows a team member trained in that SFBB area. Date = latest award date.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Team member</th>
+                  {SFBB_AREAS.map((area) => (
+                    <th key={area} className="py-2 px-2 text-center">
+                      {area}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {!trainingMatrix ? (
+                  <tr>
+                    <td colSpan={1 + SFBB_AREAS.length} className="py-6 text-center text-slate-500">
+                      Run a report to load training areas
+                    </td>
+                  </tr>
+                ) : trainingMatrix.length === 0 ? (
+                  <tr>
+                    <td colSpan={1 + SFBB_AREAS.length} className="py-6 text-center text-slate-500">
+                      No training area data
+                    </td>
+                  </tr>
+                ) : (
+                  visibleTrainingMatrix!.map((row) => (
+                    <tr key={row.member_id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3 whitespace-nowrap text-sm font-medium">
+                        {row.name}
+                      </td>
+                      {SFBB_AREAS.map((area) => {
+                        const meta = row.byArea[area];
+                        if (!meta?.selected) {
+                          return (
+                            <td
+                              key={area}
+                              className="py-2 px-2 text-center text-slate-400 align-top"
+                            >
+                              —
+                            </td>
+                          );
+                        }
+                        return (
+                          <td key={area} className="py-2 px-2 text-center align-top">
+                            <div className="inline-flex flex-col items-center gap-1">
+                              <span className="text-base leading-none">✓</span>
+                              {meta.awarded_on && (
+                                <span className="text-[10px] text-slate-500">
+                                  {formatISOToUK(meta.awarded_on)}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {trainingMatrix && trainingMatrix.length > 12 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllTrainingAreas
+                  ? trainingMatrix.length
+                  : Math.min(12, trainingMatrix.length)}{" "}
+                of {trainingMatrix.length} team members
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllTrainingAreas((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllTrainingAreas ? "Show first 12" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Allergen review table (next 90 days, placed near allergen edits) */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-2 text-base font-semibold">Allergen reviews (next 90 days)</h3>
+          <p className="mb-3 text-xs text-slate-500">
+            Upcoming allergen review schedule from <code>allergen_review_log</code> based on your
+            configured intervals.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Last review</th>
+                  <th className="py-2 pr-3">Next due</th>
+                  <th className="py-2 pr-3">Days</th>
+                  <th className="py-2 pr-3">Reviewer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!allergenLog ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : allergenLog.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                      No allergen reviews due in next 90 days
+                    </td>
+                  </tr>
+                ) : (
+                  allergenLog.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">
+                        {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
+                      </td>
+                      <td className="py-2 pr-3">{r.next_due ? formatISOToUK(r.next_due) : "—"}</td>
+                      <td className="py-2 pr-3">{r.days_until ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        {/* Allergen edits table (NEW) */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Allergen edits {allergenChanges ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+          <p className="mb-2 text-xs text-slate-500">
+            Change log from <code>allergen_change_logs</code> for the selected range and location.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Item</th>
+                  <th className="py-2 pr-3">Action</th>
+                  <th className="py-2 pr-3">By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!allergenChanges ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : allergenChanges.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      No allergen edits for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  allergenChanges.map((r) => {
+                    const actionLabel =
+                      r.action === "create"
+                        ? "Created"
+                        : r.action === "update"
+                        ? "Updated"
+                        : r.action === "delete"
+                        ? "Deleted"
+                        : r.action ?? "—";
+
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3">
+                          {r.created_at ? formatISOToUK(r.created_at) : "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {r.created_at ? formatTimeHM(r.created_at) : "—"}
+                        </td>
+                        <td className="py-2 pr-3 max-w-xs">
+                          {r.item_name ?? <span className="text-slate-400">Unnamed item</span>}
+                        </td>
+                        <td className="py-2 pr-3">{actionLabel}</td>
+                        <td className="py-2 pr-3">
+                          {r.staff_initials ? r.staff_initials.toUpperCase() : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       </div>
+
+      <style jsx global>{`
+        @media print {
+          nav,
+          header,
+          footer,
+          [data-hide-on-print],
+          button {
+            display: none !important;
+          }
+
+          [data-compliance-indicator],
+          #tt-compliance-indicator,
+          .tt-compliance-indicator,
+          [data-fab],
+          #tt-fab,
+          .tt-fab {
+            display: none !important;
+            visibility: hidden !important;
+          }
+
+          * {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+
+          a {
+            text-decoration: none;
+            color: inherit;
+          }
+          body {
+            background: white !important;
+          }
+          .shadow-sm {
+            box-shadow: none !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }
