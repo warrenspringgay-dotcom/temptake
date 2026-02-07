@@ -918,5 +918,5 @@ export default function CleaningRotaPage() {
         </div>
       )}
     </div>
-  );
+  )
 }
