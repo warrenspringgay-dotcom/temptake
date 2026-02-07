@@ -32,6 +32,7 @@ const TRAINING_AREAS: { key: TrainingArea; label: string; short: string }[] = [
 
 type Member = {
   id: string;
+  user_id: string | null; // ✅ used to detect login linkage
   initials: string | null;
   name: string;
   email: string | null;
@@ -146,7 +147,7 @@ function requireInitialsOrDerive(editing: Member) {
   const forced = (editing.initials ?? "").trim().toUpperCase();
   if (forced) return forced;
 
-  const derived = safeInitials({ ...editing, initials: "" });
+  const derived = safeInitials({ ...editing, initials: "" } as Member);
   return derived.trim().toUpperCase();
 }
 
@@ -165,9 +166,12 @@ export default function TeamManager() {
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
 
-  // NEW: add-member login toggle
+  // Add-member login toggle
   const [allowLogin, setAllowLogin] = useState<boolean>(false);
   const [sendingInviteOnSave, setSendingInviteOnSave] = useState(false);
+
+  // Edit-modal invite button state
+  const [sendingInviteFromEdit, setSendingInviteFromEdit] = useState(false);
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewFor, setViewFor] = useState<Member | null>(null);
@@ -227,7 +231,7 @@ export default function TeamManager() {
 
       const { data, error } = await supabase
         .from("team_members")
-        .select("id, initials, name, email, role, phone, active, notes, training_areas")
+        .select("id, user_id, initials, name, email, role, phone, active, notes, training_areas")
         .eq("org_id", id)
         .order("name", { ascending: true });
 
@@ -235,6 +239,7 @@ export default function TeamManager() {
 
       members = (data ?? []).map((m: any) => ({
         ...m,
+        user_id: m.user_id ? String(m.user_id) : null,
         training_areas: normalizeAreas(m.training_areas),
       })) as Member[];
 
@@ -242,6 +247,7 @@ export default function TeamManager() {
       if (members.length === 0 && id && userEmail) {
         const derivedInitials = requireInitialsOrDerive({
           id: "",
+          user_id: null,
           initials: null,
           name: userName,
           email: userEmail,
@@ -265,13 +271,14 @@ export default function TeamManager() {
             active: true,
             training_areas: [],
           })
-          .select("id, initials, name, email, role, phone, active, notes, training_areas")
+          .select("id, user_id, initials, name, email, role, phone, active, notes, training_areas")
           .maybeSingle();
 
         if (!insErr && inserted) {
           members = [
             {
               ...(inserted as any),
+              user_id: (inserted as any).user_id ? String((inserted as any).user_id) : null,
               training_areas: normalizeAreas((inserted as any).training_areas),
             },
           ];
@@ -341,6 +348,7 @@ export default function TeamManager() {
   function openAdd() {
     setEditing({
       id: "",
+      user_id: null,
       initials: "",
       name: "",
       email: "",
@@ -351,9 +359,9 @@ export default function TeamManager() {
       training_areas: [],
     });
 
-    // NEW default: no login unless they explicitly tick it
     setAllowLogin(false);
     setSendingInviteOnSave(false);
+    setSendingInviteFromEdit(false);
 
     // reset edit-education state
     setEditCerts([]);
@@ -377,12 +385,13 @@ export default function TeamManager() {
   async function openEdit(m: Member) {
     setEditing({
       ...m,
+      user_id: m.user_id ? String(m.user_id) : null,
       training_areas: normalizeAreas(m.training_areas),
     });
 
-    // Editing existing staff: login linking is not handled here
     setAllowLogin(false);
     setSendingInviteOnSave(false);
+    setSendingInviteFromEdit(false);
 
     await loadEditCertsForMember(m);
 
@@ -472,6 +481,47 @@ export default function TeamManager() {
     return String(inserted.id);
   }
 
+  async function sendInviteForExistingMember() {
+    if (!editing) return;
+    if (!orgId) return alert("No organisation found.");
+    if (!isOwner) return alert("Only the owner/admin can invite team members.");
+    if (!editing.id) return; // only for existing
+    if (editing.user_id) return alert("This staff member already has a linked login.");
+
+    const emailNormalized = cleanEmail(editing.email);
+    if (!emailNormalized) return alert("Add an email address first, then invite.");
+
+    const roleValue = (editing.role ?? "").trim().toLowerCase() || "staff";
+
+    setSendingInviteFromEdit(true);
+    try {
+      const res = await inviteTeamMemberServer({
+        email: emailNormalized,
+        role: roleValue,
+      });
+
+      if (!res.ok) throw new Error(res.message ?? "Failed to send invite.");
+
+      alert("Invite sent. They’ll get an email to set their password and log in.");
+
+      // Reload to reflect any linkage if your backend sets team_members.user_id
+      await load();
+      // Keep modal open and refresh editing with newest row (if any changes)
+      const refreshed = rows.find((r) => r.id === editing.id);
+      if (refreshed) {
+        setEditing({
+          ...refreshed,
+          user_id: refreshed.user_id ? String(refreshed.user_id) : null,
+          training_areas: normalizeAreas(refreshed.training_areas),
+        });
+      }
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to send invite.");
+    } finally {
+      setSendingInviteFromEdit(false);
+    }
+  }
+
   async function saveMember() {
     if (!editing) return;
 
@@ -484,7 +534,10 @@ export default function TeamManager() {
 
       // DB is NOT NULL on initials, so we always derive something.
       const initialsToSave = requireInitialsOrDerive(editing);
-      if (!initialsToSave) return alert("Initials are required (or enter a name we can derive from).");
+      if (!initialsToSave)
+        return alert(
+          "Initials are required (or enter a name we can derive from)."
+        );
 
       const emailNormalized = cleanEmail(editing.email);
 
@@ -532,7 +585,7 @@ export default function TeamManager() {
 
         setSendingInviteOnSave(true);
 
-        // 1) Send invite (creates auth user + whatever your server action does)
+        // 1) Send invite
         const res = await inviteTeamMemberServer({
           email: emailNormalized,
           role: roleValue,
@@ -811,6 +864,23 @@ export default function TeamManager() {
                         >
                           {activeLabel}
                         </span>
+
+                        {/* Optional tiny indicator if no login */}
+                        {!m.user_id ? (
+                          <span
+                            className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800"
+                            title="No login linked"
+                          >
+                            No login
+                          </span>
+                        ) : (
+                          <span
+                            className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800"
+                            title="Login linked"
+                          >
+                            Login
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -944,7 +1014,7 @@ export default function TeamManager() {
                   </div>
                 </div>
 
-                {/* NEW: Allow login (only when adding) */}
+                {/* Add-only: Allow login */}
                 {!editing.id && (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
                     <label className="flex items-start gap-3 text-sm text-slate-800">
@@ -957,7 +1027,8 @@ export default function TeamManager() {
                       <span>
                         <span className="font-semibold">Allow user to log in</span>
                         <div className="mt-0.5 text-[11px] text-slate-600">
-                          If enabled, we’ll send them an invite email on Save. If disabled, this is a staff record only (no login).
+                          If enabled, we’ll send them an invite email on Save. If disabled, this is
+                          a staff record only (no login).
                         </div>
                       </span>
                     </label>
@@ -976,9 +1047,7 @@ export default function TeamManager() {
                       placeholder="team@example.com"
                     />
                     {!editing.id && allowLogin && (
-                      <p className="mt-1 text-[11px] text-slate-600">
-                        Required to send invite.
-                      </p>
+                      <p className="mt-1 text-[11px] text-slate-600">Required to send invite.</p>
                     )}
                   </div>
                   <div>
@@ -1024,6 +1093,41 @@ export default function TeamManager() {
                   </label>
                 </div>
 
+                {/* ✅ Edit-only: enable login + invite button */}
+                {editing.id && isOwner && !editing.user_id && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
+                    <div className="text-sm font-semibold text-slate-900">Login access</div>
+                    <div className="mt-0.5 text-[11px] text-slate-700">
+                      This staff member doesn’t currently have a linked login. You can send an invite
+                      so they can create a password and sign in.
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-[11px] text-slate-700">
+                        Email:{" "}
+                        <span className="font-semibold">
+                          {cleanEmail(editing.email) ? cleanEmail(editing.email) : "Missing"}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void sendInviteForExistingMember()}
+                        disabled={sendingInviteFromEdit}
+                        className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+                      >
+                        {sendingInviteFromEdit ? "Sending invite…" : "Send invite"}
+                      </button>
+                    </div>
+
+                    {!cleanEmail(editing.email) ? (
+                      <div className="mt-2 text-[11px] text-rose-700">
+                        Add an email address above, then click Send invite.
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
                 {/* Training areas selector */}
                 <div>
                   <label className="mb-1 block text-xs text-slate-500">Training areas</label>
@@ -1047,7 +1151,8 @@ export default function TeamManager() {
                     })}
                   </div>
                   <p className="mt-1 text-[11px] text-slate-500">
-                    Tap to toggle. Each selected area is recorded as trained today and given a due date in 12 months.
+                    Tap to toggle. Each selected area is recorded as trained today and given a due date
+                    in 12 months.
                   </p>
                 </div>
 
@@ -1115,7 +1220,9 @@ export default function TeamManager() {
                     <div className="mt-3 grid gap-2">
                       <div className="grid grid-cols-2 gap-2">
                         <label className="block">
-                          <span className="mb-1 block text-[11px] font-medium text-slate-600">Course type</span>
+                          <span className="mb-1 block text-[11px] font-medium text-slate-600">
+                            Course type
+                          </span>
                           <select
                             className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
                             value={editCertForm.courseType}
@@ -1135,7 +1242,9 @@ export default function TeamManager() {
                         </label>
 
                         <label className="block">
-                          <span className="mb-1 block text-[11px] font-medium text-slate-600">Provider</span>
+                          <span className="mb-1 block text-[11px] font-medium text-slate-600">
+                            Provider
+                          </span>
                           <select
                             className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
                             value={editCertForm.provider}
@@ -1174,7 +1283,9 @@ export default function TeamManager() {
 
                       <div className="grid grid-cols-2 gap-2">
                         <div className="space-y-1">
-                          <label className="block text-[11px] font-medium text-slate-600">Date passed</label>
+                          <label className="block text-[11px] font-medium text-slate-600">
+                            Date passed
+                          </label>
                           <input
                             type="date"
                             className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
@@ -1187,7 +1298,9 @@ export default function TeamManager() {
                         </div>
 
                         <div className="space-y-1">
-                          <label className="block text-[11px] font-medium text-slate-600">Expiry date</label>
+                          <label className="block text-[11px] font-medium text-slate-600">
+                            Expiry date
+                          </label>
                           <input
                             type="date"
                             className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
@@ -1225,12 +1338,14 @@ export default function TeamManager() {
                               }}
                             />
                             <span className="mt-1 block text-[10px] text-slate-500">
-                              Upload the staff member’s training certificate (PDF preferred). Stored for inspections.
+                              Upload the staff member’s training certificate (PDF preferred). Stored
+                              for inspections.
                             </span>
 
                             {editCertFile ? (
                               <span className="mt-1 block text-[10px] text-slate-600">
-                                Selected: <span className="font-medium">{editCertFile.name}</span>
+                                Selected:{" "}
+                                <span className="font-medium">{editCertFile.name}</span>
                               </span>
                             ) : null}
                           </label>
@@ -1310,6 +1425,10 @@ export default function TeamManager() {
                   <span className="font-medium">Phone:</span> {viewFor.phone ?? "—"}
                 </div>
                 <div>
+                  <span className="font-medium">Login:</span>{" "}
+                  {viewFor.user_id ? "Enabled" : "Not enabled"}
+                </div>
+                <div>
                   <span className="font-medium">Training areas:</span>{" "}
                   {normalizeAreas(viewFor.training_areas).length
                     ? normalizeAreas(viewFor.training_areas)
@@ -1324,7 +1443,9 @@ export default function TeamManager() {
                 {/* Education / certificates (READ ONLY) */}
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <div className="text-sm font-semibold text-slate-900">Education / Courses</div>
+                    <div className="text-sm font-semibold text-slate-900">
+                      Education / Courses
+                    </div>
                     <button
                       onClick={() => void loadCertsForMember(viewFor)}
                       className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
@@ -1359,7 +1480,8 @@ export default function TeamManager() {
                             ) : null}
                           </div>
                           <div className="mt-1 text-[11px] text-slate-600">
-                            Passed: {formatDate(c.awarded_on)} · Expires: {formatDate(c.expires_on)}
+                            Passed: {formatDate(c.awarded_on)} · Expires:{" "}
+                            {formatDate(c.expires_on)}
                           </div>
                           {c.notes ? (
                             <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
