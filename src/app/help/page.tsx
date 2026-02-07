@@ -53,8 +53,8 @@ function Highlight({ text, q }: { text: string; q: string }) {
 
 /**
  * Help section:
- * - Always shows header + intro + TL;DR bullets + image/full info block.
- * - "Open/Hide" only controls the extra bullet detail area.
+ * - No accordion. Everything is visible.
+ * - When searching: shows a "Filtered matches" list at the top + the full list below.
  */
 function HelpSection({
   id,
@@ -65,13 +65,7 @@ function HelpSection({
   imageSrc,
   keywords = [],
   query,
-  isOpen,
-  onToggle,
-}: HelpSectionProps & {
-  query: string;
-  isOpen: boolean;
-  onToggle: () => void;
-}) {
+}: HelpSectionProps & { query: string }) {
   const q = query.trim().toLowerCase();
 
   const matches = useMemo(() => {
@@ -79,24 +73,14 @@ function HelpSection({
     return bullets.map((b) => ({ b, match: b.toLowerCase().includes(q) }));
   }, [bullets, q]);
 
-  const matchedCount = matches.filter((m) => m.match).length;
-
-  const collapsedBullets = useMemo(() => {
-    // TL;DR behavior stays the same
-    if (!q) return matches.slice(0, 4);
-
-    const onlyMatches = matches.filter((m) => m.match);
-    if (onlyMatches.length > 0) return onlyMatches;
-
-    return matches.slice(0, 6);
+  const matchedBullets = useMemo(() => {
+    if (!q) return [];
+    return matches.filter((m) => m.match).map((m) => m.b);
   }, [matches, q]);
 
-  const showExtraBlock = useMemo(() => {
-    // If searching, extra block is still useful but optional.
-    // If not searching, extra block only matters when there are more than 4 bullets.
-    if (q) return true;
-    return bullets.length > 4;
-  }, [q, bullets.length]);
+  const matchedCount = matchedBullets.length;
+
+  const showFilteredBlock = q.length > 0;
 
   return (
     <section id={id} className={CARD}>
@@ -113,59 +97,30 @@ function HelpSection({
             <Highlight text={intro} q={query} />
           </p>
 
-          {query.trim() && (
+          {showFilteredBlock && (
             <div className="text-xs text-slate-500">
               {matchedCount > 0
                 ? `${matchedCount} matching point${matchedCount === 1 ? "" : "s"}`
-                : "No direct bullet matches (but section may still be relevant)."}
+                : "No direct bullet matches (but the section may still be relevant)."}
             </div>
           )}
         </div>
 
-        {showExtraBlock ? (
-          <div className="shrink-0">
-            <button
-              type="button"
-              onClick={onToggle}
-              className={cls(
-                "inline-flex items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold shadow-sm",
-                "border-slate-300 bg-white/80 text-slate-800 hover:bg-slate-50"
-              )}
-              aria-expanded={isOpen}
-              aria-controls={`${id}-panel`}
-            >
-              {isOpen ? "Hide" : "Open"}
-            </button>
-          </div>
-        ) : (
-          <div className="shrink-0">
-            <span
-              className={cls(
-                "inline-flex items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold shadow-sm",
-                "border-slate-200 bg-slate-50 text-slate-600"
-              )}
-              title="No extra details in this section"
-            >
-              Info
-            </span>
-          </div>
-        )}
+        <div className="shrink-0">
+          <span
+            className={cls(
+              "inline-flex items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold shadow-sm",
+              "border-slate-200 bg-slate-50 text-slate-700"
+            )}
+            title="Always expanded"
+          >
+            Info
+          </span>
+        </div>
       </div>
 
-      {/* Always visible: TL;DR bullets */}
-      <ul className="mt-3 space-y-1.5 text-sm text-slate-700">
-        {collapsedBullets.map(({ b }) => (
-          <li key={b} className="flex gap-2">
-            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
-            <span>
-              <Highlight text={b} q={query} />
-            </span>
-          </li>
-        ))}
-      </ul>
-
-      {/* Always visible: image + keywords + (optional) context */}
       <div className="mt-4 grid gap-4 md:grid-cols-[1fr,224px]">
+        {/* Text column */}
         <div>
           {keywords.length > 0 && (
             <div className="flex flex-wrap gap-2">
@@ -180,79 +135,60 @@ function HelpSection({
             </div>
           )}
 
-          {/* Small hint row */}
-          <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 text-xs text-slate-700">
-            <span className="font-semibold">Use this section for:</span>{" "}
-            <Highlight
-              text={
-                title === "Dashboard"
-                  ? "Snapshot of how your business is performing."
-                  : title === "Routines"
-                  ? "Speeding up temperature entries using automated routines"
-                  : title === "Allergens"
-                  ? "Keeping allergy info up-to-date and customers safe."
-                  : title === "Cleaning rota"
-                  ? "Checking and recording cleaning tasks."
-                  : title === "Team"
-                  ? "All the team memebers and their training records."
-                  : title === "Locations"
-                  ? "Multi site - setup each location here."
-                  : title === "Suppliers"
-                  ? "Traceability and due diligence."
-                  : title === "Reports"
-                  ? "inspection-ready evidence and exporting."
-                  : title === "Billing & subscription"
-                  ? "Payments, invoices, plan status."
-                  : title === "Settings"
-                  ? "org defaults and configuration."
-                  : "definitions staff keep getting wrong."
-              }
-              q={query}
-            />
-          </div>
+          {/* Filtered matches (only when searching) */}
+          {showFilteredBlock && (
+            <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-600">
+                Filtered matches
+              </div>
 
-          {/* Expanded panel: only extra bullet content */}
-          {showExtraBlock && isOpen && (
-            <div id={`${id}-panel`} className="mt-4">
-              {(!query.trim() || matchedCount === 0) && bullets.length > 4 && (
-                <>
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                    More detail
-                  </div>
-                  <ul className="mt-2 space-y-1.5 text-sm text-slate-700">
-                    {bullets.slice(4).map((b) => (
-                      <li key={b} className="flex gap-2">
-                        <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
-                        <span>{b}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-
-              {query.trim() && (
-                <>
-                  <div className="mt-1 text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                    All points (filtered)
-                  </div>
-                  <ul className="mt-2 space-y-1.5 text-sm text-slate-700">
-                    {matches
-                      .filter((m) => !q || m.match)
-                      .map(({ b }) => (
-                        <li key={b} className="flex gap-2">
-                          <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
-                          <span>
-                            <Highlight text={b} q={query} />
-                          </span>
-                        </li>
-                      ))}
-                  </ul>
-                </>
+              {matchedBullets.length === 0 ? (
+                <div className="mt-1 text-sm text-slate-700">
+                  No bullet points matched your search.
+                </div>
+              ) : (
+                <ul className="mt-2 space-y-1.5 text-sm text-slate-700">
+                  {matchedBullets.map((b) => (
+                    <li key={b} className="flex gap-2">
+                      <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+                      <span>
+                        <Highlight text={b} q={query} />
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           )}
+
+          {/* Full bullets always visible */}
+          <div className="mt-3">
+            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+              Full guidance
+            </div>
+            <ul className="mt-2 space-y-1.5 text-sm text-slate-700">
+              {bullets.map((b) => (
+                <li key={b} className="flex gap-2">
+                  <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+                  <span>
+                    <Highlight text={b} q={query} />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Light hint block */}
+          <div className="mt-3 rounded-2xl border border-slate-200 bg-white/70 p-3 text-xs text-slate-700">
+            <span className="font-semibold">Tip:</span>{" "}
+            <Highlight
+              text="Keep this page as a reference. If staff are confused, your setup is probably unclear."
+              q={query}
+            />
+          </div>
         </div>
 
+        {/* Image column */}
         {imageSrc ? (
           <div className="space-y-2">
             <div className="relative h-44 w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80 md:h-44 md:w-56">
@@ -756,22 +692,6 @@ export default function HelpPage() {
   ];
 
   const [query, setQuery] = useState("");
-  const [openId, setOpenId] = useState<string | null>(null);
-
-  useEffect(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return;
-
-    const first = sections.find((s) => {
-      const hitTitle =
-        s.title.toLowerCase().includes(q) || s.intro.toLowerCase().includes(q);
-      const hitKeywords = (s.keywords ?? []).some((k) => k.toLowerCase().includes(q));
-      const hitBullets = s.bullets.some((b) => b.toLowerCase().includes(q));
-      return hitTitle || hitKeywords || hitBullets;
-    });
-
-    if (first) setOpenId(first.id);
-  }, [query]); // intentional: only depends on query
 
   const filteredSections = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -926,16 +846,10 @@ export default function HelpPage() {
         />
       </section>
 
-      {/* Help sections (filtered + accordion) */}
+      {/* Help sections (filtered) */}
       <div className="space-y-4">
         {filteredSections.map((s) => (
-          <HelpSection
-            key={s.id}
-            {...s}
-            query={query}
-            isOpen={openId === s.id}
-            onToggle={() => setOpenId((cur) => (cur === s.id ? null : s.id))}
-          />
+          <HelpSection key={s.id} {...s} query={query} />
         ))}
       </div>
 
