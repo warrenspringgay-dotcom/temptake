@@ -79,7 +79,6 @@ type LocationOption = {
   name: string;
 };
 
-/** This matches your *actual* incidents table fields (immediate_action/preventive_action). */
 type LoggedIncidentRow = {
   id: string;
   happened_on: string | null; // yyyy-mm-dd
@@ -123,14 +122,6 @@ type TrainingAreaRow = {
   status: TrainingAreaStatus;
 };
 
-type HygieneRating = {
-  rating: number | null; // 0-5
-  rated_on: string | null; // ISO date/datetime
-  scheme: "FHRS" | "FHIS" | null;
-};
-
-
-// Unified incidents row used by the UI table (includes temp failures too)
 type UnifiedIncidentRow = {
   id: string;
   happened_on: string | null; // yyyy-mm-dd
@@ -140,6 +131,13 @@ type UnifiedIncidentRow = {
   details: string | null;
   corrective_action: string | null;
   source: "incident" | "temp_fail";
+};
+
+/* ===================== NEW: Food hygiene rating types ===================== */
+
+type HygieneMeta = {
+  rating: number | null;
+  updated_on: string | null;
 };
 
 /* ===================== Date helpers ===================== */
@@ -402,6 +400,35 @@ async function fetchTrainingAreasReport(orgId: string): Promise<TrainingAreaRow[
   return rows;
 }
 
+/* ===================== NEW: Food hygiene rating helpers ===================== */
+
+function pickHygieneRating(loc: any): number | null {
+  const raw =
+    loc?.food_hygiene_rating ??
+    loc?.hygiene_rating ??
+    loc?.fhrs_rating ??
+    loc?.food_hygiene_score ??
+    null;
+
+  if (raw == null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
+function pickHygieneUpdatedOn(loc: any): string | null {
+  const raw =
+    loc?.food_hygiene_rating_updated_on ??
+    loc?.hygiene_rating_updated_on ??
+    loc?.fhrs_updated_on ??
+    loc?.food_hygiene_updated_on ??
+    null;
+
+  if (!raw) return null;
+  const d = safeDate(raw);
+  return d ? d.toISOString() : null;
+}
+
 /* ===================== Data fetch helpers ===================== */
 
 async function fetchTemps(
@@ -638,11 +665,6 @@ async function fetchSignoffsTrail(
   }));
 }
 
-/**
- * ✅ Pulls from YOUR table: public.incidents
- * Uses immediate_action + preventive_action.
- * org_id/location_id are text in your schema, so we cast to string in comparisons.
- */
 async function fetchLoggedIncidentsTrail(
   fromISO: string,
   toISO: string,
@@ -678,10 +700,6 @@ async function fetchLoggedIncidentsTrail(
   }));
 }
 
-/**
- * Keeps your existing “merged failures table” behaviour.
- * We map incidents.immediate_action -> corrective_action so the unified table still works.
- */
 async function fetchIncidentsTrailAsUnifiedIncidentShape(
   fromISO: string,
   toISO: string,
@@ -705,16 +723,13 @@ async function fetchIncidentsTrailAsUnifiedIncidentShape(
     happened_on: r.happened_on,
     type: r.type,
     details: r.details,
-    corrective_action: r.immediate_action, // mapped
+    corrective_action: r.immediate_action,
     preventive_action: r.preventive_action,
     created_by: r.created_by,
     created_at: r.created_at,
   }));
 }
 
-/**
- * NOTE: left as-is (this still uses trainings/staff tables).
- */
 async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[]> {
   const { data: tData, error: tErr } = await supabase
     .from("trainings")
@@ -981,10 +996,12 @@ export default function ReportsPage() {
   const [to, setTo] = useState(toISODate(today));
 
   const [orgId, setOrgId] = useState<string | null>(null);
-const [hygiene, setHygiene] = useState<HygieneRating | null>(null);
 
   const [locationFilter, setLocationFilter] = useState<string | "all">("all");
   const [locations, setLocations] = useState<LocationOption[]>([]);
+
+  // ✅ NEW: hygiene rating per location
+  const [hygieneByLocation, setHygieneByLocation] = useState<Record<string, HygieneMeta>>({});
 
   const [temps, setTemps] = useState<TempRow[] | null>(null);
   const [teamDue, setTeamDue] = useState<TeamRow[] | null>(null);
@@ -994,10 +1011,7 @@ const [hygiene, setHygiene] = useState<HygieneRating | null>(null);
   const [education, setEducation] = useState<EducationRow[] | null>(null);
   const [cleaningCount, setCleaningCount] = useState(0);
 
-  // unified failures table (incidents mapped + temp fails)
   const [incidents, setIncidents] = useState<UnifiedIncidentRow[] | null>(null);
-
-  // separate logged incidents table (public.incidents)
   const [loggedIncidents, setLoggedIncidents] = useState<LoggedIncidentRow[] | null>(null);
 
   const [signoffs, setSignoffs] = useState<SignoffRow[] | null>(null);
@@ -1020,7 +1034,6 @@ const [hygiene, setHygiene] = useState<HygieneRating | null>(null);
 
   const printRef = useRef<HTMLDivElement>(null);
 
-  // ✅ NEW: track last auto-run location to prevent duplicate firing
   const lastAutoLocationRef = useRef<string | "all" | null>(null);
 
   const visibleTemps = useMemo(() => {
@@ -1083,40 +1096,28 @@ const [hygiene, setHygiene] = useState<HygieneRating | null>(null);
     return showAllTrainingAreas ? trainingMatrix : trainingMatrix.slice(0, 12);
   }, [trainingMatrix, showAllTrainingAreas]);
 
+  // ✅ NEW: hygiene display for selected / all
+  const hygieneDisplay = useMemo(() => {
+    if (locationFilter !== "all") {
+      const meta = hygieneByLocation[String(locationFilter)];
+      if (!meta || meta.rating == null) return { label: "—", updated: null as string | null };
+      return {
+        label: `${meta.rating}/5`,
+        updated: meta.updated_on,
+      };
+    }
+
+    const metas = Object.values(hygieneByLocation);
+    const rated = metas.map((m) => m.rating).filter((x): x is number => typeof x === "number");
+    if (!rated.length) return { label: "—", updated: null as string | null };
+
+    const uniq = Array.from(new Set(rated));
+    if (uniq.length === 1) return { label: `${uniq[0]}/5`, updated: null as string | null };
+
+    return { label: "Varies", updated: null as string | null };
+  }, [locationFilter, hygieneByLocation]);
+
   /* ---------- boot: org + locations ---------- */
-async function fetchFoodHygieneRating(
-  orgId: string,
-  locationId: string | null
-): Promise<HygieneRating | null> {
-  // Only meaningful when a specific location is selected
-  if (!locationId) return null;
-
-  const { data, error } = await supabase
-    .from("locations")
-    .select("id, food_hygiene_rating, food_hygiene_rating_date, country")
-    .eq("org_id", orgId)
-    .eq("id", locationId)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) return null;
-
-  // Optional: infer scheme based on country (Scotland uses FHIS scheme)
-  const country = (data as any).country ? String((data as any).country) : "";
-  const scheme: HygieneRating["scheme"] =
-    country.toLowerCase().includes("scotland") ? "FHIS" : "FHRS";
-
-  return {
-    rating:
-      (data as any).food_hygiene_rating != null ? Number((data as any).food_hygiene_rating) : null,
-    rated_on: (data as any).food_hygiene_rating_date
-      ? String((data as any).food_hygiene_rating_date)
-      : null,
-    scheme,
-  };
-}
-
-
 
   useEffect(() => {
     (async () => {
@@ -1124,14 +1125,25 @@ async function fetchFoodHygieneRating(
       setOrgId(id ?? null);
       if (!id) return;
 
+      // CHANGED: select("*") so we can safely read rating fields without risking missing-column errors
       const { data, error } = await supabase
         .from("locations")
-        .select("id, name")
+        .select("*")
         .eq("org_id", id)
         .order("name");
 
       if (!error && data) {
         setLocations(data.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })));
+
+        const map: Record<string, HygieneMeta> = {};
+        for (const r of data as any[]) {
+          const locId = String(r.id);
+          map[locId] = {
+            rating: pickHygieneRating(r),
+            updated_on: pickHygieneUpdatedOn(r),
+          };
+        }
+        setHygieneByLocation(map);
       }
 
       const activeLoc = await getActiveLocationIdClient();
@@ -1166,13 +1178,8 @@ async function fetchFoodHygieneRating(
         fetchTemps(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningCount(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchStaffReviews(rangeFrom, rangeTo, orgIdValue, locationId),
-
-        // real incidents table rows
         fetchLoggedIncidentsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
-
-        // used ONLY to map into unified failures table
         fetchIncidentsTrailAsUnifiedIncidentShape(rangeFrom, rangeTo, orgIdValue, locationId),
-
         fetchTempFailuresUnified(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchSignoffsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningRunsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
@@ -1216,30 +1223,25 @@ async function fetchFoodHygieneRating(
       setShowAllCleaningRuns(false);
 
       if (includeAncillary) {
-  const withinDays = 90;
-  const [m, a, e, ta, hy] = await Promise.all([
-    fetchTeamDue(withinDays, orgIdValue),
-    fetchAllergenLog(withinDays, orgIdValue),
-    fetchEducation(orgIdValue),
-    fetchTrainingAreasReport(orgIdValue),
-    fetchFoodHygieneRating(orgIdValue, locationId),
-  ]);
+        const withinDays = 90;
+        const [m, a, e, ta] = await Promise.all([
+          fetchTeamDue(withinDays, orgIdValue),
+          fetchAllergenLog(withinDays, orgIdValue),
+          fetchEducation(orgIdValue),
+          fetchTrainingAreasReport(orgIdValue),
+        ]);
 
-  setTeamDue(m);
-  setAllergenLog(a);
-  setEducation(e);
-  setTrainingAreas(ta);
-  setHygiene(hy);
+        setTeamDue(m);
+        setAllergenLog(a);
+        setEducation(e);
+        setTrainingAreas(ta);
 
-  setShowAllEducation(false);
-  setShowAllTrainingAreas(false);
-}
-
+        setShowAllEducation(false);
+        setShowAllTrainingAreas(false);
+      }
     } catch (e: any) {
       setErr(e?.message ?? "Failed to run report.");
       setTemps(null);
-      setHygiene(null);
-
       setTeamDue(null);
       setAllergenLog(null);
       setAllergenChanges(null);
@@ -1285,32 +1287,27 @@ async function fetchFoodHygieneRating(
     if (orgId && !initialRunDone) {
       runInstantAudit90();
       setInitialRunDone(true);
-      // after the first run, set the last auto location so the next change triggers correctly
       lastAutoLocationRef.current = locationFilter;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
-  // ✅ NEW: auto-run when location changes (no more pressing "Run")
   useEffect(() => {
     if (!orgId) return;
     if (!initialRunDone) return;
     if (loading) return;
 
-    // prevent firing on initial mount / state hydration
     if (lastAutoLocationRef.current === null) {
       lastAutoLocationRef.current = locationFilter;
       return;
     }
 
-    // only act on real change
     if (lastAutoLocationRef.current === locationFilter) return;
 
     lastAutoLocationRef.current = locationFilter;
 
     const locId = locationFilter !== "all" ? locationFilter : null;
 
-    // location does NOT impact ancillary sections, so skip those for speed
     runRange(from, to, orgId, locId, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationFilter]);
@@ -1428,9 +1425,21 @@ async function fetchFoodHygieneRating(
                 </option>
               ))}
             </select>
+
             <div className="mt-1 text-[11px] text-slate-500">Current: {currentLocationLabel}</div>
+
+            {/* ✅ NEW: Food hygiene rating display */}
             <div className="mt-1 text-[11px] text-slate-500">
-              {/* tiny status hint so users don’t assume it’s broken */}
+              Food hygiene rating:{" "}
+              <span className="font-semibold text-slate-700">{hygieneDisplay.label}</span>
+              {hygieneDisplay.updated ? (
+                <span className="ml-1 text-slate-500">
+                  (updated {formatISOToUK(hygieneDisplay.updated)})
+                </span>
+              ) : null}
+            </div>
+
+            <div className="mt-1 text-[11px] text-slate-500">
               {loading ? "Loading…" : "Auto-runs when you change location."}
             </div>
           </div>
@@ -1486,39 +1495,6 @@ async function fetchFoodHygieneRating(
             </div>
           </div>
         </Card>
-
-<Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-  <h3 className="mb-2 text-base font-semibold">Food hygiene rating</h3>
-
-  {locationFilter === "all" ? (
-    <p className="text-sm text-slate-600">
-      Select a location to show its rating.
-    </p>
-  ) : !hygiene ? (
-    <p className="text-sm text-slate-600">
-      No rating saved for this location.
-    </p>
-  ) : (
-    <div className="flex flex-col gap-1 text-sm">
-      <div>
-        <span className="text-slate-500">Rating:</span>{" "}
-        <span className="font-semibold">
-          {hygiene.rating != null ? `${hygiene.rating}/5` : "—"}
-        </span>{" "}
-        {hygiene.scheme ? (
-          <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-            {hygiene.scheme}
-          </span>
-        ) : null}
-      </div>
-      <div className="text-slate-600">
-        <span className="text-slate-500">Rated on:</span>{" "}
-        {hygiene.rated_on ? formatISOToUK(hygiene.rated_on) : "—"}
-      </div>
-    </div>
-  )}
-</Card>
-
 
         {/* Temperature Logs */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
@@ -1786,8 +1762,7 @@ async function fetchFoodHygieneRating(
         {/* Cleaning runs trail (range-based) */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-1 text-base font-semibold">
-            Cleaning runs{" "}
-            {cleaningRuns ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+            Cleaning runs {cleaningRuns ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
           <p className="mb-3 text-xs text-slate-500">
             Total cleaning runs this period:{" "}
@@ -1859,8 +1834,7 @@ async function fetchFoodHygieneRating(
         {/* Day sign-offs trail */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
-            Day sign-offs{" "}
-            {signoffs ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+            Day sign-offs {signoffs ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
 
           <div className="overflow-x-auto">
@@ -1924,11 +1898,10 @@ async function fetchFoodHygieneRating(
           )}
         </Card>
 
-        {/* Manager QC reviews (reports view of QC table) */}
+        {/* Manager QC reviews */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
-            Manager QC reviews{" "}
-            {staffReviews ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+            Manager QC reviews {staffReviews ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
 
           <div className="overflow-x-auto">
@@ -2001,9 +1974,8 @@ async function fetchFoodHygieneRating(
               data-hide-on-print
             >
               <div>
-                Showing{" "}
-                {showAllEducation ? staffReviews.length : Math.min(10, staffReviews.length)} of{" "}
-                {staffReviews.length} entries
+                Showing {showAllEducation ? staffReviews.length : Math.min(10, staffReviews.length)}{" "}
+                of {staffReviews.length} entries
               </div>
               <button
                 type="button"
@@ -2076,7 +2048,7 @@ async function fetchFoodHygieneRating(
                             {r.status === "no-expiry"
                               ? "No expiry"
                               : r.status === "expired"
-                                                           ? "Expired"
+                              ? "Expired"
                               : "Valid"}
                           </span>
                         </td>
@@ -2218,7 +2190,7 @@ async function fetchFoodHygieneRating(
           )}
         </Card>
 
-        {/* Allergen review table (next 90 days, placed near allergen edits) */}
+        {/* Allergen review table */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-2 text-base font-semibold">Allergen reviews (next 90 days)</h3>
           <p className="mb-3 text-xs text-slate-500">
@@ -2266,7 +2238,7 @@ async function fetchFoodHygieneRating(
           </div>
         </Card>
 
-        {/* Allergen edits table (NEW) */}
+        {/* Allergen edits table */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Allergen edits {allergenChanges ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
