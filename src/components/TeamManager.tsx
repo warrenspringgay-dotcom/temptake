@@ -40,6 +40,8 @@ type Member = {
   active: boolean | null;
   notes?: string | null;
   training_areas?: TrainingArea[] | null; // stored on team_members as text[]
+  login_enabled?: boolean | null; // new column (default true)
+  user_id?: string | null; // optional if you select it
 };
 
 type TrainingCert = {
@@ -50,49 +52,24 @@ type TrainingCert = {
   certificate_url: string | null;
   notes: string | null;
 
-  // DB columns you actually have:
   provider_name?: "Highfield" | "Other" | null;
   course_key?: string | null;
 };
 
 /* -------------------- Helpers -------------------- */
-
-function normalizeInitials(s: string) {
-  return (s || "")
-    .toUpperCase()
-    .replace(/\./g, "")
-    .replace(/[^A-Z0-9]/g, "")
-    .trim();
-}
-
-function makeInitialsFromName(name: string) {
-  const parts = (name || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-
-  if (parts.length === 0) return "";
-  if (parts.length === 1) return (parts[0]?.slice(0, 2) ?? "").toUpperCase();
-
-  const first = parts[0]?.[0] ?? "";
-  const last = parts[parts.length - 1]?.[0] ?? "";
-  return (first + last).toUpperCase();
-}
-
-function validateInitials(s: string) {
-  const v = normalizeInitials(s);
-  if (!v) return "Initials are required.";
-  if (v.length < 2) return "Initials must be at least 2 characters.";
-  if (v.length > 4) return "Initials must be 4 characters or less.";
-  return null;
+function deriveInitialsFromName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "";
+  if (parts.length === 1) return parts[0]!.charAt(0).toUpperCase();
+  return (parts[0]!.charAt(0) + parts[1]!.charAt(0)).toUpperCase();
 }
 
 function safeInitials(m: Member): string {
-  const fromField = normalizeInitials(m.initials ?? "");
+  const fromField = (m.initials ?? "").trim().toUpperCase();
   if (fromField) return fromField;
 
-  const gen = makeInitialsFromName(m.name);
-  return gen;
+  const fromName = deriveInitialsFromName(m.name ?? "");
+  return fromName;
 }
 
 function prettyRole(role: string | null) {
@@ -120,11 +97,6 @@ function pillClassSelected(selected: boolean) {
     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
 }
 
-/**
- * 12-month policy for pills.
- * If you want "12 months" exactly regardless of leap years,
- * we do date + 12 months (not 365 days).
- */
 function addMonthsISODate(months: number) {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -167,6 +139,11 @@ function certTitle(c: TrainingCert) {
   return `${providerLabel} · ${courseLabel}`;
 }
 
+function isValidEmail(email: string) {
+  // good enough for UI gating
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim().toLowerCase());
+}
+
 /* ================================================= */
 export default function TeamManager() {
   const searchParams = useSearchParams();
@@ -181,6 +158,10 @@ export default function TeamManager() {
 
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
+
+  // New: login toggle in the modal
+  const [allowLogin, setAllowLogin] = useState(true);
+  const [inviteOnSave, setInviteOnSave] = useState(false);
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewFor, setViewFor] = useState<Member | null>(null);
@@ -207,7 +188,6 @@ export default function TeamManager() {
     courseType: "Food Safety Level 2",
     courseTitle: "Food Safety Level 2",
 
-    // Default provider = Highfield
     provider: "Highfield" as "Highfield" | "Other",
     providerName: "",
 
@@ -250,7 +230,7 @@ export default function TeamManager() {
 
       const { data, error } = await supabase
         .from("team_members")
-        .select("id, initials, name, email, role, phone, active, notes, training_areas")
+        .select("id, initials, name, email, role, phone, active, notes, training_areas, login_enabled, user_id")
         .eq("org_id", id)
         .order("name", { ascending: true });
 
@@ -263,13 +243,12 @@ export default function TeamManager() {
 
       // Auto-create owner row if empty
       if (members.length === 0 && id && userEmail) {
-        const ownerInitials = normalizeInitials(makeInitialsFromName(userName)) || "OW";
-
+        const initials = deriveInitialsFromName(userName) || "OW";
         const { data: inserted, error: insErr } = await supabase
           .from("team_members")
           .insert({
             org_id: id,
-            initials: ownerInitials, // ✅ NOT NULL
+            initials, // avoid NOT NULL crash
             name: userName,
             email: userEmail,
             role: "owner",
@@ -277,8 +256,9 @@ export default function TeamManager() {
             notes: null,
             active: true,
             training_areas: [],
+            login_enabled: true,
           })
-          .select("id, initials, name, email, role, phone, active, notes, training_areas")
+          .select("id, initials, name, email, role, phone, active, notes, training_areas, login_enabled, user_id")
           .maybeSingle();
 
         if (!insErr && inserted) {
@@ -362,9 +342,13 @@ export default function TeamManager() {
       active: true,
       notes: "",
       training_areas: [],
+      login_enabled: true,
+      user_id: null,
     });
 
-    // reset edit-education state
+    setAllowLogin(true);
+    setInviteOnSave(false);
+
     setEditCerts([]);
     setEditCertsLoading(false);
     setEditCertSaving(false);
@@ -388,6 +372,11 @@ export default function TeamManager() {
       ...m,
       training_areas: normalizeAreas(m.training_areas),
     });
+
+    const loginEnabled = m.login_enabled ?? true;
+    setAllowLogin(loginEnabled);
+    // Only auto-invite-on-save if they are not linked yet
+    setInviteOnSave(loginEnabled && !m.user_id);
 
     await loadEditCertsForMember(m);
 
@@ -439,33 +428,49 @@ export default function TeamManager() {
     }
   }
 
+  async function maybeInviteLogin(email: string, role: string) {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanRole = (role.trim() || "staff").toLowerCase();
+
+    if (!cleanEmail) throw new Error("Email is required to allow login.");
+    if (!isValidEmail(cleanEmail)) throw new Error("Enter a valid email address.");
+
+    const res = await inviteTeamMemberServer({ email: cleanEmail, role: cleanRole });
+
+    if (!res.ok) throw new Error(res.message ?? "Failed to send invite.");
+  }
+
   async function saveMember() {
     if (!editing) return;
     try {
       if (!orgId) return alert("No organisation found.");
-
-      const nameClean = (editing.name ?? "").trim();
-      if (!nameClean) return alert("Name is required.");
-
-      // ✅ initials must never be null (DB NOT NULL)
-      let initialsClean = normalizeInitials(editing.initials ?? "");
-      if (!initialsClean) initialsClean = normalizeInitials(makeInitialsFromName(nameClean));
-
-      const initialsErr = validateInitials(initialsClean);
-      if (initialsErr) return alert(initialsErr);
+      if (!editing.name.trim()) return alert("Name is required.");
 
       const roleValue = (editing.role ?? "").trim().toLowerCase() || "staff";
       const trainingAreas = normalizeAreas(editing.training_areas);
 
+      const derivedInitials = deriveInitialsFromName(editing.name.trim());
+      const initialsToSave = (editing.initials ?? "").trim().toUpperCase() || derivedInitials || "—";
+
+      // Decide login behaviour
+      const login_enabled = !!allowLogin;
+
+      // If login enabled, email is required
+      const emailToSave = (editing.email ?? "").trim().toLowerCase() || null;
+      if (login_enabled && (!emailToSave || !isValidEmail(emailToSave))) {
+        return alert("Email is required (and must be valid) if login is enabled.");
+      }
+
       if (editing.id) {
         const updatePayload: any = {
-          initials: initialsClean,
-          name: nameClean,
-          email: (editing.email ?? "").trim() || null,
-          phone: (editing.phone ?? "").trim() || null,
-          notes: (editing.notes ?? "").trim() || null,
+          initials: initialsToSave, // avoid NOT NULL crash
+          name: editing.name.trim(),
+          email: emailToSave,
+          phone: editing.phone?.trim() || null,
+          notes: editing.notes?.trim() || null,
           active: editing.active ?? true,
           training_areas: trainingAreas,
+          login_enabled,
         };
 
         if (isOwner) {
@@ -480,6 +485,11 @@ export default function TeamManager() {
         if (error) throw error;
 
         await syncTrainingTracking(editing.id, trainingAreas);
+
+        // Invite if: login enabled + not linked + user chose to invite (or default true for unlinked)
+        if (login_enabled && (inviteOnSave || !editing.user_id)) {
+          await maybeInviteLogin(emailToSave!, roleValue);
+        }
       } else {
         if (!isOwner) {
           alert("Only the owner can add team members.");
@@ -490,14 +500,15 @@ export default function TeamManager() {
           .from("team_members")
           .insert({
             org_id: orgId,
-            initials: initialsClean, // ✅ NOT NULL
-            name: nameClean,
-            email: (editing.email ?? "").trim() || null,
+            initials: initialsToSave, // avoid NOT NULL crash
+            name: editing.name.trim(),
+            email: emailToSave,
             role: roleValue,
-            phone: (editing.phone ?? "").trim() || null,
-            notes: (editing.notes ?? "").trim() || null,
+            phone: editing.phone?.trim() || null,
+            notes: editing.notes?.trim() || null,
             active: true,
             training_areas: trainingAreas,
+            login_enabled,
           })
           .select("id")
           .single();
@@ -506,6 +517,10 @@ export default function TeamManager() {
 
         if (inserted?.id) {
           await syncTrainingTracking(inserted.id, trainingAreas);
+        }
+
+        if (login_enabled) {
+          await maybeInviteLogin(emailToSave!, roleValue);
         }
       }
 
@@ -587,9 +602,6 @@ export default function TeamManager() {
     const provider_name: "Highfield" | "Other" =
       editCertForm.provider === "Other" ? "Other" : "Highfield";
 
-    // course_key usage:
-    // - if provider is Highfield -> store courseType
-    // - if provider is Other -> store the providerName (actual provider)
     const course_key =
       provider_name === "Other"
         ? ((editCertForm.providerName ?? "").trim() || null)
@@ -598,19 +610,16 @@ export default function TeamManager() {
     setEditCertSaving(true);
 
     try {
-      // Optional upload
       let certificate_url: string | null =
         (editCertForm.certificate_url ?? "").trim() || null;
 
       if (editCertFile) {
         const up = await uploadTrainingCertificateServer({ file: editCertFile });
 
-        // return shape: { url, path }
         if (!up?.url && !up?.path) {
           throw new Error("Certificate upload failed (no URL/path returned).");
         }
 
-        // Prefer URL if available
         certificate_url = up.url || certificate_url;
       }
 
@@ -656,7 +665,7 @@ export default function TeamManager() {
     await loadCertsForMember(m);
   }
 
-  /* -------------------- Invite flow -------------------- */
+  /* -------------------- Invite flow (standalone modal) -------------------- */
   function openInvite() {
     setInviteForm({ email: "", role: "staff" });
     setInviteError(null);
@@ -743,6 +752,18 @@ export default function TeamManager() {
             const roleLabel = prettyRole(m.role);
             const activeLabel = m.active ? "Active" : "Inactive";
             const areas = normalizeAreas(m.training_areas);
+            const loginEnabled = m.login_enabled ?? true;
+            const loginBadge =
+              loginEnabled
+                ? (m.user_id ? "Linked" : "Invite pending")
+                : "No login";
+
+            const loginBadgeCls =
+              !loginEnabled
+                ? "bg-slate-50 text-slate-600 border border-slate-200"
+                : m.user_id
+                ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                : "bg-amber-50 text-amber-800 border border-amber-200";
 
             return (
               <div
@@ -778,6 +799,10 @@ export default function TeamManager() {
                           }`}
                         >
                           {activeLabel}
+                        </span>
+
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${loginBadgeCls}`}>
+                          {loginBadge}
                         </span>
                       </div>
                     </div>
@@ -833,7 +858,7 @@ export default function TeamManager() {
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-slate-500">Initials</span>
-                    <span className="text-right">{normalizeInitials(m.initials ?? "") || initials || "—"}</span>
+                    <span className="text-right">{m.initials ?? initials ?? "—"}</span>
                   </div>
                 </div>
 
@@ -888,58 +913,84 @@ export default function TeamManager() {
                 </button>
               </div>
 
+              {/* Login toggle */}
+              <div className="mb-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+                <label className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    className="mt-1 accent-emerald-600"
+                    checked={allowLogin}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      setAllowLogin(next);
+                      setInviteOnSave(next); // if enabling login, default to inviting on save
+                      setEditing((cur) =>
+                        cur ? { ...cur, login_enabled: next } : cur
+                      );
+                    }}
+                  />
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-900">
+                      Allow this person to log in
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      If enabled, an email is required and we’ll send them an invite link on save.
+                      If disabled, they are staff-only (no login).
+                    </div>
+                  </div>
+                </label>
+
+                {allowLogin && editing.id && !editing.user_id ? (
+                  <label className="mt-3 flex items-center gap-2 text-xs text-slate-700">
+                    <input
+                      type="checkbox"
+                      className="accent-emerald-600"
+                      checked={inviteOnSave}
+                      onChange={(e) => setInviteOnSave(e.target.checked)}
+                    />
+                    Send invite link on save
+                  </label>
+                ) : null}
+              </div>
+
               <div className="grid gap-3">
                 <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <label className="mb-1 block text-xs text-slate-500">Initials *</label>
+                    <label className="mb-1 block text-xs text-slate-500">Initials</label>
                     <input
                       className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                       value={editing.initials ?? ""}
-                      onChange={(e) =>
-                        setEditing({
-                          ...editing,
-                          initials: normalizeInitials(e.target.value),
-                        })
-                      }
-                      placeholder="e.g. WS"
+                      onChange={(e) => setEditing({ ...editing, initials: e.target.value })}
+                      placeholder="WS"
                     />
-                    <div className="mt-1 text-[10px] text-slate-500">
-                      2–4 chars. Uppercase. No dots.
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      If blank, we’ll auto-generate from the name.
                     </div>
                   </div>
-
                   <div className="col-span-2">
                     <label className="mb-1 block text-xs text-slate-500">Name *</label>
                     <input
                       className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                       value={editing.name}
-                      onChange={(e) => {
-                        const nextName = e.target.value;
-                        setEditing((cur) => {
-                          if (!cur) return cur;
-
-                          const curInitials = normalizeInitials(cur.initials ?? "");
-                          // Auto-fill initials only if empty
-                          if (!curInitials) {
-                            const gen = makeInitialsFromName(nextName);
-                            return { ...cur, name: nextName, initials: gen };
-                          }
-
-                          return { ...cur, name: nextName };
-                        });
-                      }}
+                      onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                     />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="mb-1 block text-xs text-slate-500">Email</label>
+                    <label className="mb-1 block text-xs text-slate-500">
+                      Email {allowLogin ? "*" : ""}
+                    </label>
                     <input
                       className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                       value={editing.email ?? ""}
                       onChange={(e) => setEditing({ ...editing, email: e.target.value })}
+                      placeholder="team@example.com"
                     />
+                    {allowLogin && editing.email && !isValidEmail(editing.email) ? (
+                      <div className="mt-1 text-[11px] text-rose-700">Email looks invalid.</div>
+                    ) : null}
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-slate-500">Phone</label>
@@ -1169,7 +1220,7 @@ export default function TeamManager() {
                           }
                           placeholder="Certificate URL (optional)"
                         />
-                        {/* Certificate link + upload (clear labels) */}
+
                         <div>
                           <label className="block">
                             <span className="mb-1 block text-[11px] font-medium text-slate-600">
@@ -1257,7 +1308,7 @@ export default function TeamManager() {
               <div className="space-y-2 p-4 text-sm">
                 <div>
                   <span className="font-medium">Initials:</span>{" "}
-                  {normalizeInitials(viewFor.initials ?? "") || safeInitials(viewFor) || "—"}
+                  {viewFor.initials ?? safeInitials(viewFor) ?? "—"}
                 </div>
                 <div>
                   <span className="font-medium">Role:</span> {prettyRole(viewFor.role)}
@@ -1267,6 +1318,12 @@ export default function TeamManager() {
                 </div>
                 <div>
                   <span className="font-medium">Phone:</span> {viewFor.phone ?? "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Login:</span>{" "}
+                  {(viewFor.login_enabled ?? true)
+                    ? (viewFor.user_id ? "Linked" : "Invite pending")
+                    : "No login"}
                 </div>
                 <div>
                   <span className="font-medium">Training areas:</span>{" "}
