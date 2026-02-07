@@ -165,7 +165,12 @@ export default function CleaningRotaPage() {
   const [err, setErr] = useState<string | null>(null);
 
   const [manageOpen, setManageOpen] = useState(false);
+
+  // Header initials box (staff can still override)
   const [initials, setInitials] = useState<string>("");
+
+  // ✅ Logged-in user's initials (authoritative default)
+  const [userInitials, setUserInitials] = useState<string>("");
 
   const [showConfetti, setShowConfetti] = useState(false);
 
@@ -269,7 +274,7 @@ export default function CleaningRotaPage() {
         return;
       }
 
-      // 🔹 Auto-load current user's initials from team_members
+      // ✅ Load current user's initials from team_members (reliable default)
       try {
         const { data: userRes } = await supabase.auth.getUser();
         const userId = userRes.user?.id;
@@ -284,8 +289,10 @@ export default function CleaningRotaPage() {
           if (!tmErr && tm && (tm as any).initials) {
             const ini = String((tm as any).initials).trim().toUpperCase();
             if (ini) {
-              setInitials(ini);
-              // don't overwrite signoffInitials here; we handle that when the modal opens
+              setUserInitials(ini);
+
+              // only set the header initials if the user hasn't already typed something
+              setInitials((prev) => (prev.trim() ? prev : ini));
             }
           }
         }
@@ -377,9 +384,8 @@ export default function CleaningRotaPage() {
 
       // auto-open signoff prompt if not already signed off
       if (!signoff) {
-        setSignoffInitials((prev) =>
-          prev.trim() ? prev : initials.trim().toUpperCase()
-        );
+        const best = (userInitials || initials).trim().toUpperCase();
+        setSignoffInitials((prev) => (prev.trim() ? prev : best));
         setSignoffNotes("");
         setSignoffOpen(true);
       }
@@ -388,7 +394,7 @@ export default function CleaningRotaPage() {
     }
 
     prevAllDoneRef.current = allDone;
-  }, [allDone, initials, signoff]);
+  }, [allDone, initials, userInitials, signoff]);
 
   const groupedByCategory = useMemo(() => {
     const m = new Map<string, Task[]>();
@@ -616,13 +622,16 @@ export default function CleaningRotaPage() {
     }
   }
 
-  // 🔹 When the sign-off modal opens, auto-fill initials from current user if blank
+  // ✅ When the sign-off modal opens, auto-fill initials from the logged-in user if blank
   useEffect(() => {
     if (!signoffOpen) return;
     if (signoffInitials.trim()) return;
-    if (!initials.trim()) return;
-    setSignoffInitials(initials.trim().toUpperCase());
-  }, [signoffOpen, signoffInitials, initials]);
+
+    const best = (userInitials || initials).trim().toUpperCase();
+    if (!best) return;
+
+    setSignoffInitials(best);
+  }, [signoffOpen, signoffInitials, userInitials, initials]);
 
   if (loading) {
     return (
@@ -665,9 +674,8 @@ export default function CleaningRotaPage() {
             {/* ✅ Sign off button */}
             <button
               onClick={() => {
-                setSignoffInitials((prev) =>
-                  prev.trim() ? prev : initials.trim().toUpperCase()
-                );
+                const best = (userInitials || initials).trim().toUpperCase();
+                setSignoffInitials((prev) => (prev.trim() ? prev : best));
                 setSignoffNotes("");
                 setSignoffOpen(true);
               }}
