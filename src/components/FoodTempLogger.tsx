@@ -55,7 +55,7 @@ type CleanTask = {
   task: string;
   category: string | null;
   frequency: "daily" | "weekly" | "monthly";
-  weekday: number | null; // IMPORTANT: expected 0..6 to match rota page
+  weekday: number | null;
   month_day: number | null;
 };
 
@@ -65,6 +65,8 @@ type CleanRun = {
   done_by: string | null;
 };
 
+// Optional: only used if you have deferrals in your rota.
+// If table doesn't exist, code ignores it.
 type Deferral = {
   task_id: string;
   from_on: string; // yyyy-mm-dd
@@ -163,37 +165,9 @@ function formatDDMMYYYY(val: any): string | null {
   return `${dd}/${mm}/${yyyy}`;
 }
 
-function clampPct(n: number) {
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(0, Math.min(100, n));
-}
-
-function daysBetween(aISO: string, bISO: string) {
-  const a = new Date(aISO);
-  const b = new Date(bISO);
-  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 999999;
-  const a0 = new Date(a);
-  const b0 = new Date(b);
-  a0.setHours(0, 0, 0, 0);
-  b0.setHours(0, 0, 0, 0);
-  return Math.round((b0.getTime() - a0.getTime()) / 86400000);
-}
-
-function isLikelyMonthEnd(d = new Date()) {
-  // If it's within first 3 days of the month, treat as month end review time.
-  return d.getDate() <= 3;
-}
-
-/* ---------- Cleaning KPI helpers (MATCH cleaning-rota) ---------- */
-
+// yyyy-mm-dd from Date
 function isoDate(d: Date) {
   return d.toISOString().slice(0, 10);
-}
-
-function isoDateFromYmd(ymd: string) {
-  // ymd should already be yyyy-mm-dd. This makes sure we treat it as date.
-  const d = new Date(`${ymd}T00:00:00.000Z`);
-  return d;
 }
 
 function startOfWeekMonday(d: Date) {
@@ -213,21 +187,54 @@ function endOfWeekSunday(d: Date) {
   return e;
 }
 
-function isDueOn(task: CleanTask, date: Date) {
-  if (task.frequency === "daily") return true;
+function getDow1to7(ymd: string) {
+  const date = new Date(ymd);
+  return ((date.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
+}
+function getDom(ymd: string) {
+  return new Date(ymd).getDate();
+}
 
-  if (task.frequency === "weekly") {
-    if (task.weekday === null || task.weekday === undefined) return false;
-    // IMPORTANT: this matches CleaningRotaPage (0..6)
-    return date.getDay() === task.weekday;
+// Robust: supports weekday stored as 0..6 or 1..7
+function isDueOn(t: CleanTask, ymd: string) {
+  switch (t.frequency) {
+    case "daily":
+      return true;
+
+    case "weekly": {
+      if (t.weekday == null) return false;
+      const d0to6 = new Date(ymd).getDay(); // Sun=0..Sat=6
+      const d1to7 = getDow1to7(ymd); // Mon=1..Sun=7
+      return t.weekday === d0to6 || t.weekday === d1to7;
+    }
+
+    case "monthly":
+      return t.month_day === getDom(ymd);
+
+    default:
+      return false;
   }
+}
 
-  if (task.frequency === "monthly") {
-    if (!task.month_day) return false;
-    return date.getDate() === task.month_day;
-  }
+function clampPct(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
+}
 
-  return false;
+function daysBetween(aISO: string, bISO: string) {
+  const a = new Date(aISO);
+  const b = new Date(bISO);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 999999;
+  const a0 = new Date(a);
+  const b0 = new Date(b);
+  a0.setHours(0, 0, 0, 0);
+  b0.setHours(0, 0, 0, 0);
+  return Math.round((b0.getTime() - a0.getTime()) / 86400000);
+}
+
+function isLikelyMonthEnd(d = new Date()) {
+  // If it's within first 3 days of the month, treat as month end review time.
+  return d.getDate() <= 3;
 }
 
 /* ---------- Four-week dismiss helpers ---------- */
@@ -533,6 +540,7 @@ function AlertsModal({
                 Alerts & incidents
               </div>
 
+              {/* NO IDs. Labels only. */}
               <div className="mt-0.5 text-xs text-slate-500">
                 Org:{" "}
                 <span className="font-semibold text-slate-700">
@@ -719,9 +727,7 @@ function AlertsModal({
 
                         <div className="shrink-0 flex flex-col items-end gap-2">
                           <div className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-extrabold text-slate-700">
-                            {i.created_at
-                              ? formatDDMMYYYY(i.created_at) ?? ""
-                              : ""}
+                            {i.created_at ? formatDDMMYYYY(i.created_at) ?? "" : ""}
                           </div>
 
                           {!resolved ? (
@@ -736,9 +742,7 @@ function AlertsModal({
                                   : "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
                               )}
                             >
-                              {resolvingId === i.id
-                                ? "Resolving…"
-                                : "Mark resolved"}
+                              {resolvingId === i.id ? "Resolving…" : "Mark resolved"}
                             </button>
                           ) : null}
                         </div>
@@ -969,7 +973,6 @@ export default function DashboardPage() {
     }));
   }
 
-  // ✅ FIXED: dashboard cleaning KPI now matches /cleaning-rota logic exactly
   async function loadCleaningKpi(
     orgId: string,
     locationId: string | null,
@@ -985,14 +988,14 @@ export default function DashboardPage() {
       return;
     }
 
-    // Treat "todayISO" as a Date (same as rota does)
-    const today = isoDateFromYmd(todayISO);
-
-    // 1) Tasks are ORG scoped (match rota page)
+    // ----- TASKS -----
     const { data: tData, error: tErr } = await supabase
       .from("cleaning_tasks")
-      .select("id,org_id,task,area,category,frequency,weekday,month_day")
-      .eq("org_id", orgId);
+      .select(
+        "id, org_id, location_id, area, task, category, frequency, weekday, month_day"
+      )
+      .eq("org_id", orgId)
+      .eq("location_id", locationId);
 
     if (tErr) throw tErr;
 
@@ -1010,10 +1013,10 @@ export default function DashboardPage() {
           r.month_day === null || r.month_day === undefined ? null : Number(r.month_day),
       })) || [];
 
-    // 2) Runs are location scoped (match rota page)
+    // ----- RUNS -----
     const { data: rData, error: rErr } = await supabase
       .from("cleaning_task_runs")
-      .select("task_id,run_on,done_by")
+      .select("task_id,run_on,done_by,location_id")
       .eq("org_id", orgId)
       .eq("location_id", locationId)
       .eq("run_on", todayISO);
@@ -1023,35 +1026,40 @@ export default function DashboardPage() {
     const runs: CleanRun[] =
       (rData ?? []).map((r: any) => ({
         task_id: String(r.task_id),
-        run_on: String(r.run_on),
+        run_on: r.run_on as string,
         done_by: r.done_by ?? null,
       })) || [];
 
-    // 3) Deferrals are location scoped and affect what is "due today"
-    const weekStart = isoDate(startOfWeekMonday(today));
-    const weekEnd = isoDate(endOfWeekSunday(today));
+    // ----- DEFERRALS (optional) -----
+    // If table isn't present, we just ignore.
+    let deferrals: Deferral[] = [];
+    try {
+      const today = new Date(todayISO);
+      const weekStart = isoDate(startOfWeekMonday(today));
+      const weekEnd = isoDate(endOfWeekSunday(today));
 
-    const { data: dData, error: dErr } = await supabase
-      .from("cleaning_task_deferrals")
-      .select("task_id,from_on,to_on")
-      .eq("org_id", orgId)
-      .eq("location_id", locationId)
-      .gte("from_on", weekStart)
-      .lte("to_on", weekEnd);
+      const { data: dData, error: dErr } = await supabase
+        .from("cleaning_task_deferrals")
+        .select("task_id,from_on,to_on")
+        .eq("org_id", orgId)
+        .eq("location_id", locationId)
+        .gte("from_on", weekStart)
+        .lte("to_on", weekEnd);
 
-    // deferrals are non-critical, but they are critical for matching the rota count
-    if (dErr) console.warn("[dashboard cleaning] deferrals fetch failed:", dErr.message);
-
-    const deferrals: Deferral[] =
-      (dData ?? []).map((d: any) => ({
-        task_id: String(d.task_id),
-        from_on: String(d.from_on),
-        to_on: String(d.to_on),
-      })) || [];
+      if (!dErr) {
+        deferrals =
+          (dData ?? []).map((d: any) => ({
+            task_id: String(d.task_id),
+            from_on: String(d.from_on),
+            to_on: String(d.to_on),
+          })) || [];
+      }
+    } catch {
+      // ignore
+    }
 
     if (cancelled) return;
 
-    // Build deferral maps (same approach as rota)
     const deferralsFromMap = new Map<string, Set<string>>();
     const deferralsToMap = new Map<string, Set<string>>();
 
@@ -1063,18 +1071,17 @@ export default function DashboardPage() {
       deferralsToMap.get(d.to_on)!.add(d.task_id);
     }
 
-    function isDueEffective(task: CleanTask, date: Date) {
-      const dIso = isoDate(date);
-      const deferredFrom = deferralsFromMap.get(dIso)?.has(task.id) ?? false;
-      const deferredTo = deferralsToMap.get(dIso)?.has(task.id) ?? false;
+    function isDueEffective(task: CleanTask, ymd: string) {
+      const deferredFrom = deferralsFromMap.get(ymd)?.has(task.id) ?? false;
+      const deferredTo = deferralsToMap.get(ymd)?.has(task.id) ?? false;
 
-      if (deferredFrom) return false;
-      if (deferredTo) return true;
+      if (deferredFrom) return false; // moved away from today
+      if (deferredTo) return true; // moved onto today
 
-      return isDueOn(task, date);
+      return isDueOn(task, ymd);
     }
 
-    const dueTodayAll = allTasks.filter((t) => isDueEffective(t, today));
+    const dueTodayAll = allTasks.filter((t) => isDueEffective(t, todayISO));
 
     const runsKey = new Set(runs.map((r) => `${r.task_id}|${r.run_on}`));
     const cleaningDoneToday = dueTodayAll.filter((t) =>
@@ -1166,9 +1173,7 @@ export default function DashboardPage() {
     try {
       const { data, error } = await supabase
         .from(WALL_TABLE)
-        .select(
-          "id, org_id, location_id, author_initials, message, color, created_at"
-        )
+        .select("id, org_id, location_id, author_initials, message, color, created_at")
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
         .limit(3);
@@ -1209,8 +1214,10 @@ export default function DashboardPage() {
         localStorage.setItem(firstSeenKey, firstSeenISO);
       }
 
+      // Not eligible until 28 days after first seen
       const eligibleDate = new Date(firstSeenISO);
       eligibleDate.setDate(eligibleDate.getDate() + 28);
+
       const eligible = eligibleDate.getTime() <= Date.now();
 
       if (!eligible) {
@@ -1221,6 +1228,7 @@ export default function DashboardPage() {
       const reviewedAtRaw = localStorage.getItem("tt_four_week_reviewed_at");
       const lastReviewedISO = reviewedAtRaw ? toISODate(reviewedAtRaw) : null;
 
+      // Fetch summary first (we need periodFrom/periodTo to build reviewKey)
       const res = await fetch(
         `/four-week-review/summary?to=${encodeURIComponent(todayISO)}`,
         { cache: "no-store" }
@@ -1247,8 +1255,7 @@ export default function DashboardPage() {
       });
 
       const dismissUntilRaw =
-        localStorage.getItem(dismissKeyScoped) ??
-        localStorage.getItem(dismissKeyFallback);
+        localStorage.getItem(dismissKeyScoped) ?? localStorage.getItem(dismissKeyFallback);
 
       if (dismissUntilRaw) {
         const dismissUntil = new Date(dismissUntilRaw).getTime();
@@ -1260,8 +1267,7 @@ export default function DashboardPage() {
 
       if (cancelled) return;
 
-      const overdue =
-        !lastReviewedISO || daysBetween(lastReviewedISO, todayISO) >= 28;
+      const overdue = !lastReviewedISO || daysBetween(lastReviewedISO, todayISO) >= 28;
       const monthEnd = isLikelyMonthEnd(new Date());
 
       type FourWeekBannerReason = "overdue" | "month_end" | "issues";
@@ -1276,6 +1282,7 @@ export default function DashboardPage() {
         return;
       }
 
+      // Optional DB dismissal check (only if we have org+location)
       if (locationId && periodFrom && periodTo) {
         const dismissed = await isFourWeekReviewDismissed({
           orgId,
@@ -1315,6 +1322,7 @@ export default function DashboardPage() {
       fromD.setDate(fromD.getDate() - INCIDENT_KPI_LOOKBACK_DAYS);
       const fromISO = fromD.toISOString().slice(0, 10);
 
+      // Use head:true + count to avoid fetching rows
       let q = supabase
         .from("incidents")
         .select("id", { count: "exact", head: true })
@@ -1329,6 +1337,7 @@ export default function DashboardPage() {
       const { count, error } = await q;
 
       if (error) {
+        // fallback to text ids if needed
         let q2 = supabase
           .from("incidents")
           .select("id", { count: "exact", head: true })
@@ -1376,10 +1385,7 @@ export default function DashboardPage() {
     }
   }
 
-  async function resolveOrgLocationLabels(
-    orgId: string | null,
-    locationId: string | null
-  ) {
+  async function resolveOrgLocationLabels(orgId: string | null, locationId: string | null) {
     if (!orgId) {
       setOrgLabel(null);
       setLocationLabel(null);
@@ -1448,10 +1454,7 @@ export default function DashboardPage() {
       const { data, error } = await q;
 
       if (error) {
-        console.warn(
-          "[alerts/incidents] uuid filter failed, trying text:",
-          error.message
-        );
+        console.warn("[alerts/incidents] uuid filter failed, trying text:", error.message);
 
         let q2 = supabase
           .from("incidents")
@@ -1522,11 +1525,9 @@ export default function DashboardPage() {
     kpi.allergenDueSoon > 0 ||
     openIncidentCount > 0;
 
+  // ✅ NOW includes open incidents
   const alertsCount =
-    kpi.trainingOver +
-    kpi.allergenOver +
-    (kpi.tempFails7d > 0 ? 1 : 0) +
-    openIncidentCount;
+    kpi.trainingOver + kpi.allergenOver + (kpi.tempFails7d > 0 ? 1 : 0) + openIncidentCount;
 
   const openTempModal = () => {
     if (typeof window === "undefined") return;
@@ -1577,6 +1578,8 @@ export default function DashboardPage() {
       });
     }
 
+    // NOTE: incidents are displayed in the modal section below,
+    // so we don't duplicate them as "Other alerts" cards.
     return items;
   })();
 
@@ -1584,23 +1587,18 @@ export default function DashboardPage() {
     const bits: string[] = [];
 
     if (openIncidentCount > 0)
-      bits.push(
-        `${openIncidentCount} open incident${openIncidentCount === 1 ? "" : "s"}`
-      );
+      bits.push(`${openIncidentCount} open incident${openIncidentCount === 1 ? "" : "s"}`);
 
     if (kpi.tempFails7d > 0) bits.push(`${kpi.tempFails7d} failed temps (7d)`);
     if (kpi.trainingOver > 0) bits.push(`${kpi.trainingOver} training overdue`);
     if (kpi.allergenOver > 0) bits.push(`${kpi.allergenOver} allergen review overdue`);
 
-    if (!bits.length)
-      return "No incidents, training, allergen or temperature issues flagged.";
+    if (!bits.length) return "No incidents, training, allergen or temperature issues flagged.";
     return bits.join(" · ");
   })();
 
   const cleaningPct =
-    kpi.cleaningDueToday > 0
-      ? (kpi.cleaningDoneToday / kpi.cleaningDueToday) * 100
-      : 0;
+    kpi.cleaningDueToday > 0 ? (kpi.cleaningDoneToday / kpi.cleaningDueToday) * 100 : 0;
 
   const cleaningTone: "danger" | "warn" | "ok" | "neutral" =
     kpi.cleaningDueToday === 0
@@ -1611,12 +1609,9 @@ export default function DashboardPage() {
       ? "danger"
       : "warn";
 
-  const tempTone: "danger" | "warn" | "ok" | "neutral" =
-    kpi.tempLogsToday === 0 ? "danger" : "ok";
+  const tempTone: "danger" | "warn" | "ok" | "neutral" = kpi.tempLogsToday === 0 ? "danger" : "ok";
 
-  const alertsTone: "danger" | "warn" | "ok" | "neutral" = hasAnyKpiAlert
-    ? "danger"
-    : "ok";
+  const alertsTone: "danger" | "warn" | "ok" | "neutral" = hasAnyKpiAlert ? "danger" : "ok";
 
   const fourWeekBannerTone =
     fourWeekBanner.kind === "show"
@@ -1641,6 +1636,7 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incidentRangeDays, alertsOpen]);
 
+  // ✅ Resolve handler
   async function resolveIncident(incidentId: string) {
     try {
       setResolvingId(incidentId);
@@ -1658,6 +1654,7 @@ export default function DashboardPage() {
 
       if (error) throw error;
 
+      // refresh modal list + KPI count
       await loadIncidentsForAlerts(incidentRangeDays);
 
       const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
@@ -1695,11 +1692,330 @@ export default function DashboardPage() {
         resolvingId={resolvingId}
       />
 
-      {/* ---- rest of your render unchanged ---- */}
-      {/* (I’m not duplicating the rest because we did not change anything else below this in your snippet) */}
+      {fourWeekBanner.kind === "show" && (
+        <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
+          <div
+            className={cls(
+              "rounded-3xl border p-4 shadow-lg shadow-slate-900/5 backdrop-blur",
+              fourWeekBannerTone
+            )}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-sm font-extrabold">Four-week review ready</div>
 
-      {/* ... KEEP EVERYTHING ELSE AS-IS FROM YOUR CURRENT FILE ... */}
+                <div className="mt-1 text-xs font-medium opacity-90">
+                  Period:{" "}
+                  <span className="font-extrabold">
+                    {formatDDMMYYYY(fourWeekBanner.periodFrom) ?? "—"} →{" "}
+                    {formatDDMMYYYY(fourWeekBanner.periodTo) ?? "—"}
+                  </span>
+                  {" · "}
+                  Issues found:{" "}
+                  <span className="font-extrabold">{fourWeekBanner.issues}</span>
+                </div>
 
+                <div className="mt-1 text-[11px] font-medium opacity-80">
+                  {fourWeekBanner.reason === "issues"
+                    ? "Recurring issues detected. Fix the top items and you look like you run the place."
+                    : fourWeekBanner.reason === "overdue"
+                    ? "It’s been ~4 weeks since the last review. Time to sanity-check the diary."
+                    : "Month-end check-in. One quick review now saves pain later."}
+                </div>
+              </div>
+
+              <div className="flex gap-2 shrink-0">
+                <Link
+                  href="/four-week-review"
+                  className="inline-flex items-center justify-center rounded-2xl bg-slate-900 px-3 py-2 text-xs font-extrabold text-white shadow-sm hover:bg-slate-800"
+                >
+                  View
+                </Link>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
+                      const locationId =
+                        (await getActiveLocationIdClient()) ?? activeLocationId;
+
+                      const reviewKey = makeReviewKey(
+                        fourWeekBanner.periodFrom,
+                        fourWeekBanner.periodTo
+                      );
+
+                      const dismissKeyScoped = makeDismissStorageKey({
+                        orgId: orgId ?? null,
+                        locationId: locationId ?? null,
+                        reviewKey,
+                      });
+                      const dismissKeyFallback = makeDismissStorageKey({
+                        orgId: orgId ?? null,
+                        locationId: null,
+                        reviewKey,
+                      });
+
+                      const until = new Date();
+                      until.setDate(until.getDate() + 28);
+
+                      localStorage.setItem(dismissKeyScoped, until.toISOString());
+                      localStorage.setItem(dismissKeyFallback, until.toISOString());
+
+                      localStorage.setItem("tt_four_week_reviewed_at", new Date().toISOString());
+
+                      if (orgId && locationId) {
+                        await dismissFourWeekReview({
+                          orgId,
+                          locationId,
+                          periodFrom: fourWeekBanner.periodFrom,
+                          periodTo: fourWeekBanner.periodTo,
+                        });
+                      }
+                    } finally {
+                      setFourWeekBanner({ kind: "none" });
+                    }
+                  }}
+                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 text-xs font-extrabold text-slate-900 shadow-sm hover:bg-white"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
+        <header className="text-center">
+          <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">
+            {headerDate}
+          </h1>
+          <p className="mt-0.5 text-xs sm:text-sm font-medium text-slate-500">
+            Safety, cleaning and compliance at a glance.
+          </p>
+        </header>
+
+        <section className="mt-3 rounded-3xl border border-white/50 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur space-y-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 items-stretch">
+            <KpiTile
+              canHover={canHover}
+              title="Temperature logs"
+              icon={kpi.tempLogsToday === 0 ? "❌" : "✅"}
+              tone={tempTone}
+              big={kpi.tempLogsToday}
+              sub={
+                kpi.tempLogsToday === 0
+                  ? "No temperatures logged yet today."
+                  : "At least one temperature check recorded."
+              }
+              onClick={openTempModal}
+              footer={
+                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
+                  <span>Tap to log</span>
+                  <span className="opacity-80">Today</span>
+                </div>
+              }
+            />
+
+            <KpiTile
+              canHover={canHover}
+              title="Cleaning (today)"
+              icon="🧽"
+              tone={cleaningTone}
+              big={
+                <span>
+                  {kpi.cleaningDoneToday}/{kpi.cleaningDueToday}
+                </span>
+              }
+              sub={
+                kpi.cleaningDueToday === 0
+                  ? "No cleaning tasks scheduled for today."
+                  : kpi.cleaningDoneToday === kpi.cleaningDueToday
+                  ? "All scheduled cleaning tasks completed."
+                  : "Some scheduled cleaning tasks still open."
+              }
+              href="/cleaning-rota"
+              footer={
+                kpi.cleaningDueToday > 0 ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
+                      <span>Progress</span>
+                      <span>{Math.round(clampPct(cleaningPct))}%</span>
+                    </div>
+                    <ProgressBar pct={cleaningPct} tone={cleaningTone} />
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
+                    <span>Progress</span>
+                    <span>0%</span>
+                  </div>
+                )
+              }
+            />
+
+            <KpiTile
+              canHover={canHover}
+              title="Alerts"
+              icon={hasAnyKpiAlert ? "⚠️" : "✅"}
+              tone={alertsTone}
+              big={alertsCount}
+              sub={alertsSummary}
+              onClick={openAlertsModal}
+              footer={
+                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
+                  <span>View details</span>
+                  <span className="opacity-80">{hasAnyKpiAlert ? "Now" : "OK"}</span>
+                </div>
+              }
+            />
+          </div>
+
+          {err && (
+            <div className="mt-1 rounded-2xl border border-red-200 bg-red-50/90 px-3 py-2 text-xs font-semibold text-red-800">
+              {err}
+            </div>
+          )}
+        </section>
+
+        <section className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur flex flex-col">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-extrabold text-slate-900">Kitchen wall</h2>
+                <p className="text-[11px] font-medium text-slate-500">
+                  Latest three notes from the team.
+                </p>
+              </div>
+              <Link
+                href="/wall"
+                className="text-[11px] font-semibold text-amber-700 hover:text-amber-800 underline-offset-2 hover:underline"
+              >
+                View wall
+              </Link>
+            </div>
+
+            {wallPosts.length === 0 ? (
+              <div className="mt-1 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-xs text-slate-500 flex-1 flex items-center">
+                No posts yet. When the team adds messages on the wall, the latest three will
+                show here.
+              </div>
+            ) : (
+              <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {wallPosts.map((p, idx) => (
+                  <motion.div
+                    key={p.id}
+                    className={cls(
+                      "flex flex-col justify-between rounded-2xl px-3 py-2 text-xs shadow-sm border border-slate-100",
+                      p.colorClass || "bg-yellow-200"
+                    )}
+                    initial={{ opacity: 0, y: 10, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{
+                      type: "spring",
+                      stiffness: 260,
+                      damping: 20,
+                      delay: idx * 0.05,
+                    }}
+                    whileHover={canHover ? { y: -3 } : undefined}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-base font-extrabold tracking-wide text-slate-900">
+                        {p.initials || "??"}
+                      </div>
+
+                      <span className="rounded-full bg-white/60 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                        {formatDDMMYYYY(p.created_at) ?? ""}
+                      </span>
+                    </div>
+
+                    <div className="text-[11px] font-medium text-slate-800 line-clamp-3">
+                      {p.message}
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-md shadow-amber-200/60 flex flex-col">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-extrabold text-amber-900">Employee of the month</h2>
+              <span className="text-xl" aria-hidden="true">
+                🏆
+              </span>
+            </div>
+
+            {eom ? (
+              <>
+                <div className="text-lg font-extrabold text-amber-900 truncate">
+                  {eom.display_name}
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-extrabold text-amber-900 border border-amber-200/60">
+                    ⭐ {eom.points ?? 0} points
+                  </span>
+                  <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-amber-900 border border-amber-200/60">
+                    🧽 {eom.cleaning_count ?? 0} cleanings
+                  </span>
+                  <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-amber-900 border border-amber-200/60">
+                    🌡 {eom.temp_logs_count ?? 0} temps
+                  </span>
+                </div>
+
+                <p className="mt-3 text-[11px] font-medium text-amber-900/80">
+                  Based on completed cleaning tasks and temperature logs this month.
+                </p>
+              </>
+            ) : (
+              <p className="text-xs font-medium text-amber-900/80">
+                No leaderboard data yet. Once your team completes cleaning tasks and logs
+                temperatures, the top performer will be highlighted here.
+              </p>
+            )}
+
+            <div className="mt-3">
+              <Link
+                href="/leaderboard"
+                className="inline-flex items-center rounded-2xl bg-amber-600 px-3 py-1.5 text-xs font-extrabold text-white shadow-sm hover:bg-amber-700"
+              >
+                View full leaderboard
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur space-y-3">
+          <h2 className="text-sm font-extrabold text-slate-900">Quick actions</h2>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <QuickLink href="/routines" label="Routines" icon="📋" canHover={canHover} />
+            <QuickLink href="/allergens" label="Allergens" icon="⚠️" canHover={canHover} />
+            <QuickLink
+              href="/cleaning-rota"
+              label="Cleaning rota"
+              icon="🧽"
+              canHover={canHover}
+            />
+            <QuickLink href="/team" label="Team & training" icon="👥" canHover={canHover} />
+            <QuickLink href="/reports" label="Reports" icon="📊" canHover={canHover} />
+            <QuickLink
+              href="/locations"
+              label="Locations & sites"
+              icon="📍"
+              canHover={canHover}
+            />
+            <QuickLink href="/manager" label="Manager view" icon="💼" canHover={canHover} />
+            <QuickLink href="/help" label="Help & support" icon="❓" canHover={canHover} />
+          </div>
+        </section>
+
+        {loading && (
+          <p className="text-center text-[11px] font-medium text-slate-400">
+            Loading dashboard…
+          </p>
+        )}
+      </div>
     </>
   );
 }
