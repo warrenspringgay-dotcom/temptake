@@ -319,6 +319,55 @@ function normaliseTrainingAreas(
   return out;
 }
 
+function HygieneStars({
+  rating,
+}: {
+  rating: number | null;
+}) {
+  if (rating == null) {
+    return <span className="text-slate-500 text-sm">No rating</span>;
+  }
+
+  const isGood = rating >= 3;
+  const totalStars = 5;
+
+  return (
+    <div className="flex items-center gap-2">
+      <div
+        className={`flex ${
+          isGood ? "text-yellow-500" : "text-yellow-600 opacity-70"
+        }`}
+      >
+        {Array.from({ length: totalStars }).map((_, i) => (
+          <span
+            key={i}
+            className={
+              i < rating
+                ? isGood
+                  ? "text-3xl leading-none"
+                  : "text-xl leading-none"
+                : isGood
+                ? "text-3xl leading-none text-slate-300"
+                : "text-xl leading-none text-slate-300"
+            }
+          >
+            ★
+          </span>
+        ))}
+      </div>
+
+      <span
+        className={`font-semibold ${
+          isGood ? "text-slate-900 text-base" : "text-slate-700 text-sm"
+        }`}
+      >
+        {rating}/5
+      </span>
+    </div>
+  );
+}
+
+
 function computeTrainingStatus(awardedISO: string | null, expiresISO: string | null) {
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
@@ -1437,14 +1486,34 @@ export default function ReportsPage() {
 
             <div className="mt-1 text-[11px] text-slate-500">Current: {currentLocationLabel}</div>
 
-            {/* ✅ Food hygiene rating display (from food_hygiene_ratings) */}
-            <div className="mt-1 text-[11px] text-slate-500">
-              Food hygiene rating:{" "}
-              <span className="font-semibold text-slate-700">{hygieneDisplay.label}</span>
-              {hygieneDisplay.visit ? (
-                <span className="ml-1 text-slate-500">(visit {formatISOToUK(hygieneDisplay.visit)})</span>
-              ) : null}
-            </div>
+           <div className="mt-2">
+  <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">
+    Food hygiene rating
+  </div>
+
+  {locationFilter !== "all" ? (
+    <HygieneStars
+      rating={
+        hygieneByLocation[locationFilter]?.rating ?? null
+      }
+    />
+  ) : hygieneDisplay.label === "Varies" ? (
+    <span className="text-sm font-medium text-slate-600">
+      Varies by location
+    </span>
+  ) : (
+    <HygieneStars
+      rating={Number(hygieneDisplay.label.replace("/5", "")) || null}
+    />
+  )}
+
+  {hygieneDisplay.visit && (
+    <div className="mt-1 text-[11px] text-slate-500">
+      Last inspection: {formatISOToUK(hygieneDisplay.visit)}
+    </div>
+  )}
+</div>
+
 
             <div className="mt-1 text-[11px] text-slate-500">
               {loading ? "Loading…" : "Auto-runs when you change location."}
