@@ -1,5 +1,6 @@
 export default function CookiePolicyPage() {
   return (
+    
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 text-sm text-slate-800">
       <h1 className="text-2xl font-semibold text-slate-900">Cookie Policy</h1>
 
