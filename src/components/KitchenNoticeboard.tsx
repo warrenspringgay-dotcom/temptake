@@ -4,6 +4,7 @@ import posthog from "posthog-js";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { Pin, Send } from "lucide-react";
 
 type Post = {
@@ -14,6 +15,7 @@ type Post = {
   is_pinned: boolean;
   reactions: Record<string, string[]>;
   created_at: string;
+  location_id?: string | null;
 };
 
 type LeaderboardRow = {
@@ -39,6 +41,10 @@ export default function KitchenWall() {
   const [message, setMessage] = useState("");
   const [initials, setInitials] = useState("");
   const [orgId, setOrgId] = useState<string | null>(null);
+
+  // ✅ Active location
+  const [locationId, setLocationId] = useState<string | null>(null);
+
   const [myInitials, setMyInitials] = useState("");
   const [myName, setMyName] = useState<string>("");
 
@@ -59,32 +65,62 @@ export default function KitchenWall() {
     year: "numeric",
   });
 
+  // ✅ Keep org + location in sync (location switching)
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+
+    const sync = async () => {
       const id = await getActiveOrgIdClient();
+      const loc = await getActiveLocationIdClient();
+
+      if (cancelled) return;
+
       setOrgId(id);
+      setLocationId(loc);
 
-      // Load latest posts + leaderboard
       if (id) {
-        await loadPosts(id);
-        await loadLeaderboard(id);
+        await loadPosts(id, loc);
+        await loadLeaderboard(id); // keep as org-wide for now (you can make it location-specific later)
       }
+    };
 
+    const onStorage = () => void sync();
+    const onFocus = () => void sync();
+    const onCustom = () => void sync();
+
+    void sync();
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("tt-location-changed" as any, onCustom);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("tt-location-changed" as any, onCustom);
+    };
+  }, []);
+
+  // Initial auth-derived initials/name/role (runs when orgId becomes available)
+  useEffect(() => {
+    if (!orgId) return;
+
+    (async () => {
       // Try to derive initials + name from the logged-in team member
       let detectedInitials = "";
       let detectedName = "";
       let managerFlag = false;
 
       try {
-        const { data: authData, error: authError } =
-          await supabase.auth.getUser();
+        const { data: authData, error: authError } = await supabase.auth.getUser();
         if (!authError && authData?.user) {
           const email = authData.user.email ?? "";
-          if (id && email) {
+          if (orgId && email) {
             const { data: tm } = await supabase
               .from("team_members")
               .select("initials,name,email,role")
-              .eq("org_id", id)
+              .eq("org_id", orgId)
               .eq("email", email)
               .limit(1);
 
@@ -104,8 +140,7 @@ export default function KitchenWall() {
               detectedInitials = base.toUpperCase().slice(0, 4);
 
               const role = (row.role ?? "").toLowerCase();
-              managerFlag =
-                role === "owner" || role === "manager" || role === "admin";
+              managerFlag = role === "owner" || role === "manager" || role === "admin";
             }
           }
         }
@@ -117,9 +152,7 @@ export default function KitchenWall() {
 
       // Fallback: previous initials stored locally
       const saved =
-        (typeof window !== "undefined" &&
-          localStorage.getItem("kitchen_wall_initials")) ||
-        "";
+        (typeof window !== "undefined" && localStorage.getItem("kitchen_wall_initials")) || "";
 
       const finalInitials =
         detectedInitials || (saved ? saved.toUpperCase().slice(0, 4) : "");
@@ -128,7 +161,7 @@ export default function KitchenWall() {
       setMyInitials(finalInitials);
       setMyName(detectedName);
     })();
-  }, []);
+  }, [orgId]);
 
   // Recompute "your rank" + badges whenever leaderboard or myName changes
   useEffect(() => {
@@ -162,7 +195,6 @@ export default function KitchenWall() {
       const c = cPts ?? 0;
       const t = tPts ?? 0;
 
-      // Simple badge logic
       if (p >= 50) badges.push("Kitchen Hero");
       else if (p >= 25) badges.push("Rising Star");
       else if (p >= 10) badges.push("On the Board");
@@ -173,7 +205,6 @@ export default function KitchenWall() {
       if (t >= 20) badges.push("Temp Pro");
       else if (t >= 10) badges.push("Probe Regular");
 
-      // Streak-ish badge: top 3 in leaderboard
       if (rank && rank <= 3) badges.push("On a Hot Streak");
 
       setMyBadges(badges);
@@ -182,13 +213,26 @@ export default function KitchenWall() {
     }
   }, [lbRows, myName]);
 
-  async function loadPosts(orgId: string) {
-    const { data } = await supabase
+  async function loadPosts(orgId: string, locationId: string | null) {
+    let q = supabase
       .from("kitchen_wall")
       .select("*")
       .eq("org_id", orgId)
       .order("is_pinned", { ascending: false })
       .order("created_at", { ascending: false });
+
+    // ✅ Location-specific wall when location is selected
+    if (locationId) {
+      q = q.eq("location_id", locationId);
+    }
+
+    const { data, error } = await q;
+
+    if (error) {
+      console.warn("[kitchen_wall] loadPosts failed:", error.message);
+      setPosts([]);
+      return;
+    }
 
     setPosts((data as Post[]) || []);
   }
@@ -221,14 +265,21 @@ export default function KitchenWall() {
     const color = COLORS[Math.floor(Math.random() * COLORS.length)];
     const normInitials = initials.toUpperCase().slice(0, 4);
 
-    await supabase.from("kitchen_wall").insert({
+    // ✅ Save the active location_id on the post
+    const { error } = await supabase.from("kitchen_wall").insert({
       org_id: orgId,
+      location_id: locationId, // <- key change
       author_initials: normInitials,
       message: message.trim(),
       color,
       is_pinned: false,
       reactions: {},
     });
+
+    if (error) {
+      console.warn("[kitchen_wall] insert failed:", error.message);
+      return;
+    }
 
     if (typeof window !== "undefined") {
       localStorage.setItem("kitchen_wall_initials", normInitials);
@@ -237,11 +288,13 @@ export default function KitchenWall() {
     posthog.capture("wall_post_created", {
       initials: normInitials,
       length: message.trim().length,
+      org_id: orgId,
+      location_id: locationId ?? null,
     });
 
     setMessage("");
     setMyInitials(normInitials);
-    await loadPosts(orgId);
+    await loadPosts(orgId, locationId);
   }
 
   async function toggleReaction(postId: string, emoji: string) {
@@ -251,47 +304,44 @@ export default function KitchenWall() {
 
     const users = post.reactions[emoji] || [];
     const hasReacted = users.includes(myInitials);
-    const newUsers = hasReacted
-      ? users.filter((u) => u !== myInitials)
-      : [...users, myInitials];
+    const newUsers = hasReacted ? users.filter((u) => u !== myInitials) : [...users, myInitials];
 
     const newReactions: Record<string, string[]> = {
       ...post.reactions,
       [emoji]: newUsers.length > 0 ? newUsers : (undefined as any),
     };
 
-    // Clean up empty keys
     Object.keys(newReactions).forEach((k) => {
-      if (!newReactions[k] || newReactions[k].length === 0) {
-        delete newReactions[k];
-      }
+      if (!newReactions[k] || newReactions[k].length === 0) delete newReactions[k];
     });
 
-    await supabase
+    const { error } = await supabase
       .from("kitchen_wall")
       .update({ reactions: newReactions })
       .eq("id", postId);
+
+    if (error) {
+      console.warn("[kitchen_wall] reaction update failed:", error.message);
+      return;
+    }
 
     posthog.capture("wall_reaction_toggled", {
       post_id: postId,
       emoji,
       added: !hasReacted,
+      org_id: orgId ?? null,
+      location_id: locationId ?? null,
     });
 
-    if (orgId) await loadPosts(orgId);
+    if (orgId) await loadPosts(orgId, locationId);
   }
 
-  // Manager-only: delete a note from the wall
   async function deletePost(id: string) {
     if (!orgId) return;
     if (!window.confirm("Remove this note from the wall?")) return;
 
     try {
-      const { error } = await supabase
-        .from("kitchen_wall")
-        .delete()
-        .eq("id", id)
-        .eq("org_id", orgId);
+      const { error } = await supabase.from("kitchen_wall").delete().eq("id", id).eq("org_id", orgId);
 
       if (error) throw error;
 
@@ -307,7 +357,6 @@ export default function KitchenWall() {
 
   return (
     <div className="space-y-10">
-      {/* Top stats / leaderboard summary for this month */}
       {topThree.length > 0 && (
         <div className="rounded-3xl border border-amber-200 bg-gradient-to-r from-amber-50 via-orange-50 to-yellow-50 p-4 shadow-lg">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -322,9 +371,13 @@ export default function KitchenWall() {
                 Points reset monthly – current period:{" "}
                 <span className="font-semibold">{currentMonthLabel}</span>
               </p>
+              {locationId && (
+                <p className="mt-0.5 text-[11px] text-amber-800/80">
+                  Wall is location-specific (selected location).
+                </p>
+              )}
             </div>
 
-            {/* Your rank + badges */}
             <div className="mt-2 flex flex-col items-start gap-1 text-xs text-amber-900 sm:items-end">
               {myRank ? (
                 <div className="text-sm font-semibold">
@@ -337,8 +390,7 @@ export default function KitchenWall() {
                 </div>
               ) : (
                 <div className="text-sm text-amber-800">
-                  Your rank:{" "}
-                  <span className="font-semibold">No points yet</span>
+                  Your rank: <span className="font-semibold">No points yet</span>
                 </div>
               )}
               {myBadges.length > 0 && (
@@ -356,7 +408,6 @@ export default function KitchenWall() {
             </div>
           </div>
 
-          {/* Top 3 row */}
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             {topThree.map((row, idx) => (
               <div
@@ -365,9 +416,7 @@ export default function KitchenWall() {
               >
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-600 text-sm font-bold text-white relative">
                   {idx === 0 && (
-                    <span className="absolute -top-4 text-2xl animate-bounce">
-                      👑
-                    </span>
+                    <span className="absolute -top-4 text-2xl animate-bounce">👑</span>
                   )}
                   {idx + 1}
                 </div>
@@ -387,7 +436,6 @@ export default function KitchenWall() {
         </div>
       )}
 
-      {/* Clean Composer */}
       <div className="rounded-2xl bg-white p-6 shadow-lg border">
         <div className="flex flex-col sm:flex-row gap-4">
           <input
@@ -402,9 +450,7 @@ export default function KitchenWall() {
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={(e) =>
-              e.key === "Enter" &&
-              !e.shiftKey &&
-              (e.preventDefault(), sendPost())
+              e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendPost())
             }
             className="flex-1 rounded-lg border-2 border-orange-400 px-5 py-3 text-lg focus:outline-none focus:ring-4 focus:ring-orange-200"
           />
@@ -418,14 +464,11 @@ export default function KitchenWall() {
         </div>
       </div>
 
-      {/* Sticky notes wall */}
       <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
         {posts.length === 0 ? (
           <div className="col-span-full text-center py-32">
             <div className="text-9xl mb-8">🧡</div>
-            <h2 className="text-4xl font-black text-orange-600">
-              Wall is empty
-            </h2>
+            <h2 className="text-4xl font-black text-orange-600">Wall is empty</h2>
             <p className="text-2xl text-gray-600">Be the first to post 🔥</p>
           </div>
         ) : (
@@ -442,7 +485,6 @@ export default function KitchenWall() {
                 <Pin className="absolute -top-6 -right-6 h-14 w-14 text-red-600 fill-red-600 drop-shadow-2xl" />
               )}
 
-              {/* Manager-only remove button */}
               {isManager && (
                 <button
                   type="button"
