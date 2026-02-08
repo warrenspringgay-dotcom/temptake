@@ -952,7 +952,8 @@ async function fetchTeamDue(withinDays: number, orgId: string, locationId: strin
       };
     })
     .filter(isTeamRow)
-    .filter((r: { days_until: number | null }) => r.days_until != null && r.days_until <= withinDays)
+    .filter((r) => typeof r.days_until === "number" && r.days_until <= withinDays)
+
     .sort((a: any, b: any) => (a.expires_on || "").localeCompare(b.expires_on || ""));
 }
 
