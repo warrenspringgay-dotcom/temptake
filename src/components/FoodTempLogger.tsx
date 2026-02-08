@@ -880,6 +880,28 @@ export default function DashboardPage() {
     return () => mq?.removeEventListener?.("change", update);
   }, []);
 
+  // ---------- shared reload (used on mount AND on location changes) ----------
+  const reloadDashboard = React.useCallback(
+    async (orgId: string, locationId: string | null, cancelled: boolean) => {
+      const today = isoToday();
+
+      setActiveOrgId(orgId);
+      setActiveLocationId(locationId);
+
+      await Promise.all([
+        loadTempsKpi(orgId, locationId, today, cancelled),
+        loadCleaningKpi(orgId, locationId, today, cancelled),
+        loadTrainingAndAllergenKpi(orgId, cancelled), // org-wide
+        loadLeaderBoard(orgId, locationId, cancelled), // ✅ now location-aware
+        loadWallPosts(orgId, cancelled),
+        loadFourWeekBanner(orgId, locationId, today, cancelled),
+        loadOpenIncidentCount(orgId, locationId, cancelled),
+      ]);
+    },
+    []
+  );
+
+  // initial load
   useEffect(() => {
     let cancelled = false;
 
@@ -889,27 +911,13 @@ export default function DashboardPage() {
       try {
         const orgId = await getActiveOrgIdClient();
         const locationId = await getActiveLocationIdClient();
-        const today = isoToday();
 
         if (!orgId) {
           setLoading(false);
           return;
         }
 
-        setActiveOrgId(orgId);
-        setActiveLocationId(locationId);
-
-        await Promise.all([
-          loadTempsKpi(orgId, locationId, today, cancelled),
-          loadCleaningKpi(orgId, locationId, today, cancelled),
-          loadTrainingAndAllergenKpi(orgId, cancelled),
-          loadLeaderBoard(orgId, cancelled),
-          loadWallPosts(orgId, cancelled),
-          loadFourWeekBanner(orgId, locationId, today, cancelled),
-
-          // ✅ incident KPI count
-          loadOpenIncidentCount(orgId, locationId, cancelled),
-        ]);
+        await reloadDashboard(orgId, locationId, cancelled);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load dashboard.");
       } finally {
@@ -922,6 +930,65 @@ export default function DashboardPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ✅ react to location changes (storage + custom events + safety-net interval)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    let cancelled = false;
+    let lastOrgId: string | null = activeOrgId;
+    let lastLocId: string | null = activeLocationId;
+
+    const checkAndReload = async () => {
+      const orgId = await getActiveOrgIdClient();
+      const locId = await getActiveLocationIdClient();
+
+      if (!orgId) return;
+
+      const changed = orgId !== lastOrgId || locId !== lastLocId;
+      if (!changed) return;
+
+      lastOrgId = orgId;
+      lastLocId = locId;
+
+      try {
+        setLoading(true);
+        await reloadDashboard(orgId, locId, cancelled);
+      } catch (e) {
+        console.warn("[dashboard] reload on location change failed", e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    const onStorage = () => {
+      void checkAndReload();
+    };
+
+    const onCustom = () => void checkAndReload();
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("tt-location-changed", onCustom as any);
+    window.addEventListener("tt-active-location-changed", onCustom as any);
+    window.addEventListener("tt-org-location-changed", onCustom as any);
+    window.addEventListener("active-location-changed", onCustom as any);
+
+    // Safety net: detect changes even if no events fire.
+    const id = window.setInterval(() => {
+      void checkAndReload();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("tt-location-changed", onCustom as any);
+      window.removeEventListener("tt-active-location-changed", onCustom as any);
+      window.removeEventListener("tt-org-location-changed", onCustom as any);
+      window.removeEventListener("active-location-changed", onCustom as any);
+      window.clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrgId, activeLocationId, reloadDashboard]);
 
   /* ---------- loaders ---------- */
 
@@ -988,7 +1055,6 @@ export default function DashboardPage() {
       return;
     }
 
-    // ----- TASKS -----
     const { data: tData, error: tErr } = await supabase
       .from("cleaning_tasks")
       .select(
@@ -1013,7 +1079,6 @@ export default function DashboardPage() {
           r.month_day === null || r.month_day === undefined ? null : Number(r.month_day),
       })) || [];
 
-    // ----- RUNS -----
     const { data: rData, error: rErr } = await supabase
       .from("cleaning_task_runs")
       .select("task_id,run_on,done_by,location_id")
@@ -1030,8 +1095,6 @@ export default function DashboardPage() {
         done_by: r.done_by ?? null,
       })) || [];
 
-    // ----- DEFERRALS (optional) -----
-    // If table isn't present, we just ignore.
     let deferrals: Deferral[] = [];
     try {
       const today = new Date(todayISO);
@@ -1075,8 +1138,8 @@ export default function DashboardPage() {
       const deferredFrom = deferralsFromMap.get(ymd)?.has(task.id) ?? false;
       const deferredTo = deferralsToMap.get(ymd)?.has(task.id) ?? false;
 
-      if (deferredFrom) return false; // moved away from today
-      if (deferredTo) return true; // moved onto today
+      if (deferredFrom) return false;
+      if (deferredTo) return true;
 
       return isDueOn(task, ymd);
     }
@@ -1105,7 +1168,6 @@ export default function DashboardPage() {
     let allergenDueSoon = 0;
     let allergenOver = 0;
 
-    // Training
     try {
       const { data } = await supabase
         .from("team_members")
@@ -1123,7 +1185,6 @@ export default function DashboardPage() {
       });
     } catch {}
 
-    // Allergen review
     try {
       const { data } = await supabase
         .from("allergen_review")
@@ -1152,8 +1213,43 @@ export default function DashboardPage() {
     }));
   }
 
-  async function loadLeaderBoard(orgId: string, cancelled: boolean) {
+  // ✅ location-aware leaderboard / EOM (with fallbacks)
+  async function loadLeaderBoard(
+    orgId: string,
+    locationId: string | null,
+    cancelled: boolean
+  ) {
     try {
+      if (locationId) {
+        const { data, error } = await supabase
+          .from("leaderboard")
+          .select("display_name, points, temp_logs_count, cleaning_count")
+          .eq("org_id", orgId)
+          .eq("location_id_uuid", locationId)
+          .order("points", { ascending: false })
+          .limit(1);
+
+        if (!error) {
+          if (!cancelled) setEom(data?.[0] ?? null);
+          return;
+        }
+      }
+
+      if (locationId) {
+        const { data, error } = await supabase
+          .from("leaderboard")
+          .select("display_name, points, temp_logs_count, cleaning_count")
+          .eq("org_id", orgId)
+          .eq("location_id", String(locationId))
+          .order("points", { ascending: false })
+          .limit(1);
+
+        if (!error) {
+          if (!cancelled) setEom(data?.[0] ?? null);
+          return;
+        }
+      }
+
       const { data, error } = await supabase
         .from("leaderboard")
         .select("display_name, points, temp_logs_count, cleaning_count")
@@ -1214,7 +1310,6 @@ export default function DashboardPage() {
         localStorage.setItem(firstSeenKey, firstSeenISO);
       }
 
-      // Not eligible until 28 days after first seen
       const eligibleDate = new Date(firstSeenISO);
       eligibleDate.setDate(eligibleDate.getDate() + 28);
 
@@ -1228,7 +1323,6 @@ export default function DashboardPage() {
       const reviewedAtRaw = localStorage.getItem("tt_four_week_reviewed_at");
       const lastReviewedISO = reviewedAtRaw ? toISODate(reviewedAtRaw) : null;
 
-      // Fetch summary first (we need periodFrom/periodTo to build reviewKey)
       const res = await fetch(
         `/four-week-review/summary?to=${encodeURIComponent(todayISO)}`,
         { cache: "no-store" }
@@ -1255,7 +1349,8 @@ export default function DashboardPage() {
       });
 
       const dismissUntilRaw =
-        localStorage.getItem(dismissKeyScoped) ?? localStorage.getItem(dismissKeyFallback);
+        localStorage.getItem(dismissKeyScoped) ??
+        localStorage.getItem(dismissKeyFallback);
 
       if (dismissUntilRaw) {
         const dismissUntil = new Date(dismissUntilRaw).getTime();
@@ -1282,7 +1377,6 @@ export default function DashboardPage() {
         return;
       }
 
-      // Optional DB dismissal check (only if we have org+location)
       if (locationId && periodFrom && periodTo) {
         const dismissed = await isFourWeekReviewDismissed({
           orgId,
@@ -1311,7 +1405,6 @@ export default function DashboardPage() {
     }
   }
 
-  // ✅ KPI incident count: OPEN incidents only
   async function loadOpenIncidentCount(
     orgId: string,
     locationId: string | null,
@@ -1322,7 +1415,6 @@ export default function DashboardPage() {
       fromD.setDate(fromD.getDate() - INCIDENT_KPI_LOOKBACK_DAYS);
       const fromISO = fromD.toISOString().slice(0, 10);
 
-      // Use head:true + count to avoid fetching rows
       let q = supabase
         .from("incidents")
         .select("id", { count: "exact", head: true })
@@ -1337,7 +1429,6 @@ export default function DashboardPage() {
       const { count, error } = await q;
 
       if (error) {
-        // fallback to text ids if needed
         let q2 = supabase
           .from("incidents")
           .select("id", { count: "exact", head: true })
@@ -1415,7 +1506,6 @@ export default function DashboardPage() {
     setLocationLabel(loc);
   }
 
-  // ✅ incidents loader for alerts modal
   async function loadIncidentsForAlerts(rangeDays: number) {
     const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
     const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
@@ -1525,9 +1615,11 @@ export default function DashboardPage() {
     kpi.allergenDueSoon > 0 ||
     openIncidentCount > 0;
 
-  // ✅ NOW includes open incidents
   const alertsCount =
-    kpi.trainingOver + kpi.allergenOver + (kpi.tempFails7d > 0 ? 1 : 0) + openIncidentCount;
+    kpi.trainingOver +
+    kpi.allergenOver +
+    (kpi.tempFails7d > 0 ? 1 : 0) +
+    openIncidentCount;
 
   const openTempModal = () => {
     if (typeof window === "undefined") return;
@@ -1578,8 +1670,6 @@ export default function DashboardPage() {
       });
     }
 
-    // NOTE: incidents are displayed in the modal section below,
-    // so we don't duplicate them as "Other alerts" cards.
     return items;
   })();
 
@@ -1598,7 +1688,9 @@ export default function DashboardPage() {
   })();
 
   const cleaningPct =
-    kpi.cleaningDueToday > 0 ? (kpi.cleaningDoneToday / kpi.cleaningDueToday) * 100 : 0;
+    kpi.cleaningDueToday > 0
+      ? (kpi.cleaningDoneToday / kpi.cleaningDueToday) * 100
+      : 0;
 
   const cleaningTone: "danger" | "warn" | "ok" | "neutral" =
     kpi.cleaningDueToday === 0
@@ -1609,9 +1701,11 @@ export default function DashboardPage() {
       ? "danger"
       : "warn";
 
-  const tempTone: "danger" | "warn" | "ok" | "neutral" = kpi.tempLogsToday === 0 ? "danger" : "ok";
+  const tempTone: "danger" | "warn" | "ok" | "neutral" =
+    kpi.tempLogsToday === 0 ? "danger" : "ok";
 
-  const alertsTone: "danger" | "warn" | "ok" | "neutral" = hasAnyKpiAlert ? "danger" : "ok";
+  const alertsTone: "danger" | "warn" | "ok" | "neutral" =
+    hasAnyKpiAlert ? "danger" : "ok";
 
   const fourWeekBannerTone =
     fourWeekBanner.kind === "show"
@@ -1636,7 +1730,6 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incidentRangeDays, alertsOpen]);
 
-  // ✅ Resolve handler
   async function resolveIncident(incidentId: string) {
     try {
       setResolvingId(incidentId);
@@ -1654,7 +1747,6 @@ export default function DashboardPage() {
 
       if (error) throw error;
 
-      // refresh modal list + KPI count
       await loadIncidentsForAlerts(incidentRangeDays);
 
       const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
@@ -1762,7 +1854,10 @@ export default function DashboardPage() {
                       localStorage.setItem(dismissKeyScoped, until.toISOString());
                       localStorage.setItem(dismissKeyFallback, until.toISOString());
 
-                      localStorage.setItem("tt_four_week_reviewed_at", new Date().toISOString());
+                      localStorage.setItem(
+                        "tt_four_week_reviewed_at",
+                        new Date().toISOString()
+                      );
 
                       if (orgId && locationId) {
                         await dismissFourWeekReview({
