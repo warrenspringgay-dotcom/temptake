@@ -239,7 +239,6 @@ function isLikelyMonthEnd(d = new Date()) {
 
 /* ---------- Four-week dismiss helpers ---------- */
 
-// Stable key: only YYYY-MM-DD (no times)
 function makeReviewKey(periodFromISO: string, periodToISO: string) {
   const from = (periodFromISO ?? "").slice(0, 10);
   const to = (periodToISO ?? "").slice(0, 10);
@@ -302,7 +301,6 @@ async function dismissFourWeekReview(args: {
   const currentCount = existing?.dismiss_count ?? 0;
   const nextCount = currentCount + 1;
 
-  // 1-2 dismisses => 24h, 3rd+ => 28 days
   const hours = nextCount >= 3 ? 24 * 28 : 24;
   const dismissedUntil = new Date(
     Date.now() + hours * 60 * 60 * 1000
@@ -876,10 +874,7 @@ export default function DashboardPage() {
     return () => mq?.removeEventListener?.("change", update);
   }, []);
 
-  /**
-   * Location switching: your dashboard was loading once and then living in denial.
-   * This watches for localStorage changes (or tab focus) and refreshes org/location.
-   */
+  // Keep org/location in sync
   useEffect(() => {
     let cancelled = false;
 
@@ -892,20 +887,13 @@ export default function DashboardPage() {
       setActiveLocationId(locationId);
     };
 
-    const onStorage = (e: StorageEvent) => {
-      // We don't know your exact storage key, so we just re-sync.
-      // Storage events only fire across tabs, but it's still useful.
-      void syncOrgLoc();
-    };
-
+    const onStorage = () => void syncOrgLoc();
     const onFocus = () => void syncOrgLoc();
+    const onCustom = () => void syncOrgLoc();
 
     void syncOrgLoc();
     window.addEventListener("storage", onStorage);
     window.addEventListener("focus", onFocus);
-
-    // Optional: if your HeaderSwitcher dispatches something like this, we’ll catch it.
-    const onCustom = () => void syncOrgLoc();
     window.addEventListener("tt-location-changed" as any, onCustom);
 
     return () => {
@@ -916,9 +904,7 @@ export default function DashboardPage() {
     };
   }, []);
 
-  /**
-   * Main data load: now re-runs when org or location changes.
-   */
+  // Load data (re-run when org/location changes)
   useEffect(() => {
     let cancelled = false;
 
@@ -945,8 +931,8 @@ export default function DashboardPage() {
           loadTempsKpi(orgId, locationId, today, cancelled),
           loadCleaningKpi(orgId, locationId, today, cancelled),
           loadTrainingAndAllergenKpi(orgId, cancelled),
-          loadLeaderBoard(orgId, locationId, cancelled), // ✅ location-aware
-          loadWallPosts(orgId, locationId, cancelled), // ✅ location-aware
+          loadLeaderBoard(orgId, locationId, cancelled),
+          loadWallPosts(orgId, locationId, cancelled), // ✅ fixed fallback logic
           loadFourWeekBanner(orgId, locationId, today, cancelled),
           loadOpenIncidentCount(orgId, locationId, cancelled),
         ]);
@@ -960,7 +946,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-    // ✅ rerun on org/location change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId, activeLocationId]);
 
   /* ---------- loaders ---------- */
@@ -1044,10 +1030,8 @@ export default function DashboardPage() {
         task: r.task ?? r.name ?? "",
         category: r.category ?? null,
         frequency: (r.frequency ?? "daily") as CleanTask["frequency"],
-        weekday:
-          r.weekday === null || r.weekday === undefined ? null : Number(r.weekday),
-        month_day:
-          r.month_day === null || r.month_day === undefined ? null : Number(r.month_day),
+        weekday: r.weekday == null ? null : Number(r.weekday),
+        month_day: r.month_day == null ? null : Number(r.month_day),
       })) || [];
 
     const { data: rData, error: rErr } = await supabase
@@ -1116,8 +1100,8 @@ export default function DashboardPage() {
     }
 
     const dueTodayAll = allTasks.filter((t) => isDueEffective(t, todayISO));
-
     const runsKey = new Set(runs.map((r) => `${r.task_id}|${r.run_on}`));
+
     const cleaningDoneToday = dueTodayAll.filter((t) =>
       runsKey.has(`${t.id}|${todayISO}`)
     ).length;
@@ -1139,16 +1123,11 @@ export default function DashboardPage() {
     let allergenDueSoon = 0;
     let allergenOver = 0;
 
-    // Training (org-wide)
     try {
-      const { data } = await supabase
-        .from("team_members")
-        .select("*")
-        .eq("org_id", orgId);
+      const { data } = await supabase.from("team_members").select("*").eq("org_id", orgId);
 
       (data ?? []).forEach((r: any) => {
-        const raw =
-          r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
+        const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
         if (!raw) return;
         const d = new Date(raw);
         if (Number.isNaN(d.getTime())) return;
@@ -1157,7 +1136,6 @@ export default function DashboardPage() {
       });
     } catch {}
 
-    // Allergen review (org-wide)
     try {
       const { data } = await supabase
         .from("allergen_review")
@@ -1186,12 +1164,6 @@ export default function DashboardPage() {
     }));
   }
 
-  /**
-   * ✅ Location-specific Leaderboard / EOM
-   *
-   * - If a location is selected: use leaderboard_location (new view).
-   * - If no location: fall back to org-wide leaderboard view.
-   */
   async function loadLeaderBoard(orgId: string, locationId: string | null, cancelled: boolean) {
     try {
       if (locationId) {
@@ -1209,7 +1181,6 @@ export default function DashboardPage() {
         return;
       }
 
-      // Fallback: org-wide
       const { data, error } = await supabase
         .from("leaderboard")
         .select("display_name, points, temp_logs_count, cleaning_count")
@@ -1221,31 +1192,57 @@ export default function DashboardPage() {
       if (cancelled) return;
       setEom(data?.[0] ?? null);
     } catch (e: any) {
-      // If leaderboard_location doesn’t exist yet, you’ll land here.
       console.warn("[leaderboard] failed:", e?.message ?? e);
       if (!cancelled) setEom(null);
     }
   }
 
+  // ✅ FIXED: wall posts now attempt location filter, but safely fallback to org-only
   async function loadWallPosts(orgId: string, locationId: string | null, cancelled: boolean) {
     try {
-      let q = supabase
+      // Attempt location-aware query first (only if we have a location)
+      if (locationId) {
+        const { data, error } = await supabase
+          .from(WALL_TABLE)
+          .select("id, org_id, location_id, author_initials, message, color, created_at")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .order("created_at", { ascending: false })
+          .limit(3);
+
+        if (!error) {
+          if (cancelled) return;
+
+          const mapped: WallPost[] =
+            (data ?? []).map((r: any) => ({
+              id: String(r.id),
+              initials: r.author_initials ?? r.staff_initials ?? r.initials ?? "??",
+              message: r.message ?? "",
+              created_at: r.created_at ?? new Date().toISOString(),
+              colorClass: (r.color as string) || "bg-yellow-200",
+            })) || [];
+
+          setWallPosts(mapped);
+          return;
+        }
+
+        // If location column doesn't exist or filter fails, fall through to org-only.
+        console.warn("[wall] location filter failed, falling back to org-only:", error.message);
+      }
+
+      // Fallback: org-only (no location_id column required)
+      const { data: data2, error: err2 } = await supabase
         .from(WALL_TABLE)
-        .select("id, org_id, location_id, author_initials, message, color, created_at")
+        .select("id, org_id, author_initials, message, color, created_at")
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
         .limit(3);
 
-      // ✅ wall should be location-specific if you have the column
-      if (locationId) q = q.eq("location_id", locationId);
-
-      const { data, error } = await q;
-
-      if (error) throw error;
+      if (err2) throw err2;
       if (cancelled) return;
 
-      const mapped: WallPost[] =
-        (data ?? []).map((r: any) => ({
+      const mapped2: WallPost[] =
+        (data2 ?? []).map((r: any) => ({
           id: String(r.id),
           initials: r.author_initials ?? r.staff_initials ?? r.initials ?? "??",
           message: r.message ?? "",
@@ -1253,7 +1250,7 @@ export default function DashboardPage() {
           colorClass: (r.color as string) || "bg-yellow-200",
         })) || [];
 
-      setWallPosts(mapped);
+      setWallPosts(mapped2);
     } catch (e) {
       console.error("Failed to load wall posts", e);
       if (!cancelled) setWallPosts([]);
@@ -1279,7 +1276,6 @@ export default function DashboardPage() {
 
       const eligibleDate = new Date(firstSeenISO);
       eligibleDate.setDate(eligibleDate.getDate() + 28);
-
       const eligible = eligibleDate.getTime() <= Date.now();
 
       if (!eligible) {
@@ -1304,16 +1300,8 @@ export default function DashboardPage() {
 
       const reviewKey = makeReviewKey(periodFrom, periodTo);
 
-      const dismissKeyScoped = makeDismissStorageKey({
-        orgId,
-        locationId,
-        reviewKey,
-      });
-      const dismissKeyFallback = makeDismissStorageKey({
-        orgId,
-        locationId: null,
-        reviewKey,
-      });
+      const dismissKeyScoped = makeDismissStorageKey({ orgId, locationId, reviewKey });
+      const dismissKeyFallback = makeDismissStorageKey({ orgId, locationId: null, reviewKey });
 
       const dismissUntilRaw =
         localStorage.getItem(dismissKeyScoped) ?? localStorage.getItem(dismissKeyFallback);
@@ -1331,9 +1319,7 @@ export default function DashboardPage() {
       const overdue = !lastReviewedISO || daysBetween(lastReviewedISO, todayISO) >= 28;
       const monthEnd = isLikelyMonthEnd(new Date());
 
-      type FourWeekBannerReason = "overdue" | "month_end" | "issues";
-      let reason: FourWeekBannerReason | null = null;
-
+      let reason: "overdue" | "month_end" | "issues" | null = null;
       if (issues > 0) reason = "issues";
       else if (overdue) reason = "overdue";
       else if (monthEnd) reason = "month_end";
@@ -1636,7 +1622,6 @@ export default function DashboardPage() {
 
     if (openIncidentCount > 0)
       bits.push(`${openIncidentCount} open incident${openIncidentCount === 1 ? "" : "s"}`);
-
     if (kpi.tempFails7d > 0) bits.push(`${kpi.tempFails7d} failed temps (7d)`);
     if (kpi.trainingOver > 0) bits.push(`${kpi.trainingOver} training overdue`);
     if (kpi.allergenOver > 0) bits.push(`${kpi.allergenOver} allergen review overdue`);
@@ -1657,9 +1642,7 @@ export default function DashboardPage() {
       ? "danger"
       : "warn";
 
-  const tempTone: "danger" | "warn" | "ok" | "neutral" =
-    kpi.tempLogsToday === 0 ? "danger" : "ok";
-
+  const tempTone: "danger" | "warn" | "ok" | "neutral" = kpi.tempLogsToday === 0 ? "danger" : "ok";
   const alertsTone: "danger" | "warn" | "ok" | "neutral" = hasAnyKpiAlert ? "danger" : "ok";
 
   const fourWeekBannerTone =
@@ -1808,7 +1791,6 @@ export default function DashboardPage() {
 
                       localStorage.setItem(dismissKeyScoped, until.toISOString());
                       localStorage.setItem(dismissKeyFallback, until.toISOString());
-
                       localStorage.setItem("tt_four_week_reviewed_at", new Date().toISOString());
 
                       if (orgId && locationId) {
@@ -1856,10 +1838,7 @@ export default function DashboardPage() {
                   ? "No temperatures logged yet today."
                   : "At least one temperature check recorded."
               }
-              onClick={() => {
-                if (typeof window === "undefined") return;
-                window.dispatchEvent(new Event("tt-open-temp-modal"));
-              }}
+              onClick={openTempModal}
               footer={
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
                   <span>Tap to log</span>
@@ -1911,9 +1890,7 @@ export default function DashboardPage() {
               tone={alertsTone}
               big={alertsCount}
               sub={alertsSummary}
-              onClick={async () => {
-                await openAlertsModal();
-              }}
+              onClick={openAlertsModal}
               footer={
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
                   <span>View details</span>
@@ -2052,12 +2029,7 @@ export default function DashboardPage() {
             />
             <QuickLink href="/team" label="Team & training" icon="👥" canHover={canHover} />
             <QuickLink href="/reports" label="Reports" icon="📊" canHover={canHover} />
-            <QuickLink
-              href="/locations"
-              label="Locations & sites"
-              icon="📍"
-              canHover={canHover}
-            />
+            <QuickLink href="/locations" label="Locations & sites" icon="📍" canHover={canHover} />
             <QuickLink href="/manager" label="Manager view" icon="💼" canHover={canHover} />
             <QuickLink href="/help" label="Help & support" icon="❓" canHover={canHover} />
           </div>
