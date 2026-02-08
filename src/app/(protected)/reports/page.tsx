@@ -143,6 +143,17 @@ type HygieneMeta = {
   reference: string | null;
 };
 
+type HygieneHistoryRow = {
+  id: string;
+  rating: number | null;
+  visit_date: string | null; // yyyy-mm-dd
+  certificate_expires_at: string | null; // yyyy-mm-dd
+  issuing_authority: string | null;
+  reference: string | null;
+  notes: string | null;
+  created_at: string | null;
+};
+
 /* ===================== Date helpers ===================== */
 
 function safeDate(val: any): Date | null {
@@ -319,10 +330,14 @@ function normaliseTrainingAreas(
   return out;
 }
 
+/* ===================== Hygiene stars (big >=3, small <3, history small) ===================== */
+
 function HygieneStars({
   rating,
+  variant = "auto",
 }: {
   rating: number | null;
+  variant?: "auto" | "big" | "small";
 }) {
   if (rating == null) {
     return <span className="text-slate-500 text-sm">No rating</span>;
@@ -331,34 +346,37 @@ function HygieneStars({
   const isGood = rating >= 3;
   const totalStars = 5;
 
+  const sizeClass =
+    variant === "big"
+      ? "text-3xl"
+      : variant === "small"
+      ? "text-lg"
+      : isGood
+      ? "text-3xl"
+      : "text-xl";
+
+  const dimmed = variant === "small" ? "opacity-80" : isGood ? "" : "opacity-80";
+
   return (
     <div className="flex items-center gap-2">
-      <div
-        className={`flex ${
-          isGood ? "text-yellow-500" : "text-yellow-600 opacity-70"
-        }`}
-      >
-        {Array.from({ length: totalStars }).map((_, i) => (
-          <span
-            key={i}
-            className={
-              i < rating
-                ? isGood
-                  ? "text-3xl leading-none"
-                  : "text-xl leading-none"
-                : isGood
-                ? "text-3xl leading-none text-slate-300"
-                : "text-xl leading-none text-slate-300"
-            }
-          >
-            ★
-          </span>
-        ))}
+      <div className={`flex text-yellow-500 ${dimmed}`}>
+        {Array.from({ length: totalStars }).map((_, i) => {
+          const filled = i < rating;
+          return (
+            <span
+              key={i}
+              className={`${sizeClass} leading-none ${filled ? "" : "text-slate-300"}`}
+              aria-hidden
+            >
+              ★
+            </span>
+          );
+        })}
       </div>
 
       <span
         className={`font-semibold ${
-          isGood ? "text-slate-900 text-base" : "text-slate-700 text-sm"
+          variant === "small" ? "text-slate-700 text-xs" : isGood ? "text-slate-900 text-base" : "text-slate-700 text-sm"
         }`}
       >
         {rating}/5
@@ -367,6 +385,7 @@ function HygieneStars({
   );
 }
 
+/* ===================== Training status compute ===================== */
 
 function computeTrainingStatus(awardedISO: string | null, expiresISO: string | null) {
   const today0 = new Date();
@@ -461,6 +480,7 @@ async function fetchLatestHygieneByLocation(orgId: string): Promise<Record<strin
     .select("location_id, rating, visit_date, certificate_expires_at, issuing_authority, reference")
     .eq("org_id", orgId)
     .order("visit_date", { ascending: false })
+    .order("created_at", { ascending: false })
     .limit(5000);
 
   if (error) throw error;
@@ -484,6 +504,35 @@ async function fetchLatestHygieneByLocation(orgId: string): Promise<Record<strin
   }
 
   return map;
+}
+
+async function fetchHygieneHistoryForLocation(
+  orgId: string,
+  locationId: string
+): Promise<HygieneHistoryRow[]> {
+  const { data, error } = await supabase
+    .from("food_hygiene_ratings")
+    .select(
+      "id, rating, visit_date, certificate_expires_at, issuing_authority, reference, notes, created_at"
+    )
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .order("visit_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  if (error) throw error;
+
+  return (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    rating: r.rating != null ? Number(r.rating) : null,
+    visit_date: r.visit_date ? String(r.visit_date) : null,
+    certificate_expires_at: r.certificate_expires_at ? String(r.certificate_expires_at) : null,
+    issuing_authority: r.issuing_authority ? String(r.issuing_authority) : null,
+    reference: r.reference ? String(r.reference) : null,
+    notes: r.notes ? String(r.notes) : null,
+    created_at: r.created_at ? String(r.created_at) : null,
+  }));
 }
 
 /* ===================== Data fetch helpers ===================== */
@@ -1057,8 +1106,10 @@ export default function ReportsPage() {
   const [locationFilter, setLocationFilter] = useState<string | "all">("all");
   const [locations, setLocations] = useState<LocationOption[]>([]);
 
-  // ✅ Food hygiene rating per location (latest per location)
+  // Food hygiene rating per location (latest per location)
   const [hygieneByLocation, setHygieneByLocation] = useState<Record<string, HygieneMeta>>({});
+  // Food hygiene rating history for selected location
+  const [hygieneHistory, setHygieneHistory] = useState<HygieneHistoryRow[] | null>(null);
 
   const [temps, setTemps] = useState<TempRow[] | null>(null);
   const [teamDue, setTeamDue] = useState<TeamRow[] | null>(null);
@@ -1153,7 +1204,7 @@ export default function ReportsPage() {
     return showAllTrainingAreas ? trainingMatrix : trainingMatrix.slice(0, 12);
   }, [trainingMatrix, showAllTrainingAreas]);
 
-  // ✅ Hygiene display for selected / all
+  // Hygiene display for selected / all (label-only used for "all locations" path)
   const hygieneDisplay = useMemo(() => {
     if (locationFilter !== "all") {
       const meta = hygieneByLocation[String(locationFilter)];
@@ -1200,7 +1251,6 @@ export default function ReportsPage() {
         const map = await fetchLatestHygieneByLocation(id);
         setHygieneByLocation(map);
       } catch (e) {
-        // Don't block the page if hygiene fetch fails
         setHygieneByLocation({});
       }
 
@@ -1280,6 +1330,18 @@ export default function ReportsPage() {
       setShowAllSignoffs(false);
       setShowAllCleaningRuns(false);
 
+      // Hygiene history for selected location (small list)
+      if (locationId) {
+        try {
+          const hist = await fetchHygieneHistoryForLocation(orgIdValue, locationId);
+          setHygieneHistory(hist);
+        } catch {
+          setHygieneHistory(null);
+        }
+      } else {
+        setHygieneHistory(null);
+      }
+
       if (includeAncillary) {
         const withinDays = 90;
         const [m, a, e, ta] = await Promise.all([
@@ -1311,6 +1373,7 @@ export default function ReportsPage() {
       setLoggedIncidents(null);
       setSignoffs(null);
       setCleaningRuns(null);
+      setHygieneHistory(null);
     } finally {
       setLoading(false);
     }
@@ -1397,6 +1460,17 @@ export default function ReportsPage() {
     locationFilter === "all"
       ? "All locations"
       : locations.find((l) => l.id === locationFilter)?.name ?? "This location";
+
+  const selectedLatestRating =
+    locationFilter !== "all" ? hygieneByLocation[String(locationFilter)]?.rating ?? null : null;
+
+  const selectedLatestVisit =
+    locationFilter !== "all" ? hygieneByLocation[String(locationFilter)]?.visit_date ?? null : null;
+
+  const previousHygiene =
+    locationFilter !== "all" && hygieneHistory && hygieneHistory.length > 1
+      ? hygieneHistory.slice(1)
+      : [];
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
@@ -1486,36 +1560,81 @@ export default function ReportsPage() {
 
             <div className="mt-1 text-[11px] text-slate-500">Current: {currentLocationLabel}</div>
 
-           <div className="mt-2">
-  <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">
-    Food hygiene rating
-  </div>
+            {/* Food hygiene rating + history */}
+            <div className="mt-3">
+              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">
+                Food hygiene rating
+              </div>
 
-  {locationFilter !== "all" ? (
-    <HygieneStars
-      rating={
-        hygieneByLocation[locationFilter]?.rating ?? null
-      }
-    />
-  ) : hygieneDisplay.label === "Varies" ? (
-    <span className="text-sm font-medium text-slate-600">
-      Varies by location
-    </span>
-  ) : (
-    <HygieneStars
-      rating={Number(hygieneDisplay.label.replace("/5", "")) || null}
-    />
-  )}
+              {locationFilter !== "all" ? (
+                <>
+                  <HygieneStars rating={selectedLatestRating} variant="auto" />
 
-  {hygieneDisplay.visit && (
-    <div className="mt-1 text-[11px] text-slate-500">
-      Last inspection: {formatISOToUK(hygieneDisplay.visit)}
-    </div>
-  )}
-</div>
+                  {selectedLatestVisit && (
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      Last inspection: {formatISOToUK(selectedLatestVisit)}
+                    </div>
+                  )}
 
+                  {previousHygiene.length > 0 && (
+                    <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 p-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                        Previous ratings
+                      </div>
 
-            <div className="mt-1 text-[11px] text-slate-500">
+                      <div className="mt-2 space-y-2">
+                        {previousHygiene.map((row) => (
+                          <div
+                            key={row.id}
+                            className="flex items-start justify-between gap-3 border-t border-slate-100 pt-2 first:border-t-0 first:pt-0"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <HygieneStars rating={row.rating} variant="small" />
+                              </div>
+
+                              <div className="mt-0.5 text-[11px] text-slate-500">
+                                {row.visit_date ? `Inspection: ${formatISOToUK(row.visit_date)}` : "Inspection: —"}
+                                {row.issuing_authority ? ` · ${row.issuing_authority}` : ""}
+                              </div>
+
+                              {row.reference && (
+                                <div className="text-[11px] text-slate-500">
+                                  Ref: <span className="font-mono">{row.reference}</span>
+                                </div>
+                              )}
+
+                              {row.notes && (
+                                <div className="mt-1 text-[11px] text-slate-600 line-clamp-2">
+                                  {row.notes}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="shrink-0 text-[11px] text-slate-500">
+                              {row.certificate_expires_at
+                                ? `Cert exp: ${formatISOToUK(row.certificate_expires_at)}`
+                                : ""}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : hygieneDisplay.label === "Varies" ? (
+                <span className="text-sm font-medium text-slate-600">Varies by location</span>
+              ) : hygieneDisplay.label === "—" ? (
+                <span className="text-sm font-medium text-slate-500">No ratings</span>
+              ) : (
+                <HygieneStars
+                  rating={Number(hygieneDisplay.label.replace("/5", "")) || null}
+                  variant="auto"
+                />
+              )}
+            </div>
+
+            <div className="mt-2 text-[11px] text-slate-500">
               {loading ? "Loading…" : "Auto-runs when you change location."}
             </div>
           </div>
