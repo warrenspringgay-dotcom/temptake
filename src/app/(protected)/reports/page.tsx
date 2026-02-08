@@ -431,28 +431,32 @@ function computeTrainingStatus(awardedISO: string | null, expiresISO: string | n
     return { expires_on: toISODate(exp0!), days_until, status: "amber" as TrainingAreaStatus };
   return { expires_on: toISODate(exp0!), days_until, status: "green" as TrainingAreaStatus };
 }
-
 async function fetchTrainingAreasReport(
   orgId: string,
   locationId: string | null
 ): Promise<TrainingAreaRow[]> {
-  // Attempt location-scoped if location_id exists; fallback to org-scoped if not.
-  let data: any[] | null = null;
+  const rows: TrainingAreaRow[] = [];
 
-  if (locationId) {
-    const { data: d1, error: e1 } = await supabase
-      .from("team_members")
-      .select("id,name,initials,email,active,training_areas,location_id")
-      .eq("org_id", orgId)
-      .eq("location_id", locationId)
-      .order("name", { ascending: true })
-      .limit(5000);
+  async function fetchFromTeamMembers(): Promise<any[] | null> {
+    // 1) location-scoped (if possible)
+    if (locationId) {
+      const { data: d1, error: e1 } = await supabase
+        .from("team_members")
+        .select("id,name,initials,email,active,training_areas,location_id")
+        .eq("org_id", orgId)
+        .eq("location_id", locationId)
+        .order("name", { ascending: true })
+        .limit(5000);
 
-    if (!e1) data = (d1 ?? []) as any[];
-    else if (!isMissingLocationColumnError(e1)) throw e1;
-  }
+      if (e1) {
+        if (!isMissingLocationColumnError(e1)) throw e1;
+      } else if ((d1?.length ?? 0) > 0) {
+        return d1 as any[];
+      }
+      // ✅ zero rows => fall back to org-wide below
+    }
 
-  if (data === null) {
+    // 2) org-wide team_members
     const { data: d2, error: e2 } = await supabase
       .from("team_members")
       .select("id,name,initials,email,active,training_areas")
@@ -461,12 +465,45 @@ async function fetchTrainingAreasReport(
       .limit(5000);
 
     if (e2) throw e2;
-    data = (d2 ?? []) as any[];
+
+    return (d2 ?? []) as any[];
   }
 
-  const rows: TrainingAreaRow[] = [];
+  async function fetchFromStaff(): Promise<any[] | null> {
+    // Some builds store training coverage on staff not team_members.
+    if (locationId) {
+      const { data: d1, error: e1 } = await supabase
+        .from("staff")
+        .select("id,name,initials,email,active,training_areas,location_id")
+        .eq("org_id", orgId)
+        .eq("location_id", locationId)
+        .order("name", { ascending: true })
+        .limit(5000);
 
-  for (const m of data ?? []) {
+      if (e1) {
+        if (!isMissingLocationColumnError(e1)) throw e1;
+      } else if ((d1?.length ?? 0) > 0) {
+        return d1 as any[];
+      }
+    }
+
+    const { data: d2, error: e2 } = await supabase
+      .from("staff")
+      .select("id,name,initials,email,active,training_areas")
+      .eq("org_id", orgId)
+      .order("name", { ascending: true })
+      .limit(5000);
+
+    if (e2) throw e2;
+    return (d2 ?? []) as any[];
+  }
+
+  // Try team_members first (preferred), then staff if it’s empty.
+  let data = await fetchFromTeamMembers();
+  if (!data || data.length === 0) data = await fetchFromStaff();
+  if (!data || data.length === 0) return [];
+
+  for (const m of data) {
     if (m.active === false) continue;
 
     const member_id = String(m.id);
@@ -964,73 +1001,74 @@ async function fetchTeamDue(
  * If allergen_review_log has no location_id, fallback to org-wide.
  */
 async function fetchAllergenLog(
-  _withinDays: number, // kept for backwards compat, ignored
+  _withinDays: number, // ignored: we want history
   orgId: string,
   locationId: string | null
 ): Promise<AllergenRow[]> {
-  let data: any[] | null = null;
+  const today0 = new Date();
+  today0.setHours(0, 0, 0, 0);
 
-  // Try location-scoped first (if column exists)
+  const mapRows = (rows: any[]) =>
+    (rows ?? []).map((r: any) => {
+      const reviewed = safeDate(r.reviewed_on);
+
+      const intervalDaysRaw = r.interval_days;
+      const intervalDays =
+        intervalDaysRaw == null || intervalDaysRaw === "" ? null : Number(intervalDaysRaw);
+
+      let nextDue: Date | null = null;
+      if (reviewed && intervalDays && Number.isFinite(intervalDays) && intervalDays > 0) {
+        nextDue = new Date(reviewed.getTime() + intervalDays * 86400000);
+      }
+
+      const next0 = nextDue ? new Date(nextDue) : null;
+      if (next0) next0.setHours(0, 0, 0, 0);
+
+      const days_until = next0
+        ? Math.round((next0.getTime() - today0.getTime()) / 86400000)
+        : null;
+
+      return {
+        id: String(r.id),
+        reviewed_on: reviewed ? reviewed.toISOString() : null,
+        next_due: nextDue ? nextDue.toISOString() : null,
+        reviewer: r.reviewer_name ?? null,
+        days_until,
+      } as AllergenRow;
+    });
+
+  // 1) Try location-scoped (if locationId exists)
   if (locationId) {
     const { data: d1, error: e1 } = await supabase
       .from("allergen_review_log")
-      .select("id, reviewed_on, interval_days, reviewer_name, location_id")
+      .select("id, reviewed_on, interval_days, reviewer_name, location_id, created_at")
       .eq("org_id", orgId)
       .eq("location_id", locationId)
       .order("reviewed_on", { ascending: false })
       .order("created_at", { ascending: false })
-      .limit(200);
+      .limit(500);
 
-    if (!e1) data = (d1 ?? []) as any[];
-    else if (!isMissingLocationColumnError(e1)) throw e1;
+    // If table doesn't have location_id, fall through to org-wide
+    if (e1 && !isMissingLocationColumnError(e1)) throw e1;
+
+    // ✅ If location query returns rows, use them.
+    if (!e1 && (d1?.length ?? 0) > 0) return mapRows(d1 ?? []);
+
+    // ✅ If location query returns ZERO rows, fall back to org-wide (data might not be location-tagged)
   }
 
-  // Fallback org-wide if no location_id column or no location chosen
-  if (data === null) {
-    const { data: d2, error: e2 } = await supabase
-      .from("allergen_review_log")
-      .select("id, reviewed_on, interval_days, reviewer_name, created_at")
-      .eq("org_id", orgId)
-      .order("reviewed_on", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(200);
+  // 2) Org-wide fallback
+  const { data: d2, error: e2 } = await supabase
+    .from("allergen_review_log")
+    .select("id, reviewed_on, interval_days, reviewer_name, created_at")
+    .eq("org_id", orgId)
+    .order("reviewed_on", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(500);
 
-    if (e2) throw e2;
-    data = (d2 ?? []) as any[];
-  }
+  if (e2) throw e2;
 
-  // Return historic rows (no filtering)
-  const today0 = new Date();
-  today0.setHours(0, 0, 0, 0);
-
-  return (data ?? []).map((r: any) => {
-    const reviewed = safeDate(r.reviewed_on);
-
-    const intervalDaysRaw = r.interval_days;
-    const intervalDays =
-      intervalDaysRaw == null || intervalDaysRaw === "" ? null : Number(intervalDaysRaw);
-
-    // Still compute next_due if you want it displayed, but do NOT filter by it
-    let nextDue: Date | null = null;
-    if (reviewed && intervalDays && Number.isFinite(intervalDays) && intervalDays > 0) {
-      nextDue = new Date(reviewed.getTime() + intervalDays * 86400000);
-    }
-
-    const next0 = nextDue ? new Date(nextDue) : null;
-    if (next0) next0.setHours(0, 0, 0, 0);
-
-    const days_until = next0
-      ? Math.round((next0.getTime() - today0.getTime()) / 86400000)
-      : null;
-
-    return {
-      id: String(r.id),
-      reviewed_on: reviewed ? reviewed.toISOString() : null,
-      next_due: nextDue ? nextDue.toISOString() : null,
-      reviewer: r.reviewer_name ?? null,
-      days_until,
-    } as AllergenRow;
-  });
+  return mapRows(d2 ?? []);
 }
 
 async function fetchAllergenChanges(
