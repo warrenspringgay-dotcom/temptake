@@ -210,7 +210,6 @@ function isTeamRow(v: TeamRow | null): v is TeamRow {
 
 function isMissingLocationColumnError(err: any) {
   const msg = String(err?.message ?? "").toLowerCase();
-  // PostgREST usually says something like: column "location_id" does not exist
   return msg.includes("column") && msg.includes("location_id") && msg.includes("does not exist");
 }
 
@@ -433,7 +432,10 @@ function computeTrainingStatus(awardedISO: string | null, expiresISO: string | n
   return { expires_on: toISODate(exp0!), days_until, status: "green" as TrainingAreaStatus };
 }
 
-async function fetchTrainingAreasReport(orgId: string, locationId: string | null): Promise<TrainingAreaRow[]> {
+async function fetchTrainingAreasReport(
+  orgId: string,
+  locationId: string | null
+): Promise<TrainingAreaRow[]> {
   // Attempt location-scoped if location_id exists; fallback to org-scoped if not.
   let data: any[] | null = null;
 
@@ -505,7 +507,6 @@ async function fetchTrainingAreasReport(orgId: string, locationId: string | null
 /* ===================== Food hygiene ratings fetch ===================== */
 
 async function fetchLatestHygieneByLocation(orgId: string): Promise<Record<string, HygieneMeta>> {
-  // Pull latest records first; then keep the first per location.
   const { data, error } = await supabase
     .from("food_hygiene_ratings")
     .select("location_id, rating, visit_date, certificate_expires_at, issuing_authority, reference")
@@ -521,9 +522,7 @@ async function fetchLatestHygieneByLocation(orgId: string): Promise<Record<strin
   for (const r of (data ?? []) as any[]) {
     const locId = r.location_id ? String(r.location_id) : null;
     if (!locId) continue;
-
-    // first hit is latest due to ordering
-    if (map[locId]) continue;
+    if (map[locId]) continue; // keep first (latest) per location
 
     map[locId] = {
       rating: r.rating != null ? Number(r.rating) : null,
@@ -872,7 +871,11 @@ async function fetchIncidentsTrailAsUnifiedIncidentShape(
  * Team due is now location-aware when possible.
  * If trainings table doesn't have location_id, we fallback to org-wide.
  */
-async function fetchTeamDue(withinDays: number, orgId: string, locationId: string | null): Promise<TeamRow[]> {
+async function fetchTeamDue(
+  withinDays: number,
+  orgId: string,
+  locationId: string | null
+): Promise<TeamRow[]> {
   let tData: any[] = [];
 
   if (locationId) {
@@ -953,7 +956,6 @@ async function fetchTeamDue(withinDays: number, orgId: string, locationId: strin
     })
     .filter(isTeamRow)
     .filter((r) => typeof r.days_until === "number" && r.days_until <= withinDays)
-
     .sort((a: any, b: any) => (a.expires_on || "").localeCompare(b.expires_on || ""));
 }
 
@@ -961,7 +963,11 @@ async function fetchTeamDue(withinDays: number, orgId: string, locationId: strin
  * Allergen review schedule now location-aware when possible.
  * If allergen_review_log has no location_id, fallback to org-wide.
  */
-async function fetchAllergenLog(withinDays: number, orgId: string, locationId: string | null): Promise<AllergenRow[]> {
+async function fetchAllergenLog(
+  withinDays: number,
+  orgId: string,
+  locationId: string | null
+): Promise<AllergenRow[]> {
   let data: any[] | null = null;
 
   if (locationId) {
@@ -1015,7 +1021,7 @@ async function fetchAllergenLog(withinDays: number, orgId: string, locationId: s
         days_until,
       } as AllergenRow;
     })
-    .filter((r: any) => r.days_until != null && r.days_until <= withinDays)
+    .filter((r) => typeof r.days_until === "number" && r.days_until <= withinDays)
     .sort((a: any, b: any) => (a.next_due || "").localeCompare(b.next_due || ""));
 }
 
@@ -1216,6 +1222,9 @@ export default function ReportsPage() {
   const [locationFilter, setLocationFilter] = useState<string | "all">("all");
   const [locations, setLocations] = useState<LocationOption[]>([]);
 
+  // Boot gate: ensures active location loaded before initial report run
+  const [bootReady, setBootReady] = useState(false);
+
   // Food hygiene rating per location (latest per location)
   const [hygieneByLocation, setHygieneByLocation] = useState<Record<string, HygieneMeta>>({});
   // Food hygiene rating history for selected location
@@ -1244,8 +1253,6 @@ export default function ReportsPage() {
   const [showAllLoggedIncidents, setShowAllLoggedIncidents] = useState(false);
   const [showAllSignoffs, setShowAllSignoffs] = useState(false);
   const [showAllCleaningRuns, setShowAllCleaningRuns] = useState(false);
-
-  // FIX: separate state for staff reviews
   const [showAllStaffReviews, setShowAllStaffReviews] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -1254,8 +1261,6 @@ export default function ReportsPage() {
   const [initialRunDone, setInitialRunDone] = useState(false);
 
   const printRef = useRef<HTMLDivElement>(null);
-
-  const lastAutoLocationRef = useRef<string | "all" | null>(null);
 
   const visibleTemps = useMemo(() => {
     if (!temps) return null;
@@ -1317,11 +1322,6 @@ export default function ReportsPage() {
     return rows;
   }, [trainingAreas]);
 
-  const visibleTrainingMatrix = useMemo(() => {
-    if (!trainingMatrix) return null;
-    return showAllTrainingAreas ? trainingMatrix : trainingMatrix.slice(0, 12);
-  }, [trainingMatrix, showAllTrainingAreas]);
-
   // Hygiene display for selected / all (label-only used for "all locations" path)
   const hygieneDisplay = useMemo(() => {
     if (locationFilter !== "all") {
@@ -1345,35 +1345,42 @@ export default function ReportsPage() {
     return { label: "Varies", visit: null as string | null };
   }, [locationFilter, hygieneByLocation]);
 
-  /* ---------- boot: org + locations + hygiene ---------- */
+  /* ---------- boot: org + locations + hygiene + active location ---------- */
 
   useEffect(() => {
     (async () => {
-      const id = await getActiveOrgIdClient();
-      setOrgId(id ?? null);
-      if (!id) return;
-
-      // locations
-      const { data: locData, error: locErr } = await supabase
-        .from("locations")
-        .select("id,name")
-        .eq("org_id", id)
-        .order("name");
-
-      if (!locErr && locData) {
-        setLocations(locData.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })));
-      }
-
-      // hygiene ratings (latest per location)
       try {
-        const map = await fetchLatestHygieneByLocation(id);
-        setHygieneByLocation(map);
-      } catch (e) {
-        setHygieneByLocation({});
-      }
+        setBootReady(false);
 
-      const activeLoc = await getActiveLocationIdClient();
-      if (activeLoc) setLocationFilter(activeLoc);
+        const id = await getActiveOrgIdClient();
+        setOrgId(id ?? null);
+        if (!id) return;
+
+        // locations
+        const { data: locData, error: locErr } = await supabase
+          .from("locations")
+          .select("id,name")
+          .eq("org_id", id)
+          .order("name");
+
+        if (!locErr && locData) {
+          setLocations(locData.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })));
+        }
+
+        // hygiene ratings (latest per location)
+        try {
+          const map = await fetchLatestHygieneByLocation(id);
+          setHygieneByLocation(map);
+        } catch {
+          setHygieneByLocation({});
+        }
+
+        // set active location from header switcher (if any)
+        const activeLoc = await getActiveLocationIdClient();
+        if (activeLoc) setLocationFilter(activeLoc);
+      } finally {
+        setBootReady(true);
+      }
     })();
   }, []);
 
@@ -1524,37 +1531,30 @@ export default function ReportsPage() {
     await runRange(fromISO, toISO, orgId, locId, true);
   }
 
-  useEffect(() => {
-    if (orgId && !initialRunDone) {
-      runInstantAudit90();
-      setInitialRunDone(true);
-      lastAutoLocationRef.current = locationFilter;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId]);
-
+  // Initial run: wait for bootReady so locationFilter can be set from header switcher
   useEffect(() => {
     if (!orgId) return;
+    if (!bootReady) return;
+    if (initialRunDone) return;
+
+    (async () => {
+      await runInstantAudit90();
+      setInitialRunDone(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, bootReady, initialRunDone]);
+
+  // Location change: re-run everything INCLUDING ancillary so the page stays consistent
+  useEffect(() => {
+    if (!orgId) return;
+    if (!bootReady) return;
     if (!initialRunDone) return;
     if (loading) return;
 
-    if (lastAutoLocationRef.current === null) {
-      lastAutoLocationRef.current = locationFilter;
-      return;
-    }
-
-    if (lastAutoLocationRef.current === locationFilter) return;
-
-    lastAutoLocationRef.current = locationFilter;
-
     const locId = locationFilter !== "all" ? locationFilter : null;
-
-    // IMPORTANT CHANGE:
-    // Previously includeAncillary=false, which caused org-wide sections to stick.
-    // Now ancillary refreshes on location change so everything matches the selected location.
     runRange(from, to, orgId, locId, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationFilter]);
+  }, [locationFilter, orgId, bootReady, initialRunDone]);
 
   function downloadCSV() {
     if (!temps?.length) return;
@@ -2114,7 +2114,7 @@ export default function ReportsPage() {
                     </td>
                   </tr>
                 ) : (
-                  visibleCleaningRuns!.map((r) => (
+                  (showAllCleaningRuns ? cleaningRuns : visibleCleaningRuns!).map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
                       <td className="py-2 pr-3">{formatISOToUK(r.run_on)}</td>
                       <td className="py-2 pr-3">{formatTimeHM(r.done_at)}</td>
@@ -2179,7 +2179,7 @@ export default function ReportsPage() {
                     </td>
                   </tr>
                 ) : (
-                  visibleSignoffs!.map((r) => (
+                  (showAllSignoffs ? signoffs : visibleSignoffs!).map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
                       <td className="py-2 pr-3">{formatISOToUK(r.signoff_on)}</td>
                       <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
@@ -2219,7 +2219,8 @@ export default function ReportsPage() {
         {/* Manager QC reviews */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
-            Manager QC reviews {staffReviews ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+            Manager QC reviews{" "}
+            {staffReviews ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
 
           <div className="overflow-x-auto">
@@ -2262,12 +2263,16 @@ export default function ReportsPage() {
 
                     return (
                       <tr key={r.id} className="border-t border-slate-100">
-                        <td className="py-2 pr-3 whitespace-nowrap">{formatISOToUK(r.reviewed_on)}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">
+                          {formatISOToUK(r.reviewed_on)}
+                        </td>
                         <td className="py-2 pr-3 whitespace-nowrap">{staffLabel}</td>
                         <td className="py-2 pr-3 whitespace-nowrap">{r.reviewer ?? "—"}</td>
                         <td className="py-2 pr-3 whitespace-nowrap">{r.location_name ?? "—"}</td>
                         <td className="py-2 pr-3">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${pill}`}>
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${pill}`}
+                          >
                             {r.rating}/5
                           </span>
                         </td>
@@ -2283,9 +2288,13 @@ export default function ReportsPage() {
           </div>
 
           {staffReviews && staffReviews.length > 10 && (
-            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
               <div>
-                Showing {showAllStaffReviews ? staffReviews.length : Math.min(10, staffReviews.length)} of{" "}
+                Showing{" "}
+                {showAllStaffReviews ? staffReviews.length : Math.min(10, staffReviews.length)} of{" "}
                 {staffReviews.length} entries
               </div>
               <button
@@ -2353,7 +2362,9 @@ export default function ReportsPage() {
                           )}
                         </td>
                         <td className="py-2 pr-3">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${pill}`}>
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${pill}`}
+                          >
                             {r.status === "no-expiry"
                               ? "No expiry"
                               : r.status === "expired"
@@ -2387,7 +2398,10 @@ export default function ReportsPage() {
           </div>
 
           {education && education.length > 10 && (
-            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
               <div>
                 Showing {showAllEducation ? education.length : Math.min(10, education.length)} of{" "}
                 {education.length} entries
@@ -2436,43 +2450,56 @@ export default function ReportsPage() {
                     </td>
                   </tr>
                 ) : (
-                  (showAllTrainingAreas ? trainingMatrix : trainingMatrix.slice(0, 12)).map((row) => (
-                    <tr key={row.member_id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3 whitespace-nowrap text-sm font-medium">{row.name}</td>
-                      {SFBB_AREAS.map((area) => {
-                        const meta = row.byArea[area];
-                        if (!meta?.selected) {
+                  (showAllTrainingAreas ? trainingMatrix : trainingMatrix.slice(0, 12)).map(
+                    (row) => (
+                      <tr key={row.member_id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3 whitespace-nowrap text-sm font-medium">
+                          {row.name}
+                        </td>
+                        {SFBB_AREAS.map((area) => {
+                          const meta = row.byArea[area];
+                          if (!meta?.selected) {
+                            return (
+                              <td
+                                key={area}
+                                className="py-2 px-2 text-center text-slate-400 align-top"
+                              >
+                                —
+                              </td>
+                            );
+                          }
                           return (
-                            <td key={area} className="py-2 px-2 text-center text-slate-400 align-top">
-                              —
+                            <td key={area} className="py-2 px-2 text-center align-top">
+                              <div className="inline-flex flex-col items-center gap-1">
+                                <span className="text-base leading-none">✓</span>
+                                {meta.awarded_on && (
+                                  <span className="text-[10px] text-slate-500">
+                                    {formatISOToUK(meta.awarded_on)}
+                                  </span>
+                                )}
+                              </div>
                             </td>
                           );
-                        }
-                        return (
-                          <td key={area} className="py-2 px-2 text-center align-top">
-                            <div className="inline-flex flex-col items-center gap-1">
-                              <span className="text-base leading-none">✓</span>
-                              {meta.awarded_on && (
-                                <span className="text-[10px] text-slate-500">
-                                  {formatISOToUK(meta.awarded_on)}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))
+                        })}
+                      </tr>
+                    )
+                  )
                 )}
               </tbody>
             </table>
           </div>
 
           {trainingMatrix && trainingMatrix.length > 12 && (
-            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
               <div>
-                Showing {showAllTrainingAreas ? trainingMatrix.length : Math.min(12, trainingMatrix.length)} of{" "}
-                {trainingMatrix.length} team members
+                Showing{" "}
+                {showAllTrainingAreas
+                  ? trainingMatrix.length
+                  : Math.min(12, trainingMatrix.length)}{" "}
+                of {trainingMatrix.length} team members
               </div>
               <button
                 type="button"
@@ -2489,7 +2516,8 @@ export default function ReportsPage() {
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-2 text-base font-semibold">Allergen reviews (next 90 days)</h3>
           <p className="mb-3 text-xs text-slate-500">
-            Upcoming allergen review schedule from <code>allergen_review_log</code> based on your configured intervals.
+            Upcoming allergen review schedule from <code>allergen_review_log</code> based on your
+            configured intervals.
           </p>
 
           <div className="overflow-x-auto">
@@ -2518,7 +2546,9 @@ export default function ReportsPage() {
                 ) : (
                   allergenLog.map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">{r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}</td>
+                      <td className="py-2 pr-3">
+                        {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
+                      </td>
                       <td className="py-2 pr-3">{r.next_due ? formatISOToUK(r.next_due) : "—"}</td>
                       <td className="py-2 pr-3">{r.days_until ?? "—"}</td>
                       <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
@@ -2576,13 +2606,19 @@ export default function ReportsPage() {
 
                     return (
                       <tr key={r.id} className="border-t border-slate-100">
-                        <td className="py-2 pr-3">{r.created_at ? formatISOToUK(r.created_at) : "—"}</td>
-                        <td className="py-2 pr-3">{r.created_at ? formatTimeHM(r.created_at) : "—"}</td>
+                        <td className="py-2 pr-3">
+                          {r.created_at ? formatISOToUK(r.created_at) : "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {r.created_at ? formatTimeHM(r.created_at) : "—"}
+                        </td>
                         <td className="py-2 pr-3 max-w-xs">
                           {r.item_name ?? <span className="text-slate-400">Unnamed item</span>}
                         </td>
                         <td className="py-2 pr-3">{actionLabel}</td>
-                        <td className="py-2 pr-3">{r.staff_initials ? r.staff_initials.toUpperCase() : "—"}</td>
+                        <td className="py-2 pr-3">
+                          {r.staff_initials ? r.staff_initials.toUpperCase() : "—"}
+                        </td>
                       </tr>
                     );
                   })
