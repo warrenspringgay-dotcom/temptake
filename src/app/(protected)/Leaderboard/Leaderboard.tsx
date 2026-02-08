@@ -4,6 +4,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import QuickActionsFab from "@/components/QuickActionsFab";
 
 type LeaderboardEntry = {
@@ -18,21 +19,54 @@ export default function Leaderboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       try {
         setLoading(true);
-        const orgId = await getActiveOrgIdClient();
+
+        const [orgId, locationId] = await Promise.all([
+          getActiveOrgIdClient(),
+          getActiveLocationIdClient(),
+        ]);
+
         if (!orgId) {
-          setEntries([]);
-          setLoading(false);
+          if (!cancelled) setEntries([]);
           return;
         }
 
-        const { data, error } = await supabase
-          .from("leaderboard")
-          .select("display_name, points, cleaning_count, temp_logs_count")
-          .eq("org_id", orgId)
-          .order("points", { ascending: false });
+        // Try location-specific first (if your leaderboard view/table supports it).
+        // If it doesn't (missing column), we fall back to org-wide.
+        const baseSelect = "display_name, points, cleaning_count, temp_logs_count";
+
+        const runQuery = async (withLocation: boolean) => {
+          let q = supabase
+            .from("leaderboard")
+            .select(baseSelect)
+            .eq("org_id", orgId)
+            .order("points", { ascending: false });
+
+          if (withLocation && locationId) {
+            // If your leaderboard is location-aware, it MUST have a location_id column.
+            q = q.eq("location_id", locationId);
+          }
+
+          return await q;
+        };
+
+        // 1) attempt location filter
+        let { data, error } = await runQuery(true);
+
+        // 2) if location filter fails (likely missing column on view), retry org-wide
+        if (error) {
+          console.warn(
+            "[leaderboard] location filter failed, falling back to org-wide:",
+            error.message
+          );
+          const retry = await runQuery(false);
+          data = retry.data;
+          error = retry.error;
+        }
 
         if (error) throw error;
 
@@ -44,15 +78,21 @@ export default function Leaderboard() {
             temp_points: Number(row.temp_logs_count ?? 0),
           })) ?? [];
 
-        setEntries(mapped);
+        if (!cancelled) setEntries(mapped);
       } catch (e: any) {
         console.error(e);
-        alert(e?.message ?? "Failed to load leaderboard");
-        setEntries([]);
+        if (!cancelled) {
+          alert(e?.message ?? "Failed to load leaderboard");
+          setEntries([]);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const employeeOfMonth = useMemo(() => {
@@ -63,15 +103,9 @@ export default function Leaderboard() {
   }, [entries]);
 
   const rankBadge = (index: number) => {
-    if (index === 0) {
-      return "bg-amber-500 text-white";
-    }
-    if (index === 1) {
-      return "bg-slate-700 text-white";
-    }
-    if (index === 2) {
-      return "bg-orange-400 text-white";
-    }
+    if (index === 0) return "bg-amber-500 text-white";
+    if (index === 1) return "bg-slate-700 text-white";
+    if (index === 2) return "bg-orange-400 text-white";
     return "bg-slate-900 text-white";
   };
 
@@ -183,9 +217,7 @@ export default function Leaderboard() {
                     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-600">
                       <span>
                         🧽 Cleaning:{" "}
-                        <span className="font-medium">
-                          {e.cleaning_points}
-                        </span>
+                        <span className="font-medium">{e.cleaning_points}</span>
                       </span>
                       <span>
                         🌡️ Temps logged:{" "}
