@@ -964,12 +964,13 @@ async function fetchTeamDue(
  * If allergen_review_log has no location_id, fallback to org-wide.
  */
 async function fetchAllergenLog(
-  withinDays: number,
+  _withinDays: number, // kept for backwards compat, ignored
   orgId: string,
   locationId: string | null
 ): Promise<AllergenRow[]> {
   let data: any[] | null = null;
 
+  // Try location-scoped first (if column exists)
   if (locationId) {
     const { data: d1, error: e1 } = await supabase
       .from("allergen_review_log")
@@ -977,52 +978,59 @@ async function fetchAllergenLog(
       .eq("org_id", orgId)
       .eq("location_id", locationId)
       .order("reviewed_on", { ascending: false })
-      .limit(365);
+      .order("created_at", { ascending: false })
+      .limit(200);
 
     if (!e1) data = (d1 ?? []) as any[];
     else if (!isMissingLocationColumnError(e1)) throw e1;
   }
 
+  // Fallback org-wide if no location_id column or no location chosen
   if (data === null) {
     const { data: d2, error: e2 } = await supabase
       .from("allergen_review_log")
-      .select("id, reviewed_on, interval_days, reviewer_name")
+      .select("id, reviewed_on, interval_days, reviewer_name, created_at")
       .eq("org_id", orgId)
       .order("reviewed_on", { ascending: false })
-      .limit(365);
+      .order("created_at", { ascending: false })
+      .limit(200);
 
     if (e2) throw e2;
     data = (d2 ?? []) as any[];
   }
 
+  // Return historic rows (no filtering)
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
 
-  return (data ?? [])
-    .map((r: any) => {
-      const reviewed = safeDate(r.reviewed_on);
-      const intervalDays = Number(r.interval_days ?? 0);
+  return (data ?? []).map((r: any) => {
+    const reviewed = safeDate(r.reviewed_on);
 
-      let nextDue: Date | null = null;
-      if (reviewed && Number.isFinite(intervalDays) && intervalDays > 0) {
-        nextDue = new Date(reviewed.getTime() + intervalDays * 86400000);
-      }
+    const intervalDaysRaw = r.interval_days;
+    const intervalDays =
+      intervalDaysRaw == null || intervalDaysRaw === "" ? null : Number(intervalDaysRaw);
 
-      const next0 = nextDue ? new Date(nextDue) : null;
-      if (next0) next0.setHours(0, 0, 0, 0);
+    // Still compute next_due if you want it displayed, but do NOT filter by it
+    let nextDue: Date | null = null;
+    if (reviewed && intervalDays && Number.isFinite(intervalDays) && intervalDays > 0) {
+      nextDue = new Date(reviewed.getTime() + intervalDays * 86400000);
+    }
 
-      const days_until = next0 ? Math.round((next0.getTime() - today0.getTime()) / 86400000) : null;
+    const next0 = nextDue ? new Date(nextDue) : null;
+    if (next0) next0.setHours(0, 0, 0, 0);
 
-      return {
-        id: String(r.id),
-        reviewed_on: reviewed ? reviewed.toISOString() : null,
-        next_due: nextDue ? nextDue.toISOString() : null,
-        reviewer: r.reviewer_name ?? null,
-        days_until,
-      } as AllergenRow;
-    })
-    .filter((r) => typeof r.days_until === "number" && r.days_until <= withinDays)
-    .sort((a: any, b: any) => (a.next_due || "").localeCompare(b.next_due || ""));
+    const days_until = next0
+      ? Math.round((next0.getTime() - today0.getTime()) / 86400000)
+      : null;
+
+    return {
+      id: String(r.id),
+      reviewed_on: reviewed ? reviewed.toISOString() : null,
+      next_due: nextDue ? nextDue.toISOString() : null,
+      reviewer: r.reviewer_name ?? null,
+      days_until,
+    } as AllergenRow;
+  });
 }
 
 async function fetchAllergenChanges(
@@ -2514,11 +2522,11 @@ export default function ReportsPage() {
 
         {/* Allergen review table */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-2 text-base font-semibold">Allergen reviews (next 90 days)</h3>
-          <p className="mb-3 text-xs text-slate-500">
-            Upcoming allergen review schedule from <code>allergen_review_log</code> based on your
-            configured intervals.
-          </p>
+          <h3 className="mb-2 text-base font-semibold">Allergen reviews (history)</h3>
+<p className="mb-3 text-xs text-slate-500">
+  Historic log from <code>allergen_review_log</code> for the selected location (or all locations).
+</p>
+
 
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -2540,7 +2548,8 @@ export default function ReportsPage() {
                 ) : allergenLog.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="py-6 text-center text-slate-500">
-                      No allergen reviews due in next 90 days
+                    No allergen reviews found
+
                     </td>
                   </tr>
                 ) : (
