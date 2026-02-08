@@ -206,6 +206,14 @@ function isTeamRow(v: TeamRow | null): v is TeamRow {
   return v !== null;
 }
 
+/* ===================== Small helper: optional location_id filter with fallback ===================== */
+
+function isMissingLocationColumnError(err: any) {
+  const msg = String(err?.message ?? "").toLowerCase();
+  // PostgREST usually says something like: column "location_id" does not exist
+  return msg.includes("column") && msg.includes("location_id") && msg.includes("does not exist");
+}
+
 /* ===================== Training areas ===================== */
 
 const SFBB_AREAS = [
@@ -376,7 +384,11 @@ function HygieneStars({
 
       <span
         className={`font-semibold ${
-          variant === "small" ? "text-slate-700 text-xs" : isGood ? "text-slate-900 text-base" : "text-slate-700 text-sm"
+          variant === "small"
+            ? "text-slate-700 text-xs"
+            : isGood
+            ? "text-slate-900 text-base"
+            : "text-slate-700 text-sm"
         }`}
       >
         {rating}/5
@@ -421,19 +433,38 @@ function computeTrainingStatus(awardedISO: string | null, expiresISO: string | n
   return { expires_on: toISODate(exp0!), days_until, status: "green" as TrainingAreaStatus };
 }
 
-async function fetchTrainingAreasReport(orgId: string): Promise<TrainingAreaRow[]> {
-  const { data, error } = await supabase
-    .from("team_members")
-    .select("id,name,initials,email,active,training_areas")
-    .eq("org_id", orgId)
-    .order("name", { ascending: true })
-    .limit(5000);
+async function fetchTrainingAreasReport(orgId: string, locationId: string | null): Promise<TrainingAreaRow[]> {
+  // Attempt location-scoped if location_id exists; fallback to org-scoped if not.
+  let data: any[] | null = null;
 
-  if (error) throw error;
+  if (locationId) {
+    const { data: d1, error: e1 } = await supabase
+      .from("team_members")
+      .select("id,name,initials,email,active,training_areas,location_id")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .order("name", { ascending: true })
+      .limit(5000);
+
+    if (!e1) data = (d1 ?? []) as any[];
+    else if (!isMissingLocationColumnError(e1)) throw e1;
+  }
+
+  if (data === null) {
+    const { data: d2, error: e2 } = await supabase
+      .from("team_members")
+      .select("id,name,initials,email,active,training_areas")
+      .eq("org_id", orgId)
+      .order("name", { ascending: true })
+      .limit(5000);
+
+    if (e2) throw e2;
+    data = (d2 ?? []) as any[];
+  }
 
   const rows: TrainingAreaRow[] = [];
 
-  for (const m of (data ?? []) as any[]) {
+  for (const m of data ?? []) {
     if (m.active === false) continue;
 
     const member_id = String(m.id);
@@ -715,6 +746,7 @@ async function fetchCleaningRunsTrail(
     .eq("org_id", orgId)
     .in("id", taskIds)
     .limit(5000);
+
   if (locationId) tasksQ = tasksQ.eq("location_id", locationId);
 
   const { data: tasks, error: tasksErr } = await tasksQ;
@@ -836,12 +868,33 @@ async function fetchIncidentsTrailAsUnifiedIncidentShape(
   }));
 }
 
-async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[]> {
-  const { data: tData, error: tErr } = await supabase
-    .from("trainings")
-    .select("id, staff_id, expires_on")
-    .eq("org_id", orgId);
-  if (tErr) throw tErr;
+/**
+ * Team due is now location-aware when possible.
+ * If trainings table doesn't have location_id, we fallback to org-wide.
+ */
+async function fetchTeamDue(withinDays: number, orgId: string, locationId: string | null): Promise<TeamRow[]> {
+  let tData: any[] = [];
+
+  if (locationId) {
+    const { data, error } = await supabase
+      .from("trainings")
+      .select("id, staff_id, expires_on, location_id")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId);
+
+    if (!error) tData = (data ?? []) as any[];
+    else if (!isMissingLocationColumnError(error)) throw error;
+  }
+
+  if (!tData.length) {
+    const { data, error } = await supabase
+      .from("trainings")
+      .select("id, staff_id, expires_on")
+      .eq("org_id", orgId);
+
+    if (error) throw error;
+    tData = (data ?? []) as any[];
+  }
 
   const trainings = (tData ?? []).filter((t: any) => !!t.expires_on);
   if (!trainings.length) return [];
@@ -862,6 +915,7 @@ async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[
       .from("staff")
       .select("id, name, email, initials")
       .in("id", staffIds);
+
     if (sErr) throw sErr;
 
     for (const s of sData ?? []) {
@@ -902,15 +956,37 @@ async function fetchTeamDue(withinDays: number, orgId: string): Promise<TeamRow[
     .sort((a: any, b: any) => (a.expires_on || "").localeCompare(b.expires_on || ""));
 }
 
-async function fetchAllergenLog(withinDays: number, orgId: string): Promise<AllergenRow[]> {
-  const { data, error } = await supabase
-    .from("allergen_review_log")
-    .select("id, reviewed_on, interval_days, reviewer_name")
-    .eq("org_id", orgId)
-    .order("reviewed_on", { ascending: false })
-    .limit(365);
+/**
+ * Allergen review schedule now location-aware when possible.
+ * If allergen_review_log has no location_id, fallback to org-wide.
+ */
+async function fetchAllergenLog(withinDays: number, orgId: string, locationId: string | null): Promise<AllergenRow[]> {
+  let data: any[] | null = null;
 
-  if (error) throw error;
+  if (locationId) {
+    const { data: d1, error: e1 } = await supabase
+      .from("allergen_review_log")
+      .select("id, reviewed_on, interval_days, reviewer_name, location_id")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .order("reviewed_on", { ascending: false })
+      .limit(365);
+
+    if (!e1) data = (d1 ?? []) as any[];
+    else if (!isMissingLocationColumnError(e1)) throw e1;
+  }
+
+  if (data === null) {
+    const { data: d2, error: e2 } = await supabase
+      .from("allergen_review_log")
+      .select("id, reviewed_on, interval_days, reviewer_name")
+      .eq("org_id", orgId)
+      .order("reviewed_on", { ascending: false })
+      .limit(365);
+
+    if (e2) throw e2;
+    data = (d2 ?? []) as any[];
+  }
 
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
@@ -1018,25 +1094,58 @@ async function fetchStaffReviews(
   }));
 }
 
-async function fetchEducation(orgId: string): Promise<EducationRow[]> {
-  const { data, error } = await supabase
-    .from("trainings")
-    .select(
-      `
-      id,
-      type,
-      awarded_on,
-      expires_on,
-      certificate_url,
-      notes,
-      staff:staff_id ( name, email, initials )
-    `
-    )
-    .eq("org_id", orgId)
-    .order("expires_on", { ascending: true })
-    .order("awarded_on", { ascending: true });
+/**
+ * Education/trainings table now location-aware when possible.
+ * If trainings has no location_id, fallback to org-wide.
+ */
+async function fetchEducation(orgId: string, locationId: string | null): Promise<EducationRow[]> {
+  let data: any[] | null = null;
 
-  if (error) throw error;
+  if (locationId) {
+    const { data: d1, error: e1 } = await supabase
+      .from("trainings")
+      .select(
+        `
+        id,
+        type,
+        awarded_on,
+        expires_on,
+        certificate_url,
+        notes,
+        location_id,
+        staff:staff_id ( name, email, initials )
+      `
+      )
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .order("expires_on", { ascending: true })
+      .order("awarded_on", { ascending: true });
+
+    if (!e1) data = (d1 ?? []) as any[];
+    else if (!isMissingLocationColumnError(e1)) throw e1;
+  }
+
+  if (data === null) {
+    const { data: d2, error: e2 } = await supabase
+      .from("trainings")
+      .select(
+        `
+        id,
+        type,
+        awarded_on,
+        expires_on,
+        certificate_url,
+        notes,
+        staff:staff_id ( name, email, initials )
+      `
+      )
+      .eq("org_id", orgId)
+      .order("expires_on", { ascending: true })
+      .order("awarded_on", { ascending: true });
+
+    if (e2) throw e2;
+    data = (d2 ?? []) as any[];
+  }
 
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
@@ -1135,6 +1244,9 @@ export default function ReportsPage() {
   const [showAllSignoffs, setShowAllSignoffs] = useState(false);
   const [showAllCleaningRuns, setShowAllCleaningRuns] = useState(false);
 
+  // FIX: separate state for staff reviews
+  const [showAllStaffReviews, setShowAllStaffReviews] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -1173,6 +1285,11 @@ export default function ReportsPage() {
     if (!cleaningRuns) return null;
     return showAllCleaningRuns ? cleaningRuns : cleaningRuns.slice(0, 10);
   }, [cleaningRuns, showAllCleaningRuns]);
+
+  const visibleStaffReviews = useMemo(() => {
+    if (!staffReviews) return null;
+    return showAllStaffReviews ? staffReviews : staffReviews.slice(0, 10);
+  }, [staffReviews, showAllStaffReviews]);
 
   const trainingMatrix = useMemo(() => {
     if (!trainingAreas) return null;
@@ -1329,6 +1446,7 @@ export default function ReportsPage() {
       setShowAllLoggedIncidents(false);
       setShowAllSignoffs(false);
       setShowAllCleaningRuns(false);
+      setShowAllStaffReviews(false);
 
       // Hygiene history for selected location (small list)
       if (locationId) {
@@ -1344,11 +1462,12 @@ export default function ReportsPage() {
 
       if (includeAncillary) {
         const withinDays = 90;
+
         const [m, a, e, ta] = await Promise.all([
-          fetchTeamDue(withinDays, orgIdValue),
-          fetchAllergenLog(withinDays, orgIdValue),
-          fetchEducation(orgIdValue),
-          fetchTrainingAreasReport(orgIdValue),
+          fetchTeamDue(withinDays, orgIdValue, locationId),
+          fetchAllergenLog(withinDays, orgIdValue, locationId),
+          fetchEducation(orgIdValue, locationId),
+          fetchTrainingAreasReport(orgIdValue, locationId),
         ]);
 
         setTeamDue(m);
@@ -1429,7 +1548,10 @@ export default function ReportsPage() {
 
     const locId = locationFilter !== "all" ? locationFilter : null;
 
-    runRange(from, to, orgId, locId, false);
+    // IMPORTANT CHANGE:
+    // Previously includeAncillary=false, which caused org-wide sections to stick.
+    // Now ancillary refreshes on location change so everything matches the selected location.
+    runRange(from, to, orgId, locId, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationFilter]);
 
@@ -1594,7 +1716,9 @@ export default function ReportsPage() {
                               </div>
 
                               <div className="mt-0.5 text-[11px] text-slate-500">
-                                {row.visit_date ? `Inspection: ${formatISOToUK(row.visit_date)}` : "Inspection: —"}
+                                {row.visit_date
+                                  ? `Inspection: ${formatISOToUK(row.visit_date)}`
+                                  : "Inspection: —"}
                                 {row.issuing_authority ? ` · ${row.issuing_authority}` : ""}
                               </div>
 
@@ -1808,7 +1932,7 @@ export default function ReportsPage() {
                     </td>
                   </tr>
                 ) : (
-                  visibleLoggedIncidents!.map((r) => (
+                  (showAllLoggedIncidents ? loggedIncidents : visibleLoggedIncidents!).map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
                       <td className="py-2 pr-3">
                         {r.happened_on ? formatISOToUK(r.happened_on) : "—"}
@@ -2010,10 +2134,8 @@ export default function ReportsPage() {
             >
               <div>
                 Showing{" "}
-                {showAllCleaningRuns
-                  ? cleaningRuns.length
-                  : Math.min(10, cleaningRuns.length)}{" "}
-                of {cleaningRuns.length} entries
+                {showAllCleaningRuns ? cleaningRuns.length : Math.min(10, cleaningRuns.length)} of{" "}
+                {cleaningRuns.length} entries
               </div>
               <button
                 type="button"
@@ -2125,7 +2247,7 @@ export default function ReportsPage() {
                     </td>
                   </tr>
                 ) : (
-                  (showAllEducation ? staffReviews : staffReviews.slice(0, 10)).map((r) => {
+                  visibleStaffReviews!.map((r) => {
                     const pill =
                       r.rating >= 4
                         ? "bg-emerald-100 text-emerald-800"
@@ -2139,16 +2261,12 @@ export default function ReportsPage() {
 
                     return (
                       <tr key={r.id} className="border-t border-slate-100">
-                        <td className="py-2 pr-3 whitespace-nowrap">
-                          {formatISOToUK(r.reviewed_on)}
-                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{formatISOToUK(r.reviewed_on)}</td>
                         <td className="py-2 pr-3 whitespace-nowrap">{staffLabel}</td>
                         <td className="py-2 pr-3 whitespace-nowrap">{r.reviewer ?? "—"}</td>
                         <td className="py-2 pr-3 whitespace-nowrap">{r.location_name ?? "—"}</td>
                         <td className="py-2 pr-3">
-                          <span
-                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${pill}`}
-                          >
+                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${pill}`}>
                             {r.rating}/5
                           </span>
                         </td>
@@ -2164,20 +2282,17 @@ export default function ReportsPage() {
           </div>
 
           {staffReviews && staffReviews.length > 10 && (
-            <div
-              className="mt-2 flex items-center justify-between text-xs text-slate-600"
-              data-hide-on-print
-            >
+            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
               <div>
-                Showing {showAllEducation ? staffReviews.length : Math.min(10, staffReviews.length)}{" "}
-                of {staffReviews.length} entries
+                Showing {showAllStaffReviews ? staffReviews.length : Math.min(10, staffReviews.length)} of{" "}
+                {staffReviews.length} entries
               </div>
               <button
                 type="button"
-                onClick={() => setShowAllEducation((v) => !v)}
+                onClick={() => setShowAllStaffReviews((v) => !v)}
                 className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
               >
-                {showAllEducation ? "Show first 10" : "View all"}
+                {showAllStaffReviews ? "Show first 10" : "View all"}
               </button>
             </div>
           )}
@@ -2237,9 +2352,7 @@ export default function ReportsPage() {
                           )}
                         </td>
                         <td className="py-2 pr-3">
-                          <span
-                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${pill}`}
-                          >
+                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${pill}`}>
                             {r.status === "no-expiry"
                               ? "No expiry"
                               : r.status === "expired"
@@ -2273,10 +2386,7 @@ export default function ReportsPage() {
           </div>
 
           {education && education.length > 10 && (
-            <div
-              className="mt-2 flex items-center justify-between text-xs text-slate-600"
-              data-hide-on-print
-            >
+            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
               <div>
                 Showing {showAllEducation ? education.length : Math.min(10, education.length)} of{" "}
                 {education.length} entries
@@ -2327,17 +2437,12 @@ export default function ReportsPage() {
                 ) : (
                   (showAllTrainingAreas ? trainingMatrix : trainingMatrix.slice(0, 12)).map((row) => (
                     <tr key={row.member_id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3 whitespace-nowrap text-sm font-medium">
-                        {row.name}
-                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap text-sm font-medium">{row.name}</td>
                       {SFBB_AREAS.map((area) => {
                         const meta = row.byArea[area];
                         if (!meta?.selected) {
                           return (
-                            <td
-                              key={area}
-                              className="py-2 px-2 text-center text-slate-400 align-top"
-                            >
+                            <td key={area} className="py-2 px-2 text-center text-slate-400 align-top">
                               —
                             </td>
                           );
@@ -2363,14 +2468,10 @@ export default function ReportsPage() {
           </div>
 
           {trainingMatrix && trainingMatrix.length > 12 && (
-            <div
-              className="mt-2 flex items-center justify-between text-xs text-slate-600"
-              data-hide-on-print
-            >
+            <div className="mt-2 flex items-center justify-between text-xs text-slate-600" data-hide-on-print>
               <div>
-                Showing{" "}
-                {showAllTrainingAreas ? trainingMatrix.length : Math.min(12, trainingMatrix.length)}{" "}
-                of {trainingMatrix.length} team members
+                Showing {showAllTrainingAreas ? trainingMatrix.length : Math.min(12, trainingMatrix.length)} of{" "}
+                {trainingMatrix.length} team members
               </div>
               <button
                 type="button"
@@ -2387,8 +2488,7 @@ export default function ReportsPage() {
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-2 text-base font-semibold">Allergen reviews (next 90 days)</h3>
           <p className="mb-3 text-xs text-slate-500">
-            Upcoming allergen review schedule from <code>allergen_review_log</code> based on your
-            configured intervals.
+            Upcoming allergen review schedule from <code>allergen_review_log</code> based on your configured intervals.
           </p>
 
           <div className="overflow-x-auto">
@@ -2417,9 +2517,7 @@ export default function ReportsPage() {
                 ) : (
                   allergenLog.map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">
-                        {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
-                      </td>
+                      <td className="py-2 pr-3">{r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}</td>
                       <td className="py-2 pr-3">{r.next_due ? formatISOToUK(r.next_due) : "—"}</td>
                       <td className="py-2 pr-3">{r.days_until ?? "—"}</td>
                       <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
@@ -2477,19 +2575,13 @@ export default function ReportsPage() {
 
                     return (
                       <tr key={r.id} className="border-t border-slate-100">
-                        <td className="py-2 pr-3">
-                          {r.created_at ? formatISOToUK(r.created_at) : "—"}
-                        </td>
-                        <td className="py-2 pr-3">
-                          {r.created_at ? formatTimeHM(r.created_at) : "—"}
-                        </td>
+                        <td className="py-2 pr-3">{r.created_at ? formatISOToUK(r.created_at) : "—"}</td>
+                        <td className="py-2 pr-3">{r.created_at ? formatTimeHM(r.created_at) : "—"}</td>
                         <td className="py-2 pr-3 max-w-xs">
                           {r.item_name ?? <span className="text-slate-400">Unnamed item</span>}
                         </td>
                         <td className="py-2 pr-3">{actionLabel}</td>
-                        <td className="py-2 pr-3">
-                          {r.staff_initials ? r.staff_initials.toUpperCase() : "—"}
-                        </td>
+                        <td className="py-2 pr-3">{r.staff_initials ? r.staff_initials.toUpperCase() : "—"}</td>
                       </tr>
                     );
                   })
