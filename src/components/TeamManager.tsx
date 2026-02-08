@@ -1,3 +1,4 @@
+// src/app/(protected)/team/page.tsx  (or wherever this component lives)
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -5,6 +6,7 @@ import { createPortal } from "react-dom";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import ActionMenu from "@/components/ActionMenu";
 import { inviteTeamMemberServer } from "@/app/actions/team";
 import {
@@ -30,8 +32,12 @@ const TRAINING_AREAS: { key: TrainingArea; label: string; short: string }[] = [
   { key: "management", label: "Management", short: "Management" },
 ];
 
+type LocationRow = { id: string; name: string | null };
+
 type Member = {
   id: string;
+  org_id?: string;
+  location_id: string | null; // ✅ NEW: location-scoped staff
   user_id: string | null; // ✅ used to detect login linkage
   initials: string | null;
   name: string;
@@ -127,8 +133,6 @@ function ModalPortal({ children }: { children: React.ReactNode }) {
   return createPortal(children, document.body);
 }
 
-
-
 function certTitle(c: TrainingCert) {
   const providerEnum = c.provider_name ?? null;
   const providerLabel =
@@ -161,6 +165,10 @@ export default function TeamManager() {
   const [rows, setRows] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [orgId, setOrgId] = useState<string | null>(null);
+
+  // ✅ active location + location list for dropdown
+  const [activeLocationId, setActiveLocationId] = useState<string | null>(null);
+  const [locations, setLocations] = useState<LocationRow[]>([]);
 
   const [isOwner, setIsOwner] = useState(false);
   const [q, setQ] = useState("");
@@ -209,8 +217,9 @@ export default function TeamManager() {
     setIsOwner(false);
 
     try {
-      const [id, userRes] = await Promise.all([
+      const [id, locationId, userRes] = await Promise.all([
         getActiveOrgIdClient(),
+        getActiveLocationIdClient(),
         supabase.auth.getUser(),
       ]);
 
@@ -221,34 +230,64 @@ export default function TeamManager() {
         "Owner";
 
       setOrgId(id ?? null);
+      setActiveLocationId(locationId ?? null);
 
       if (!id) {
         setRows([]);
+        setLocations([]);
         setLoading(false);
         return;
       }
 
-      let members: Member[] = [];
-      let ownerFlag = false;
-
-      const { data, error } = await supabase
-        .from("team_members")
-        .select("id, user_id, initials, name, email, role, phone, active, notes, training_areas")
+      // ✅ load locations for the org (for dropdown)
+      const { data: locData } = await supabase
+        .from("locations")
+        .select("id,name")
         .eq("org_id", id)
         .order("name", { ascending: true });
 
+      const locs: LocationRow[] =
+        (locData ?? []).map((l: any) => ({
+          id: String(l.id),
+          name: l.name ?? null,
+        })) ?? [];
+      setLocations(locs);
+
+      // If activeLocationId is missing, pick the first one (best-effort)
+      const effectiveLocationId = locationId ?? locs?.[0]?.id ?? null;
+      if (!locationId && effectiveLocationId) setActiveLocationId(effectiveLocationId);
+
+      let members: Member[] = [];
+      let ownerFlag = false;
+
+      // ✅ location-scoped team members: filter by active location
+      let tmQuery = supabase
+        .from("team_members")
+        .select(
+          "id, org_id, location_id, user_id, initials, name, email, role, phone, active, notes, training_areas"
+        )
+        .eq("org_id", id)
+        .order("name", { ascending: true });
+
+      if (effectiveLocationId) tmQuery = tmQuery.eq("location_id", effectiveLocationId);
+
+      const { data, error } = await tmQuery;
       if (error) throw error;
 
       members = (data ?? []).map((m: any) => ({
         ...m,
+        id: String(m.id),
+        org_id: m.org_id ? String(m.org_id) : undefined,
+        location_id: m.location_id ? String(m.location_id) : null,
         user_id: m.user_id ? String(m.user_id) : null,
         training_areas: normalizeAreas(m.training_areas),
       })) as Member[];
 
-      // Auto-create owner row if empty
+      // Auto-create owner row if empty (scoped to the current location)
       if (members.length === 0 && id && userEmail) {
         const derivedInitials = requireInitialsOrDerive({
           id: "",
+          location_id: effectiveLocationId,
           user_id: null,
           initials: null,
           name: userName,
@@ -264,6 +303,7 @@ export default function TeamManager() {
           .from("team_members")
           .insert({
             org_id: id,
+            location_id: effectiveLocationId, // ✅ NEW
             initials: derivedInitials, // NOT NULL in DB
             name: userName,
             email: userEmail,
@@ -273,13 +313,20 @@ export default function TeamManager() {
             active: true,
             training_areas: [],
           })
-          .select("id, user_id, initials, name, email, role, phone, active, notes, training_areas")
+          .select(
+            "id, org_id, location_id, user_id, initials, name, email, role, phone, active, notes, training_areas"
+          )
           .maybeSingle();
 
         if (!insErr && inserted) {
           members = [
             {
               ...(inserted as any),
+              id: String((inserted as any).id),
+              org_id: (inserted as any).org_id ? String((inserted as any).org_id) : undefined,
+              location_id: (inserted as any).location_id
+                ? String((inserted as any).location_id)
+                : null,
               user_id: (inserted as any).user_id ? String((inserted as any).user_id) : null,
               training_areas: normalizeAreas((inserted as any).training_areas),
             },
@@ -288,6 +335,7 @@ export default function TeamManager() {
         }
       }
 
+      // owner/admin detection (within this location view)
       if (!ownerFlag && userEmail && members.length) {
         const me = members.find((m) => m.email && m.email.toLowerCase() === userEmail);
         const role = (me?.role ?? "").toLowerCase();
@@ -299,6 +347,7 @@ export default function TeamManager() {
     } catch (e: any) {
       alert(e?.message ?? "Failed to load team.");
       setRows([]);
+      setLocations([]);
       setIsOwner(false);
     } finally {
       setLoading(false);
@@ -350,6 +399,7 @@ export default function TeamManager() {
   function openAdd() {
     setEditing({
       id: "",
+      location_id: activeLocationId ?? null, // ✅ default to selected location
       user_id: null,
       initials: "",
       name: "",
@@ -387,6 +437,7 @@ export default function TeamManager() {
   async function openEdit(m: Member) {
     setEditing({
       ...m,
+      location_id: m.location_id ?? activeLocationId ?? null,
       user_id: m.user_id ? String(m.user_id) : null,
       training_areas: normalizeAreas(m.training_areas),
     });
@@ -452,14 +503,12 @@ export default function TeamManager() {
   }): Promise<string> {
     const { orgId, email, payload } = params;
 
-    // Try find existing by org+email
-    const { data: existing, error: selErr } = await supabase
-      .from("team_members")
-      .select("id")
-      .eq("org_id", orgId)
-      .eq("email", email)
-      .maybeSingle();
+    // Try find existing by org+email (+ location, because team is now location-scoped)
+    let q = supabase.from("team_members").select("id").eq("org_id", orgId).eq("email", email);
 
+    if (payload?.location_id) q = q.eq("location_id", payload.location_id);
+
+    const { data: existing, error: selErr } = await q.maybeSingle();
     if (selErr) throw selErr;
 
     if (existing?.id) {
@@ -506,13 +555,12 @@ export default function TeamManager() {
 
       alert("Invite sent. They’ll get an email to set their password and log in.");
 
-      // Reload to reflect any linkage if your backend sets team_members.user_id
       await load();
-      // Keep modal open and refresh editing with newest row (if any changes)
       const refreshed = rows.find((r) => r.id === editing.id);
       if (refreshed) {
         setEditing({
           ...refreshed,
+          location_id: refreshed.location_id ?? activeLocationId ?? null,
           user_id: refreshed.user_id ? String(refreshed.user_id) : null,
           training_areas: normalizeAreas(refreshed.training_areas),
         });
@@ -531,20 +579,25 @@ export default function TeamManager() {
       if (!orgId) return alert("No organisation found.");
       if (!editing.name.trim()) return alert("Name is required.");
 
+      // ✅ enforce location on save (this is the whole point)
+      const locToSave = editing.location_id ?? activeLocationId ?? null;
+      if (!locToSave) {
+        return alert("Select a location for this team member.");
+      }
+
       const roleValue = (editing.role ?? "").trim().toLowerCase() || "staff";
       const trainingAreas = normalizeAreas(editing.training_areas);
 
-      // DB is NOT NULL on initials, so we always derive something.
       const initialsToSave = requireInitialsOrDerive(editing);
-      if (!initialsToSave)
-        return alert(
-          "Initials are required (or enter a name we can derive from)."
-        );
+      if (!initialsToSave) {
+        return alert("Initials are required (or enter a name we can derive from).");
+      }
 
       const emailNormalized = cleanEmail(editing.email);
 
       if (editing.id) {
         const updatePayload: any = {
+          location_id: locToSave, // ✅ NEW
           initials: initialsToSave,
           name: editing.name.trim(),
           email: emailNormalized || null,
@@ -597,9 +650,10 @@ export default function TeamManager() {
           throw new Error(res.message ?? "Failed to send invite.");
         }
 
-        // 2) Ensure the team_members row exists and has the full profile fields you entered
+        // 2) Ensure team_members row exists (location-scoped)
         const payload: any = {
           org_id: orgId,
+          location_id: locToSave, // ✅ NEW
           initials: initialsToSave,
           name: editing.name.trim(),
           email: emailNormalized,
@@ -626,11 +680,12 @@ export default function TeamManager() {
         return;
       }
 
-      // No login: create staff record only
+      // No login: create staff record only (location-scoped)
       const { data: inserted, error } = await supabase
         .from("team_members")
         .insert({
           org_id: orgId,
+          location_id: locToSave, // ✅ NEW
           initials: initialsToSave,
           name: editing.name.trim(),
           email: emailNormalized || null,
@@ -751,7 +806,8 @@ export default function TeamManager() {
       }
 
       const awarded_on =
-        (editCertForm.awarded_on ?? "").trim() || new Date().toISOString().slice(0, 10);
+        (editCertForm.awarded_on ?? "").trim() ||
+        new Date().toISOString().slice(0, 10);
 
       const expires_on = (editCertForm.expires_on ?? "").trim() || null;
 
@@ -793,11 +849,21 @@ export default function TeamManager() {
   }
 
   /* -------------------- Render -------------------- */
+  const activeLocationName =
+    (activeLocationId &&
+      locations.find((l) => l.id === activeLocationId)?.name?.toString().trim()) ||
+    null;
+
   return (
     <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-lg font-semibold text-slate-900">Team</h1>
+
+        {/* Location context label (read-only here; location switching happens in your header) */}
+        <div className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700">
+          Location: <span className="font-extrabold">{activeLocationName ?? "—"}</span>
+        </div>
 
         <div className="ml-auto flex min-w-0 items-center gap-2">
           <input
@@ -846,17 +912,19 @@ export default function TeamManager() {
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
                       {initials}
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <button
                         className="text-sm font-semibold text-slate-900 hover:text-emerald-700"
                         onClick={() => void openCard(m)}
                       >
                         {m.name || "Unnamed"}
                       </button>
+
                       <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
                         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">
                           {roleLabel}
                         </span>
+
                         <span
                           className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
                             m.active
@@ -867,7 +935,6 @@ export default function TeamManager() {
                           {activeLabel}
                         </span>
 
-                        {/* Optional tiny indicator if no login */}
                         {!m.user_id ? (
                           <span
                             className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800"
@@ -883,6 +950,16 @@ export default function TeamManager() {
                             Login
                           </span>
                         )}
+
+                        {/* If somehow missing location_id, call it out */}
+                        {!m.location_id ? (
+                          <span
+                            className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-800"
+                            title="This staff member has no location assigned"
+                          >
+                            No location
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -968,7 +1045,7 @@ export default function TeamManager() {
         </div>
       ) : (
         <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
-          No team members yet.
+          No team members yet (for this location).
         </div>
       )}
 
@@ -993,6 +1070,43 @@ export default function TeamManager() {
               </div>
 
               <div className="grid gap-3">
+                {/* ✅ Location selector */}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+                  <div className="mb-1 text-xs font-semibold text-slate-700">Location *</div>
+                  <div className="grid grid-cols-1 gap-2">
+                    <select
+                      className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                      value={editing.location_id ?? ""}
+                      onChange={(e) =>
+                        setEditing({
+                          ...editing,
+                          location_id: e.target.value ? e.target.value : null,
+                        })
+                      }
+                      disabled={!isOwner}
+                      title={!isOwner ? "Only owner/admin can change location assignment." : ""}
+                    >
+                      <option value="">Select location…</option>
+                      {locations.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {(l.name ?? "Unnamed location").toString()}
+                        </option>
+                      ))}
+                    </select>
+
+                    {!isOwner ? (
+                      <div className="text-[11px] text-slate-600">
+                        Location assignment is locked unless you’re owner/admin.
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-slate-600">
+                        Members are location-scoped. This controls leaderboard + employee of the
+                        month accuracy.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="mb-1 block text-xs text-slate-500">Initials</label>
@@ -1346,8 +1460,7 @@ export default function TeamManager() {
 
                             {editCertFile ? (
                               <span className="mt-1 block text-[10px] text-slate-600">
-                                Selected:{" "}
-                                <span className="font-medium">{editCertFile.name}</span>
+                                Selected: <span className="font-medium">{editCertFile.name}</span>
                               </span>
                             ) : null}
                           </label>
@@ -1430,6 +1543,15 @@ export default function TeamManager() {
                   <span className="font-medium">Login:</span>{" "}
                   {viewFor.user_id ? "Enabled" : "Not enabled"}
                 </div>
+
+                {/* ✅ Location shown */}
+                <div>
+                  <span className="font-medium">Location:</span>{" "}
+                  {viewFor.location_id
+                    ? locations.find((l) => l.id === viewFor.location_id)?.name ?? "Unnamed"
+                    : "—"}
+                </div>
+
                 <div>
                   <span className="font-medium">Training areas:</span>{" "}
                   {normalizeAreas(viewFor.training_areas).length
