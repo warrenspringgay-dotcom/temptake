@@ -128,27 +128,29 @@ export default function NavTabs() {
 
         console.log("[billing]", billing);
 
-        const { data, error } = await supabase
-          .from("team_members")
-          .select("role,email")
-          .eq("org_id", orgId)
-          .eq("email", email)
-          .maybeSingle();
+       const { data, error } = await supabase
+  .from("team_members")
+  .select("role")
+  .eq("org_id", orgId)
+  .eq("user_id", user.id)
+  .is("location_id", null)
+  .maybeSingle();
 
-        if (!alive) return;
+if (!alive) return;
 
-        if (error || !data) {
-          setRoleName(null);
-          setIsManager(false);
-          setRoleLoading(false);
-          return;
-        }
+if (error || !data) {
+  setRoleName(null);
+  setIsManager(false);
+  setRoleLoading(false);
+  return;
+}
 
-        const role = (data.role ?? "").toLowerCase() || "staff";
-        setRoleName(role);
+const role = (data.role ?? "").toLowerCase() || "staff";
+setRoleName(role);
 
-        const managerLike = role === "owner" || role === "manager" || role === "admin";
-        setIsManager(managerLike);
+const managerLike = role === "owner" || role === "manager" || role === "admin";
+setIsManager(managerLike);
+
       } catch {
         if (!alive) return;
         setRoleName(null);

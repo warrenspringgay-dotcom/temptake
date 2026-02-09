@@ -42,13 +42,13 @@ export default function KitchenWall() {
   const [initials, setInitials] = useState("");
   const [orgId, setOrgId] = useState<string | null>(null);
 
-  // ✅ Active location
+  // Active location
   const [locationId, setLocationId] = useState<string | null>(null);
 
   const [myInitials, setMyInitials] = useState("");
   const [myName, setMyName] = useState<string>("");
 
-  // Manager / owner / admin flag
+  // Manager / owner / admin flag (org-level)
   const [isManager, setIsManager] = useState(false);
 
   // Leaderboard-related
@@ -59,28 +59,27 @@ export default function KitchenWall() {
   const [myTempPoints, setMyTempPoints] = useState<number | null>(null);
   const [myBadges, setMyBadges] = useState<string[]>([]);
 
-  // Current month label for "monthly reset"
   const currentMonthLabel = new Date().toLocaleString(undefined, {
     month: "long",
     year: "numeric",
   });
 
-  // ✅ Keep org + location in sync (location switching)
+  // Keep org + location in sync (location switching)
   useEffect(() => {
     let cancelled = false;
 
     const sync = async () => {
-      const id = await getActiveOrgIdClient();
-      const loc = await getActiveLocationIdClient();
+      const nextOrg = await getActiveOrgIdClient();
+      const nextLoc = await getActiveLocationIdClient();
 
       if (cancelled) return;
 
-      setOrgId(id);
-      setLocationId(loc);
+      setOrgId(nextOrg);
+      setLocationId(nextLoc);
 
-      if (id) {
-        await loadPosts(id, loc);
-        await loadLeaderboard(id); // keep as org-wide for now (you can make it location-specific later)
+      if (nextOrg) {
+        await loadPosts(nextOrg, nextLoc);
+        await loadLeaderboard(nextOrg); // org-wide for now
       }
     };
 
@@ -102,55 +101,90 @@ export default function KitchenWall() {
     };
   }, []);
 
-  // Initial auth-derived initials/name/role (runs when orgId becomes available)
+  // Initial auth-derived initials/name + org-level role
   useEffect(() => {
     if (!orgId) return;
 
+    let alive = true;
+
     (async () => {
-      // Try to derive initials + name from the logged-in team member
       let detectedInitials = "";
       let detectedName = "";
       let managerFlag = false;
 
       try {
         const { data: authData, error: authError } = await supabase.auth.getUser();
-        if (!authError && authData?.user) {
-          const email = authData.user.email ?? "";
-          if (orgId && email) {
-            const { data: tm } = await supabase
-              .from("team_members")
-              .select("initials,name,email,role")
-              .eq("org_id", orgId)
-              .eq("email", email)
-              .limit(1);
+        const user = authData?.user;
 
-            const row = tm?.[0];
-            if (row) {
-              detectedName = (row.name ?? "").toString().trim();
+        if (authError || !user) {
+          if (!alive) return;
+          setIsManager(false);
+          return;
+        }
 
-              const base =
-                row.initials?.toString().trim() ||
-                detectedName
-                  .split(/\s+/)
-                  .map((p: string) => p[0] ?? "")
-                  .join("") ||
-                email[0] ||
-                "";
+        // ✅ 1) ORG-LEVEL ROLE (authoritative)
+        const { data: roleRow, error: roleErr } = await supabase
+          .from("team_members")
+          .select("role")
+          .eq("org_id", orgId)
+          .eq("user_id", user.id)
+          .is("location_id", null)
+          .maybeSingle();
 
-              detectedInitials = base.toUpperCase().slice(0, 4);
+        if (!roleErr && roleRow) {
+          const role = (roleRow.role ?? "").toLowerCase();
+          managerFlag = role === "owner" || role === "manager" || role === "admin";
+        }
 
-              const role = (row.role ?? "").toLowerCase();
-              managerFlag = role === "owner" || role === "manager" || role === "admin";
-            }
-          }
+        // ✅ 2) NAME/INITIALS: location row first, fallback to org-level row
+        const baseQuery = supabase
+          .from("team_members")
+          .select("name,initials,email")
+          .eq("org_id", orgId)
+          .eq("user_id", user.id);
+
+        // Try location-specific staff profile if a location is selected
+        let memberRow:
+          | { name: string | null; initials: string | null; email: string | null }
+          | null = null;
+
+        if (locationId) {
+          const { data: locRow } = await baseQuery
+            .eq("location_id", locationId)
+            .maybeSingle();
+
+          if (locRow) memberRow = locRow as any;
+        }
+
+        // Fallback to org-level
+        if (!memberRow) {
+          const { data: orgRow } = await baseQuery.is("location_id", null).maybeSingle();
+          if (orgRow) memberRow = orgRow as any;
+        }
+
+        if (memberRow) {
+          detectedName = (memberRow.name ?? "").toString().trim();
+
+          const email = (user.email ?? "").toString();
+          const base =
+            (memberRow.initials ?? "").toString().trim() ||
+            detectedName
+              .split(/\s+/)
+              .map((p: string) => p[0] ?? "")
+              .join("") ||
+            email[0] ||
+            "";
+
+          detectedInitials = base.toUpperCase().slice(0, 4);
         }
       } catch {
-        // ignore – we'll fall back to localStorage
+        // ignore – fallback below
       }
+
+      if (!alive) return;
 
       setIsManager(managerFlag);
 
-      // Fallback: previous initials stored locally
       const saved =
         (typeof window !== "undefined" && localStorage.getItem("kitchen_wall_initials")) || "";
 
@@ -161,7 +195,11 @@ export default function KitchenWall() {
       setMyInitials(finalInitials);
       setMyName(detectedName);
     })();
-  }, [orgId]);
+
+    return () => {
+      alive = false;
+    };
+  }, [orgId, locationId]);
 
   // Recompute "your rank" + badges whenever leaderboard or myName changes
   useEffect(() => {
@@ -188,29 +226,24 @@ export default function KitchenWall() {
     setMyCleaningPoints(cPts);
     setMyTempPoints(tPts);
 
-    if (pts != null || cPts != null || tPts != null) {
-      const badges: string[] = [];
+    const badges: string[] = [];
+    const p = pts ?? 0;
+    const c = cPts ?? 0;
+    const t = tPts ?? 0;
 
-      const p = pts ?? 0;
-      const c = cPts ?? 0;
-      const t = tPts ?? 0;
+    if (p >= 50) badges.push("Kitchen Hero");
+    else if (p >= 25) badges.push("Rising Star");
+    else if (p >= 10) badges.push("On the Board");
 
-      if (p >= 50) badges.push("Kitchen Hero");
-      else if (p >= 25) badges.push("Rising Star");
-      else if (p >= 10) badges.push("On the Board");
+    if (c >= 20) badges.push("Cleaning Champ");
+    else if (c >= 10) badges.push("Sparkle Crew");
 
-      if (c >= 20) badges.push("Cleaning Champ");
-      else if (c >= 10) badges.push("Sparkle Crew");
+    if (t >= 20) badges.push("Temp Pro");
+    else if (t >= 10) badges.push("Probe Regular");
 
-      if (t >= 20) badges.push("Temp Pro");
-      else if (t >= 10) badges.push("Probe Regular");
+    if (rank && rank <= 3) badges.push("On a Hot Streak");
 
-      if (rank && rank <= 3) badges.push("On a Hot Streak");
-
-      setMyBadges(badges);
-    } else {
-      setMyBadges([]);
-    }
+    setMyBadges(badges);
   }, [lbRows, myName]);
 
   async function loadPosts(orgId: string, locationId: string | null) {
@@ -221,10 +254,7 @@ export default function KitchenWall() {
       .order("is_pinned", { ascending: false })
       .order("created_at", { ascending: false });
 
-    // ✅ Location-specific wall when location is selected
-    if (locationId) {
-      q = q.eq("location_id", locationId);
-    }
+    if (locationId) q = q.eq("location_id", locationId);
 
     const { data, error } = await q;
 
@@ -265,10 +295,9 @@ export default function KitchenWall() {
     const color = COLORS[Math.floor(Math.random() * COLORS.length)];
     const normInitials = initials.toUpperCase().slice(0, 4);
 
-    // ✅ Save the active location_id on the post
     const { error } = await supabase.from("kitchen_wall").insert({
       org_id: orgId,
-      location_id: locationId, // <- key change
+      location_id: locationId, // location-scoped wall
       author_initials: normInitials,
       message: message.trim(),
       color,
@@ -281,9 +310,7 @@ export default function KitchenWall() {
       return;
     }
 
-    if (typeof window !== "undefined") {
-      localStorage.setItem("kitchen_wall_initials", normInitials);
-    }
+    localStorage.setItem("kitchen_wall_initials", normInitials);
 
     posthog.capture("wall_post_created", {
       initials: normInitials,
@@ -341,7 +368,11 @@ export default function KitchenWall() {
     if (!window.confirm("Remove this note from the wall?")) return;
 
     try {
-      const { error } = await supabase.from("kitchen_wall").delete().eq("id", id).eq("org_id", orgId);
+      const { error } = await supabase
+        .from("kitchen_wall")
+        .delete()
+        .eq("id", id)
+        .eq("org_id", orgId);
 
       if (error) throw error;
 
@@ -496,12 +527,8 @@ export default function KitchenWall() {
                 </button>
               )}
 
-              <div className="text-5xl font-black mb-6 opacity-90">
-                {post.author_initials}
-              </div>
-              <p className="text-2xl leading-relaxed whitespace-pre-wrap mb-8">
-                {post.message}
-              </p>
+              <div className="text-5xl font-black mb-6 opacity-90">{post.author_initials}</div>
+              <p className="text-2xl leading-relaxed whitespace-pre-wrap mb-8">{post.message}</p>
 
               <div className="flex flex-wrap gap-2 justify-end">
                 {EMOJIS.map((emoji) => {
