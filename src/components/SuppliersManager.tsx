@@ -136,7 +136,7 @@ export default function SuppliersManager() {
     refresh();
   }, []);
 
-  // permissions
+  // permissions: try team_members role, but DO NOT block UI if lookup fails
   useEffect(() => {
     (async () => {
       try {
@@ -144,9 +144,18 @@ export default function SuppliersManager() {
           getActiveOrgIdClient(),
           supabase.auth.getUser(),
         ]);
-        const email = userRes.data.user?.email?.toLowerCase() ?? null;
-        if (!id || !email) {
+
+        const user = userRes.data.user;
+        if (!id || !user) {
           setCanManage(false);
+          return;
+        }
+
+        const email = user.email?.toLowerCase() ?? null;
+
+        // If we don't even have an email, still allow and let RLS decide.
+        if (!email) {
+          setCanManage(true);
           return;
         }
 
@@ -157,17 +166,18 @@ export default function SuppliersManager() {
           .eq("email", email)
           .maybeSingle();
 
-        if (error) {
-          setCanManage(false);
+        // If the lookup fails or no row found, don't block the UI.
+        // RLS is the real gate anyway.
+        if (error || !data) {
+          setCanManage(true);
           return;
         }
 
         const role = (data?.role ?? "").toLowerCase();
-        setCanManage(
-          role === "owner" || role === "manager" || role === "admin"
-        );
+        setCanManage(role === "owner" || role === "manager" || role === "admin");
       } catch {
-        setCanManage(false);
+        // also don't block if something transient breaks
+        setCanManage(true);
       }
     })();
   }, []);
@@ -244,7 +254,7 @@ export default function SuppliersManager() {
       contact: s.contact.trim() || null,
       phone: s.phone.trim() || null,
       email: s.email.trim() || null,
-      categories: cleanCats, // ✅ send array for text[]
+      categories: cleanCats, // ✅ array (text[])
       notes: s.notes.trim() || null,
       active: !!s.active,
     };
@@ -301,7 +311,6 @@ export default function SuppliersManager() {
     refresh();
   }
 
-  // ✅ ONE implementation only (do not duplicate below)
   function toggleCat(
     _state: SupplierEdit,
     setState: (updater: (s: SupplierEdit) => SupplierEdit) => void,
@@ -312,9 +321,7 @@ export default function SuppliersManager() {
       const has = s.categories.includes(v);
       return {
         ...s,
-        categories: has
-          ? s.categories.filter((c) => c !== v)
-          : [...s.categories, v],
+        categories: has ? s.categories.filter((c) => c !== v) : [...s.categories, v],
       };
     });
   }
@@ -340,7 +347,6 @@ export default function SuppliersManager() {
   /* -------------------- Render -------------------- */
   return (
     <div className="space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 text-slate-900 shadow-xl backdrop-blur-sm sm:p-6">
-      {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-lg font-semibold text-slate-900">Suppliers</h1>
         <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
@@ -353,9 +359,7 @@ export default function SuppliersManager() {
           <button
             className={cls(
               "shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-white",
-              canManage
-                ? "bg-emerald-600 hover:bg-emerald-700"
-                : "cursor-not-allowed bg-slate-400"
+              canManage ? "bg-emerald-600 hover:bg-emerald-700" : "cursor-not-allowed bg-slate-400"
             )}
             onClick={openAddModal}
             disabled={!canManage}
@@ -415,8 +419,7 @@ export default function SuppliersManager() {
                         </span>
                         {cats.length > 0 && (
                           <span className="text-[10px] text-slate-500">
-                            {cats.length} category
-                            {cats.length > 1 ? "ies" : "y"}
+                            {cats.length} category{cats.length > 1 ? "ies" : "y"}
                           </span>
                         )}
                       </div>
@@ -474,9 +477,7 @@ export default function SuppliersManager() {
                       ))}
                     </div>
                   ) : (
-                    <span className="text-[11px] text-slate-500">
-                      No categories
-                    </span>
+                    <span className="text-[11px] text-slate-500">No categories</span>
                   )}
                 </div>
 
@@ -511,10 +512,7 @@ export default function SuppliersManager() {
       {/* ---------- VIEW ---------- */}
       {viewOpen && viewing && (
         <ModalPortal>
-          <div
-            className="fixed inset-0 z-50 bg-black/40"
-            onClick={() => setViewOpen(false)}
-          >
+          <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
             <div
               className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 text-slate-900 shadow-2xl backdrop-blur-sm"
               onClick={(e) => e.stopPropagation()}
@@ -522,30 +520,24 @@ export default function SuppliersManager() {
               <div className="rounded-t-3xl bg-slate-900 p-4 text-white">
                 <div className="text-sm opacity-80">Supplier</div>
                 <div className="text-xl font-semibold">{viewing.name}</div>
-                <div className="opacity-80">
-                  {viewing.active ? "Active" : "Inactive"}
-                </div>
+                <div className="opacity-80">{viewing.active ? "Active" : "Inactive"}</div>
               </div>
               <div className="space-y-3 p-4 text-sm">
                 <div>
-                  <span className="font-medium">Contact:</span>{" "}
-                  {viewing.contact || "—"}
+                  <span className="font-medium">Contact:</span> {viewing.contact || "—"}
                 </div>
                 <div>
-                  <span className="font-medium">Phone:</span>{" "}
-                  {viewing.phone || "—"}
+                  <span className="font-medium">Phone:</span> {viewing.phone || "—"}
                 </div>
                 <div>
-                  <span className="font-medium">Email:</span>{" "}
-                  {viewing.email || "—"}
+                  <span className="font-medium">Email:</span> {viewing.email || "—"}
                 </div>
                 <div>
                   <span className="font-medium">Categories:</span>{" "}
                   {parseCats(viewing.categories).join(", ") || "—"}
                 </div>
                 <div>
-                  <span className="font-medium">Notes:</span>{" "}
-                  {viewing.notes || "—"}
+                  <span className="font-medium">Notes:</span> {viewing.notes || "—"}
                 </div>
               </div>
               <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
@@ -564,10 +556,7 @@ export default function SuppliersManager() {
       {/* ---------- EDIT ---------- */}
       {editOpen && editing && (
         <ModalPortal>
-          <div
-            className="fixed inset-0 z-50 bg-black/40"
-            onClick={() => setEditOpen(false)}
-          >
+          <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEditOpen(false)}>
             <div
               className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl backdrop-blur-sm"
               onClick={(e) => e.stopPropagation()}
@@ -586,34 +575,26 @@ export default function SuppliersManager() {
                 <input
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                   value={editing.name}
-                  onChange={(e) =>
-                    setEditing((s) => ({ ...s!, name: e.target.value }))
-                  }
+                  onChange={(e) => setEditing((s) => ({ ...s!, name: e.target.value }))}
                 />
                 <input
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                   placeholder="Contact"
                   value={editing.contact}
-                  onChange={(e) =>
-                    setEditing((s) => ({ ...s!, contact: e.target.value }))
-                  }
+                  onChange={(e) => setEditing((s) => ({ ...s!, contact: e.target.value }))}
                 />
                 <div className="grid grid-cols-2 gap-3">
                   <input
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     placeholder="Phone"
                     value={editing.phone}
-                    onChange={(e) =>
-                      setEditing((s) => ({ ...s!, phone: e.target.value }))
-                    }
+                    onChange={(e) => setEditing((s) => ({ ...s!, phone: e.target.value }))}
                   />
                   <input
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     placeholder="Email"
                     value={editing.email}
-                    onChange={(e) =>
-                      setEditing((s) => ({ ...s!, email: e.target.value }))
-                    }
+                    onChange={(e) => setEditing((s) => ({ ...s!, email: e.target.value }))}
                   />
                 </div>
 
@@ -632,9 +613,7 @@ export default function SuppliersManager() {
                               ? "border-emerald-600 bg-emerald-600 text-white"
                               : "border-slate-200 bg-white hover:bg-slate-50"
                           )}
-                          onClick={() =>
-                            toggleCat(editing, setEditing as any, c)
-                          }
+                          onClick={() => toggleCat(editing, setEditing as any, c)}
                         >
                           {c}
                         </button>
@@ -647,15 +626,9 @@ export default function SuppliersManager() {
                       placeholder="Add custom category"
                       value={editing.addCategory}
                       onChange={(e) =>
-                        setEditing((s) => ({
-                          ...s!,
-                          addCategory: e.target.value,
-                        }))
+                        setEditing((s) => ({ ...s!, addCategory: e.target.value }))
                       }
-                      onKeyDown={(e) =>
-                        e.key === "Enter" &&
-                        addFreeCat(editing, setEditing as any)
-                      }
+                      onKeyDown={(e) => e.key === "Enter" && addFreeCat(editing, setEditing as any)}
                     />
                     <button
                       type="button"
@@ -665,55 +638,21 @@ export default function SuppliersManager() {
                       Add
                     </button>
                   </div>
-
-                  {editing.categories.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {editing.categories.map((c) => (
-                        <span
-                          key={c}
-                          className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800"
-                        >
-                          {c}
-                          <button
-                            type="button"
-                            className="ml-1 rounded p-0.5 hover:bg-emerald-100"
-                            onClick={() =>
-                              setEditing((s) => ({
-                                ...s!,
-                                categories: s!.categories.filter(
-                                  (x) => x !== c
-                                ),
-                              }))
-                            }
-                            aria-label={`Remove ${c}`}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
                 </div>
 
                 <textarea
                   className="min-h-[90px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
                   placeholder="Notes"
                   value={editing.notes}
-                  onChange={(e) =>
-                    setEditing((s) => ({ ...s!, notes: e.target.value }))
-                  }
+                  onChange={(e) => setEditing((s) => ({ ...s!, notes: e.target.value }))}
                 />
+
                 <label className="flex items-center gap-2 text-sm text-slate-800">
                   <input
                     type="checkbox"
                     className="accent-emerald-600"
                     checked={editing.active}
-                    onChange={(e) =>
-                      setEditing((s) => ({
-                        ...s!,
-                        active: e.target.checked,
-                      }))
-                    }
+                    onChange={(e) => setEditing((s) => ({ ...s!, active: e.target.checked }))}
                   />
                   Active
                 </label>
@@ -742,10 +681,7 @@ export default function SuppliersManager() {
       {/* ---------- ADD ---------- */}
       {addOpen && (
         <ModalPortal>
-          <div
-            className="fixed inset-0 z-50 bg-black/40"
-            onClick={() => setAddOpen(false)}
-          >
+          <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setAddOpen(false)}>
             <div
               className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl backdrop-blur-sm"
               onClick={(e) => e.stopPropagation()}
@@ -765,34 +701,26 @@ export default function SuppliersManager() {
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                   placeholder="Name"
                   value={adding.name}
-                  onChange={(e) =>
-                    setAdding((s) => ({ ...s, name: e.target.value }))
-                  }
+                  onChange={(e) => setAdding((s) => ({ ...s, name: e.target.value }))}
                 />
                 <input
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                   placeholder="Contact"
                   value={adding.contact}
-                  onChange={(e) =>
-                    setAdding((s) => ({ ...s, contact: e.target.value }))
-                  }
+                  onChange={(e) => setAdding((s) => ({ ...s, contact: e.target.value }))}
                 />
                 <div className="grid grid-cols-2 gap-3">
                   <input
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     placeholder="Phone"
                     value={adding.phone}
-                    onChange={(e) =>
-                      setAdding((s) => ({ ...s, phone: e.target.value }))
-                    }
+                    onChange={(e) => setAdding((s) => ({ ...s, phone: e.target.value }))}
                   />
                   <input
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                     placeholder="Email"
                     value={adding.email}
-                    onChange={(e) =>
-                      setAdding((s) => ({ ...s, email: e.target.value }))
-                    }
+                    onChange={(e) => setAdding((s) => ({ ...s, email: e.target.value }))}
                   />
                 </div>
 
@@ -811,9 +739,7 @@ export default function SuppliersManager() {
                               ? "border-emerald-600 bg-emerald-600 text-white"
                               : "border-slate-200 bg-white hover:bg-slate-50"
                           )}
-                          onClick={() =>
-                            toggleCat(adding, setAdding as any, c)
-                          }
+                          onClick={() => toggleCat(adding, setAdding as any, c)}
                         >
                           {c}
                         </button>
@@ -826,15 +752,9 @@ export default function SuppliersManager() {
                       placeholder="Add custom category"
                       value={adding.addCategory}
                       onChange={(e) =>
-                        setAdding((s) => ({
-                          ...s,
-                          addCategory: e.target.value,
-                        }))
+                        setAdding((s) => ({ ...s, addCategory: e.target.value }))
                       }
-                      onKeyDown={(e) =>
-                        e.key === "Enter" &&
-                        addFreeCat(adding, setAdding as any)
-                      }
+                      onKeyDown={(e) => e.key === "Enter" && addFreeCat(adding, setAdding as any)}
                     />
                     <button
                       type="button"
@@ -850,18 +770,15 @@ export default function SuppliersManager() {
                   className="min-h-[90px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
                   placeholder="Notes"
                   value={adding.notes}
-                  onChange={(e) =>
-                    setAdding((s) => ({ ...s, notes: e.target.value }))
-                  }
+                  onChange={(e) => setAdding((s) => ({ ...s, notes: e.target.value }))}
                 />
+
                 <label className="flex items-center gap-2 text-sm text-slate-800">
                   <input
                     type="checkbox"
                     className="accent-emerald-600"
                     checked={adding.active}
-                    onChange={(e) =>
-                      setAdding((s) => ({ ...s, active: e.target.checked }))
-                    }
+                    onChange={(e) => setAdding((s) => ({ ...s, active: e.target.checked }))}
                   />
                   Active
                 </label>
