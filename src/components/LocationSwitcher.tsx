@@ -75,7 +75,9 @@ export default function LocationSwitcher({
 
         setLocations(locs);
 
-        const stored = await getActiveLocationIdClient();
+        // Pull per-org stored location (NOT global)
+        const stored = await getActiveLocationIdClient(orgId);
+
         const storedIsValid = !!stored && locs.some((l) => l.id === stored);
 
         let chosen = "";
@@ -83,7 +85,8 @@ export default function LocationSwitcher({
           chosen = stored as string;
         } else if (locs[0]) {
           chosen = locs[0].id;
-          setActiveLocationIdClient(chosen);
+          // persist per-org + best-effort to profiles
+          await setActiveLocationIdClient(chosen, orgId);
         }
 
         setActiveId(chosen);
@@ -105,7 +108,9 @@ export default function LocationSwitcher({
   async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const id = e.target.value;
     setActiveId(id);
-    setActiveLocationIdClient(id);
+
+    const orgId = await getActiveOrgIdClient();
+    await setActiveLocationIdClient(id, orgId);
 
     if (reloadOnChange && typeof window !== "undefined") {
       window.location.reload();
@@ -120,7 +125,7 @@ export default function LocationSwitcher({
 
   return (
     <div className={cls("hidden items-center gap-2 md:flex", className)}>
-      {/* ✅ Single location: show ONE pill */}
+      {/* Single location: show ONE pill */}
       {!multi && (
         <span
           className="max-w-[180px] truncate rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900 shadow-sm md:max-w-[220px]"
@@ -130,7 +135,7 @@ export default function LocationSwitcher({
         </span>
       )}
 
-      {/* ✅ Multi location: show ONLY the dropdown (no extra pill) */}
+      {/* Multi location: show dropdown */}
       {multi && (
         <select
           value={activeId}
