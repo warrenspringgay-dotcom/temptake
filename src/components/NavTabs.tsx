@@ -1,4 +1,3 @@
-// src/components/NavTabs.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -55,40 +54,31 @@ function isFutureIso(iso: unknown) {
   return Number.isFinite(t) ? t > Date.now() : false;
 }
 
+function isManagerLike(role: string | null | undefined) {
+  const r = (role ?? "").toLowerCase().trim();
+  return r === "owner" || r === "manager" || r === "admin";
+}
+
 export default function NavTabs() {
   const pathname = usePathname();
   const { user, ready } = useAuth();
   const billing = useSubscriptionStatus();
 
-  /**
-   * PLAN GATING (fixed):
-   * - Your billing page shows "Free trial active" but billing.hasValid is false.
-   * - So we treat trialing/onTrial/future trial_ends_at as valid access.
-   *
-   * We keep the original behavior: while loading, don't lock anything.
-   */
   const planOK = useMemo(() => {
     if (billing?.loading) return true;
 
-    // Common flags
     const hasValid = !!(billing as any)?.hasValid;
     const active = !!(billing as any)?.active;
     const onTrial = !!(billing as any)?.onTrial;
 
-    // Common fields (depending on your hook's shape)
     const status = String((billing as any)?.status ?? "").toLowerCase();
     const trialEndsAt = (billing as any)?.trialEndsAt ?? (billing as any)?.trial_ends_at ?? null;
     const currentPeriodEnd =
       (billing as any)?.currentPeriodEnd ?? (billing as any)?.current_period_end ?? null;
 
-    // ✅ IMPORTANT: trial counts as valid plan access
     if (hasValid || active || onTrial) return true;
     if (status === "trialing") return true;
-
-    // If status flags are buggy, still allow if trial end is in the future
     if (isFutureIso(trialEndsAt)) return true;
-
-    // Some setups only populate current_period_end even during trial
     if (isFutureIso(currentPeriodEnd) && status !== "canceled") return true;
 
     return false;
@@ -115,44 +105,69 @@ export default function NavTabs() {
 
       try {
         const orgId = await getActiveOrgIdClient();
-        const email = user.email?.toLowerCase() ?? null;
-
         if (!alive) return;
 
-        if (!orgId || !email) {
+        if (!orgId) {
           setRoleName(null);
           setIsManager(false);
           setRoleLoading(false);
           return;
         }
 
-        console.log("[billing]", billing);
+        // ✅ OPTION A: ORG-WIDE ROLE (authoritative)
+        // Use user_id + location_id IS NULL so location-specific rows can’t mess with gating.
+        const { data: orgRoleRow, error: orgRoleErr } = await supabase
+          .from("team_members")
+          .select("role")
+          .eq("org_id", orgId)
+          .eq("user_id", user.id)
+          .is("location_id", null)
+          .limit(1)
+          .maybeSingle();
 
-       const { data, error } = await supabase
-  .from("team_members")
-  .select("role")
-  .eq("org_id", orgId)
-  .eq("user_id", user.id)
-  .is("location_id", null)
-  .maybeSingle();
-
-if (!alive) return;
-
-if (error || !data) {
-  setRoleName(null);
-  setIsManager(false);
-  setRoleLoading(false);
-  return;
-}
-
-const role = (data.role ?? "").toLowerCase() || "staff";
-setRoleName(role);
-
-const managerLike = role === "owner" || role === "manager" || role === "admin";
-setIsManager(managerLike);
-
-      } catch {
         if (!alive) return;
+
+        if (!orgRoleErr && orgRoleRow?.role) {
+          const role = String(orgRoleRow.role ?? "staff").toLowerCase().trim() || "staff";
+          setRoleName(role);
+          setIsManager(isManagerLike(role));
+          setRoleLoading(false);
+          return;
+        }
+
+        // 🔁 Fallback: email (case-insensitive) for edge cases where user_id isn’t linked yet
+        const email = (user.email ?? "").trim();
+        if (!email) {
+          setRoleName(null);
+          setIsManager(false);
+          setRoleLoading(false);
+          return;
+        }
+
+        const { data: emailRows, error: emailErr } = await supabase
+          .from("team_members")
+          .select("role, created_at")
+          .eq("org_id", orgId)
+          .is("location_id", null)
+          .ilike("email", email) // case-insensitive
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        if (!alive) return;
+
+        if (emailErr || !emailRows?.length) {
+          setRoleName(null);
+          setIsManager(false);
+          setRoleLoading(false);
+          return;
+        }
+
+        const role = String(emailRows[0]?.role ?? "staff").toLowerCase().trim() || "staff";
+        setRoleName(role);
+        setIsManager(isManagerLike(role));
+      } catch (e) {
+        if (!alive) return;
+        console.warn("[NavTabs] role lookup failed:", e);
         setRoleName(null);
         setIsManager(false);
       } finally {
@@ -164,11 +179,9 @@ setIsManager(managerLike);
     return () => {
       alive = false;
     };
-  }, [ready, user, billing]);
+  }, [ready, user]);
 
-  // Build visible tabs by role (DO NOT hide plan tabs, only redirect them)
   const visibleTabs = useMemo(() => {
-    // While role is loading, don’t show role-sensitive tabs (prevents pop-in)
     const roleKnown = !roleLoading;
 
     return TABS.filter((t) => {
@@ -176,28 +189,21 @@ setIsManager(managerLike);
         if (!roleKnown) return false;
         return isManager;
       }
-
       if (t.requiresStaffOnly) {
         if (!roleKnown) return false;
-        return !isManager; // staff-only means NOT manager-like
+        return !isManager;
       }
-
       return true;
     });
   }, [roleLoading, isManager]);
 
-  // No auth, no nav
   if (!ready || !user) return null;
 
   return (
     <ul className="flex flex-nowrap items-center gap-1 min-w-max px-2 overflow-x-auto">
       {visibleTabs.map((t) => {
-        const active =
-          pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
-
+        const active = pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
         const locked = !!t.requiresPlan && !planOK;
-
-        // Keep UI consistent: show the tab, but send them to billing if locked.
         const href = locked ? "/billing" : t.href;
 
         return (
@@ -207,9 +213,7 @@ setIsManager(managerLike);
               title={locked ? "Requires an active plan" : undefined}
               className={[
                 "inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors whitespace-nowrap",
-                active && !locked
-                  ? "bg-black text-white"
-                  : "text-slate-700 hover:bg-gray-100 hover:text-black",
+                active && !locked ? "bg-black text-white" : "text-slate-700 hover:bg-gray-100 hover:text-black",
                 locked ? "opacity-60" : "",
               ].join(" ")}
             >
