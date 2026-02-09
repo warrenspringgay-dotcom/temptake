@@ -1,3 +1,4 @@
+// src/components/NavTabs.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -16,33 +17,17 @@ type Tab = {
   icon?: React.ReactNode;
   requiresManager?: boolean;
   requiresStaffOnly?: boolean;
-  requiresPlan?: boolean; // needs active sub OR trial
+  requiresPlan?: boolean;
 };
 
 const TABS: Tab[] = [
   { href: "/dashboard", label: "Dashboard" },
-
-  // Staff-only dashboard (only show to non-managers)
   { href: "/staff", label: "Staff", requiresStaffOnly: true, requiresPlan: true },
-
   { href: "/routines", label: "Routines", requiresPlan: true },
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning Rota", requiresPlan: true },
-
-  {
-    href: "/manager",
-    label: "Manager Dashboard",
-    requiresManager: true,
-    requiresPlan: true,
-  },
-
-  {
-    href: "/leaderboard",
-    label: "Leaderboard",
-    icon: <Trophy className="h-4 w-4 text-amber-500" />,
-    requiresPlan: true,
-  },
-
+  { href: "/manager", label: "Manager Dashboard", requiresManager: true, requiresPlan: true },
+  { href: "/leaderboard", label: "Leaderboard", icon: <Trophy className="h-4 w-4 text-amber-500" />, requiresPlan: true },
   { href: "/team", label: "Team", requiresPlan: true },
   { href: "/suppliers", label: "Suppliers", requiresPlan: true },
   { href: "/reports", label: "Reports", requiresPlan: true },
@@ -54,9 +39,12 @@ function isFutureIso(iso: unknown) {
   return Number.isFinite(t) ? t > Date.now() : false;
 }
 
-function isManagerLike(role: string | null | undefined) {
-  const r = (role ?? "").toLowerCase().trim();
-  return r === "owner" || r === "manager" || r === "admin";
+function roleScore(role: string) {
+  const r = (role ?? "").toLowerCase();
+  if (r === "owner") return 4;
+  if (r === "admin") return 3;
+  if (r === "manager") return 2;
+  return 1; // staff default
 }
 
 export default function NavTabs() {
@@ -84,7 +72,6 @@ export default function NavTabs() {
     return false;
   }, [billing]);
 
-  // Role
   const [roleName, setRoleName] = useState<string | null>(null);
   const [isManager, setIsManager] = useState(false);
   const [roleLoading, setRoleLoading] = useState(true);
@@ -105,6 +92,9 @@ export default function NavTabs() {
 
       try {
         const orgId = await getActiveOrgIdClient();
+        const email = (user.email ?? "").trim().toLowerCase();
+        const userId = user.id;
+
         if (!alive) return;
 
         if (!orgId) {
@@ -114,61 +104,56 @@ export default function NavTabs() {
           return;
         }
 
-        // ✅ OPTION A: ORG-WIDE ROLE (authoritative)
-        // Use user_id + location_id IS NULL so location-specific rows can’t mess with gating.
-        const { data: orgRoleRow, error: orgRoleErr } = await supabase
+        // ✅ Option A: org-wide role comes from team_members row where location_id IS NULL.
+        // Prefer user_id match; fallback to email match.
+        let rows: Array<{ role: string | null }> = [];
+
+        // 1) Try user_id
+        const byUser = await supabase
           .from("team_members")
           .select("role")
           .eq("org_id", orgId)
-          .eq("user_id", user.id)
-          .is("location_id", null)
-          .limit(1)
-          .maybeSingle();
+          .eq("user_id", userId)
+          .is("location_id", null);
+
+        if (!byUser.error && Array.isArray(byUser.data) && byUser.data.length) {
+          rows = byUser.data as any;
+        } else if (email) {
+          // 2) Fallback email
+          const byEmail = await supabase
+            .from("team_members")
+            .select("role")
+            .eq("org_id", orgId)
+            .eq("email", email)
+            .is("location_id", null);
+
+          if (!byEmail.error && Array.isArray(byEmail.data) && byEmail.data.length) {
+            rows = byEmail.data as any;
+          }
+        }
 
         if (!alive) return;
 
-        if (!orgRoleErr && orgRoleRow?.role) {
-          const role = String(orgRoleRow.role ?? "staff").toLowerCase().trim() || "staff";
-          setRoleName(role);
-          setIsManager(isManagerLike(role));
-          setRoleLoading(false);
-          return;
-        }
-
-        // 🔁 Fallback: email (case-insensitive) for edge cases where user_id isn’t linked yet
-        const email = (user.email ?? "").trim();
-        if (!email) {
-          setRoleName(null);
+        if (!rows.length) {
+          setRoleName("staff");
           setIsManager(false);
           setRoleLoading(false);
           return;
         }
 
-        const { data: emailRows, error: emailErr } = await supabase
-          .from("team_members")
-          .select("role, created_at")
-          .eq("org_id", orgId)
-          .is("location_id", null)
-          .ilike("email", email) // case-insensitive
-          .order("created_at", { ascending: false })
-          .limit(1);
+        // ✅ Deterministic: pick highest privilege
+        const best = rows
+          .map((r) => (r.role ?? "staff").toLowerCase())
+          .sort((a, b) => roleScore(b) - roleScore(a))[0];
 
-        if (!alive) return;
-
-        if (emailErr || !emailRows?.length) {
-          setRoleName(null);
-          setIsManager(false);
-          setRoleLoading(false);
-          return;
-        }
-
-        const role = String(emailRows[0]?.role ?? "staff").toLowerCase().trim() || "staff";
+        const role = best || "staff";
         setRoleName(role);
-        setIsManager(isManagerLike(role));
-      } catch (e) {
+
+        const managerLike = role === "owner" || role === "admin" || role === "manager";
+        setIsManager(managerLike);
+      } catch {
         if (!alive) return;
-        console.warn("[NavTabs] role lookup failed:", e);
-        setRoleName(null);
+        setRoleName("staff");
         setIsManager(false);
       } finally {
         if (!alive) return;
