@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import ActionMenu from "@/components/ActionMenu";
 
 /* -------------------- Config -------------------- */
@@ -108,22 +109,37 @@ export default function SuppliersManager() {
   });
 
   const [orgId, setOrgId] = useState<string | null>(null);
+  const [locationId, setLocationId] = useState<string | null>(null);
   const [canManage, setCanManage] = useState(false);
 
   async function refresh() {
     setLoading(true);
     try {
-      const id = await getActiveOrgIdClient();
-      setOrgId(id ?? null);
-      if (!id) {
+      const [oid, lid] = await Promise.all([
+        getActiveOrgIdClient(),
+        getActiveLocationIdClient(),
+      ]);
+
+      setOrgId(oid ?? null);
+      setLocationId(lid ?? null);
+
+      if (!oid) {
         setRows([]);
         return;
       }
+      if (!lid) {
+        // No active location selected, so we can't meaningfully scope suppliers
+        setRows([]);
+        return;
+      }
+
       const { data, error } = await supabase
         .from("suppliers")
         .select("id,name,contact,phone,email,categories,notes,active")
-        .eq("org_id", id)
+        .eq("org_id", oid)
+        .eq("location_id", lid)
         .order("name");
+
       if (error) throw error;
       setRows((data ?? []) as SupplierRow[]);
     } catch (e: any) {
@@ -136,6 +152,11 @@ export default function SuppliersManager() {
 
   useEffect(() => {
     refresh();
+
+    // if location changes elsewhere, refresh this list
+    const onLoc = () => void refresh();
+    window.addEventListener("tt-location-changed" as any, onLoc);
+    return () => window.removeEventListener("tt-location-changed" as any, onLoc);
   }, []);
 
   // permissions
@@ -222,7 +243,18 @@ export default function SuppliersManager() {
       return;
     }
     if (!confirm("Delete supplier?")) return;
-    const { error } = await supabase.from("suppliers").delete().eq("id", id);
+
+    const oid = orgId ?? (await getActiveOrgIdClient());
+    const lid = locationId ?? (await getActiveLocationIdClient());
+    if (!oid || !lid) return alert("No organisation/location found.");
+
+    const { error } = await supabase
+      .from("suppliers")
+      .delete()
+      .eq("id", id)
+      .eq("org_id", oid)
+      .eq("location_id", lid);
+
     if (error) return alert(error.message);
     refresh();
   }
@@ -247,10 +279,17 @@ export default function SuppliersManager() {
     }
     if (!editing.name.trim()) return alert("Name is required.");
 
+    const oid = orgId ?? (await getActiveOrgIdClient());
+    const lid = locationId ?? (await getActiveLocationIdClient());
+    if (!oid || !lid) return alert("No organisation/location found.");
+
     const { error } = await supabase
       .from("suppliers")
       .update(normalizeBeforeSave(editing))
-      .eq("id", editing.id);
+      .eq("id", editing.id)
+      .eq("org_id", oid)
+      .eq("location_id", lid);
+
     if (error) return alert(error.message);
     setEditOpen(false);
     setEditing(null);
@@ -263,10 +302,18 @@ export default function SuppliersManager() {
       alert("Only managers / owners can add suppliers.");
       return;
     }
-    const id = orgId ?? (await getActiveOrgIdClient());
-    if (!id) return alert("No organisation found.");
 
-    const payload = { org_id: id, ...normalizeBeforeSave(adding) };
+    const oid = orgId ?? (await getActiveOrgIdClient());
+    const lid = locationId ?? (await getActiveLocationIdClient());
+    if (!oid) return alert("No organisation found.");
+    if (!lid) return alert("No location selected.");
+
+    const payload = {
+      org_id: oid,
+      location_id: lid,
+      ...normalizeBeforeSave(adding),
+    };
+
     const { error } = await supabase.from("suppliers").insert(payload);
     if (error) return alert(error.message);
 
@@ -624,9 +671,7 @@ export default function SuppliersManager() {
                               ? "border-emerald-600 bg-emerald-600 text-white"
                               : "border-slate-200 bg-white hover:bg-slate-50"
                           )}
-                          onClick={() =>
-                            toggleCat(editing, setEditing as any, c)
-                          }
+                          onClick={() => toggleCat(editing, setEditing as any, c)}
                         >
                           {c}
                         </button>
@@ -645,8 +690,7 @@ export default function SuppliersManager() {
                         }))
                       }
                       onKeyDown={(e) =>
-                        e.key === "Enter" &&
-                        addFreeCat(editing, setEditing as any)
+                        e.key === "Enter" && addFreeCat(editing, setEditing as any)
                       }
                     />
                     <button
@@ -672,9 +716,7 @@ export default function SuppliersManager() {
                             onClick={() =>
                               setEditing((s) => ({
                                 ...s!,
-                                categories: s!.categories.filter(
-                                  (x) => x !== c
-                                ),
+                                categories: s!.categories.filter((x) => x !== c),
                               }))
                             }
                             aria-label={`Remove ${c}`}
@@ -803,9 +845,7 @@ export default function SuppliersManager() {
                               ? "border-emerald-600 bg-emerald-600 text-white"
                               : "border-slate-200 bg-white hover:bg-slate-50"
                           )}
-                          onClick={() =>
-                            toggleCat(adding, setAdding as any, c)
-                          }
+                          onClick={() => toggleCat(adding, setAdding as any, c)}
                         >
                           {c}
                         </button>
@@ -824,8 +864,7 @@ export default function SuppliersManager() {
                         }))
                       }
                       onKeyDown={(e) =>
-                        e.key === "Enter" &&
-                        addFreeCat(adding, setAdding as any)
+                        e.key === "Enter" && addFreeCat(adding, setAdding as any)
                       }
                     />
                     <button
