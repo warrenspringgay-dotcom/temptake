@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import {
@@ -41,76 +42,94 @@ export default function LocationSwitcher({
 
   const multi = locations.length > 1;
 
+  async function loadLocations() {
+    setLoading(true);
+
+    const orgId = await getActiveOrgIdClient();
+    if (!orgId) {
+      setLocations([]);
+      setActiveId("");
+      setLoading(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("locations")
+      .select("id,name,active")
+      .eq("org_id", orgId)
+      .eq("active", true)
+      .order("name", { ascending: true });
+
+    if (error) {
+      console.error("[LocationSwitcher] load failed", error);
+      setLocations([]);
+      setActiveId("");
+      setLoading(false);
+      return;
+    }
+
+    const locs: LocationRow[] =
+      data?.map((r: any) => ({
+        id: String(r.id),
+        name: (r.name ?? "Unnamed").toString(),
+      })) ?? [];
+
+    setLocations(locs);
+
+    const stored = await getActiveLocationIdClient();
+    const storedIsValid = !!stored && locs.some((l) => l.id === stored);
+
+    let chosen = "";
+    if (storedIsValid) {
+      chosen = stored as string;
+    } else if (locs[0]) {
+      chosen = locs[0].id;
+      setActiveLocationIdClient(chosen);
+      window.dispatchEvent(new Event("tt-location-changed"));
+    }
+
+    setActiveId(chosen);
+    setLoading(false);
+  }
+
   useEffect(() => {
     let alive = true;
 
-    (async () => {
-      try {
-        setLoading(true);
+    const safeLoad = async () => {
+      if (!alive) return;
+      await loadLocations();
+    };
 
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) {
-          if (!alive) return;
-          setLocations([]);
-          setActiveId("");
-          return;
-        }
+    // initial load
+    void safeLoad();
 
-        const { data, error } = await supabase
-          .from("locations")
-          .select("id,name,active")
-          .eq("org_id", orgId)
-          .eq("active", true)
-          .order("name", { ascending: true });
+    // reload when user returns to tab / window
+    const onFocus = () => void safeLoad();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void safeLoad();
+    };
 
-        if (error) throw error;
+    // reload when app tells us locations changed
+    const onLocationsChanged = () => void safeLoad();
 
-        const locs: LocationRow[] =
-          data?.map((r: any) => ({
-            id: String(r.id),
-            name: (r.name ?? "Unnamed").toString(),
-          })) ?? [];
-
-        if (!alive) return;
-
-        setLocations(locs);
-
-        // Pull per-org stored location (NOT global)
-        const stored = await getActiveLocationIdClient(orgId);
-
-        const storedIsValid = !!stored && locs.some((l) => l.id === stored);
-
-        let chosen = "";
-        if (storedIsValid) {
-          chosen = stored as string;
-        } else if (locs[0]) {
-          chosen = locs[0].id;
-          // persist per-org + best-effort to profiles
-          await setActiveLocationIdClient(chosen, orgId);
-        }
-
-        setActiveId(chosen);
-      } catch (e) {
-        console.error("[LocationSwitcher] load failed", e);
-        if (!alive) return;
-        setLocations([]);
-        setActiveId("");
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("tt-locations-changed" as any, onLocationsChanged);
 
     return () => {
       alive = false;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("tt-locations-changed" as any, onLocationsChanged);
     };
   }, []);
 
   async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const id = e.target.value;
     setActiveId(id);
+    setActiveLocationIdClient(id);
 
-    const orgId = await getActiveOrgIdClient();
-    await setActiveLocationIdClient(id, orgId);
+    window.dispatchEvent(new Event("tt-location-changed"));
 
     if (reloadOnChange && typeof window !== "undefined") {
       window.location.reload();
@@ -120,36 +139,41 @@ export default function LocationSwitcher({
   if (loading) return null;
   if (locations.length === 0 || !activeId) return null;
 
-  // If single-location and caller doesn’t want it, hide entirely
+  // hide completely if single and caller wants hidden
   if (!multi && !showWhenSingle) return null;
 
   return (
-    <div className={cls("hidden items-center gap-2 md:flex", className)}>
-      {/* Single location: show ONE pill */}
+    <div className={cls("flex items-center gap-2", className)}>
       {!multi && (
         <span
-          className="max-w-[180px] truncate rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900 shadow-sm md:max-w-[220px]"
+          className="max-w-[220px] truncate rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-900 shadow-sm"
           title={activeName || "—"}
         >
           {activeName || "—"}
         </span>
       )}
 
-      {/* Multi location: show dropdown */}
       {multi && (
-        <select
-          value={activeId}
-          onChange={handleChange}
-          className="h-9 max-w-[220px] truncate rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          title="Switch location"
-          aria-label="Switch location"
-        >
-          {locations.map((loc) => (
-            <option key={loc.id} value={loc.id}>
-              {loc.name}
-            </option>
-          ))}
-        </select>
+        <div className="relative">
+          <select
+            value={activeId}
+            onChange={handleChange}
+            className="h-9 max-w-[220px] cursor-pointer truncate rounded-full border border-emerald-200 bg-emerald-50 py-0 pl-3 pr-9 text-xs font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 appearance-none"
+            title="Switch location"
+            aria-label="Switch location"
+          >
+            {locations.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name}
+              </option>
+            ))}
+          </select>
+
+          <ChevronDown
+            className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-900/70"
+            aria-hidden="true"
+          />
+        </div>
       )}
     </div>
   );
