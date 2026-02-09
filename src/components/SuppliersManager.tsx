@@ -4,7 +4,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
 import ActionMenu from "@/components/ActionMenu";
 
 /* -------------------- Config -------------------- */
@@ -26,7 +25,7 @@ type SupplierRow = {
   contact: string | null;
   phone: string | null;
   email: string | null;
-  categories: string | null; // comma string
+  categories: string[] | string | null; // supports old string + new text[]
   notes: string | null;
   active: boolean | null;
 };
@@ -72,11 +71,6 @@ function parseCats(input: unknown): string[] {
   }
 }
 
-function catsToString(arr: string[]): string | null {
-  const clean = Array.from(new Set(arr.map((s) => s.trim()).filter(Boolean)));
-  return clean.length ? clean.join(", ") : null;
-}
-
 function ModalPortal({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -109,26 +103,15 @@ export default function SuppliersManager() {
   });
 
   const [orgId, setOrgId] = useState<string | null>(null);
-  const [locationId, setLocationId] = useState<string | null>(null);
   const [canManage, setCanManage] = useState(false);
 
   async function refresh() {
     setLoading(true);
     try {
-      const [oid, lid] = await Promise.all([
-        getActiveOrgIdClient(),
-        getActiveLocationIdClient(),
-      ]);
+      const id = await getActiveOrgIdClient();
+      setOrgId(id ?? null);
 
-      setOrgId(oid ?? null);
-      setLocationId(lid ?? null);
-
-      if (!oid) {
-        setRows([]);
-        return;
-      }
-      if (!lid) {
-        // No active location selected, so we can't meaningfully scope suppliers
+      if (!id) {
         setRows([]);
         return;
       }
@@ -136,8 +119,7 @@ export default function SuppliersManager() {
       const { data, error } = await supabase
         .from("suppliers")
         .select("id,name,contact,phone,email,categories,notes,active")
-        .eq("org_id", oid)
-        .eq("location_id", lid)
+        .eq("org_id", id)
         .order("name");
 
       if (error) throw error;
@@ -152,11 +134,6 @@ export default function SuppliersManager() {
 
   useEffect(() => {
     refresh();
-
-    // if location changes elsewhere, refresh this list
-    const onLoc = () => void refresh();
-    window.addEventListener("tt-location-changed" as any, onLoc);
-    return () => window.removeEventListener("tt-location-changed" as any, onLoc);
   }, []);
 
   // permissions
@@ -245,27 +222,29 @@ export default function SuppliersManager() {
     if (!confirm("Delete supplier?")) return;
 
     const oid = orgId ?? (await getActiveOrgIdClient());
-    const lid = locationId ?? (await getActiveLocationIdClient());
-    if (!oid || !lid) return alert("No organisation/location found.");
+    if (!oid) return alert("No organisation found.");
 
     const { error } = await supabase
       .from("suppliers")
       .delete()
       .eq("id", id)
-      .eq("org_id", oid)
-      .eq("location_id", lid);
+      .eq("org_id", oid);
 
     if (error) return alert(error.message);
     refresh();
   }
 
   function normalizeBeforeSave(s: SupplierEdit) {
+    const cleanCats = Array.from(
+      new Set(s.categories.map((x) => x.trim()).filter(Boolean))
+    );
+
     return {
       name: s.name.trim(),
       contact: s.contact.trim() || null,
       phone: s.phone.trim() || null,
       email: s.email.trim() || null,
-      categories: catsToString(s.categories),
+      categories: cleanCats, // ✅ send array for text[]
       notes: s.notes.trim() || null,
       active: !!s.active,
     };
@@ -280,15 +259,13 @@ export default function SuppliersManager() {
     if (!editing.name.trim()) return alert("Name is required.");
 
     const oid = orgId ?? (await getActiveOrgIdClient());
-    const lid = locationId ?? (await getActiveLocationIdClient());
-    if (!oid || !lid) return alert("No organisation/location found.");
+    if (!oid) return alert("No organisation found.");
 
     const { error } = await supabase
       .from("suppliers")
       .update(normalizeBeforeSave(editing))
       .eq("id", editing.id)
-      .eq("org_id", oid)
-      .eq("location_id", lid);
+      .eq("org_id", oid);
 
     if (error) return alert(error.message);
     setEditOpen(false);
@@ -304,16 +281,9 @@ export default function SuppliersManager() {
     }
 
     const oid = orgId ?? (await getActiveOrgIdClient());
-    const lid = locationId ?? (await getActiveLocationIdClient());
     if (!oid) return alert("No organisation found.");
-    if (!lid) return alert("No location selected.");
 
-    const payload = {
-      org_id: oid,
-      location_id: lid,
-      ...normalizeBeforeSave(adding),
-    };
-
+    const payload = { org_id: oid, ...normalizeBeforeSave(adding) };
     const { error } = await supabase.from("suppliers").insert(payload);
     if (error) return alert(error.message);
 
@@ -331,7 +301,7 @@ export default function SuppliersManager() {
     refresh();
   }
 
-  // typed toggleCat + addFreeCat
+  // ✅ ONE implementation only (do not duplicate below)
   function toggleCat(
     _state: SupplierEdit,
     setState: (updater: (s: SupplierEdit) => SupplierEdit) => void,
@@ -395,7 +365,6 @@ export default function SuppliersManager() {
         </div>
       </div>
 
-      {/* Card grid (all breakpoints) */}
       {loading ? (
         <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
           Loading…
@@ -421,7 +390,6 @@ export default function SuppliersManager() {
                 key={r.id}
                 className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white/90 p-3 text-sm text-slate-900 shadow-sm backdrop-blur-sm transition hover:shadow-md"
               >
-                {/* Header */}
                 <div className="mb-2 flex items-start justify-between gap-2">
                   <div className="flex items-start gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
@@ -460,10 +428,7 @@ export default function SuppliersManager() {
                       { label: "View", onClick: () => openView(r) },
                       ...(canManage
                         ? [
-                            {
-                              label: "Edit",
-                              onClick: () => openEdit(r),
-                            },
+                            { label: "Edit", onClick: () => openEdit(r) },
                             {
                               label: "Delete",
                               onClick: () => removeSupplier(r.id),
@@ -475,7 +440,6 @@ export default function SuppliersManager() {
                   />
                 </div>
 
-                {/* Body */}
                 <div className="space-y-1 text-xs text-slate-800">
                   <div className="flex justify-between gap-2">
                     <span className="text-slate-500">Contact</span>
@@ -497,7 +461,6 @@ export default function SuppliersManager() {
                   </div>
                 </div>
 
-                {/* Categories */}
                 <div className="mt-2 min-h-[28px]">
                   {cats.length ? (
                     <div className="flex flex-wrap gap-1">
@@ -517,14 +480,12 @@ export default function SuppliersManager() {
                   )}
                 </div>
 
-                {/* Notes */}
                 {r.notes && (
                   <div className="mt-2 rounded-xl bg-slate-50 px-2 py-1.5 text-xs text-slate-600">
                     {r.notes}
                   </div>
                 )}
 
-                {/* Footer shortcuts */}
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   {canManage && (
                     <button
@@ -671,7 +632,9 @@ export default function SuppliersManager() {
                               ? "border-emerald-600 bg-emerald-600 text-white"
                               : "border-slate-200 bg-white hover:bg-slate-50"
                           )}
-                          onClick={() => toggleCat(editing, setEditing as any, c)}
+                          onClick={() =>
+                            toggleCat(editing, setEditing as any, c)
+                          }
                         >
                           {c}
                         </button>
@@ -690,7 +653,8 @@ export default function SuppliersManager() {
                         }))
                       }
                       onKeyDown={(e) =>
-                        e.key === "Enter" && addFreeCat(editing, setEditing as any)
+                        e.key === "Enter" &&
+                        addFreeCat(editing, setEditing as any)
                       }
                     />
                     <button
@@ -716,7 +680,9 @@ export default function SuppliersManager() {
                             onClick={() =>
                               setEditing((s) => ({
                                 ...s!,
-                                categories: s!.categories.filter((x) => x !== c),
+                                categories: s!.categories.filter(
+                                  (x) => x !== c
+                                ),
                               }))
                             }
                             aria-label={`Remove ${c}`}
@@ -845,7 +811,9 @@ export default function SuppliersManager() {
                               ? "border-emerald-600 bg-emerald-600 text-white"
                               : "border-slate-200 bg-white hover:bg-slate-50"
                           )}
-                          onClick={() => toggleCat(adding, setAdding as any, c)}
+                          onClick={() =>
+                            toggleCat(adding, setAdding as any, c)
+                          }
                         >
                           {c}
                         </button>
@@ -864,7 +832,8 @@ export default function SuppliersManager() {
                         }))
                       }
                       onKeyDown={(e) =>
-                        e.key === "Enter" && addFreeCat(adding, setAdding as any)
+                        e.key === "Enter" &&
+                        addFreeCat(adding, setAdding as any)
                       }
                     />
                     <button
