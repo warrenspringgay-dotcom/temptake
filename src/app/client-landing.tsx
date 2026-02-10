@@ -547,7 +547,7 @@ function StagedWall({ notes }: { notes: Array<{ initials: string; message: strin
 
       <div className="mt-16 text-center">
         <p className="text-xl font-semibold text-emerald-200 md:text-2xl">
-          Get real quotes by onboarding 5 beta kitchens.
+          Join the beta kitchens.
         </p>
       </div>
     </section>
