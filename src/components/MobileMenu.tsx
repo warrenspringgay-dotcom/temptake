@@ -148,7 +148,7 @@ export default function MobileMenu() {
             .from("team_members")
             .select("role")
             .eq("org_id", orgId)
-            // @ts-expect-error - column may or may not exist
+            
             .eq("user_id", userId)
             .maybeSingle();
 
