@@ -7,15 +7,16 @@ export default function AppFooter() {
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2">
         <span>© {new Date().getFullYear()} TempTake</span>
 
-<a
+
+
+        <nav className="flex flex-wrap items-center gap-3">
+            <a
   href="mailto:info@temptake.co.uk"
   className="text-slate-300 hover:text-emerald-300"
 >
   Contact support
 </a>
 
-
-        <nav className="flex flex-wrap items-center gap-3">
           <Link href="/privacy" className="hover:text-emerald-600">
             Privacy
           </Link>
