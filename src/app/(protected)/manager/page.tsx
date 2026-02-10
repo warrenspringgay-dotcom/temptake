@@ -1043,7 +1043,7 @@ export default function ManagerDashboardPage() {
         /* ✅ NEW: allergen review history (same table used in Reports) */
         supabase
           .from("allergen_review")
-          .select("id, reviewed_on, reviewer, interval_days, created_at")
+          .select("id, last_reviewed, reviewer, interval_days, created_at")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .order("reviewed_on", { ascending: false })
