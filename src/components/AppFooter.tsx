@@ -20,6 +20,13 @@ export default function AppFooter() {
           <Link href="/help" className="hover:text-emerald-600">
             Support
           </Link>
+          <a
+  href="mailto:support@temptake.co.uk"
+  className="text-slate-300 hover:text-emerald-300"
+>
+  Contact support
+</a>
+
         </nav>
       </div>
     </footer>
