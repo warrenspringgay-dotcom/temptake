@@ -1597,7 +1597,7 @@ export default function TempFab() {
                     posthog.capture("fab_choose_wall");
                   }}
                   className="w-full rounded-xl bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-500/40 hover:brightness-105"
-                >
+                ><MessageSquare className="inline h-4 w-4 mr-2" />
                   Open wall
                 </button>
 
