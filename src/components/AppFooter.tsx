@@ -12,7 +12,7 @@ export default function AppFooter() {
         <nav className="flex flex-wrap items-center gap-3">
             <a
   href="mailto:info@temptake.co.uk"
-  className="text-slate-300 hover:text-emerald-300"
+  className="text-slate-500 hover:text-emerald-300"
 >
   Contact support
 </a>
