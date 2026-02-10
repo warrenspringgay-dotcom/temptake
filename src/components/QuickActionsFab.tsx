@@ -1523,7 +1523,7 @@ export default function TempFab() {
                     posthog.capture("fab_choose_quick_temp");
                   }}
                   className="w-full rounded-xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/40 hover:brightness-105"
-                >
+                ><Thermometer className="inline h-4 w-4 mr-2" />
                   Quick temp log
                 </button>
 
