@@ -147,7 +147,7 @@ export default function LaunchPage() {
               </button>
 
               <Link
-                href="/demo"
+                href="/app"
                 className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
               >
                 View demo
@@ -267,7 +267,7 @@ export default function LaunchPage() {
 
                 <div className="mt-6 flex flex-wrap items-center gap-3">
                   <Link
-                    href="/demo"
+                    href="/app"
                     className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
                   >
                     View demo
