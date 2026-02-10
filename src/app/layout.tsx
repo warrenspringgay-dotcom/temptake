@@ -19,6 +19,7 @@ import HeaderSwitcher from "@/components/HeaderSwitcher";
 import CookieBanner from "@/components/CookieBanner";
 import ConsentBootstrap from "@/components/ConsentBootstrap";
 import AppFooter from "@/components/AppFooter";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -45,32 +46,37 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
+      <body className="min-h-[100dvh] bg-gray-100 text-gray-900">
         <PHProvider>
           <ToastProvider>
             <GlobalLoadingProvider>
               <AuthProvider>
-                <Pwa />
+                <div className="flex min-h-[100dvh] flex-col">
+                  <Pwa />
 
-                {/* Cookie consent + PostHog opt-in/out */}
-                <ConsentBootstrap />
-                <CookieBanner />
+                  {/* Cookie consent + PostHog opt-in/out */}
+                  <ConsentBootstrap />
+                  <CookieBanner />
 
-                <Suspense fallback={null}>
-                  <HeaderSwitcher />
-                </Suspense>
+                  <Suspense fallback={null}>
+                    <HeaderSwitcher />
+                  </Suspense>
 
-                <main className="w-full">
-                  <div className="w-full px-0 sm:px-4 md:mx-auto md:max-w-6xl">
-                    {children}
-                    <AppFooter />
-                  </div>
-                </main>
+                  {/* Main app content */}
+                  <main className="w-full flex-1">
+                    <div className="w-full px-0 sm:px-4 md:mx-auto md:max-w-6xl">
+                      {children}
+                    </div>
+                  </main>
 
-                <Suspense fallback={null}>
-                  <FabShell />
-                  <ServiceWorkerRegister />
-                </Suspense>
+                  {/* Footer sits outside content container so it behaves like a real footer */}
+                  <AppFooter />
+
+                  <Suspense fallback={null}>
+                    <FabShell />
+                    <ServiceWorkerRegister />
+                  </Suspense>
+                </div>
               </AuthProvider>
             </GlobalLoadingProvider>
           </ToastProvider>
