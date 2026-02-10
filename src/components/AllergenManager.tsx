@@ -8,8 +8,6 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import AllergenChangeTimeline from "@/components/AllergenChangeTimeline";
-import { useAuth } from "@/components/AuthProvider";
-
 
 /* ---------- Types & Constants ---------- */
 type AllergenKey =
@@ -31,20 +29,20 @@ type AllergenKey =
 type Allergen = { key: AllergenKey; icon: string; label: string; short: string };
 
 const ALLERGENS: Allergen[] = [
-  { key: "gluten",      icon: "🌾", label: "Gluten",      short: "GLU" },
+  { key: "gluten", icon: "🌾", label: "Gluten", short: "GLU" },
   { key: "crustaceans", icon: "🦐", label: "Crustaceans", short: "CRU" },
-  { key: "eggs",        icon: "🥚", label: "Eggs",        short: "EGG" },
-  { key: "fish",        icon: "🐟", label: "Fish",        short: "FIS" },
-  { key: "peanuts",     icon: "🥜", label: "Peanuts",     short: "PEA" },
-  { key: "soybeans",    icon: "🌱", label: "Soy",         short: "SOY" },
-  { key: "milk",        icon: "🥛", label: "Milk",        short: "MIL" },
-  { key: "nuts",        icon: "🌰", label: "Tree nuts",   short: "NUT" },
-  { key: "celery",      icon: "🥬", label: "Celery",      short: "CEL" },
-  { key: "mustard",     icon: "🌿", label: "Mustard",     short: "MUS" },
-  { key: "sesame",      icon: "🧴", label: "Sesame",      short: "SES" },
-  { key: "sulphites",   icon: "🧪", label: "Sulphites",   short: "SUL" },
-  { key: "lupin",       icon: "🌼", label: "Lupin",       short: "LUP" },
-  { key: "molluscs",    icon: "🐚", label: "Molluscs",    short: "MOL" },
+  { key: "eggs", icon: "🥚", label: "Eggs", short: "EGG" },
+  { key: "fish", icon: "🐟", label: "Fish", short: "FIS" },
+  { key: "peanuts", icon: "🥜", label: "Peanuts", short: "PEA" },
+  { key: "soybeans", icon: "🌱", label: "Soy", short: "SOY" },
+  { key: "milk", icon: "🥛", label: "Milk", short: "MIL" },
+  { key: "nuts", icon: "🌰", label: "Tree nuts", short: "NUT" },
+  { key: "celery", icon: "🥬", label: "Celery", short: "CEL" },
+  { key: "mustard", icon: "🌿", label: "Mustard", short: "MUS" },
+  { key: "sesame", icon: "🧴", label: "Sesame", short: "SES" },
+  { key: "sulphites", icon: "🧪", label: "Sulphites", short: "SUL" },
+  { key: "lupin", icon: "🌼", label: "Lupin", short: "LUP" },
+  { key: "molluscs", icon: "🐚", label: "Molluscs", short: "MOL" },
 ];
 
 const CATEGORIES = ["Starter", "Main", "Side", "Dessert", "Drink"] as const;
@@ -93,9 +91,7 @@ const formatDateUK = (iso?: string) => {
 function bumpVibrate(ms = 10) {
   if (typeof window === "undefined") return;
   const nav = window.navigator as any;
-  if (typeof nav.vibrate === "function") {
-    nav.vibrate(ms);
-  }
+  if (typeof nav.vibrate === "function") nav.vibrate(ms);
 }
 
 async function fireConfetti() {
@@ -106,6 +102,7 @@ async function fireConfetti() {
     // ignore
   }
 }
+
 /** Write an audit row when allergen items change */
 async function logAllergenChange(params: {
   orgId: string;
@@ -115,24 +112,20 @@ async function logAllergenChange(params: {
   after?: MatrixRow | null;
 }) {
   try {
-    // location context for the log row
     const locationId = await getActiveLocationIdClient().catch(() => null);
 
-    // derive staff initials from team_members / auth user
     let staffInitials: string | null = null;
 
     try {
       const { data: userData, error: userErr } = await supabase.auth.getUser();
-
       if (!userErr && userData?.user?.email) {
-        const email = userData.user.email.toLowerCase();
+        const email = userData.user.email.toLowerCase().trim();
 
-        // try to find matching team member for this org + email
         const { data: tm, error: tmErr } = await supabase
           .from("team_members")
           .select("name, initials")
           .eq("org_id", params.orgId)
-          .eq("email", email)
+          .ilike("email", email)
           .maybeSingle();
 
         if (!tmErr && tm) {
@@ -140,7 +133,6 @@ async function logAllergenChange(params: {
             staffInitials = tm.initials.trim().toUpperCase();
           } else if (tm.name && tm.name.trim()) {
             const parts: string[] = tm.name.trim().split(/\s+/);
-
             staffInitials = parts
               .slice(0, 2)
               .map((p: string) => p[0]?.toUpperCase() ?? "")
@@ -148,17 +140,9 @@ async function logAllergenChange(params: {
           }
         }
 
-        // hard fallback if somehow still empty
-        if (!staffInitials && email) {
-          staffInitials = email[0].toUpperCase();
-        }
+        if (!staffInitials && email) staffInitials = email[0].toUpperCase();
       }
-    } catch (e) {
-      console.warn(
-        "Failed to resolve staff initials for allergen change log:",
-        e
-      );
-    }
+    } catch {}
 
     const { error } = await supabase.from("allergen_change_logs").insert({
       org_id: params.orgId,
@@ -172,23 +156,67 @@ async function logAllergenChange(params: {
       flags_after: params.after?.flags ?? null,
       notes_before: params.before?.notes ?? null,
       notes_after: params.after?.notes ?? null,
-      staff_initials: staffInitials, // populated
+      staff_initials: staffInitials,
     });
 
-    if (error) {
-      console.error("Failed to log allergen change:", error.message);
-    }
+    if (error) console.error("Failed to log allergen change:", error.message);
   } catch (e) {
     console.error("Failed to log allergen change (unexpected):", e);
   }
 }
 
+async function resolveCanManage(params: {
+  orgId: string | null;
+  userId: string | null;
+  email: string | null;
+}): Promise<boolean> {
+  // If orgId is missing, we allow local editing when signed in.
+  // Otherwise the whole page becomes unusable for no good reason.
+  if (!params.orgId) return !!(params.userId || params.email);
 
+  const orgId = params.orgId;
+  const email = (params.email ?? "").trim().toLowerCase();
+  const userId = params.userId ?? null;
+
+  // Try by user_id if your table has it (safe even if it doesn't; we catch).
+  if (userId) {
+    try {
+      const { data, error } = await supabase
+        .from("team_members")
+        .select("role")
+        .eq("org_id", orgId)
+       
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (!error && data?.role) {
+        const r = String(data.role).toLowerCase();
+        return r === "owner" || r === "manager" || r === "admin";
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Fallback: email match (case-insensitive)
+  if (!email) return false;
+
+  const { data, error } = await supabase
+    .from("team_members")
+    .select("role,email")
+    .eq("org_id", orgId)
+    .ilike("email", email)
+    .maybeSingle();
+
+  if (error || !data) return false;
+
+  const role = String((data as any).role ?? "").toLowerCase();
+  return role === "owner" || role === "manager" || role === "admin";
+}
 
 /* ---------- Component ---------- */
 export default function AllergenManager() {
   const [hydrated, setHydrated] = useState(false);
-const { user, ready } = useAuth();
 
   // Cloud context
   const [orgId, setOrgId] = useState<string | null>(null);
@@ -210,51 +238,50 @@ const { user, ready } = useAuth();
   const [qFlags, setQFlags] = useState<Flags>(emptyFlags());
 
   /* ---------- boot ---------- */
- /* ---------- permissions ---------- */
-useEffect(() => {
-  let cancelled = false;
+  useEffect(() => {
+    let cancelled = false;
 
-  (async () => {
-    if (!ready || !user || !orgId) {
-      if (!cancelled) setCanManage(false);
-      return;
-    }
+    setHydrated(true);
 
-    try {
-      const email = user.email?.toLowerCase() ?? null;
-      if (!email) {
-        setCanManage(false);
-        return;
+    (async () => {
+      try {
+        // Always prime local first so UI isn't dead while org resolves
+        primeLocal();
+
+        const [{ data: auth }, org] = await Promise.all([
+          supabase.auth.getUser(),
+          getActiveOrgIdClient().catch(() => null),
+        ]);
+
+        if (cancelled) return;
+
+        const userId = auth?.user?.id ?? null;
+        const email = auth?.user?.email?.toLowerCase().trim() ?? null;
+
+        setOrgId(org ?? null);
+
+        const allowed = await resolveCanManage({
+          orgId: org ?? null,
+          userId,
+          email,
+        });
+
+        if (!cancelled) setCanManage(allowed);
+
+        // If we have an org, load cloud data (overwrites local shadow)
+        if (org) {
+          await Promise.all([loadFromSupabase(org), loadReviewFromSupabase(org)]);
+        }
+      } catch (e: any) {
+        if (!cancelled) setLoadErr(e?.message ?? "Failed to load allergens.");
       }
+    })();
 
-      const { data, error } = await supabase
-        .from("team_members")
-        .select("role,email")
-        .eq("org_id", orgId)
-        .eq("email", email)
-        .maybeSingle();
-
-      if (cancelled) return;
-
-      if (error || !data) {
-        setCanManage(false);
-        return;
-      }
-
-      const role = (data.role ?? "").toLowerCase();
-      setCanManage(
-        role === "owner" || role === "manager" || role === "admin"
-      );
-    } catch {
-      if (!cancelled) setCanManage(false);
-    }
-  })();
-
-  return () => {
-    cancelled = true;
-  };
-}, [ready, user, orgId]);
-
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function primeLocal() {
     try {
@@ -366,16 +393,11 @@ useEffect(() => {
     } catch {}
   }
 
-  // Load last review info – primary source: allergen_review (for KPIs),
-  // fallback: allergen_review_log (for reviewer name / history).
   async function loadReviewFromSupabase(id = orgId) {
     if (!id) return;
 
-    const nextState: ReviewInfo = {
-      intervalDays: 30,
-    };
+    const nextState: ReviewInfo = { intervalDays: 30 };
 
-    // 1) Settings row used by FoodTempLogger KPIs
     const { data: settings, error: settingsErr } = await supabase
       .from("allergen_review")
       .select("last_reviewed, interval_days")
@@ -383,15 +405,11 @@ useEffect(() => {
       .maybeSingle();
 
     if (!settingsErr && settings) {
-      if (settings.last_reviewed) {
-        nextState.lastReviewedOn = settings.last_reviewed;
-      }
-      if (typeof settings.interval_days === "number") {
+      if (settings.last_reviewed) nextState.lastReviewedOn = settings.last_reviewed;
+      if (typeof settings.interval_days === "number")
         nextState.intervalDays = settings.interval_days;
-      }
     }
 
-    // 2) Latest log row – mainly to get reviewer name
     const { data: logRow, error: logErr } = await supabase
       .from("allergen_review_log")
       .select("reviewed_on, reviewer, interval_days")
@@ -401,18 +419,11 @@ useEffect(() => {
       .maybeSingle();
 
     if (!logErr && logRow) {
-      if (!nextState.lastReviewedOn && logRow.reviewed_on) {
+      if (!nextState.lastReviewedOn && logRow.reviewed_on)
         nextState.lastReviewedOn = logRow.reviewed_on;
-      }
-      if (
-        typeof logRow.interval_days === "number" &&
-        !settings?.interval_days
-      ) {
+      if (typeof logRow.interval_days === "number" && !settings?.interval_days)
         nextState.intervalDays = logRow.interval_days;
-      }
-      if (logRow.reviewer) {
-        nextState.lastReviewedBy = logRow.reviewer;
-      }
+      if (logRow.reviewer) nextState.lastReviewedBy = logRow.reviewer;
     }
 
     setReview(nextState);
@@ -437,7 +448,6 @@ useEffect(() => {
   }, [review, hydrated]);
 
   /* ---------- CRUD ---------- */
-
   async function upsertItem(d: {
     id?: string;
     item: string;
@@ -450,9 +460,8 @@ useEffect(() => {
       return;
     }
 
-    const currentOrgId = orgId ?? (await getActiveOrgIdClient());
+    const currentOrgId = orgId ?? (await getActiveOrgIdClient().catch(() => null));
 
-    // capture "before" snapshot for change log
     const beforeRow = d.id ? rows.find((r) => r.id === d.id) ?? null : null;
 
     const applyLocal = (forcedId?: string) => {
@@ -473,7 +482,6 @@ useEffect(() => {
       });
     };
 
-    // No org => purely local
     if (!currentOrgId) {
       applyLocal();
       return;
@@ -482,7 +490,6 @@ useEffect(() => {
     let rowId = d.id as string | undefined;
 
     try {
-      // 1) Save / update the main allergen_items row
       if (rowId) {
         const { error } = await supabase
           .from("allergen_items")
@@ -514,33 +521,26 @@ useEffect(() => {
         if (error) throw error;
         rowId = String(data!.id);
       }
-// 2) Upsert all flags for that item
-if (rowId) {
-  const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
-    item_id: rowId!,                 // PK part 1
-    key: k,                          // PK part 2
-    value: !!d.flags[k],             // actual yes/no value
-    org_id: currentOrgId,            // ✅ REQUIRED (NOT NULL on table)
-  }));
 
-  if (payload.length) {
-    const { error: flagsErr } = await supabase
-      .from("allergen_flags")
-      .upsert(payload, {
-        onConflict: "item_id,key",
-      });
+      if (rowId) {
+        const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
+          item_id: rowId!,
+          key: k,
+          value: !!d.flags[k],
+          org_id: currentOrgId,
+        }));
 
-    if (flagsErr) {
-      console.warn(
-        "Saving allergen flags failed (ignored — item still saved):",
-        flagsErr.message
-      );
-    }
-  }
-}
+        if (payload.length) {
+          const { error: flagsErr } = await supabase
+            .from("allergen_flags")
+            .upsert(payload, { onConflict: "item_id,key" });
 
+          if (flagsErr) {
+            console.warn("Saving allergen flags failed (ignored):", flagsErr.message);
+          }
+        }
+      }
 
-      // 3) Log change
       if (currentOrgId && rowId) {
         const afterRow: MatrixRow = {
           id: rowId,
@@ -559,7 +559,6 @@ if (rowId) {
           after: afterRow,
         });
 
-        // poke the timeline to re-fetch
         setChangeLogRefreshKey((n) => n + 1);
       }
 
@@ -576,11 +575,10 @@ if (rowId) {
       return;
     }
 
-    const currentOrgId = orgId ?? (await getActiveOrgIdClient());
+    const currentOrgId = orgId ?? (await getActiveOrgIdClient().catch(() => null));
     const beforeRow = rows.find((r) => r.id === idToDelete) ?? null;
 
     if (!currentOrgId) {
-      // local only
       setRows((rs) => rs.filter((r) => r.id !== idToDelete));
       return;
     }
@@ -588,17 +586,12 @@ if (rowId) {
     try {
       await supabase.from("allergen_flags").delete().eq("item_id", idToDelete);
 
-      const { error } = await supabase
-        .from("allergen_items")
-        .delete()
-        .eq("id", idToDelete);
-
+      const { error } = await supabase.from("allergen_items").delete().eq("id", idToDelete);
       if (error) {
         alert(`Delete failed: ${error.message}`);
         return;
       }
 
-      // log delete
       if (beforeRow) {
         await logAllergenChange({
           orgId: currentOrgId,
@@ -615,114 +608,104 @@ if (rowId) {
       alert(e?.message || "Delete failed.");
     }
   }
-async function markReviewedToday() {
-  if (!canManage) {
-    alert("Only managers / owners can mark the allergen register as reviewed.");
-    return;
-  }
 
-  const id = orgId ?? (await getActiveOrgIdClient());
-  const today = todayISO();
-
-  // Who is reviewing (prefer team member name)
-  let reviewer = "Manager";
-
-  try {
-    const userRes = await supabase.auth.getUser();
-    const email = userRes.data.user?.email?.toLowerCase() ?? null;
-
-    if (email && id) {
-      const { data: tm } = await supabase
-        .from("team_members")
-        .select("name")
-        .eq("email", email)
-        .eq("org_id", id)
-        .maybeSingle();
-
-      reviewer = tm?.name ?? email ?? reviewer;
+  async function markReviewedToday() {
+    if (!canManage) {
+      alert("Only managers / owners can mark the allergen register as reviewed.");
+      return;
     }
-  } catch {
-    // ignore
-  }
 
-  const newInterval = review.intervalDays || 30;
+    const id = orgId ?? (await getActiveOrgIdClient().catch(() => null));
+    const today = todayISO();
 
-  // Update local pill state immediately (so UI feels responsive)
-  setReview((r) => ({
-    ...r,
-    lastReviewedOn: today,
-    lastReviewedBy: reviewer,
-    intervalDays: newInterval,
-  }));
+    let reviewer = "Manager";
+    try {
+      const userRes = await supabase.auth.getUser();
+      const email = userRes.data.user?.email?.toLowerCase().trim() ?? null;
 
-  // No org: local only
-  if (!id) {
-    await fireConfetti();
-    bumpVibrate();
-    return;
-  }
+      if (email && id) {
+        const { data: tm } = await supabase
+          .from("team_members")
+          .select("name")
+          .eq("org_id", id)
+          .ilike("email", email)
+          .maybeSingle();
 
-  // 1) Persist settings row (used by KPIs) WITHOUT upsert/onConflict
-  // Try update first:
-  const { data: existing, error: existingErr } = await supabase
-    .from("allergen_review")
-    .select("org_id")
-    .eq("org_id", id)
-    .maybeSingle();
+        reviewer = tm?.name ?? email ?? reviewer;
+      } else if (email) {
+        reviewer = email;
+      }
+    } catch {}
 
-  if (existingErr) {
-    alert(`Failed to save review: ${existingErr.message}`);
-    return;
-  }
+    const newInterval = review.intervalDays || 30;
 
-  if (existing) {
-    const { error: updErr } = await supabase
+    setReview((r) => ({
+      ...r,
+      lastReviewedOn: today,
+      lastReviewedBy: reviewer,
+      intervalDays: newInterval,
+    }));
+
+    if (!id) {
+      await fireConfetti();
+      bumpVibrate();
+      return;
+    }
+
+    const { data: existing, error: existingErr } = await supabase
       .from("allergen_review")
-      .update({
+      .select("org_id")
+      .eq("org_id", id)
+      .maybeSingle();
+
+    if (existingErr) {
+      alert(`Failed to save review: ${existingErr.message}`);
+      return;
+    }
+
+    if (existing) {
+      const { error: updErr } = await supabase
+        .from("allergen_review")
+        .update({ last_reviewed: today, interval_days: newInterval })
+        .eq("org_id", id);
+
+      if (updErr) {
+        alert(`Failed to save review: ${updErr.message}`);
+        return;
+      }
+    } else {
+      const { error: insErr } = await supabase.from("allergen_review").insert({
+        org_id: id,
         last_reviewed: today,
         interval_days: newInterval,
-      })
-      .eq("org_id", id);
+      });
 
-    if (updErr) {
-      alert(`Failed to save review: ${updErr.message}`);
-      return;
+      if (insErr) {
+        alert(`Failed to save review: ${insErr.message}`);
+        return;
+      }
     }
-  } else {
-    const { error: insErr } = await supabase.from("allergen_review").insert({
+
+    const { error: logErr } = await supabase.from("allergen_review_log").insert({
       org_id: id,
-      last_reviewed: today,
+      reviewed_on: today,
+      reviewer,
       interval_days: newInterval,
+      notes: null,
     });
 
-    if (insErr) {
-      alert(`Failed to save review: ${insErr.message}`);
+    if (logErr) {
+      alert(`Failed to save review: ${logErr.message}`);
       return;
     }
+
+    await fireConfetti();
+    bumpVibrate(15);
   }
-
-  // 2) Always append to history log
-  const { error: logErr } = await supabase.from("allergen_review_log").insert({
-    org_id: id,
-    reviewed_on: today,
-    reviewer,
-    interval_days: newInterval,
-    notes: null,
-  });
-
-  if (logErr) {
-    alert(`Failed to save review: ${logErr.message}`);
-    return;
-  }
-
-  await fireConfetti();
-  bumpVibrate(15);
-}
 
   /* ===== Query (SAFE FOODS) ===== */
   const selectedAllergenKeys = useMemo(
-    () =>
-      (ALLERGENS.map((a) => a.key) as AllergenKey[]).filter((k) => qFlags[k]),
+    () => (ALLERGENS.map((a) => a.key) as AllergenKey[]).filter((k) => qFlags[k]),
     [qFlags]
   );
 
@@ -735,10 +718,7 @@ async function markReviewedToday() {
   }, [hydrated, rows, qCat, selectedAllergenKeys]);
 
   /* ===== Add/Edit modal ===== */
-  type Draft = Omit<MatrixRow, "id" | "locked"> & {
-    id?: string;
-    locked?: boolean;
-  };
+  type Draft = Omit<MatrixRow, "id" | "locked"> & { id?: string; locked?: boolean };
   const [modalOpen, setModalOpen] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
 
@@ -750,6 +730,7 @@ async function markReviewedToday() {
     setDraft({ item: "", category: "Starter", flags: emptyFlags(), notes: "" });
     setModalOpen(true);
   };
+
   const openEdit = (row: MatrixRow) => {
     if (!canManage) {
       alert("Only managers / owners can edit allergen items.");
@@ -764,6 +745,7 @@ async function markReviewedToday() {
     });
     setModalOpen(true);
   };
+
   const closeModal = () => setModalOpen(false);
 
   const saveDraft = async (e?: React.FormEvent) => {
@@ -787,31 +769,23 @@ async function markReviewedToday() {
 
   return (
     <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
-      {/* Header row – matches other pages, no date */}
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold text-slate-900">Allergens</h1>
       </div>
 
-      {/* Review panel */}
-      <div
-        className={`rounded-2xl px-4 py-3 shadow-sm backdrop-blur-sm ${reviewPanelTone}`}
-      >
+      <div className={`rounded-2xl px-4 py-3 shadow-sm backdrop-blur-sm ${reviewPanelTone}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5">
-            <div className="font-medium text-slate-900">
-              Allergen register review
-            </div>
+            <div className="font-medium text-slate-900">Allergen register review</div>
             <div className="text-xs text-slate-600">
               Last reviewed:{" "}
               {review.lastReviewedOn ? (
-                <span className="font-medium">
-                  {formatDateUK(review.lastReviewedOn)}
-                </span>
+                <span className="font-medium">{formatDateUK(review.lastReviewedOn)}</span>
               ) : (
                 <span className="italic">never</span>
               )}
-              {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} ·
-              Interval (days): {review.intervalDays}
+              {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} · Interval (days):{" "}
+              {review.intervalDays}
             </div>
           </div>
           <div className="flex w-full max-w-[360px] items-center gap-2 sm:w-auto sm:max-w-none">
@@ -839,16 +813,14 @@ async function markReviewedToday() {
         </div>
       </div>
 
-      {/* QUERY – SAFE FOODS */}
       <details className="mb-4 rounded-2xl border border-slate-200 bg-white/70 p-3 backdrop-blur-sm">
         <summary className="cursor-pointer select-none text-sm font-medium text-slate-900">
           Allergen Query (safe foods)
         </summary>
+
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
-            <div className="mb-2 text-sm font-medium text-slate-900">
-              Category
-            </div>
+            <div className="mb-2 text-sm font-medium text-slate-900">Category</div>
             <select
               className="w-full rounded-md border border-slate-300 bg-white/80 px-2 py-1.5 text-sm"
               value={qCat}
@@ -862,34 +834,24 @@ async function markReviewedToday() {
               ))}
             </select>
             <p className="mt-2 text-xs text-slate-600">
-              Only items <strong>without</strong> the selected allergens appear
-              below.
+              Only items <strong>without</strong> the selected allergens appear below.
             </p>
           </div>
 
           <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
-            <div className="mb-2 text-sm font-medium text-slate-900">
-              Select allergens to exclude
-            </div>
+            <div className="mb-2 text-sm font-medium text-slate-900">Select allergens to exclude</div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
               {ALLERGENS.map((a) => (
-                <label
-                  key={a.key}
-                  className="inline-flex items-center gap-2 text-sm text-slate-800"
-                >
+                <label key={a.key} className="inline-flex items-center gap-2 text-sm text-slate-800">
                   <input
                     type="checkbox"
                     checked={qFlags[a.key]}
-                    onChange={(e) =>
-                      setQFlags((f) => ({ ...f, [a.key]: e.target.checked }))
-                    }
+                    onChange={(e) => setQFlags((f) => ({ ...f, [a.key]: e.target.checked }))}
                     className="accent-emerald-600"
                   />
                   <span title={a.label}>
                     {a.icon}{" "}
-                    <span className="font-mono text-[11px] text-slate-500">
-                      {a.short}
-                    </span>
+                    <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
                   </span>
                 </label>
               ))}
@@ -908,12 +870,9 @@ async function markReviewedToday() {
           </div>
         </div>
 
-        {/* Safe results */}
         {hydrated && selectedAllergenKeys.length > 0 && (
           <div className="mt-4">
-            <div className="mb-2 text-sm font-semibold text-slate-900">
-              Safe foods ({safeFoods.length})
-            </div>
+            <div className="mb-2 text-sm font-semibold text-slate-900">Safe foods ({safeFoods.length})</div>
             <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white/80 backdrop-blur-sm">
               <table className="w-full min-w-[640px] text-sm">
                 <thead className="bg-slate-50/80">
@@ -926,10 +885,7 @@ async function markReviewedToday() {
                 <tbody>
                   {safeFoods.length === 0 && (
                     <tr>
-                      <td
-                        colSpan={3}
-                        className="px-3 py-6 text-center text-slate-500"
-                      >
+                      <td colSpan={3} className="px-3 py-6 text-center text-slate-500">
                         No safe items for this selection.
                       </td>
                     </tr>
@@ -937,12 +893,8 @@ async function markReviewedToday() {
                   {safeFoods.map((r) => (
                     <tr key={r.id} className="border-t border-slate-100">
                       <td className="px-3 py-2 text-slate-900">{r.item}</td>
-                      <td className="px-3 py-2 text-slate-900">
-                        {r.category ?? ""}
-                      </td>
-                      <td className="px-3 py-2 text-slate-900">
-                        {r.notes ?? ""}
-                      </td>
+                      <td className="px-3 py-2 text-slate-900">{r.category ?? ""}</td>
+                      <td className="px-3 py-2 text-slate-900">{r.notes ?? ""}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -952,7 +904,6 @@ async function markReviewedToday() {
         )}
       </details>
 
-      {/* Top actions */}
       <div className="mb-1 flex flex-col gap-2 sm:flex-row">
         <button
           className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
@@ -972,10 +923,7 @@ async function markReviewedToday() {
         </button>
       </div>
 
-      {/* MATRIX – Desktop table */}
-      <div className="mb-2 hidden text-sm font-semibold text-slate-900 md:block">
-        Allergen matrix
-      </div>
+      <div className="mb-2 hidden text-sm font-semibold text-slate-900 md:block">Allergen matrix</div>
       <div className="hidden overflow-x-auto rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm md:block">
         <table className="w-full min-w-[700px] text-sm">
           <thead className="bg-slate-50/80">
@@ -983,14 +931,9 @@ async function markReviewedToday() {
               <th className="px-2 py-2 font-medium">Item</th>
               <th className="px-2 py-2 font-medium">Category</th>
               {ALLERGENS.map((a) => (
-                <th
-                  key={a.key}
-                  className="whitespace-nowrap px-2 py-2 text-center font-medium"
-                >
+                <th key={a.key} className="whitespace-nowrap px-2 py-2 text-center font-medium">
                   {a.icon}{" "}
-                  <span className="font-mono text-[11px] text-slate-500">
-                    {a.short}
-                  </span>
+                  <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
                 </th>
               ))}
               <th className="px-3 py-2 text-right font-medium">Actions</th>
@@ -999,32 +942,22 @@ async function markReviewedToday() {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td
-                  colSpan={2 + ALLERGENS.length + 1}
-                  className="px-3 py-6 text-center text-slate-500"
-                >
+                <td colSpan={2 + ALLERGENS.length + 1} className="px-3 py-6 text-center text-slate-500">
                   {loadErr ? `Error: ${loadErr}` : "No items."}
                 </td>
               </tr>
             ) : (
               rows.map((row) => (
-                <tr
-                  key={row.id}
-                  className="border-t border-slate-100 align-top"
-                >
+                <tr key={row.id} className="border-t border-slate-100 align-top">
                   <td className="px-3 py-2 text-slate-900">{row.item}</td>
-                  <td className="px-3 py-2 text-slate-900">
-                    {row.category ?? ""}
-                  </td>
+                  <td className="px-3 py-2 text-slate-900">{row.category ?? ""}</td>
                   {ALLERGENS.map((a) => {
                     const yes = row.flags[a.key];
                     return (
                       <td key={a.key} className="px-2 py-2 text-center">
                         <span
                           className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                            yes
-                              ? "bg-red-100 text-red-800"
-                              : "bg-emerald-100 text-emerald-800"
+                            yes ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"
                           }`}
                         >
                           {yes ? "Yes" : "No"}
@@ -1053,7 +986,6 @@ async function markReviewedToday() {
         </table>
       </div>
 
-      {/* MOBILE – Cards */}
       <div className="md:hidden">
         {rows.length === 0 ? (
           <div className="rounded-xl border border-slate-200 bg-white/80 p-4 text-center text-slate-500">
@@ -1068,14 +1000,8 @@ async function markReviewedToday() {
               >
                 <div className="mb-2 flex items-start justify-between gap-2">
                   <div>
-                    <div className="font-medium text-slate-900">
-                      {row.item}
-                    </div>
-                    {row.category ? (
-                      <div className="text-xs text-slate-500">
-                        {row.category}
-                      </div>
-                    ) : null}
+                    <div className="font-medium text-slate-900">{row.item}</div>
+                    {row.category ? <div className="text-xs text-slate-500">{row.category}</div> : null}
                   </div>
                   {canManage && (
                     <ActionMenu
@@ -1098,63 +1024,45 @@ async function markReviewedToday() {
                       <div
                         key={a.key}
                         className={`flex items-center justify-between rounded px-2 py-1 text-xs ${
-                          yes
-                            ? "bg-red-50 text-red-800"
-                            : "bg-emerald-50 text-emerald-800"
+                          yes ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"
                         }`}
                       >
                         <span className="flex items-center gap-1">
                           <span>{a.icon}</span>
                           <span className="font-mono">{a.short}</span>
                         </span>
-                        <span className="font-medium">
-                          {yes ? "Yes" : "No"}
-                        </span>
+                        <span className="font-medium">{yes ? "Yes" : "No"}</span>
                       </div>
                     );
                   })}
                 </div>
 
-                {row.notes ? (
-                  <div className="mt-2 text-xs text-slate-600">
-                    {row.notes}
-                  </div>
-                ) : null}
+                {row.notes ? <div className="mt-2 text-xs text-slate-600">{row.notes}</div> : null}
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* Legend */}
       <div className="mt-6 rounded-2xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm">
-        <div className="mb-2 text-sm font-semibold text-slate-900">
-          Allergen legend
-        </div>
+        <div className="mb-2 text-sm font-semibold text-slate-900">Allergen legend</div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {ALLERGENS.map((a) => (
             <div key={a.key} className="flex items-center gap-2 text-sm">
               <span>{a.icon}</span>
               <span className="truncate text-slate-800">
                 {a.label}{" "}
-                <span className="font-mono text-[11px] text-slate-500">
-                  {a.short}
-                </span>
+                <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
               </span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Recent allergen change log */}
       <AllergenChangeTimeline refreshKey={changeLogRefreshKey} />
 
-      {/* Modal */}
       {modalOpen && draft && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={closeModal}
-        >
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={closeModal}>
           <form
             onSubmit={saveDraft}
             onClick={(e) => e.stopPropagation()}
@@ -1172,9 +1080,7 @@ async function markReviewedToday() {
                     autoFocus
                     className="w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5"
                     value={draft.item}
-                    onChange={(e) =>
-                      setDraft((d) => ({ ...d!, item: e.target.value }))
-                    }
+                    onChange={(e) => setDraft((d) => ({ ...d!, item: e.target.value }))}
                     required
                   />
                 </label>
@@ -1184,10 +1090,7 @@ async function markReviewedToday() {
                     className="w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5"
                     value={draft.category ?? "Starter"}
                     onChange={(e) =>
-                      setDraft((d) => ({
-                        ...d!,
-                        category: e.target.value as Category,
-                      }))
+                      setDraft((d) => ({ ...d!, category: e.target.value as Category }))
                     }
                   >
                     {CATEGORIES.map((c) => (
@@ -1207,28 +1110,18 @@ async function markReviewedToday() {
                       key={a.key}
                       className="flex items-center justify-between rounded border border-slate-200 bg-white/80 p-2"
                     >
-                      <span
-                        title={a.label}
-                        className="text-sm text-slate-800"
-                      >
+                      <span title={a.label} className="text-sm text-slate-800">
                         {a.icon}{" "}
-                        <span className="font-mono text-[11px] text-slate-500">
-                          {a.short}
-                        </span>
+                        <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
                       </span>
                       <div className="inline-flex overflow-hidden rounded border border-slate-200 bg-white/80">
                         <button
                           type="button"
                           className={`px-2 py-1 text-xs ${
-                            val
-                              ? "bg-red-600 text-white"
-                              : "bg-white text-slate-700 hover:bg-slate-50"
+                            val ? "bg-red-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
                           }`}
                           onClick={() =>
-                            setDraft((d) => ({
-                              ...d!,
-                              flags: { ...d!.flags, [a.key]: true },
-                            }))
+                            setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: true } }))
                           }
                         >
                           Yes
@@ -1241,10 +1134,7 @@ async function markReviewedToday() {
                               : "bg-white text-slate-700 hover:bg-slate-50"
                           }`}
                           onClick={() =>
-                            setDraft((d) => ({
-                              ...d!,
-                              flags: { ...d!.flags, [a.key]: false },
-                            }))
+                            setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: false } }))
                           }
                         >
                           No
@@ -1261,9 +1151,7 @@ async function markReviewedToday() {
                   className="w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5"
                   rows={3}
                   value={draft.notes ?? ""}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d!, notes: e.target.value }))
-                  }
+                  onChange={(e) => setDraft((d) => ({ ...d!, notes: e.target.value }))}
                 />
               </label>
 
