@@ -18,7 +18,7 @@ import FabShell from "@/app/FabShell";
 import HeaderSwitcher from "@/components/HeaderSwitcher";
 import CookieBanner from "@/components/CookieBanner";
 import ConsentBootstrap from "@/components/ConsentBootstrap";
-
+import AppFooter from "@/components/AppFooter";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -63,6 +63,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 <main className="w-full">
                   <div className="w-full px-0 sm:px-4 md:mx-auto md:max-w-6xl">
                     {children}
+                    <AppFooter />
                   </div>
                 </main>
 
