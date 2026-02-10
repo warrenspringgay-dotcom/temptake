@@ -15,7 +15,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
-import IncidentModal from "@/components/IncidentModal"; // ✅ ADD (adjust path/name if different)
+import IncidentModal from "@/components/IncidentModal";
 
 import {
   Thermometer,
@@ -25,7 +25,7 @@ import {
   ClipboardList,
   CheckSquare,
   MessageSquare,
-  AlertTriangle, // ✅ ADD
+  AlertTriangle,
 } from "lucide-react";
 import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
 
@@ -285,12 +285,10 @@ function CorrectiveModal({
           <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-800 space-y-1">
             <div className="font-semibold text-red-900">Details</div>
             <div>
-              <span className="font-semibold">Area:</span>{" "}
-              {draft.area || "—"}
+              <span className="font-semibold">Area:</span> {draft.area || "—"}
             </div>
             <div>
-              <span className="font-semibold">Item:</span>{" "}
-              {draft.item || "—"}
+              <span className="font-semibold">Item:</span> {draft.item || "—"}
             </div>
             <div>
               <span className="font-semibold">Target:</span>{" "}
@@ -699,7 +697,6 @@ export default function TempFab() {
       setCorrectiveRecheckEnabled(true);
       setCorrectiveRecheckTemp("");
 
-      // nudge reports/other pages to refresh if they listen
       try {
         window.dispatchEvent(new Event("tt-temps-changed"));
       } catch {}
@@ -891,7 +888,6 @@ export default function TempFab() {
         return;
       }
 
-      // Prefill initials from last-used, then from current form
       let prefIni = "";
       try {
         prefIni = (localStorage.getItem(LS_LAST_INITIALS) || "")
@@ -944,7 +940,6 @@ export default function TempFab() {
     }
   }
 
-  // Save sign-off (upsert by unique index)
   async function saveDaySignoff() {
     const initialsTxt = signoffInitials.trim().toUpperCase();
     if (!initialsTxt) {
@@ -1136,14 +1131,12 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Initial refresh
   useEffect(() => {
     void refreshEntriesToday();
     void refreshCleaningOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Faster fallback poll (safety net only)
   useEffect(() => {
     const id = setInterval(() => {
       void refreshCleaningOpen(false);
@@ -1152,7 +1145,6 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId, activeLocationId]);
 
-  // Refresh on focus/visibility so it never "lags" when you come back
   useEffect(() => {
     const onVis = () => {
       if (document.visibilityState === "visible") void refreshCleaningOpen(true);
@@ -1168,7 +1160,6 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Allow other pages to force immediate refresh (recommended)
   useEffect(() => {
     const onCleaningChanged = () => {
       void refreshCleaningOpen(true);
@@ -1179,7 +1170,6 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime: update orb instantly when logs change (kept as-is)
   useEffect(() => {
     if (!activeOrgId || !activeLocationId) return;
     const channel = supabase
@@ -1220,8 +1210,6 @@ export default function TempFab() {
     window.addEventListener("tt-open-temp-modal", handler);
     return () => window.removeEventListener("tt-open-temp-modal", handler);
   }, []);
-
-  /* --------- save entry --------- */
 
   async function handleSave() {
     if (!canSave) return;
@@ -1287,7 +1275,6 @@ export default function TempFab() {
       status,
     };
 
-    // ✅ Return inserted log id so corrective action can link properly
     const { data: inserted, error } = await supabase
       .from("food_temp_logs")
       .insert(payload)
@@ -1321,7 +1308,6 @@ export default function TempFab() {
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
     await refreshEntriesToday();
 
-    // ✅ If FAIL, open corrective action modal
     if (status === "fail" && inserted?.id) {
       const staffIni = (form.staff_initials || "").toUpperCase().trim();
       setCorrective({
@@ -1345,8 +1331,6 @@ export default function TempFab() {
 
     setOpen(false);
   }
-
-  /* --------- routines --------- */
 
   async function openRoutinePicker() {
     setShowPicker(true);
@@ -1445,19 +1429,14 @@ export default function TempFab() {
     }
   }
 
-  /* --------- derived --------- */
-
   const wrapperClass =
     entriesToday !== null && entriesToday === 0 ? "no-temps-today" : "";
 
   const showTempWarning = entriesToday !== null && entriesToday === 0;
   const showCleaningWarning = openCleaning !== null && openCleaning > 0;
 
-  /* --------- render --------- */
-
   return (
     <>
-      {/* FAB + orbs wrapper */}
       <div className={cls(wrapperClass, "fixed bottom-6 right-4 z-40")}>
         <button
           type="button"
@@ -1500,7 +1479,6 @@ export default function TempFab() {
         )}
       </div>
 
-      {/* Quick choice menu */}
       {showMenu && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-end"
@@ -1515,6 +1493,7 @@ export default function TempFab() {
                 What would you like to do?
               </div>
               <div className="space-y-2">
+                {/* ✅ ADD ICON */}
                 <button
                   type="button"
                   onClick={() => {
@@ -1524,7 +1503,10 @@ export default function TempFab() {
                   }}
                   className="w-full rounded-xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/40 hover:brightness-105"
                 >
-                  Quick temp log
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <Thermometer className="h-4 w-4" />
+                    Quick temp log
+                  </span>
                 </button>
 
                 <button
@@ -1542,7 +1524,6 @@ export default function TempFab() {
                   </span>
                 </button>
 
-                {/* Day sign-off */}
                 <button
                   type="button"
                   onClick={openDaySignoff}
@@ -1554,33 +1535,32 @@ export default function TempFab() {
                   </span>
                 </button>
 
-                {/* ✅ Log incident (NEW) */}
                 <button
                   type="button"
                   onClick={async () => {
-  setShowMenu(false);
+                    setShowMenu(false);
 
-  const orgId = await getActiveOrgIdClient();
-  const locationId = await getActiveLocationIdClient();
+                    const orgId = await getActiveOrgIdClient();
+                    const locationId = await getActiveLocationIdClient();
 
-  if (!orgId || !locationId) {
-    addToast({
-      title: "Select a location first",
-      message: "You need an active site/location to log an incident.",
-      type: "error",
-    });
-    return;
-  }
+                    if (!orgId || !locationId) {
+                      addToast({
+                        title: "Select a location first",
+                        message:
+                          "You need an active site/location to log an incident.",
+                        type: "error",
+                      });
+                      return;
+                    }
 
-  setActiveOrgId(orgId);
-  setActiveLocationId(locationId);
+                    setActiveOrgId(orgId);
+                    setActiveLocationId(locationId);
 
-  setIncidentArea(form.location ? String(form.location) : null);
-  setIncidentOpen(true);
+                    setIncidentArea(form.location ? String(form.location) : null);
+                    setIncidentOpen(true);
 
-  posthog.capture("fab_choose_log_incident");
-}}
-
+                    posthog.capture("fab_choose_log_incident");
+                  }}
                   className="w-full rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:brightness-105"
                 >
                   <span className="inline-flex items-center justify-center gap-2">
@@ -1589,6 +1569,7 @@ export default function TempFab() {
                   </span>
                 </button>
 
+                {/* ✅ ADD ICON */}
                 <button
                   type="button"
                   onClick={() => {
@@ -1598,10 +1579,12 @@ export default function TempFab() {
                   }}
                   className="w-full rounded-xl bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-500/40 hover:brightness-105"
                 >
-                  Open wall
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    Open wall
+                  </span>
                 </button>
 
-                {/* ✅ Feedback (trial FAB action) */}
                 <button
                   type="button"
                   onClick={() => {
@@ -1622,7 +1605,6 @@ export default function TempFab() {
         </div>
       )}
 
-      {/* ✅ Feedback modal */}
       <FeedbackModal
         open={feedbackOpen}
         onClose={() => setFeedbackOpen(false)}
@@ -1630,23 +1612,21 @@ export default function TempFab() {
         area={form.location ? String(form.location) : null}
       />
 
-  <IncidentModal
-  open={incidentOpen}
-  onClose={() => setIncidentOpen(false)}
-  orgId={activeOrgId ?? ""}
-  locationId={activeLocationId ?? ""}
-  defaultDate={isoToday()}
-  defaultInitials={form.staff_initials || ""}
-  defaultArea={incidentArea || form.location || null}
-  onSaved={() => {
-    try {
-      window.dispatchEvent(new Event("tt-incidents-changed"));
-    } catch {}
-  }}
-/>
+      <IncidentModal
+        open={incidentOpen}
+        onClose={() => setIncidentOpen(false)}
+        orgId={activeOrgId ?? ""}
+        locationId={activeLocationId ?? ""}
+        defaultDate={isoToday()}
+        defaultInitials={form.staff_initials || ""}
+        defaultArea={incidentArea || form.location || null}
+        onSaved={() => {
+          try {
+            window.dispatchEvent(new Event("tt-incidents-changed"));
+          } catch {}
+        }}
+      />
 
-
-      {/* Day sign-off modal */}
       <SignoffModal
         open={signoffOpen}
         dateLabel={signoffDateLabel}
@@ -1660,7 +1640,6 @@ export default function TempFab() {
         setNotes={setSignoffNotes}
       />
 
-      {/* ✅ Corrective action modal (opens only after FAIL) */}
       <CorrectiveModal
         open={corrective.open}
         saving={correctiveSaving}
@@ -1675,267 +1654,6 @@ export default function TempFab() {
         setRecheckTemp={setCorrectiveRecheckTemp}
       />
 
-      {/* Routine picker modal */}
-      {showPicker && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
-          onClick={() => setShowPicker(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-10 w-full max-w-lg overflow-hidden rounded-2xl border border-white/30 bg-white/95 shadow-xl shadow-slate-900/25"
-          >
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-              <div className="text-sm font-semibold text-slate-900">
-                Choose a routine
-              </div>
-              <button
-                type="button"
-                className="rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-700 hover:bg-slate-200"
-                onClick={() => setShowPicker(false)}
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="max-h-[70vh] overflow-y-auto p-4">
-              {pickerLoading ? (
-                <div className="py-8 text-center text-sm text-slate-500">
-                  Loading…
-                </div>
-              ) : pickerErr ? (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {pickerErr}
-                </div>
-              ) : pickerList.length === 0 ? (
-                <div className="py-8 text-center text-sm text-slate-500">
-                  No routines found.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {pickerList.map((r) => (
-                    <button
-                      key={r.id ?? r.name}
-                      type="button"
-                      onClick={() => pickRoutine(r)}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm shadow-sm hover:bg-slate-50"
-                    >
-                      <div className="font-semibold text-slate-900">{r.name}</div>
-                      <div className="text-[11px] text-slate-500">
-                        {r.active ? "Active" : "Inactive"}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Quick entry modal */}
-      {open && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
-          onClick={() => setOpen(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="mx-auto mt-6 flex h-[72vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-white/30 bg-white/95 shadow-xl shadow-slate-900/25 sm:mt-24 sm:h-auto sm:rounded-2xl"
-          >
-            <div className="flex items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  Quick temp log
-                </div>
-                <div className="text-base font-semibold text-slate-900">
-                  Add a temperature
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="flex-1 space-y-3 overflow-y-auto p-4 text-sm">
-              {/* voice controls */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold text-slate-900">
-                      Voice entry
-                    </div>
-                    <div className="text-[11px] text-slate-500">
-                      Say: “Walk-in fridge 3.4 degrees JB”
-                    </div>
-                  </div>
-
-                  {voiceSupported ? (
-                    <button
-                      type="button"
-                      onClick={() => (listening ? stop() : start())}
-                      className={cls(
-                        "inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-white shadow-sm transition",
-                        listening
-                          ? "bg-rose-600 hover:bg-rose-700"
-                          : "bg-slate-900 hover:bg-black"
-                      )}
-                    >
-                      {listening ? (
-                        <>
-                          <MicOff className="h-4 w-4" />
-                          Stop
-                        </>
-                      ) : (
-                        <>
-                          <Mic className="h-4 w-4" />
-                          Start
-                        </>
-                      )}
-                    </button>
-                  ) : (
-                    <div className="text-[11px] font-semibold text-slate-500">
-                      Not supported
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="block text-xs font-medium text-slate-700">
-                    Date
-                  </label>
-                  <input
-                    type="date"
-                    value={form.date}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, date: e.target.value }))
-                    }
-                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-700">
-                    Initials
-                  </label>
-                  <select
-                    value={form.staff_initials}
-                    onChange={(e) =>
-                      setForm((f) => ({
-                        ...f,
-                        staff_initials: e.target.value,
-                      }))
-                    }
-                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
-                  >
-                    <option value="">Select…</option>
-                    {initials.map((i) => (
-                      <option key={i} value={i}>
-                        {i}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-700">
-                  Location / Area
-                </label>
-                <input
-                  value={form.location}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, location: e.target.value }))
-                  }
-                  list="tt-areas"
-                  className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
-                  placeholder="e.g. Walk-in fridge"
-                />
-                <datalist id="tt-areas">
-                  {locations.map((l) => (
-                    <option key={l} value={l} />
-                  ))}
-                </datalist>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-700">
-                  Item
-                </label>
-                <input
-                  value={form.item}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, item: e.target.value }))
-                  }
-                  className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
-                  placeholder="e.g. Chicken curry hot hold"
-                />
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="block text-xs font-medium text-slate-700">
-                    Target preset
-                  </label>
-                  <select
-                    value={form.target_key}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, target_key: e.target.value }))
-                    }
-                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
-                  >
-                    {TARGET_PRESETS.map((p) => (
-                      <option key={p.key} value={p.key}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-700">
-                    Temperature (°C)
-                  </label>
-                  <input
-                    value={form.temp_c}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, temp_c: e.target.value }))
-                    }
-                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
-                    inputMode="decimal"
-                    placeholder="e.g. 3.4"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="border-t border-slate-200 bg-white/90 p-4">
-              <button
-                type="button"
-                disabled={!canSave}
-                onClick={handleSave}
-                className={cls(
-                  "w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white shadow-sm transition",
-                  canSave
-                    ? "bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 hover:brightness-105"
-                    : "cursor-not-allowed bg-slate-300"
-                )}
-              >
-                Save temperature
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Routine run modal */}
       <RoutineRunModal
         open={!!runRoutine}
         routine={runRoutine as any}
