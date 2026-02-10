@@ -1,14 +1,13 @@
 // src/app/launch/page.tsx
-"use client";
-
-import React, { useEffect, useMemo, useState } from "react";
+import React from "react";
 import Link from "next/link";
-import Script from "next/script";
 import Image from "next/image";
 
-/* ---------------------- FAKE SOCIAL PROOF WALL DATA ---------------------- */
+import LaunchClient from "./launch/LauncgClient";
 
-const fakeNotes = [
+/* ---------------------- DEMO SOCIAL WALL DATA (NOT “REAL”) ---------------------- */
+
+const demoNotes = [
   { initials: "JB", message: "The pulsing FAB saves so much time 🔥" },
   { initials: "SC", message: "Finally… something my team actually wants to use" },
   { initials: "MK", message: "Paper logs are on the char-grill" },
@@ -16,14 +15,11 @@ const fakeNotes = [
   { initials: "DW", message: "Saved me 90 mins today. 90!" },
   { initials: "RH", message: "Just beat my CDP to top spot on the leaderboard" },
   { initials: "LF", message: "EHO walked in, pressed one button, walked out happy" },
-  { initials: "NP", message: "i can see how my kitchen is running from home" },
+  { initials: "NP", message: "I can see how my kitchen is running from home" },
 ];
 
 /* ---------------------- PUBLIC GUIDES (LAUNCH PAGE) ---------------------- */
-/**
- * Update hrefs if your actual routes differ.
- * Keep these public (no auth required) so visitors can read before signing up.
- */
+
 const GUIDES = [
   {
     title: "Temperature logs (UK)",
@@ -66,104 +62,27 @@ function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-function openTallyWaitlist() {
-  // Tally embed script exposes window.Tally when loaded.
-  // But Tally can also open via data attributes.
-  // We keep this helper to support sticky CTA without duplicating attributes.
-  try {
-    (window as any)?.Tally?.openPopup?.("obb4vX", {
-      layout: "modal",
-      emojiText: "👋",
-      emojiAnimation: "wave",
-      autoClose: 0,
-    });
-  } catch {
-    // fallback: no-op
-  }
-}
-
-/* ---------------------------- MAIN PAGE ---------------------------- */
-
 export default function LaunchPage() {
-  const [demoOpen, setDemoOpen] = useState(false);
-  const [showStickyCta, setShowStickyCta] = useState(false);
+  const tallyId = "obb4vX";
 
-  useEffect(() => {
-    const onScroll = () => {
-      // Show sticky CTA after the hero area
-      setShowStickyCta(window.scrollY > 260);
-    };
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  const tallyAttrs = useMemo(
-    () => ({
-      "data-tally-open": "obb4vX",
-      "data-tally-layout": "modal",
-      "data-tally-emoji-text": "👋",
-      "data-tally-emoji-animation": "wave",
-      "data-tally-auto-close": "0",
-    }),
-    []
-  );
+  // Server renders the page fast + crawlable.
+  // Client only handles sticky CTA + Tally popup open.
+  const tallyAttrs = {
+    "data-tally-open": tallyId,
+    "data-tally-layout": "modal",
+    "data-tally-emoji-text": "👋",
+    "data-tally-emoji-animation": "wave",
+    "data-tally-auto-close": "0",
+  } as const;
 
   return (
     <div className="fixed inset-0 z-20 overflow-y-auto overflow-x-hidden">
-      {/* Tally embed script */}
-      <Script src="https://tally.so/widgets/embed.js" async />
-
-      {/* Sticky CTA bar (conversion insurance) */}
-      <div
-        className={cls(
-          "pointer-events-none fixed left-0 top-0 z-40 w-full transition-all duration-200",
-          showStickyCta ? "translate-y-0 opacity-100" : "-translate-y-3 opacity-0"
-        )}
-      >
-        <div className="pointer-events-auto border-b border-white/10 bg-slate-950/75 backdrop-blur-md">
-          <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-2">
-            <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-2xl bg-emerald-500 text-[11px] font-bold text-slate-950">
-                TT
-              </div>
-              <div className="leading-tight">
-                <div className="text-[12px] font-semibold text-slate-50">
-                  TempTake early access
-                </div>
-                <div className="text-[11px] text-slate-300">
-                  Join the beta kitchens shaping the product.
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Link
-                href="/app"
-                className="hidden rounded-2xl border border-white/20 bg-white/5 px-4 py-2 text-[11px] font-medium text-slate-50 hover:bg-white/10 sm:inline-flex"
-              >
-                View demo
-              </Link>
-
-              {/* Primary CTA */}
-              <button
-                type="button"
-                {...tallyAttrs}
-                onClick={() => openTallyWaitlist()}
-                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-4 py-2 text-[11px] font-semibold text-slate-950 shadow-lg shadow-emerald-500/30 transition hover:brightness-105"
-              >
-                Join early access
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <LaunchClient tallyId={tallyId} />
 
       <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white">
         {/* Top bar */}
         <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 pt-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-            {/* Marketing brand should go home, not to /dashboard */}
             <Link href="/launch" className="flex items-center gap-2">
               <Image src="/logo.png" width={44} height={44} alt="TempTake" />
               <span className="font-semibold">TempTake</span>
@@ -199,7 +118,7 @@ export default function LaunchPage() {
           <div className="md:w-1/2">
             <div className="inline-flex flex-wrap items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Early access for beta kitchens
+              Early access for UK kitchens
               <span className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
                 🎙 Voice entry
               </span>
@@ -207,27 +126,14 @@ export default function LaunchPage() {
 
             <h1 className="mt-5 text-3xl font-semibold leading-tight sm:text-4xl lg:text-5xl">
               Food safety checks
-              <span className="block text-emerald-300">done properly.</span>
+              <span className="block text-emerald-300">logged properly.</span>
             </h1>
 
-            <p  className="mt-2 block text-slate-200 font-semibold">
-                TempTake is the ultimate food hygiene app.
-                  <span className="mt-2 block text-slate-200">
-                The only food compliance assistant you need.</span>
-              <span className="mt-2 block text-slate-200"></span>
-
-              </p>
-              <p>
-            <span className="mt-4 max-w-xl text-sm text-slate-200 sm:text-base">
-
-              TempTake replaces paper logs with simple daily routines for</span>{" "}
-              <span className="font-semibold">temperatures, cleaning and allergens</span>
-          
-              <span className="mt-2 block text-slate-200">
-                When hands are full, use{" "}
-                <span className="font-semibold text-emerald-200">voice entry</span>{" "}
-                to log checks fast without fighting a screen mid-service.
-              </span>
+            <p className="mt-4 max-w-xl text-sm text-slate-200 sm:text-base">
+              TempTake replaces paper logs with fast, inspection-ready records for{" "}
+              <span className="font-semibold">temperatures, cleaning, allergens and training</span>.
+              Log checks mid-service with{" "}
+              <span className="font-semibold text-emerald-200">voice entry</span> when hands are full.
             </p>
 
             {/* CTA hierarchy: ONE primary, ONE secondary */}
@@ -235,30 +141,27 @@ export default function LaunchPage() {
               <button
                 type="button"
                 {...tallyAttrs}
-                onClick={() => openTallyWaitlist()}
                 className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 transition hover:brightness-105"
               >
                 Join early access
               </button>
 
               <Link
-                href="/app"
+                href="/demo"
                 className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
               >
                 View demo
               </Link>
 
-              {/* Tertiary: single “fun features” link, not another full CTA row */}
-              <button
-                type="button"
-                onClick={() => setDemoOpen(true)}
+              <Link
+                href="#faq"
                 className="inline-flex items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20"
               >
-                See team features (leaderboard)
-              </button>
+                What EHOs expect
+              </Link>
             </div>
 
-            {/* Tight, outcome-first facts (no “2026” self-sabotage) */}
+            {/* Outcome-first facts */}
             <dl className="mt-8 grid grid-cols-2 gap-4 text-xs text-slate-200 sm:text-sm md:max-w-md">
               <div>
                 <dt className="text-slate-400">Built for</dt>
@@ -267,20 +170,18 @@ export default function LaunchPage() {
                 </dd>
               </div>
               <div>
-                <dt className="text-slate-400">Covers</dt>
+                <dt className="text-slate-400">Core modules</dt>
                 <dd className="mt-0.5 font-semibold">
                   Temps • Cleaning • Allergens • Training
                 </dd>
               </div>
               <div>
-                <dt className="text-slate-400">Fast input</dt>
-                <dd className="mt-0.5 font-semibold">Tap, swipe, or voice</dd>
+                <dt className="text-slate-400">Audit trail</dt>
+                <dd className="mt-0.5 font-semibold">Initials • timestamps • exports</dd>
               </div>
               <div>
                 <dt className="text-slate-400">Availability</dt>
-                <dd className="mt-0.5 font-semibold">
-                  Beta kitchens now • iOS next
-                </dd>
+                <dd className="mt-0.5 font-semibold">Beta kitchens now • iOS next</dd>
               </div>
             </dl>
           </div>
@@ -299,7 +200,7 @@ export default function LaunchPage() {
                   </div>
                 </div>
                 <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-[11px] font-medium text-emerald-300">
-                  Compliant
+                  Inspection-ready
                 </span>
               </div>
 
@@ -314,17 +215,12 @@ export default function LaunchPage() {
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                     Today’s checks
                   </span>
-                  <span className="text-[11px] text-slate-500">Swipe to complete</span>
+                  <span className="text-[11px] text-slate-500">Tap to log</span>
                 </div>
 
                 <div className="space-y-1.5">
                   <MockLogRow label="Walk-in fridge" temp="3.4°C" status="pass" time="08:15" />
-                  <MockLogRow
-                    label="Chicken curry (hot hold)"
-                    temp="62.0°C"
-                    status="pass"
-                    time="12:05"
-                  />
+                  <MockLogRow label="Chicken curry (hot hold)" temp="62.0°C" status="pass" time="12:05" />
                   <MockLogRow label="Fish prep bench" temp="11.8°C" status="fail" time="10:32" />
                 </div>
               </div>
@@ -348,6 +244,67 @@ export default function LaunchPage() {
           </div>
         </section>
 
+        {/* ----------------------- TRUST / PROOF SECTION ----------------------- */}
+        <section className="border-t border-white/10 bg-slate-950/70">
+          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
+            <div className="grid gap-6 md:grid-cols-2 md:items-center">
+              <div>
+                <h2 className="text-2xl font-semibold sm:text-3xl">
+                  What your EHO cares about
+                  <span className="text-emerald-300"> is what TempTake shows.</span>
+                </h2>
+                <p className="mt-3 text-sm text-slate-300 sm:text-base">
+                  Clear logs, consistent checks, proof of corrective action, and a system your team
+                  actually follows. Not a binder of “we’ll fill it in later”.
+                </p>
+
+                <ul className="mt-4 space-y-2 text-sm text-slate-200">
+                  <li>• Initials + timestamps on every record</li>
+                  <li>• Failed temps trigger corrective actions (auditable)</li>
+                  <li>• Managers see what’s missing before inspection day</li>
+                  <li>• Exportable records when you need them</li>
+                </ul>
+
+                <div className="mt-6 flex flex-wrap items-center gap-3">
+                  <Link
+                    href="/demo"
+                    className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
+                  >
+                    View demo
+                  </Link>
+
+                  <button
+                    type="button"
+                    {...tallyAttrs}
+                    className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
+                  >
+                    Join early access
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg shadow-black/30">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  Audit trail preview
+                </div>
+                <div className="mt-4 space-y-2 text-sm">
+                  <AuditRow label="Walk-in fridge" meta="3.4°C · WS · 08:15" tone="ok" />
+                  <AuditRow label="Fish prep bench" meta="11.8°C · JB · 10:32" tone="bad" />
+                  <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-3 text-[12px] text-rose-100">
+                    <div className="font-semibold">Corrective action recorded</div>
+                    <div className="mt-1 text-rose-200/90">
+                      Moved food to working fridge, engineer called, re-check 3.6°C logged.
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    This is the “show me your system” moment EHOs love.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* ----------------------- FEATURE GRID ----------------------- */}
         <section className="border-t border-white/10 bg-slate-950/70">
           <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-12 md:py-16">
@@ -357,8 +314,8 @@ export default function LaunchPage() {
                 <span className="text-emerald-300"> without clipboard chaos.</span>
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                Daily checks stay simple and fast. No more half-filled sheets,
-                missing initials, or “we’ll do it later” turning into “we never did it”.
+                Daily checks stay simple and fast. No more half-filled sheets, missing initials,
+                or “we’ll do it later” turning into “we never did it”.
               </p>
             </div>
 
@@ -426,7 +383,6 @@ export default function LaunchPage() {
               <button
                 type="button"
                 {...tallyAttrs}
-                onClick={() => openTallyWaitlist()}
                 className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
               >
                 Join early access
@@ -441,584 +397,134 @@ export default function LaunchPage() {
           </div>
         </section>
 
-        {/* ----------------------- APP STORE STYLE BLOCKS ----------------------- */}
-        <AppStoreFeatureBlocks />
+        {/* ----------------------- FAQ SECTION ----------------------- */}
+        <FAQSection />
 
-        {/* ----------------------- ONBOARDING STEPS ----------------------- */}
-        <section className="border-t border-white/10 bg-slate-900/90">
-          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
-            <div className="mb-6 max-w-3xl">
-              <h2 className="text-2xl font-semibold sm:text-3xl">
-                From zero to running checks in one shift.
-              </h2>
-              <p className="mt-2 text-sm text-slate-300 sm:text-base">
-                Built so a busy kitchen can go from “never seen this before” to
-                “we’re doing today&apos;s checks in here” inside a single service.
-              </p>
-            </div>
-
-            <ol className="grid gap-4 md:grid-cols-3">
-              <StepCard
-                step="First 10 minutes"
-                title="Add your kitchen"
-                body="Add your kitchen, set up routines, cleaning rota and allergen info. Sensible defaults so you’re not starting from blank."
-              />
-              <StepCard
-                step="Next 20 minutes"
-                title="Get the team on"
-                body="Share TempTake with chefs and FOH. They see clear checklists with initials and times, not a wall of settings."
-              />
-              <StepCard
-                step="During service"
-                title="Run live checks"
-                body="Tap, swipe or use voice entry to log checks. By close, you’ve got a full digital record without anyone touching a clipboard."
-              />
-            </ol>
-          </div>
-        </section>
-
-        {/* ----------------------- NEON GLOW WALL ----------------------- */}
-        <StagedWall />
-
-        {/* ----------------------- DEMO VIDEO SECTION ----------------------- */}
-        <section className="border-t border-white/10 bg-slate-950/90">
-          <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-12 md:flex-row md:items-center md:py-16">
-            <div className="space-y-3 md:w-1/2">
-              <h2 className="text-2xl font-semibold sm:text-3xl">
-                See TempTake in action in 60 seconds.
-              </h2>
-              <p className="text-sm text-slate-300 sm:text-base">
-                A quick walkthrough of how a chef logs temperatures, completes cleaning
-                tasks and keeps allergen info up to date.
-              </p>
-              <ul className="space-y-1 text-sm text-slate-300">
-                <li>• Realistic example of a lunch service.</li>
-                <li>• How managers see what’s been missed.</li>
-                <li>• What your EHO will see during a visit.</li>
-              </ul>
-
-              <div className="pt-2">
-                <button
-                  type="button"
-                  {...tallyAttrs}
-                  onClick={() => openTallyWaitlist()}
-                  className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
-                >
-                  Join early access
-                </button>
-              </div>
-            </div>
-
-            <div className="md:w-1/2">
-              <div className="relative mx-auto aspect-video w-full max-w-xl overflow-hidden rounded-3xl border border-emerald-400/40 bg-slate-900 shadow-[0_0_45px_rgba(16,185,129,0.45)]">
-                <video
-                  className="h-full w-full object-cover"
-                  controls
-                  poster="/demo/temptake-poster.jpg"
-                >
-                  <source src="/demo/temptake-demo.mp4" type="video/mp4" />
-                  Your browser does not support the video tag.
-                </video>
-
-                <div className="pointer-events-none absolute left-3 top-3 rounded-full bg-black/60 px-3 py-1 text-[11px] font-medium text-emerald-200">
-                  Demo recording · TempTake
-                </div>
-              </div>
-              <p className="mt-2 text-[11px] text-slate-500">
-                Don&apos;t have a video yet? This block still looks fine. Swap the file when you&apos;re ready.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        {/* ----------------------- PRICING SECTION ----------------------- */}
-        <section id="pricing" className="border-t border-white/10 bg-slate-950">
-          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
-            <div className="mb-8 max-w-3xl">
-              <h2 className="text-2xl font-semibold sm:text-3xl">
-                Simple pricing when we launch.
-              </h2>
-              <p className="mt-2 text-sm text-slate-300 sm:text-base">
-                During early access, we&apos;re working closely with a small group of kitchens.
-                When we launch publicly, pricing is banded by how many locations you run.
-                No per-log or per-device nonsense.
-              </p>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              {/* Early access card */}
-              <div className="relative flex flex-col rounded-2xl border border-emerald-500/40 bg-slate-950/80 p-5 shadow-[0_0_30px_rgba(16,185,129,0.4)]">
-                <div className="inline-flex w-fit items-center rounded-full bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
-                  Founding kitchens
-                </div>
-                <h3 className="mt-3 text-lg font-semibold text-white">
-                  Early access programme
-                </h3>
-                <p className="mt-2 text-sm text-slate-300">
-                  Limited number of sites working directly with us to shape the product.
-                </p>
-
-                <div className="mt-4 text-3xl font-semibold text-emerald-300">
-                  £0
-                  <span className="text-sm font-normal text-slate-300"> during beta</span>
-                </div>
-
-                <ul className="mt-4 space-y-1.5 text-sm text-slate-200">
-                  <li>• Full access to TempTake features.</li>
-                  <li>• Priority support and feature input.</li>
-                  <li>• Preferential launch pricing afterwards.</li>
-                </ul>
-
-                <div className="mt-5">
-                  <button
-                    type="button"
-                    {...tallyAttrs}
-                    onClick={() => openTallyWaitlist()}
-                    className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
-                  >
-                    Apply for early access
-                  </button>
-                </div>
-              </div>
-
-              {/* Future pricing card */}
-              <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-950/70 p-5">
-                <div className="inline-flex w-fit items-center rounded-full bg-slate-800 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">
-                  Monthly pricing
-                </div>
-                <h3 className="mt-3 text-lg font-semibold text-white">
-                  From £9.99 / month
-                </h3>
-                <p className="mt-2 text-sm text-slate-300">
-                  Pricing is banded by the number of locations on your account:
-                </p>
-
-                <ul className="mt-4 space-y-1.5 text-sm text-slate-200">
-                  <li>• 1 site → £9.99 / month</li>
-                  <li>• 2–3 sites → £19.99 / month</li>
-                  <li>• 4–5 sites → £29.99 / month</li>
-                  <li>• 6+ sites → custom pricing, contact us</li>
-                </ul>
-
-                <p className="mt-4 text-[11px] text-slate-500">
-                  Every band includes unlimited logs, staff and devices, plus core modules:
-                  temperatures, cleaning, allergens and basic training records.
-                </p>
-
-                <p className="mt-4 text-[11px] text-slate-400">
-                  Want the full breakdown?{" "}
-                  <Link
-                    href="/pricing"
-                    className="font-semibold text-emerald-300 underline underline-offset-2 hover:text-emerald-200"
-                  >
-                    View detailed pricing
-                  </Link>
-                  .
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ----------------------- WAITLIST (TALLY) ----------------------- */}
-        <section id="waitlist" className="border-t border-white/10 bg-slate-950/95">
-          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
-            <div className="grid gap-8 md:grid-cols-[1.4fr_1fr] md:items-center">
-              <div>
-                <h2 className="text-2xl font-semibold sm:text-3xl">
-                  Be one of the first kitchens using TempTake.
-                </h2>
-                <p className="mt-3 max-w-xl text-sm text-slate-300 sm:text-base">
-                  We’re finishing the first production version now. Tap below and drop your
-                  details to get early access.
-                </p>
-
-                <button
-                  type="button"
-                  {...tallyAttrs}
-                  onClick={() => openTallyWaitlist()}
-                  className="mt-6 inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
-                >
-                  Join early access
-                </button>
-
-                <p className="mt-2 text-[11px] text-slate-400">
-                  Powered by Tally. No spam. We’ll only email you when TempTake is ready.
-                </p>
-
-                <p className="mt-4 text-[11px] text-slate-400">
-                  Want to see how it looks?{" "}
-                  <Link
-                    href="/app"
-                    className="font-semibold text-emerald-300 underline underline-offset-2 hover:text-emerald-200"
-                  >
-                    View the demo dashboard
-                  </Link>
-                  .
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-slate-700 bg-slate-900/80 p-4 text-sm text-slate-200 shadow-lg shadow-black/40">
-                <h3 className="text-sm font-semibold text-slate-50">
-                  Built for UK food safety
-                </h3>
-                <ul className="mt-3 space-y-1.5 text-xs text-slate-300">
-                  <li>• Designed around real EHO expectations.</li>
-                  <li>• Works for independents and multi-site groups.</li>
-                  <li>• Clear, exportable records you can show at any time.</li>
-                  <li>• Voice entry reduces missed checks under pressure.</li>
-                </ul>
-                <p className="mt-3 text-[11px] text-slate-500">
-                  TempTake does not replace your legal responsibilities. It just makes compliance harder to mess up.
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
+        {/* ----------------------- DEMO SOCIAL WALL ----------------------- */}
+        <StagedWall notes={demoNotes} />
 
         {/* ----------------------- FOOTER ----------------------- */}
-    {/* ----------------------- FOOTER ----------------------- */}
-<footer className="border-t border-white/10 bg-slate-950">
-  <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-5 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-    <div>© {new Date().getFullYear()} TempTake. All rights reserved.</div>
+        <footer className="border-t border-white/10 bg-slate-950">
+          <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-5 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+            <div>© {new Date().getFullYear()} TempTake. All rights reserved.</div>
 
-    <div className="flex flex-wrap items-center gap-3">
-      <span>Made for UK food businesses.</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <span>Made for UK food businesses.</span>
 
-      <a href="#guides" className="text-slate-300 hover:text-emerald-300">
-        Guides
-      </a>
+              <a href="#guides" className="text-slate-300 hover:text-emerald-300">
+                Guides
+              </a>
 
-      <button
-        type="button"
-        {...tallyAttrs}
-        onClick={() => openTallyWaitlist()}
-        className="text-slate-300 hover:text-emerald-300"
-      >
-        Join early access
-      </button>
+              <button
+                type="button"
+                {...tallyAttrs}
+                className="text-slate-300 hover:text-emerald-300"
+              >
+                Join early access
+              </button>
 
-      <span className="hidden sm:inline text-slate-700">|</span>
+              <span className="hidden sm:inline text-slate-700">|</span>
 
-      <Link href="/terms" className="text-slate-300 hover:text-emerald-300">
-        Terms
-      </Link>
-      <Link href="/privacy" className="text-slate-300 hover:text-emerald-300">
-        Privacy
-      </Link>
-      <Link href="/cookies" className="text-slate-300 hover:text-emerald-300">
-        Cookies
-      </Link>
-      <Link href="/help" className="text-slate-300 hover:text-emerald-300">
-        Support
-      </Link>
-    </div>
-  </div>
-</footer>
-
-      </main>
-
-      {/* ----------------------- STAFF INTERACTIONS / LEADERBOARD MODAL ----------------------- */}
-      {demoOpen && (
-        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/70 px-4">
-          <div className="relative flex w-full max-w-5xl flex-col gap-4 rounded-3xl border border-emerald-500/50 bg-slate-950 p-4 shadow-[0_0_60px_rgba(16,185,129,0.7)] md:p-6">
-            <button
-              type="button"
-              onClick={() => setDemoOpen(false)}
-              className="absolute right-4 top-3 rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700"
-            >
-              Close
-            </button>
-
-            <div className="flex flex-col gap-5 md:flex-row">
-              {/* LEFT */}
-              <div className="space-y-3 md:w-2/5">
-                <h3 className="text-lg font-semibold text-white">
-                  How your team makes this fun.
-                </h3>
-                <p className="text-sm text-slate-300">
-                  TempTake isn't just boxes to tick. Your team see streaks, friendly
-                  competition and little wins for doing the boring stuff properly.
-                </p>
-                <ul className="space-y-1 text-xs text-slate-300">
-                  <li>• Staff earn streaks for consistent logging.</li>
-                  <li>• Leaderboard shows who&apos;s smashing their checks.</li>
-                  <li>• Shout-outs wall celebrates the good days.</li>
-                  <li>• Managers still see the serious side: what was done and when.</li>
-                </ul>
-
-                <Link
-                  href="/demo-wall"
-                  className="inline-flex items-center justify-center rounded-2xl border border-emerald-500/50 bg-emerald-500/10 px-4 py-2 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
-                >
-                  Open full demo wall
-                </Link>
-              </div>
-
-              {/* RIGHT */}
-              <div className="md:w-3/5">
-                <div className="space-y-4 rounded-2xl border border-amber-300 bg-gradient-to-br from-amber-900 via-slate-950 to-slate-950 p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-300">
-                        Kitchen wall · Demo kitchen
-                      </p>
-                      <p className="text-sm font-semibold text-white">
-                        Team standings (preview)
-                      </p>
-                    </div>
-                    <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-[11px] font-medium text-emerald-200">
-                      For fun · not HR
-                    </span>
-                  </div>
-
-                  <div className="grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-                    <div className="space-y-2 rounded-xl border border-amber-400/40 bg-amber-900/40 p-3">
-                      <div className="mb-1 flex items-center justify-between">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
-                          Top streaks
-                        </p>
-                        <span className="rounded-full bg-black/40 px-2 py-1 text-[10px] text-amber-100">
-                          Example only
-                        </span>
-                      </div>
-
-                      <MiniLeaderRow
-                        rank={1}
-                        initials="JB"
-                        name="Jess (CDP)"
-                        streak="23-day streak"
-                        temps="18 temps · 4 cleans today"
-                        tone="gold"
-                      />
-                      <MiniLeaderRow
-                        rank={2}
-                        initials="SC"
-                        name="Sam (Sous Chef)"
-                        streak="17-day streak"
-                        temps="14 temps · 3 cleans today"
-                        tone="silver"
-                      />
-                      <MiniLeaderRow
-                        rank={3}
-                        initials="MK"
-                        name="Maya (FOH)"
-                        streak="9-day streak"
-                        temps="Allergen checks every service"
-                        tone="bronze"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">
-                        Shout-outs wall (demo)
-                      </p>
-                      <div className="space-y-3">
-                        <MiniStickyNote
-                          initials="JB"
-                          bg="bg-yellow-200"
-                          message="Adjusted temp on double fridge. Zero drama on a fully booked Saturday 🔥"
-                        />
-                        <MiniStickyNote
-                          initials="LF"
-                          bg="bg-pink-200"
-                          message="Stayed late to deep clean pass & walk-in. EHO would cry with joy."
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <Link href="/terms" className="text-slate-300 hover:text-emerald-300">
+                Terms
+              </Link>
+              <Link href="/privacy" className="text-slate-300 hover:text-emerald-300">
+                Privacy
+              </Link>
+              <Link href="/cookies" className="text-slate-300 hover:text-emerald-300">
+                Cookies
+              </Link>
+              <Link href="/help" className="text-slate-300 hover:text-emerald-300">
+                Support
+              </Link>
             </div>
-
-            <p className="text-[11px] text-slate-500">
-              This is a non-functional preview. In the real app, this leaderboard and wall
-              update automatically as your team complete their checks.
-            </p>
           </div>
-        </div>
-      )}
+        </footer>
+      </main>
     </div>
   );
 }
 
-/* ----------------------- APP STORE STYLE BLOCKS ----------------------- */
+/* ----------------------- FAQ SECTION ----------------------- */
 
-function AppStoreFeatureBlocks() {
+function FAQSection() {
+  const faqs = [
+    {
+      q: "Do I still need Safer Food Better Business (SFBB)?",
+      a: "SFBB is still the recognised system in many UK businesses. TempTake helps you run the daily checks and keep records in a way that aligns with SFBB expectations, but it doesn’t replace your legal responsibilities.",
+    },
+    {
+      q: "What does an EHO expect to see during an inspection?",
+      a: "Consistent records (initials + timestamps), checks done at sensible intervals, evidence of corrective action when something fails, and a system your staff actually follow.",
+    },
+    {
+      q: "What happens if a temperature fails?",
+      a: "TempTake flags it and you record a corrective action (and optionally a re-check temp). That creates an audit trail instead of a crossed-out number on paper.",
+    },
+    {
+      q: "Can I export logs if I need to show them?",
+      a: "Yes. The whole point is that you can show inspection-ready records quickly without hunting through binders.",
+    },
+    {
+      q: "Can staff log checks without a manager?",
+      a: "Yes. Staff can log temps/cleaning with initials. Managers get visibility of what’s missing and what needs attention.",
+    },
+    {
+      q: "Does it work for multi-site groups?",
+      a: "Yes. Pricing is banded by location count and the app is designed to scale from one site to multiple.",
+    },
+  ];
+
   return (
-    <section className="border-t border-white/10 bg-slate-950">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 py-12 md:py-16">
-        {/* Voice block */}
-        <div className="flex flex-col items-center gap-8 md:flex-row">
-          <div className="md:w-1/2">
-            <div className="relative mx-auto aspect-[4/3] w-full max-w-md overflow-hidden rounded-3xl border border-emerald-400/40 bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-900/60 shadow-[0_0_45px_rgba(16,185,129,0.45)]">
-              <div className="absolute inset-4 rounded-2xl border border-white/10 bg-slate-950/70 p-3">
-                <div className="mb-3 flex items-center justify-between text-[11px] text-slate-300">
-                  <span className="rounded-full bg-slate-800 px-2 py-1">Voice entry</span>
-                  <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-emerald-200">
-                    Logged
-                  </span>
-                </div>
-                <div className="space-y-2 text-[11px]">
-                  <div className="rounded-lg bg-slate-800/60 px-2 py-2 text-slate-200">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-400">
-                      You said
-                    </div>
-                    <div className="mt-1 font-medium text-slate-100">
-                      “Walk-in fridge 3.4 degrees, initials WS”
-                    </div>
-                  </div>
-                  <FakeRow label="Walk-in fridge" value="3.4°C · WS · 08:15" />
-                  <FakeRow label="Under-counter fridge" value="4.2°C · JB · 08:18" />
-                  <FakeRow label="Freezer 1" value="-18.6°C · SC · 08:21" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3 md:w-1/2">
-            <h2 className="text-2xl font-semibold text-white">
-              Voice entry for real kitchens.
-            </h2>
-            <p className="text-sm text-slate-300 sm:text-base">
-              When service is chaos and hands are full, you still need clean records.
-              Voice entry lets staff log checks faster without dodgy shortcuts.
-            </p>
-            <ul className="space-y-1.5 text-sm text-slate-300">
-              <li>• Faster logging during service.</li>
-              <li>• Still stores initials + timestamps.</li>
-              <li>• Reduces “we forgot” moments.</li>
-            </ul>
-          </div>
+    <section id="faq" className="border-t border-white/10 bg-slate-950/90">
+      <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
+        <div className="mb-6 max-w-3xl">
+          <h2 className="text-2xl font-semibold sm:text-3xl">
+            FAQs kitchens actually ask.
+            <span className="text-emerald-300"> Not marketing fluff.</span>
+          </h2>
+          <p className="mt-2 text-sm text-slate-300 sm:text-base">
+            Clear answers to the stuff that matters when you’re trying to stay compliant and keep service moving.
+          </p>
         </div>
 
-        {/* Block 1 */}
-        <div className="flex flex-col items-center gap-8 md:flex-row">
-          <div className="md:w-1/2">
-            <div className="relative mx-auto aspect-[4/3] w-full max-w-md overflow-hidden rounded-3xl border border-emerald-400/40 bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-900/60 shadow-[0_0_45px_rgba(16,185,129,0.45)]">
-              <div className="absolute inset-4 rounded-2xl border border-white/10 bg-slate-950/70 p-3">
-                <div className="mb-3 flex items-center justify-between text-[11px] text-slate-300">
-                  <span className="rounded-full bg-slate-800 px-2 py-1">Fridges</span>
-                  <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-emerald-200">
-                    All in range
-                  </span>
-                </div>
-                <div className="space-y-2 text-[11px]">
-                  <FakeRow label="Walk-in fridge" value="3.4°C" />
-                  <FakeRow label="Under-counter fridge" value="4.2°C" />
-                  <FakeRow label="Freezer 1" value="-18.6°C" />
-                  <FakeRow label="Dessert fridge" value="5.0°C" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3 md:w-1/2">
-            <h2 className="text-2xl font-semibold text-white">
-              Temperatures in one clean view.
-            </h2>
-            <p className="text-sm text-slate-300 sm:text-base">
-              Every fridge, freezer and hot hold point laid out clearly. Your team see
-              exactly what needs logging and when, and you see what&apos;s been missed.
-            </p>
-            <ul className="space-y-1.5 text-sm text-slate-300">
-              <li>• Built-in pass / fail ranges for common equipment.</li>
-              <li>• Clear initials and timestamps on every log.</li>
-              <li>• Designed for busy kitchens, one-handed.</li>
-            </ul>
-          </div>
-        </div>
-
-        {/* Block 2 */}
-        <div className="flex flex-col-reverse items-center gap-8 md:flex-row">
-          <div className="space-y-3 md:w-1/2">
-            <h2 className="text-2xl font-semibold text-white">
-              Cleaning rota that actually gets done.
-            </h2>
-            <p className="text-sm text-slate-300 sm:text-base">
-              Instead of a laminated sheet nobody reads, TempTake puts daily, weekly and
-              monthly tasks directly in front of your team.
-            </p>
-            <ul className="space-y-1.5 text-sm text-slate-300">
-              <li>• Simple indicator of what tasks need completing when.</li>
-              <li>• Staff incentivised upon completing tasks with points.</li>
-              <li>• Swipe to complete with initials and time.</li>
-              <li>• Managers see overdue tasks instantly.</li>
-            </ul>
-          </div>
-
-          <div className="md:w-1/2">
-            <div className="relative mx-auto aspect-[4/3] w-full max-w-md overflow-hidden rounded-3xl border border-sky-400/40 bg-gradient-to-br from-slate-900 via-slate-800 to-sky-900/60 shadow-[0_0_45px_rgba(56,189,248,0.45)]">
-              <div className="absolute inset-4 rounded-2xl border border-white/10 bg-slate-950/80 p-3 text-[11px] text-slate-200">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-300">
-                  Cleaning rota
-                </p>
-                <FakeTask label="Pass through dishwasher area" done />
-                <FakeTask label="Deep clean grill & flat top" />
-                <FakeTask label="Sanitise walk-in handles" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Block 3 */}
-        <div className="flex flex-col items-center gap-8 md:flex-row">
-          <div className="md:w-1/2">
-            <div className="relative mx-auto aspect-[4/3] w-full max-w-md overflow-hidden rounded-3xl border border-amber-400/40 bg-gradient-to-br from-slate-900 via-slate-800 to-amber-900/60 shadow-[0_0_45px_rgba(251,191,36,0.45)]">
-              <div className="absolute inset-4 rounded-2xl border border-white/10 bg-slate-950/80 p-3 text-[11px] text-slate-200">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-300">
-                  Allergen & training
-                </p>
-                <p className="mb-1 text-[11px] text-emerald-200">
-                  • Allergen matrix: in date
-                </p>
-                <p className="mb-1 text-[11px] text-amber-200">
-                  • FOH briefing: due in 7 days
-                </p>
-                <p className="text-[11px] text-rose-200">
-                  • 1 staff training file overdue
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3 md:w-1/2">
-            <h2 className="text-2xl font-semibold text-white">
-              Allergen & training in one glance.
-            </h2>
-            <p className="text-sm text-slate-300 sm:text-base">
-              No more wondering when you last updated the allergen matrix, or whether
-              everyone&apos;s Level 2 is still in date.
-            </p>
-            <ul className="space-y-1.5 text-sm text-slate-300">
-              <li>• Keep allergy info up to date and clear.</li>
-              <li>• Track allergen matrix reviews by date.</li>
-              <li>• Keep staff training records together and get reminders.</li>
-              <li>• Show an EHO you have a system, not chaos.</li>
-            </ul>
-          </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {faqs.map((f) => (
+            <details
+              key={f.q}
+              className="group rounded-2xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg shadow-black/30 open:bg-slate-900/80"
+            >
+              <summary className="cursor-pointer list-none text-sm font-semibold text-slate-50">
+                <span className="inline-flex items-start justify-between gap-3">
+                  <span>{f.q}</span>
+                  <span className="text-slate-400 group-open:text-emerald-300">+</span>
+                </span>
+              </summary>
+              <p className="mt-3 text-sm text-slate-300">{f.a}</p>
+            </details>
+          ))}
         </div>
       </div>
     </section>
   );
 }
 
-/* ----------------------- NEON GLOW WALL COMPONENT ----------------------- */
+/* ----------------------- DEMO SOCIAL WALL ----------------------- */
 
-function StagedWall() {
+function StagedWall({ notes }: { notes: Array<{ initials: string; message: string }> }) {
   return (
     <section className="border-t border-white/10 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 py-24">
       <div className="mx-auto mb-14 max-w-5xl px-4 text-center">
         <h2 className="mb-4 text-4xl font-extrabold text-white md:text-6xl">
-          Chefs are already losing their minds
+          Demo reactions wall
         </h2>
         <p className="text-lg text-slate-300 md:text-xl">
-          (Real reactions from the first kitchens testing TempTake)
+          Example only (placeholder quotes until beta kitchens give real ones).
         </p>
       </div>
 
       <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-4 md:grid-cols-2 lg:grid-cols-3">
-        {fakeNotes.map((note, i) => (
+        {notes.map((note, i) => (
           <div
             key={i}
             className="relative rounded-3xl border border-emerald-400/60 bg-slate-950/80 p-8 shadow-[0_0_40px_rgba(34,197,94,0.45)] transition-all duration-300 hover:-rotate-1 hover:scale-105 md:p-9"
@@ -1027,19 +533,12 @@ function StagedWall() {
             <div className="mb-6 flex items-center justify-between">
               <div className="text-4xl font-black text-emerald-300">{note.initials}</div>
               <span className="rounded-full border border-emerald-400/70 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
-                Chef reaction
+                Demo quote
               </span>
             </div>
             <p className="whitespace-pre-wrap text-xl leading-relaxed text-slate-100">
               “{note.message}”
             </p>
-            <div className="mt-8 flex justify-end gap-1 text-2xl">
-              <span>🔥</span>
-              <span>🔥</span>
-              <span>🔥</span>
-              <span>🔥</span>
-              <span>🔥</span>
-            </div>
 
             <div className="pointer-events-none absolute -inset-px rounded-3xl border border-emerald-400/20 blur-[2px]" />
           </div>
@@ -1048,7 +547,7 @@ function StagedWall() {
 
       <div className="mt-16 text-center">
         <p className="text-xl font-semibold text-emerald-200 md:text-2xl">
-          Be the next name on this wall.
+          Get real quotes by onboarding 5 beta kitchens.
         </p>
       </div>
     </section>
@@ -1137,122 +636,29 @@ function FeatureCard({
   );
 }
 
-function StepCard({
-  step,
-  title,
-  body,
-}: {
-  step: string;
-  title: string;
-  body: string;
-}) {
-  return (
-    <li className="flex flex-col rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm shadow-lg shadow-black/40">
-      <div className="flex items-center gap-2 text-xs text-slate-400">
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-[11px] font-semibold text-emerald-300">
-          ✓
-        </span>
-        <span className="uppercase tracking-[0.15em]">{step}</span>
-      </div>
-      <h3 className="mt-3 text-base font-semibold text-slate-50">{title}</h3>
-      <p className="mt-2 text-xs text-slate-300 sm:text-sm">{body}</p>
-    </li>
-  );
-}
-
-/* ---- App-store fake blocks bits ---- */
-
-function FakeRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-lg bg-slate-800/60 px-2 py-1.5">
-      <span className="text-[11px] text-slate-200">{label}</span>
-      <span className="text-[11px] font-semibold text-emerald-300">{value}</span>
-    </div>
-  );
-}
-
-function FakeTask({ label, done }: { label: string; done?: boolean }) {
-  return (
-    <div className="flex items-center justify-between rounded-lg bg-slate-900/70 px-2 py-1.5">
-      <span className="text-[11px] text-slate-200">{label}</span>
-      <span className={"h-2 w-2 rounded-full " + (done ? "bg-emerald-400" : "bg-slate-500")} />
-    </div>
-  );
-}
-
-/* ---- Mini leaderboard + shout-out components for modal ---- */
-
-function MiniLeaderRow({
-  rank,
-  initials,
-  name,
-  streak,
-  temps,
+function AuditRow({
+  label,
+  meta,
   tone,
 }: {
-  rank: number;
-  initials: string;
-  name: string;
-  streak: string;
-  temps: string;
-  tone: "gold" | "silver" | "bronze";
+  label: string;
+  meta: string;
+  tone: "ok" | "bad";
 }) {
   const badge =
-    tone === "gold"
-      ? "bg-amber-400 text-amber-950"
-      : tone === "silver"
-      ? "bg-slate-200 text-slate-900"
-      : "bg-orange-400 text-orange-950";
+    tone === "ok"
+      ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/20"
+      : "bg-rose-500/15 text-rose-200 border-rose-500/20";
 
   return (
-    <div className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2 text-[11px] text-slate-200">
-      <div className="flex items-center gap-2">
-        <span
-          className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${badge}`}
-        >
-          {rank}
-        </span>
-        <div>
-          <div className="flex items-center gap-1">
-            <span className="rounded-full bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold">
-              {initials}
-            </span>
-            <span className="font-medium">{name}</span>
-          </div>
-          <p className="text-[10px] text-slate-400">{streak}</p>
-        </div>
+    <div className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/40 px-3 py-2">
+      <div>
+        <div className="text-sm font-semibold text-slate-100">{label}</div>
+        <div className="text-[11px] text-slate-400">{meta}</div>
       </div>
-      <span className="text-[10px] text-emerald-200">{temps}</span>
-    </div>
-  );
-}
-
-function MiniStickyNote({
-  initials,
-  bg,
-  message,
-}: {
-  initials: string;
-  bg: string;
-  message: string;
-}) {
-  return (
-    <div
-      className={`relative rounded-3xl p-4 text-[11px] text-slate-900 shadow-[0_12px_24px_rgba(0,0,0,0.35)] ${bg}`}
-      style={{ transform: "rotate(-2deg)" }}
-    >
-      <div className="mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-[11px] font-bold text-white">
-            {initials}
-          </span>
-          <span className="text-[10px] uppercase tracking-[0.16em] text-slate-700">
-            Shout-out
-          </span>
-        </div>
-        <span className="text-[10px] text-slate-700/70">Demo note</span>
-      </div>
-      <p className="leading-relaxed">{message}</p>
+      <span className={cls("rounded-full border px-2 py-1 text-[10px] font-semibold", badge)}>
+        {tone === "ok" ? "In range" : "Fail"}
+      </span>
     </div>
   );
 }
