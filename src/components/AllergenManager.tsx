@@ -666,7 +666,12 @@ export default function AllergenManager() {
     if (existing) {
       const { error: updErr } = await supabase
         .from("allergen_review")
-        .update({ last_reviewed: today, interval_days: newInterval })
+       .update({
+  last_reviewed: today,
+  interval_days: newInterval,
+  reviewer,
+})
+
         .eq("org_id", id);
 
       if (updErr) {
@@ -675,10 +680,12 @@ export default function AllergenManager() {
       }
     } else {
       const { error: insErr } = await supabase.from("allergen_review").insert({
-        org_id: id,
-        last_reviewed: today,
-        interval_days: newInterval,
-      });
+  org_id: id,
+  last_reviewed: today,
+  interval_days: newInterval,
+  reviewer,
+})
+
 
       if (insErr) {
         alert(`Failed to save review: ${insErr.message}`);
