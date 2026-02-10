@@ -8,6 +8,8 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import AllergenChangeTimeline from "@/components/AllergenChangeTimeline";
+import { useAuth } from "@/components/AuthProvider";
+
 
 /* ---------- Types & Constants ---------- */
 type AllergenKey =
@@ -186,6 +188,7 @@ async function logAllergenChange(params: {
 /* ---------- Component ---------- */
 export default function AllergenManager() {
   const [hydrated, setHydrated] = useState(false);
+const { user, ready } = useAuth();
 
   // Cloud context
   const [orgId, setOrgId] = useState<string | null>(null);
@@ -207,51 +210,51 @@ export default function AllergenManager() {
   const [qFlags, setQFlags] = useState<Flags>(emptyFlags());
 
   /* ---------- boot ---------- */
-  useEffect(() => {
-    setHydrated(true);
-    (async () => {
-      try {
-        const id = await getActiveOrgIdClient();
-        setOrgId(id ?? null);
+ /* ---------- permissions ---------- */
+useEffect(() => {
+  let cancelled = false;
 
-        // determine permissions via team_members
-        try {
-          const userRes = await supabase.auth.getUser();
-          const email = userRes.data.user?.email?.toLowerCase() ?? null;
-          if (!id || !email) {
-            setCanManage(false);
-          } else {
-            const { data, error } = await supabase
-              .from("team_members")
-              .select("role,email")
-              .eq("org_id", id)
-              .eq("email", email)
-              .maybeSingle();
-            if (error) {
-              setCanManage(false);
-            } else {
-              const role = (data?.role ?? "").toLowerCase();
-              setCanManage(
-                role === "owner" || role === "manager" || role === "admin"
-              );
-            }
-          }
-        } catch {
-          setCanManage(false);
-        }
+  (async () => {
+    if (!ready || !user || !orgId) {
+      if (!cancelled) setCanManage(false);
+      return;
+    }
 
-        if (!id) {
-          primeLocal();
-          return;
-        }
-        await Promise.all([loadFromSupabase(id), loadReviewFromSupabase(id)]);
-      } catch (e: any) {
-        setLoadErr(e?.message ?? "Failed to load allergens.");
-        primeLocal();
+    try {
+      const email = user.email?.toLowerCase() ?? null;
+      if (!email) {
+        setCanManage(false);
+        return;
       }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
+      const { data, error } = await supabase
+        .from("team_members")
+        .select("role,email")
+        .eq("org_id", orgId)
+        .eq("email", email)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error || !data) {
+        setCanManage(false);
+        return;
+      }
+
+      const role = (data.role ?? "").toLowerCase();
+      setCanManage(
+        role === "owner" || role === "manager" || role === "admin"
+      );
+    } catch {
+      if (!cancelled) setCanManage(false);
+    }
+  })();
+
+  return () => {
+    cancelled = true;
+  };
+}, [ready, user, orgId]);
+
 
   function primeLocal() {
     try {
