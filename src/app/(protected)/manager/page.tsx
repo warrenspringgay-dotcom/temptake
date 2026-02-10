@@ -127,6 +127,16 @@ type AllergenChangeLogRow = {
   staff_initials: string | null;
 };
 
+/* ✅ NEW: allergen review history row type */
+type AllergenReviewHistoryRow = {
+  id: string;
+  reviewed_on: string | null; // ISO/date
+  reviewer: string | null;
+  interval_days: number | null;
+  next_due: string | null;
+  days_until: number | null;
+};
+
 const nowISO = new Date().toISOString().slice(0, 10);
 
 function safeDate(val: any): Date | null {
@@ -294,6 +304,46 @@ function isDueOn(t: CleaningTask, dmy: string) {
   if (t.frequency === "daily") return true;
   if (t.frequency === "weekly") return t.weekday === getDow1to7(dmy);
   return t.month_day === getDom(dmy);
+}
+
+/* ✅ NEW: map allergen review rows into UI-ready form */
+function mapAllergenReviews(rows: any[]): AllergenReviewHistoryRow[] {
+  const today0 = new Date();
+  today0.setHours(0, 0, 0, 0);
+
+  return (rows ?? []).map((r: any) => {
+    const reviewed = safeDate(r.reviewed_on);
+
+    const intervalRaw = r.interval_days;
+    const interval =
+      intervalRaw == null || intervalRaw === "" ? null : Number(intervalRaw);
+
+    let nextDue: Date | null = null;
+    if (reviewed && interval && Number.isFinite(interval) && interval > 0) {
+      nextDue = new Date(reviewed.getTime() + interval * 86400000);
+    }
+
+    const next0 = nextDue ? new Date(nextDue) : null;
+    if (next0) next0.setHours(0, 0, 0, 0);
+
+    const days_until =
+      next0 != null
+        ? Math.round((next0.getTime() - today0.getTime()) / 86400000)
+        : null;
+
+    return {
+      id: String(r.id),
+      reviewed_on: reviewed
+        ? reviewed.toISOString()
+        : r.reviewed_on
+        ? String(r.reviewed_on)
+        : null,
+      reviewer: r.reviewer ?? null,
+      interval_days: interval,
+      next_due: nextDue ? nextDue.toISOString() : null,
+      days_until,
+    };
+  });
 }
 
 /* ---------- KPI Tile ---------- */
@@ -486,6 +536,12 @@ export default function ManagerDashboardPage() {
   const [allergenLogs, setAllergenLogs] = useState<AllergenChangeLogRow[]>([]);
   const [showAllAllergenLogs, setShowAllAllergenLogs] = useState(false);
 
+  /* ✅ NEW: allergen review history state */
+  const [allergenReviewHistory, setAllergenReviewHistory] = useState<
+    AllergenReviewHistoryRow[]
+  >([]);
+  const [showAllAllergenReviews, setShowAllAllergenReviews] = useState(false);
+
   const lastStaffAssessKeyRef = useRef<string>("");
 
   /* ===== Actions dropdown (top bar) ===== */
@@ -592,77 +648,77 @@ export default function ManagerDashboardPage() {
     }
   }
 
- async function loadLoggedInManager() {
-  if (!orgId) return;
+  async function loadLoggedInManager() {
+    if (!orgId) return;
 
-  try {
-    const {
-      data: { user },
-      error: userErr,
-    } = await supabase.auth.getUser();
+    try {
+      const {
+        data: { user },
+        error: userErr,
+      } = await supabase.auth.getUser();
 
-    if (userErr || !user) {
-      setManagerTeamMember(null);
-      return;
-    }
+      if (userErr || !user) {
+        setManagerTeamMember(null);
+        return;
+      }
 
-    // 1) Primary: already linked by user_id
-    const byUser = await supabase
-      .from("team_members")
-      .select("id,name,initials,role,active,user_id,email")
-      .eq("org_id", orgId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (byUser.error) throw byUser.error;
-
-    if (byUser.data) {
-      setManagerTeamMember(byUser.data as any);
-      return;
-    }
-
-    // 2) Fallback: try match by email (one-time link)
-    const email = (user.email ?? "").trim().toLowerCase();
-    if (!email) {
-      setManagerTeamMember(null);
-      return;
-    }
-
-    const byEmail = await supabase
-      .from("team_members")
-      .select("id,name,initials,role,active,user_id,email")
-      .eq("org_id", orgId)
-      .ilike("email", email)
-      .maybeSingle();
-
-    if (byEmail.error) throw byEmail.error;
-
-    if (!byEmail.data) {
-      setManagerTeamMember(null);
-      return;
-    }
-
-    // 3) If found but not linked, link it now
-    if (!byEmail.data.user_id) {
-      const upd = await supabase
+      // 1) Primary: already linked by user_id
+      const byUser = await supabase
         .from("team_members")
-        .update({ user_id: user.id })
+        .select("id,name,initials,role,active,user_id,email")
         .eq("org_id", orgId)
-        .eq("id", byEmail.data.id)
-        .is("user_id", null); // prevent overwriting existing links
+        .eq("user_id", user.id)
+        .maybeSingle();
 
-      if (upd.error) throw upd.error;
+      if (byUser.error) throw byUser.error;
+
+      if (byUser.data) {
+        setManagerTeamMember(byUser.data as any);
+        return;
+      }
+
+      // 2) Fallback: try match by email (one-time link)
+      const email = (user.email ?? "").trim().toLowerCase();
+      if (!email) {
+        setManagerTeamMember(null);
+        return;
+      }
+
+      const byEmail = await supabase
+        .from("team_members")
+        .select("id,name,initials,role,active,user_id,email")
+        .eq("org_id", orgId)
+        .ilike("email", email)
+        .maybeSingle();
+
+      if (byEmail.error) throw byEmail.error;
+
+      if (!byEmail.data) {
+        setManagerTeamMember(null);
+        return;
+      }
+
+      // 3) If found but not linked, link it now
+      if (!byEmail.data.user_id) {
+        const upd = await supabase
+          .from("team_members")
+          .update({ user_id: user.id })
+          .eq("org_id", orgId)
+          .eq("id", byEmail.data.id)
+          .is("user_id", null); // prevent overwriting existing links
+
+        if (upd.error) throw upd.error;
+      }
+
+      setManagerTeamMember({
+        ...byEmail.data,
+        user_id: user.id,
+      } as any);
+    } catch (e) {
+      console.error(e);
+      setManagerTeamMember(null);
     }
-
-    setManagerTeamMember({
-      ...byEmail.data,
-      user_id: user.id,
-    } as any);
-  } catch (e) {
-    console.error(e);
-    setManagerTeamMember(null);
   }
-}
 
   async function loadQcReviews() {
     if (!orgId || !locationId) return;
@@ -886,6 +942,7 @@ export default function ManagerDashboardPage() {
         trainingsRes,
         signoffsDayRes,
         allergenLogsRes,
+        allergenReviewsRes, // ✅ NEW
       ] = await Promise.all([
         supabase
           .from("food_temp_logs")
@@ -982,6 +1039,16 @@ export default function ManagerDashboardPage() {
           .eq("location_id", locationId)
           .order("created_at", { ascending: false })
           .limit(500),
+
+        /* ✅ NEW: allergen review history (same table used in Reports) */
+        supabase
+          .from("allergen_review_log")
+          .select("id, reviewed_on, reviewer, interval_days, created_at")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .order("reviewed_on", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(500),
       ]);
 
       const firstErr =
@@ -995,7 +1062,8 @@ export default function ManagerDashboardPage() {
         incidents7dRes.error ||
         trainingsRes.error ||
         signoffsDayRes.error ||
-        allergenLogsRes.error;
+        allergenLogsRes.error ||
+        allergenReviewsRes.error; // ✅ NEW
 
       if (firstErr) throw firstErr;
 
@@ -1114,12 +1182,7 @@ export default function ManagerDashboardPage() {
         })
       );
 
-      const tempFails = await fetchTempFailuresUnifiedForDay(
-        orgId,
-        locationId,
-        d0,
-        d1
-      );
+      const tempFails = await fetchTempFailuresUnifiedForDay(orgId, locationId, d0, d1);
       setTempFailsToday(tempFails);
 
       const signoffRows: any[] = (signoffsDayRes.data as any[]) ?? [];
@@ -1148,6 +1211,11 @@ export default function ManagerDashboardPage() {
           staff_initials: r.staff_initials ?? null,
         }))
       );
+
+      /* ✅ NEW: allergen review history set */
+      const allergenReviewRows: any[] = (allergenReviewsRes.data as any[]) ?? [];
+      setAllergenReviewHistory(mapAllergenReviews(allergenReviewRows));
+      setShowAllAllergenReviews(false);
     } catch (e: any) {
       console.error(e);
       setErr(e?.message ?? "Failed to load manager dashboard.");
@@ -1189,6 +1257,11 @@ export default function ManagerDashboardPage() {
   const allergenLogsToRender = showAllAllergenLogs
     ? allergenLogs
     : allergenLogs.slice(0, 10);
+
+  /* ✅ NEW */
+  const allergenReviewsToRender = showAllAllergenReviews
+    ? allergenReviewHistory
+    : allergenReviewHistory.slice(0, 10);
 
   const cleaningAllDone =
     cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
@@ -1841,10 +1914,10 @@ export default function ManagerDashboardPage() {
                       >
                         <td className="px-3 py-2 whitespace-nowrap">
                           {r.created_at
-                            ? new Date(r.created_at).toLocaleTimeString(
-                                "en-GB",
-                                { hour: "2-digit", minute: "2-digit" }
-                              )
+                            ? new Date(r.created_at).toLocaleTimeString("en-GB", {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })
                             : "—"}
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
@@ -2092,6 +2165,91 @@ export default function ManagerDashboardPage() {
           total={qcReviews.length}
           showingAll={showAllQc}
           onToggle={() => setShowAllQc((v) => !v)}
+        />
+      </section>
+
+      {/* ✅ NEW: Allergen review history (placed near allergen changes table) */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+            Allergens
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Allergen review history (this location)
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Reviewed</th>
+                <th className="px-3 py-2">Reviewer</th>
+                <th className="px-3 py-2">Interval</th>
+                <th className="px-3 py-2">Next due</th>
+                <th className="px-3 py-2">Days until</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allergenReviewsToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-3 py-4 text-center text-slate-500">
+                    No allergen reviews logged.
+                  </td>
+                </tr>
+              ) : (
+                allergenReviewsToRender.map((r) => {
+                  const dueSoon =
+                    r.days_until != null && r.days_until <= 7 && r.days_until >= 0;
+                  const overdue = r.days_until != null && r.days_until < 0;
+
+                  const pill =
+                    overdue
+                      ? "bg-red-100 text-red-800"
+                      : dueSoon
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-emerald-100 text-emerald-800";
+
+                  return (
+                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {formatDDMMYYYY(r.reviewed_on)}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {r.reviewer?.toUpperCase() ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {r.interval_days != null ? `${r.interval_days} days` : "—"}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {formatDDMMYYYY(r.next_due)}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {r.days_until == null ? (
+                          "—"
+                        ) : (
+                          <span
+                            className={cls(
+                              "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                              pill
+                            )}
+                          >
+                            {r.days_until}d
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle
+          total={allergenReviewHistory.length}
+          showingAll={showAllAllergenReviews}
+          onToggle={() => setShowAllAllergenReviews((v) => !v)}
         />
       </section>
 
@@ -2362,9 +2520,7 @@ export default function ManagerDashboardPage() {
                   icon="🌡"
                   tone="neutral"
                   value={staffAssess?.tempLogs ?? "—"}
-                  sub={
-                    staffAssess ? `Recorded in last ${staffAssess.rangeDays}d` : "—"
-                  }
+                  sub={staffAssess ? `Recorded in last ${staffAssess.rangeDays}d` : "—"}
                 />
                 <KpiTile
                   title="Temp fails"
@@ -2391,9 +2547,7 @@ export default function ManagerDashboardPage() {
                         : "—"
                       : "—"
                   }
-                  sub={
-                    staffAssess ? `Based on ${staffAssess.qcCount30d} reviews` : "—"
-                  }
+                  sub={staffAssess ? `Based on ${staffAssess.qcCount30d} reviews` : "—"}
                 />
                 <KpiTile
                   title="Staff"
