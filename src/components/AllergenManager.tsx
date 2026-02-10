@@ -171,7 +171,6 @@ async function resolveCanManage(params: {
   email: string | null;
 }): Promise<boolean> {
   // If orgId is missing, we allow local editing when signed in.
-  // Otherwise the whole page becomes unusable for no good reason.
   if (!params.orgId) return !!(params.userId || params.email);
 
   const orgId = params.orgId;
@@ -185,7 +184,6 @@ async function resolveCanManage(params: {
         .from("team_members")
         .select("role")
         .eq("org_id", orgId)
-       
         .eq("user_id", userId)
         .maybeSingle();
 
@@ -398,16 +396,17 @@ export default function AllergenManager() {
 
     const nextState: ReviewInfo = { intervalDays: 30 };
 
+    // ✅ include reviewer here, so UI can display it and cache it
     const { data: settings, error: settingsErr } = await supabase
       .from("allergen_review")
-      .select("last_reviewed, interval_days")
+      .select("last_reviewed, interval_days, reviewer")
       .eq("org_id", id)
       .maybeSingle();
 
     if (!settingsErr && settings) {
       if (settings.last_reviewed) nextState.lastReviewedOn = settings.last_reviewed;
-      if (typeof settings.interval_days === "number")
-        nextState.intervalDays = settings.interval_days;
+      if (typeof settings.interval_days === "number") nextState.intervalDays = settings.interval_days;
+      if (settings.reviewer) nextState.lastReviewedBy = settings.reviewer;
     }
 
     const { data: logRow, error: logErr } = await supabase
@@ -419,10 +418,10 @@ export default function AllergenManager() {
       .maybeSingle();
 
     if (!logErr && logRow) {
-      if (!nextState.lastReviewedOn && logRow.reviewed_on)
-        nextState.lastReviewedOn = logRow.reviewed_on;
-      if (typeof logRow.interval_days === "number" && !settings?.interval_days)
-        nextState.intervalDays = logRow.interval_days;
+      if (!nextState.lastReviewedOn && logRow.reviewed_on) nextState.lastReviewedOn = logRow.reviewed_on;
+      if (typeof logRow.interval_days === "number" && !settings?.interval_days) nextState.intervalDays = logRow.interval_days;
+
+      // Prefer log reviewer if present, otherwise keep settings reviewer
       if (logRow.reviewer) nextState.lastReviewedBy = logRow.reviewer;
     }
 
@@ -618,6 +617,7 @@ export default function AllergenManager() {
     const id = orgId ?? (await getActiveOrgIdClient().catch(() => null));
     const today = todayISO();
 
+    // ✅ reviewer: initials > name > email
     let reviewer = "Manager";
     try {
       const userRes = await supabase.auth.getUser();
@@ -626,12 +626,14 @@ export default function AllergenManager() {
       if (email && id) {
         const { data: tm } = await supabase
           .from("team_members")
-          .select("name")
+          .select("name, initials")
           .eq("org_id", id)
           .ilike("email", email)
           .maybeSingle();
 
-        reviewer = tm?.name ?? email ?? reviewer;
+        const ini = (tm?.initials ?? "").trim().toUpperCase();
+        const name = (tm?.name ?? "").trim();
+        reviewer = ini || name || email || reviewer;
       } else if (email) {
         reviewer = email;
       }
@@ -666,12 +668,11 @@ export default function AllergenManager() {
     if (existing) {
       const { error: updErr } = await supabase
         .from("allergen_review")
-       .update({
-  last_reviewed: today,
-  interval_days: newInterval,
-  reviewer,
-})
-
+        .update({
+          last_reviewed: today,
+          interval_days: newInterval,
+          reviewer, // ✅ persist
+        })
         .eq("org_id", id);
 
       if (updErr) {
@@ -680,12 +681,11 @@ export default function AllergenManager() {
       }
     } else {
       const { error: insErr } = await supabase.from("allergen_review").insert({
-  org_id: id,
-  last_reviewed: today,
-  interval_days: newInterval,
-  reviewer,
-})
-
+        org_id: id,
+        last_reviewed: today,
+        interval_days: newInterval,
+        reviewer, // ✅ persist
+      });
 
       if (insErr) {
         alert(`Failed to save review: ${insErr.message}`);
@@ -696,7 +696,7 @@ export default function AllergenManager() {
     const { error: logErr } = await supabase.from("allergen_review_log").insert({
       org_id: id,
       reviewed_on: today,
-      reviewer,
+      reviewer, // ✅ persist
       interval_days: newInterval,
       notes: null,
     });
@@ -879,7 +879,9 @@ export default function AllergenManager() {
 
         {hydrated && selectedAllergenKeys.length > 0 && (
           <div className="mt-4">
-            <div className="mb-2 text-sm font-semibold text-slate-900">Safe foods ({safeFoods.length})</div>
+            <div className="mb-2 text-sm font-semibold text-slate-900">
+              Safe foods ({safeFoods.length})
+            </div>
             <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white/80 backdrop-blur-sm">
               <table className="w-full min-w-[640px] text-sm">
                 <thead className="bg-slate-50/80">
@@ -977,11 +979,7 @@ export default function AllergenManager() {
                       <ActionMenu
                         items={[
                           { label: "Edit", onClick: () => openEdit(row) },
-                          {
-                            label: "Delete",
-                            onClick: () => void deleteItem(row.id),
-                            variant: "danger",
-                          },
+                          { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
                         ]}
                       />
                     )}
@@ -1001,10 +999,7 @@ export default function AllergenManager() {
         ) : (
           <div className="space-y-3">
             {rows.map((row) => (
-              <div
-                key={row.id}
-                className="rounded-xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm"
-              >
+              <div key={row.id} className="rounded-xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm">
                 <div className="mb-2 flex items-start justify-between gap-2">
                   <div>
                     <div className="font-medium text-slate-900">{row.item}</div>
@@ -1014,11 +1009,7 @@ export default function AllergenManager() {
                     <ActionMenu
                       items={[
                         { label: "Edit", onClick: () => openEdit(row) },
-                        {
-                          label: "Delete",
-                          onClick: () => void deleteItem(row.id),
-                          variant: "danger",
-                        },
+                        { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
                       ]}
                     />
                   )}
@@ -1058,8 +1049,7 @@ export default function AllergenManager() {
             <div key={a.key} className="flex items-center gap-2 text-sm">
               <span>{a.icon}</span>
               <span className="truncate text-slate-800">
-                {a.label}{" "}
-                <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
+                {a.label} <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
               </span>
             </div>
           ))}
@@ -1096,9 +1086,7 @@ export default function AllergenManager() {
                   <select
                     className="w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5"
                     value={draft.category ?? "Starter"}
-                    onChange={(e) =>
-                      setDraft((d) => ({ ...d!, category: e.target.value as Category }))
-                    }
+                    onChange={(e) => setDraft((d) => ({ ...d!, category: e.target.value as Category }))}
                   >
                     {CATEGORIES.map((c) => (
                       <option key={c} value={c}>
@@ -1118,8 +1106,7 @@ export default function AllergenManager() {
                       className="flex items-center justify-between rounded border border-slate-200 bg-white/80 p-2"
                     >
                       <span title={a.label} className="text-sm text-slate-800">
-                        {a.icon}{" "}
-                        <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
+                        {a.icon} <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
                       </span>
                       <div className="inline-flex overflow-hidden rounded border border-slate-200 bg-white/80">
                         <button
@@ -1127,22 +1114,16 @@ export default function AllergenManager() {
                           className={`px-2 py-1 text-xs ${
                             val ? "bg-red-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
                           }`}
-                          onClick={() =>
-                            setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: true } }))
-                          }
+                          onClick={() => setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: true } }))}
                         >
                           Yes
                         </button>
                         <button
                           type="button"
                           className={`px-2 py-1 text-xs ${
-                            !val
-                              ? "bg-emerald-600 text-white"
-                              : "bg-white text-slate-700 hover:bg-slate-50"
+                            !val ? "bg-emerald-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
                           }`}
-                          onClick={() =>
-                            setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: false } }))
-                          }
+                          onClick={() => setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: false } }))}
                         >
                           No
                         </button>
