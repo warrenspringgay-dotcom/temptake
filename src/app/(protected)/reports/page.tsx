@@ -1041,7 +1041,7 @@ async function fetchAllergenLog(
   if (locationId) {
     const { data: d1, error: e1 } = await supabase
       .from("allergen_review_log")
-      .select("id, reviewed_on, interval_days, reviewer_name, location_id, created_at")
+      .select("id, reviewed_on, interval_days, reviewer, location_id, created_at")
       .eq("org_id", orgId)
       .eq("location_id", locationId)
       .order("reviewed_on", { ascending: false })
@@ -1060,7 +1060,7 @@ async function fetchAllergenLog(
   // 2) Org-wide fallback
   const { data: d2, error: e2 } = await supabase
     .from("allergen_review_log")
-    .select("id, reviewed_on, interval_days, reviewer_name, created_at")
+    .select("id, reviewed_on, interval_days, reviewer, created_at")
     .eq("org_id", orgId)
     .order("reviewed_on", { ascending: false })
     .order("created_at", { ascending: false })
