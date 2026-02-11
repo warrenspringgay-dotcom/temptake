@@ -160,6 +160,15 @@ function safeDate(val: any): Date | null {
   return d;
 }
 
+function Pill({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-[2px] text-[10px] font-extrabold uppercase tracking-wide text-emerald-800">
+      {children}
+    </span>
+  );
+}
+
+
 function formatPrettyDate(dmy: string | null): string {
   if (!dmy) return "—";
   const d = new Date(dmy);
@@ -2096,9 +2105,20 @@ export default function ManagerDashboardPage() {
 
               return (
                 <tr key={t.id} className="border-t border-slate-100 text-slate-800">
-                  <td className="px-3 py-2 whitespace-nowrap font-semibold">
-                    {tmLabel({ initials: t.initials ?? null, name: t.name ?? null })}
-                  </td>
+                  <td className="px-3 py-2">
+  {areas.length === 0 ? (
+    <span className="text-slate-500">—</span>
+  ) : (
+    <div className="flex flex-wrap gap-1.5">
+      {areas.map((a: string, idx: number) => (
+        <Pill key={`${t.id}_${idx}`}>
+          {String(a).replace(/_/g, " ")}
+        </Pill>
+      ))}
+    </div>
+  )}
+</td>
+
                   <td className="px-3 py-2 whitespace-nowrap">{t.role ?? "—"}</td>
                   <td className="px-3 py-2">{text}</td>
                 </tr>
