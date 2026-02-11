@@ -146,6 +146,26 @@ type CleaningTaskRun = {
   location_id: string | null;
 };
 
+/* ===================== Calibration ===================== */
+
+type CalibrationAssetOption = {
+  id: string;
+  name: string | null;
+  location_id?: string | null;
+};
+
+type CalibrationCheckRow = {
+  id: string;
+  checked_on: string; // yyyy-mm-dd
+  staff_initials: string | null;
+  method: string | null;
+  result: string | null;
+  notes: string | null;
+  created_at: string | null;
+  asset_id: string | null;
+  asset: { name: string | null } | null;
+};
+
 const nowISO = new Date().toISOString().slice(0, 10);
 
 function safeDate(val: any): Date | null {
@@ -485,6 +505,23 @@ export default function ManagerDashboardPage() {
   const [trainingAreasRows, setTrainingAreasRows] = useState<TeamMemberOption[]>([]);
   const [showAllTrainingAreas, setShowAllTrainingAreas] = useState(false);
 
+  /* ===== Calibration ===== */
+  const [calibrationChecks, setCalibrationChecks] = useState<CalibrationCheckRow[]>([]);
+  const [showAllCalibration, setShowAllCalibration] = useState(false);
+
+  const [calibrationAssets, setCalibrationAssets] = useState<CalibrationAssetOption[]>([]);
+  const [calibrationOpen, setCalibrationOpen] = useState(false);
+  const [calibrationSaving, setCalibrationSaving] = useState(false);
+
+  const [calForm, setCalForm] = useState({
+    checked_on: nowISO,
+    asset_id: "",
+    staff_initials: "",
+    method: "",
+    result: "pass",
+    notes: "",
+  });
+
   const lastStaffAssessKeyRef = useRef<string>("");
 
   /* ===== Actions dropdown (top bar) ===== */
@@ -785,6 +822,97 @@ export default function ManagerDashboardPage() {
     }
   }
 
+  async function loadCalibrationAssets(useLocId?: string | null) {
+    if (!orgId) return;
+    const loc = useLocId ?? locationId ?? null;
+
+    try {
+      // NOTE: assumes calibration_assets has: id, name, org_id, location_id (location_id nullable)
+      // If your schema differs, adjust the select fields accordingly.
+      let q = supabase
+        .from("calibration_assets")
+        .select("id,name,location_id")
+        .eq("org_id", orgId)
+        .order("name", { ascending: true })
+        .limit(5000);
+
+      // Keep assets usable for this location:
+      // - location-specific assets (location_id = loc)
+      // - shared assets (location_id is null)
+      if (loc) {
+        q = q.or(`location_id.eq.${loc},location_id.is.null`);
+      }
+
+      const { data, error } = await q;
+      if (error) throw error;
+
+      setCalibrationAssets((data ?? []) as any);
+    } catch (e) {
+      console.error(e);
+      setCalibrationAssets([]);
+    }
+  }
+
+  async function openCalibrationFromActions() {
+    if (!orgId || !locationId) return;
+
+    setActionsOpen(false);
+
+    const ini = managerTeamMember?.initials?.trim().toUpperCase() ?? "";
+    setCalForm((f) => ({
+      ...f,
+      checked_on: selectedDateISO || nowISO,
+      staff_initials: f.staff_initials?.trim() ? f.staff_initials : ini,
+      result: f.result || "pass",
+    }));
+
+    await loadCalibrationAssets(locationId);
+    setCalibrationOpen(true);
+  }
+
+  async function addCalibrationCheck() {
+    if (!orgId) return;
+    if (!locationId) return;
+
+    const checked_on = calForm.checked_on || selectedDateISO || nowISO;
+    const staff_initials = (calForm.staff_initials || "").trim().toUpperCase();
+    if (!staff_initials) return alert("Enter staff initials.");
+
+    setCalibrationSaving(true);
+    try {
+      const payload = {
+        org_id: orgId,
+        location_id: locationId,
+        asset_id: calForm.asset_id ? calForm.asset_id : null,
+        checked_on,
+        staff_initials,
+        method: calForm.method?.trim() || null,
+        result: calForm.result?.trim() || null,
+        notes: calForm.notes?.trim() || null,
+      };
+
+      const { error } = await supabase.from("calibration_checks").insert(payload);
+      if (error) throw error;
+
+      setCalibrationOpen(false);
+      setCalForm({
+        checked_on: selectedDateISO || nowISO,
+        asset_id: "",
+        staff_initials: staff_initials,
+        method: "",
+        result: "pass",
+        notes: "",
+      });
+
+      await refreshAll();
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "Failed to save calibration check.");
+    } finally {
+      setCalibrationSaving(false);
+    }
+  }
+
   useEffect(() => {
     (async () => {
       const oId = await getActiveOrgIdClient();
@@ -832,6 +960,14 @@ export default function ManagerDashboardPage() {
   }, [signoffOpen, managerTeamMember, signoffInitials]);
 
   useEffect(() => {
+    if (!calibrationOpen) return;
+    if (calForm.staff_initials.trim()) return;
+
+    const ini = managerTeamMember?.initials?.trim().toUpperCase() ?? "";
+    if (ini) setCalForm((f) => ({ ...f, staff_initials: ini }));
+  }, [calibrationOpen, managerTeamMember, calForm.staff_initials]);
+
+  useEffect(() => {
     if (!orgId || !locationId) return;
     refreshAll();
     void loadQcReviews();
@@ -875,6 +1011,7 @@ export default function ManagerDashboardPage() {
         signoffsDayRes,
         allergenReviewsRes,
         allergenLogsRes,
+        calibrationChecksRes,
       ] = await Promise.all([
         supabase
           .from("food_temp_logs")
@@ -1014,6 +1151,29 @@ export default function ManagerDashboardPage() {
           .eq("location_id", locationId)
           .order("created_at", { ascending: false })
           .limit(500),
+
+        supabase
+          .from("calibration_checks")
+          .select(
+            `
+            id,
+            checked_on,
+            staff_initials,
+            method,
+            result,
+            notes,
+            created_at,
+            asset_id,
+            asset:calibration_assets(name)
+          `
+          )
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .gte("checked_on", isoDate(ninetyDaysAgo))
+          .lte("checked_on", selectedDateISO)
+          .order("checked_on", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(500),
       ]);
 
       const firstErr =
@@ -1030,7 +1190,8 @@ export default function ManagerDashboardPage() {
         trainingAreasRes.error ||
         signoffsDayRes.error ||
         allergenReviewsRes.error ||
-        allergenLogsRes.error;
+        allergenLogsRes.error ||
+        calibrationChecksRes.error;
 
       if (firstErr) throw firstErr;
 
@@ -1212,6 +1373,22 @@ export default function ManagerDashboardPage() {
         }))
       );
       setShowAllAllergenLogs(false);
+
+      const calRows: any[] = (calibrationChecksRes.data as any[]) ?? [];
+      setCalibrationChecks(
+        calRows.map((r) => ({
+          id: String(r.id),
+          checked_on: String(r.checked_on),
+          staff_initials: r.staff_initials ? String(r.staff_initials) : null,
+          method: r.method ?? null,
+          result: r.result ?? null,
+          notes: r.notes ?? null,
+          created_at: r.created_at ? String(r.created_at) : null,
+          asset_id: r.asset_id ? String(r.asset_id) : null,
+          asset: r.asset ? { name: r.asset.name ?? null } : null,
+        }))
+      );
+      setShowAllCalibration(false);
     } catch (e: any) {
       console.error(e);
       setErr(e?.message ?? "Failed to load manager dashboard.");
@@ -1244,6 +1421,8 @@ export default function ManagerDashboardPage() {
 
   const trainingToRender = showAllTraining ? trainingRows : trainingRows.slice(0, 10);
   const trainingAreasToRender = showAllTrainingAreas ? trainingAreasRows : trainingAreasRows.slice(0, 10);
+
+  const calibrationToRender = showAllCalibration ? calibrationChecks : calibrationChecks.slice(0, 10);
 
   const cleaningAllDone = cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
   const alreadySignedOff = signoffsToday.length > 0;
@@ -1516,6 +1695,18 @@ export default function ManagerDashboardPage() {
 
                       <button
                         type="button"
+                        onClick={openCalibrationFromActions}
+                        disabled={!orgId || !locationId}
+                        className={cls(
+                          "w-full px-4 py-2 text-left text-sm font-semibold",
+                          !orgId || !locationId ? "text-slate-400 cursor-not-allowed" : "text-slate-800 hover:bg-slate-50"
+                        )}
+                      >
+                        Log calibration check
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => {
                           setActionsOpen(false);
                           setStaffAssessOpen(true);
@@ -1675,6 +1866,79 @@ export default function ManagerDashboardPage() {
         </div>
 
         <TableFooterToggle total={incidentsHistory.length} showingAll={showAllIncidents} onToggle={() => setShowAllIncidents((v) => !v)} />
+      </section>
+
+      {/* Calibration checks */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Calibration</div>
+            <div className="mt-0.5 text-sm font-semibold text-slate-900">Calibration checks (last 90 days)</div>
+          </div>
+
+          <button
+            type="button"
+            onClick={openCalibrationFromActions}
+            disabled={!orgId || !locationId}
+            className={cls(
+              "rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm",
+              !orgId || !locationId ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50"
+            )}
+          >
+            Log calibration
+          </button>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Asset</th>
+                <th className="px-3 py-2">By</th>
+                <th className="px-3 py-2">Method</th>
+                <th className="px-3 py-2">Result</th>
+                <th className="px-3 py-2">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {calibrationToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                    No calibration checks logged.
+                  </td>
+                </tr>
+              ) : (
+                calibrationToRender.map((r) => {
+                  const res = (r.result ?? "").toString().toLowerCase().trim();
+                  const pill =
+                    res === "pass" || res === "ok"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : res === "fail"
+                      ? "bg-red-100 text-red-800"
+                      : "bg-slate-100 text-slate-800";
+
+                  return (
+                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.checked_on)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap font-semibold">{r.asset?.name ?? "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
+                      <td className="px-3 py-2 max-w-[14rem] truncate">{r.method ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                          {(r.result ?? "—").toString()}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle total={calibrationChecks.length} showingAll={showAllCalibration} onToggle={() => setShowAllCalibration((v) => !v)} />
       </section>
 
       {/* Activity */}
@@ -2290,6 +2554,120 @@ export default function ManagerDashboardPage() {
               >
                 {signoffSaving ? "Signing…" : "Sign off"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Calibration modal */}
+      {calibrationOpen && (
+        <div className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4" onClick={() => setCalibrationOpen(false)}>
+          <div
+            className={cls("mx-auto my-6 w-full max-w-2xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold">Log calibration check</div>
+                <div className="mt-0.5 text-xs text-slate-500">
+                  {locations.find((l) => l.id === locationId)?.name ?? "—"}
+                </div>
+              </div>
+              <button onClick={() => setCalibrationOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
+                ✕
+              </button>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Date</label>
+                  <input
+                    type="date"
+                    value={calForm.checked_on}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCalForm((f) => ({ ...f, checked_on: e.target.value || nowISO }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Staff initials</label>
+                  <input
+                    value={calForm.staff_initials}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCalForm((f) => ({ ...f, staff_initials: e.target.value.toUpperCase() }))}
+                    placeholder="WS"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-slate-500">Asset (optional)</label>
+                  <select
+                    value={calForm.asset_id}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCalForm((f) => ({ ...f, asset_id: e.target.value }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    <option value="">No asset</option>
+                    {calibrationAssets.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name ?? "Unnamed"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Method (optional)</label>
+                  <input
+                    value={calForm.method}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCalForm((f) => ({ ...f, method: e.target.value }))}
+                    placeholder="Ice bath / probe check / reference device…"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Result</label>
+                  <select
+                    value={calForm.result}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCalForm((f) => ({ ...f, result: e.target.value }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    <option value="pass">pass</option>
+                    <option value="fail">fail</option>
+                    <option value="n/a">n/a</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
+                  <textarea
+                    value={calForm.notes}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setCalForm((f) => ({ ...f, notes: e.target.value }))}
+                    placeholder="Optional details…"
+                    rows={4}
+                    className="w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm leading-5 resize-y min-h-[96px]"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCalibrationOpen(false)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={addCalibrationCheck}
+                  disabled={calibrationSaving || !orgId || !locationId}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {calibrationSaving ? "Saving…" : "Save check"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
