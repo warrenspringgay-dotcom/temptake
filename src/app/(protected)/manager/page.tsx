@@ -8,6 +8,8 @@ import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import IncidentModal from "@/components/IncidentModal";
 
+/* ===================== Types ===================== */
+
 type LocationOption = { id: string; name: string };
 
 type TempSummary = { today: number; fails7d: number };
@@ -146,24 +148,25 @@ type CleaningTaskRun = {
   location_id: string | null;
 };
 
-/* ===================== Calibration ===================== */
-
-type CalibrationAssetOption = {
-  id: string;
-  name: string | null;
-  location_id?: string | null;
-};
-
+/* ===== Calibration (simple tick + notes) =====
+   Table assumed: calibration_checks
+   Columns used:
+   - id (uuid)
+   - org_id
+   - location_id
+   - checked_on (date)
+   - staff_initials (text)
+   - all_equipment_calibrated (bool)
+   - notes (text nullable)
+   - created_at (timestamp)
+*/
 type CalibrationCheckRow = {
   id: string;
   checked_on: string; // yyyy-mm-dd
   staff_initials: string | null;
-  method: string | null;
-  result: string | null;
+  all_equipment_calibrated: boolean | null;
   notes: string | null;
   created_at: string | null;
-  asset_id: string | null;
-  asset: { name: string | null } | null;
 };
 
 const nowISO = new Date().toISOString().slice(0, 10);
@@ -173,14 +176,6 @@ function safeDate(val: any): Date | null {
   const d = val instanceof Date ? val : new Date(val);
   if (Number.isNaN(d.getTime())) return null;
   return d;
-}
-
-function Pill({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-[2px] text-[10px] font-extrabold uppercase tracking-wide text-emerald-800">
-      {children}
-    </span>
-  );
 }
 
 function formatPrettyDate(dmy: string | null): string {
@@ -199,6 +194,42 @@ function toISODate(val: any): string {
   const d = safeDate(val) ?? new Date();
   return d.toISOString().slice(0, 10);
 }
+
+function formatTimeHM(d: Date | null | undefined): string | null {
+  if (!d) return null;
+  const hours = String(d.getHours()).padStart(2, "0");
+  const mins = String(d.getMinutes()).padStart(2, "0");
+  return `${hours}:${mins}`;
+}
+
+function formatDDMMYYYY(val: any): string {
+  const d = safeDate(val);
+  if (!d) return "—";
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+const cls = (...p: Array<string | false | null | undefined>) => p.filter(Boolean).join(" ");
+
+const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+const addDaysISO = (dmy: string, delta: number) => {
+  const d = new Date(dmy);
+  d.setDate(d.getDate() + delta);
+  return isoDate(d);
+};
+
+const getDow1to7 = (dmy: string) => ((new Date(dmy).getDay() + 6) % 7) + 1;
+const getDom = (dmy: string) => new Date(dmy).getDate();
+
+function isDueOn(t: CleaningTask, dmy: string) {
+  if (t.frequency === "daily") return true;
+  if (t.frequency === "weekly") return t.weekday === getDow1to7(dmy);
+  return t.month_day === getDom(dmy);
+}
+
+/* ===================== Temp failures (unified) ===================== */
 
 async function fetchTempFailuresUnifiedForDay(orgId: string, locationId: string, d0: Date, d1: Date) {
   const { data, error } = await supabase
@@ -303,42 +334,7 @@ async function fetchTempFailuresUnifiedForDay(orgId: string, locationId: string,
   });
 }
 
-
-function formatTimeHM(d: Date | null | undefined): string | null {
-  if (!d) return null;
-  const hours = String(d.getHours()).padStart(2, "0");
-  const mins = String(d.getMinutes()).padStart(2, "0");
-  return `${hours}:${mins}`;
-}
-
-function formatDDMMYYYY(val: any): string {
-  const d = safeDate(val);
-  if (!d) return "—";
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-}
-
-const cls = (...p: Array<string | false | null | undefined>) => p.filter(Boolean).join(" ");
-
-const isoDate = (d: Date) => d.toISOString().slice(0, 10);
-const addDaysISO = (dmy: string, delta: number) => {
-  const d = new Date(dmy);
-  d.setDate(d.getDate() + delta);
-  return isoDate(d);
-};
-
-const getDow1to7 = (dmy: string) => ((new Date(dmy).getDay() + 6) % 7) + 1;
-const getDom = (dmy: string) => new Date(dmy).getDate();
-
-function isDueOn(t: CleaningTask, dmy: string) {
-  if (t.frequency === "daily") return true;
-  if (t.frequency === "weekly") return t.weekday === getDow1to7(dmy);
-  return t.month_day === getDom(dmy);
-}
-
-/* ---------- KPI Tile ---------- */
+/* ===================== UI Bits ===================== */
 
 const KPI_HEIGHT = "min-h-[120px]";
 
@@ -397,8 +393,6 @@ function KpiTile({
   );
 }
 
-/* ---------- Table footer toggle ---------- */
-
 function TableFooterToggle({
   total,
   showingAll,
@@ -419,7 +413,7 @@ function TableFooterToggle({
   );
 }
 
-/* ---------- Page ---------- */
+/* ===================== Page ===================== */
 
 export default function ManagerDashboardPage() {
   const [orgId, setOrgId] = useState<string | null>(null);
@@ -470,7 +464,6 @@ export default function ManagerDashboardPage() {
   const [qcLoading, setQcLoading] = useState(false);
   const [qcSaving, setQcSaving] = useState(false);
   const [showAllQc, setShowAllQc] = useState(false);
-
   const [qcSummaryLoading, setQcSummaryLoading] = useState(false);
 
   const [managerTeamMember, setManagerTeamMember] = useState<TeamMemberOption | null>(null);
@@ -490,6 +483,7 @@ export default function ManagerDashboardPage() {
   const [staffAssessDays, setStaffAssessDays] = useState<number>(7);
   const [staffAssess, setStaffAssess] = useState<StaffAssessment | null>(null);
 
+  /* ===== Incident modal ===== */
   const [incidentOpen, setIncidentOpen] = useState(false);
 
   /* ===== Allergens ===== */
@@ -506,32 +500,32 @@ export default function ManagerDashboardPage() {
   const [trainingAreasRows, setTrainingAreasRows] = useState<TeamMemberOption[]>([]);
   const [showAllTrainingAreas, setShowAllTrainingAreas] = useState(false);
 
-  /* ===== Calibration ===== */
+  /* ===== Calibration (simple) ===== */
   const [calibrationChecks, setCalibrationChecks] = useState<CalibrationCheckRow[]>([]);
   const [showAllCalibration, setShowAllCalibration] = useState(false);
 
-  const [calibrationAssets, setCalibrationAssets] = useState<CalibrationAssetOption[]>([]);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [calibrationSaving, setCalibrationSaving] = useState(false);
-
-  const [calForm, setCalForm] = useState({
+  const [calibrationForm, setCalibrationForm] = useState({
     checked_on: nowISO,
-    asset_id: "",
     staff_initials: "",
-    method: "",
-    result: "pass",
+    all_equipment_calibrated: true,
     notes: "",
   });
 
-  const lastStaffAssessKeyRef = useRef<string>("");
+  useEffect(() => {
+    // Keep the calibration date pinned to selected day (unless user changes it manually later)
+    setCalibrationForm((f) => ({ ...f, checked_on: selectedDateISO }));
+  }, [selectedDateISO]);
 
   /* ===== Actions dropdown (top bar) ===== */
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsBtnRef = useRef<HTMLButtonElement | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
-
   const [portalReady, setPortalReady] = useState(false);
   const [actionsPos, setActionsPos] = useState<{ top: number; right: number } | null>(null);
+
+  const lastStaffAssessKeyRef = useRef<string>("");
 
   useEffect(() => setPortalReady(true), []);
 
@@ -580,19 +574,6 @@ export default function ManagerDashboardPage() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [actionsOpen]);
 
-  useEffect(() => {
-    if (!staffAssessOpen) return;
-    if (!orgId || !locationId) return;
-    if (!staffAssessStaffId) return;
-
-    const key = `${staffAssessStaffId}|${staffAssessDays}|${selectedDateISO}|${locationId}`;
-    if (lastStaffAssessKeyRef.current === key) return;
-    lastStaffAssessKeyRef.current = key;
-
-    void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [staffAssessOpen, staffAssessStaffId, staffAssessDays, selectedDateISO, orgId, locationId]);
-
   function tmLabel(t: { initials: string | null; name: string | null }) {
     const ini = (t.initials ?? "").toString().trim().toUpperCase();
     const nm = (t.name ?? "").toString().trim();
@@ -601,7 +582,6 @@ export default function ManagerDashboardPage() {
     return nm || "—";
   }
 
-  // ✅ UPDATED: scope team list to selected location to stop “ghost” counts + wrong staff choices
   async function loadTeamOptions(locId?: string | null) {
     if (!orgId) return;
     const useLoc = locId ?? locationId ?? null;
@@ -641,7 +621,6 @@ export default function ManagerDashboardPage() {
         return;
       }
 
-      // 1) Primary: already linked by user_id
       const byUser = await supabase
         .from("team_members")
         .select("id,name,initials,role,active,user_id,email,location_id")
@@ -656,7 +635,6 @@ export default function ManagerDashboardPage() {
         return;
       }
 
-      // 2) Fallback: try match by email (one-time link)
       const email = (user.email ?? "").trim().toLowerCase();
       if (!email) {
         setManagerTeamMember(null);
@@ -677,14 +655,13 @@ export default function ManagerDashboardPage() {
         return;
       }
 
-      // 3) If found but not linked, link it now
       if (!byEmail.data.user_id) {
         const upd = await supabase
           .from("team_members")
           .update({ user_id: user.id })
           .eq("org_id", orgId)
           .eq("id", byEmail.data.id)
-          .is("user_id", null); // prevent overwriting existing links
+          .is("user_id", null);
 
         if (upd.error) throw upd.error;
       }
@@ -823,85 +800,47 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  async function loadCalibrationAssets(useLocId?: string | null) {
-    if (!orgId) return;
-    const loc = useLocId ?? locationId ?? null;
-
-    try {
-      // NOTE: assumes calibration_assets has: id, name, org_id, location_id (location_id nullable)
-      // If your schema differs, adjust the select fields accordingly.
-      let q = supabase
-        .from("calibration_assets")
-        .select("id,name,location_id")
-        .eq("org_id", orgId)
-        .order("name", { ascending: true })
-        .limit(5000);
-
-      // Keep assets usable for this location:
-      // - location-specific assets (location_id = loc)
-      // - shared assets (location_id is null)
-      if (loc) {
-        q = q.or(`location_id.eq.${loc},location_id.is.null`);
-      }
-
-      const { data, error } = await q;
-      if (error) throw error;
-
-      setCalibrationAssets((data ?? []) as any);
-    } catch (e) {
-      console.error(e);
-      setCalibrationAssets([]);
-    }
-  }
-
-  async function openCalibrationFromActions() {
+  function openCalibrationFromActions() {
     if (!orgId || !locationId) return;
 
     setActionsOpen(false);
 
     const ini = managerTeamMember?.initials?.trim().toUpperCase() ?? "";
-    setCalForm((f) => ({
+    setCalibrationForm((f) => ({
       ...f,
       checked_on: selectedDateISO || nowISO,
       staff_initials: f.staff_initials?.trim() ? f.staff_initials : ini,
-      result: f.result || "pass",
+      all_equipment_calibrated: f.all_equipment_calibrated ?? true,
     }));
 
-    await loadCalibrationAssets(locationId);
     setCalibrationOpen(true);
   }
 
-  async function addCalibrationCheck() {
-    if (!orgId) return;
-    if (!locationId) return;
+  async function saveCalibrationCheck() {
+    if (!orgId || !locationId) return;
 
-    const checked_on = calForm.checked_on || selectedDateISO || nowISO;
-    const staff_initials = (calForm.staff_initials || "").trim().toUpperCase();
+    const checked_on = calibrationForm.checked_on || selectedDateISO || nowISO;
+    const staff_initials = (calibrationForm.staff_initials || "").trim().toUpperCase();
     if (!staff_initials) return alert("Enter staff initials.");
 
     setCalibrationSaving(true);
     try {
-      const payload = {
+      const { error } = await supabase.from("calibration_checks").insert({
         org_id: orgId,
         location_id: locationId,
-        asset_id: calForm.asset_id ? calForm.asset_id : null,
         checked_on,
         staff_initials,
-        method: calForm.method?.trim() || null,
-        result: calForm.result?.trim() || null,
-        notes: calForm.notes?.trim() || null,
-      };
+        all_equipment_calibrated: !!calibrationForm.all_equipment_calibrated,
+        notes: calibrationForm.notes?.trim() || null,
+      });
 
-      const { error } = await supabase.from("calibration_checks").insert(payload);
       if (error) throw error;
 
       setCalibrationOpen(false);
-      setCalForm({
+      setCalibrationForm({
         checked_on: selectedDateISO || nowISO,
-        asset_id: "",
-        staff_initials: staff_initials,
-        method: "",
-        result: "pass",
+        staff_initials,
+        all_equipment_calibrated: true,
         notes: "",
       });
 
@@ -913,6 +852,19 @@ export default function ManagerDashboardPage() {
       setCalibrationSaving(false);
     }
   }
+
+  useEffect(() => {
+    if (!staffAssessOpen) return;
+    if (!orgId || !locationId) return;
+    if (!staffAssessStaffId) return;
+
+    const key = `${staffAssessStaffId}|${staffAssessDays}|${selectedDateISO}|${locationId}`;
+    if (lastStaffAssessKeyRef.current === key) return;
+    lastStaffAssessKeyRef.current = key;
+
+    void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffAssessOpen, staffAssessStaffId, staffAssessDays, selectedDateISO, orgId, locationId]);
 
   useEffect(() => {
     (async () => {
@@ -944,7 +896,6 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
-  // ✅ UPDATED: reload team options when location changes (prevents cross-location data bleeding)
   useEffect(() => {
     if (!orgId) return;
     void loadLoggedInManager();
@@ -962,15 +913,15 @@ export default function ManagerDashboardPage() {
 
   useEffect(() => {
     if (!calibrationOpen) return;
-    if (calForm.staff_initials.trim()) return;
+    if (calibrationForm.staff_initials.trim()) return;
 
     const ini = managerTeamMember?.initials?.trim().toUpperCase() ?? "";
-    if (ini) setCalForm((f) => ({ ...f, staff_initials: ini }));
-  }, [calibrationOpen, managerTeamMember, calForm.staff_initials]);
+    if (ini) setCalibrationForm((f) => ({ ...f, staff_initials: ini }));
+  }, [calibrationOpen, managerTeamMember, calibrationForm.staff_initials]);
 
   useEffect(() => {
     if (!orgId || !locationId) return;
-    refreshAll();
+    void refreshAll();
     void loadQcReviews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, locationId, selectedDateISO]);
@@ -1083,7 +1034,6 @@ export default function ManagerDashboardPage() {
           .gte("happened_on", isoDate(sevenDaysAgo))
           .lte("happened_on", selectedDateISO),
 
-        // ✅ UPDATED: enforce INNER join so the location filter actually applies
         supabase
           .from("trainings")
           .select(
@@ -1097,7 +1047,6 @@ export default function ManagerDashboardPage() {
           .eq("team_member.location_id", locationId)
           .limit(5000),
 
-        // ✅ UPDATED: enforce INNER join so the location filter actually applies
         supabase
           .from("trainings")
           .select(
@@ -1153,21 +1102,10 @@ export default function ManagerDashboardPage() {
           .order("created_at", { ascending: false })
           .limit(500),
 
+        // ✅ simple calibration (no assets/result/method)
         supabase
           .from("calibration_checks")
-          .select(
-            `
-            id,
-            checked_on,
-            staff_initials,
-            method,
-            result,
-            notes,
-            created_at,
-            asset_id,
-            asset:calibration_assets(name)
-          `
-          )
+          .select("id, checked_on, staff_initials, all_equipment_calibrated, notes, created_at")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .gte("checked_on", isoDate(ninetyDaysAgo))
@@ -1381,12 +1319,9 @@ export default function ManagerDashboardPage() {
           id: String(r.id),
           checked_on: String(r.checked_on),
           staff_initials: r.staff_initials ? String(r.staff_initials) : null,
-          method: r.method ?? null,
-          result: r.result ?? null,
+          all_equipment_calibrated: r.all_equipment_calibrated ?? null,
           notes: r.notes ?? null,
           created_at: r.created_at ? String(r.created_at) : null,
-          asset_id: r.asset_id ? String(r.asset_id) : null,
-          asset: r.asset ? { name: r.asset.name ?? null } : null,
         }))
       );
       setShowAllCalibration(false);
@@ -1661,14 +1596,11 @@ export default function ManagerDashboardPage() {
             </button>
           </div>
 
-          {/* ✅ Actions button (menu is PORTALED to body so it can't hide behind layout/overflow) */}
           <div className="relative">
             <button
               ref={actionsBtnRef}
               type="button"
-              onClick={() => {
-                setActionsOpen((v) => !v);
-              }}
+              onClick={() => setActionsOpen((v) => !v)}
               className={cls("rounded-xl px-4 py-2 text-sm font-semibold shadow-sm", "bg-indigo-600 text-white hover:bg-indigo-700")}
             >
               Actions ▾
@@ -1869,78 +1801,8 @@ export default function ManagerDashboardPage() {
         <TableFooterToggle total={incidentsHistory.length} showingAll={showAllIncidents} onToggle={() => setShowAllIncidents((v) => !v)} />
       </section>
 
-      {/* Calibration checks */}
-      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Calibration</div>
-            <div className="mt-0.5 text-sm font-semibold text-slate-900">Calibration checks (last 90 days)</div>
-          </div>
-
-          <button
-            type="button"
-            onClick={openCalibrationFromActions}
-            disabled={!orgId || !locationId}
-            className={cls(
-              "rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm",
-              !orgId || !locationId ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50"
-            )}
-          >
-            Log calibration
-          </button>
-        </div>
-
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-          <table className="min-w-full text-xs">
-            <thead className="bg-slate-50">
-              <tr className="text-left text-slate-500">
-                <th className="px-3 py-2">Date</th>
-                <th className="px-3 py-2">Asset</th>
-                <th className="px-3 py-2">By</th>
-                <th className="px-3 py-2">Method</th>
-                <th className="px-3 py-2">Result</th>
-                <th className="px-3 py-2">Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {calibrationToRender.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
-                    No calibration checks logged.
-                  </td>
-                </tr>
-              ) : (
-                calibrationToRender.map((r) => {
-                  const res = (r.result ?? "").toString().toLowerCase().trim();
-                  const pill =
-                    res === "pass" || res === "ok"
-                      ? "bg-emerald-100 text-emerald-800"
-                      : res === "fail"
-                      ? "bg-red-100 text-red-800"
-                      : "bg-slate-100 text-slate-800";
-
-                  return (
-                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.checked_on)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap font-semibold">{r.asset?.name ?? "—"}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
-                      <td className="px-3 py-2 max-w-[14rem] truncate">{r.method ?? "—"}</td>
-                      <td className="px-3 py-2">
-                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
-                          {(r.result ?? "—").toString()}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <TableFooterToggle total={calibrationChecks.length} showingAll={showAllCalibration} onToggle={() => setShowAllCalibration((v) => !v)} />
-      </section>
+      
+        
 
       {/* Activity */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
@@ -2487,6 +2349,72 @@ export default function ManagerDashboardPage() {
         <TableFooterToggle total={allergenLogs.length} showingAll={showAllAllergenLogs} onToggle={() => setShowAllAllergenLogs((v) => !v)} />
       </section>
 
+
+      {/* Calibration checks (simple) */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Calibration</div>
+            <div className="mt-0.5 text-sm font-semibold text-slate-900">Calibration log (this location)</div>
+          </div>
+
+          <button
+            type="button"
+            onClick={openCalibrationFromActions}
+            disabled={!orgId || !locationId}
+            className={cls(
+              "rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm",
+              !orgId || !locationId ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50"
+            )}
+          >
+            Log calibration
+          </button>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">By</th>
+                <th className="px-3 py-2">Completed</th>
+                <th className="px-3 py-2">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {calibrationToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                    No calibration checks logged.
+                  </td>
+                </tr>
+              ) : (
+                calibrationToRender.map((r) => (
+                  <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                    <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.checked_on)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {r.all_equipment_calibrated ? (
+                        <span className="inline-flex rounded-full bg-emerald-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-emerald-800">
+                          ✓ Complete
+                        </span>
+                      ) : (
+                        <span className="inline-flex rounded-full bg-amber-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-amber-800">
+                          Not complete
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle total={calibrationChecks.length} showingAll={showAllCalibration} onToggle={() => setShowAllCalibration((v) => !v)} />
+      </section>
+
       {/* Sign-off modal */}
       {signoffOpen && (
         <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
@@ -2560,401 +2488,76 @@ export default function ManagerDashboardPage() {
         </div>
       )}
 
-      {/* Calibration modal */}
+      {/* Calibration modal (simple) */}
       {calibrationOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4" onClick={() => setCalibrationOpen(false)}>
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setCalibrationOpen(false)}>
           <div
-            className={cls("mx-auto my-6 w-full max-w-2xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
+            className="mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-base font-semibold">Log calibration check</div>
-                <div className="mt-0.5 text-xs text-slate-500">
-                  {locations.find((l) => l.id === locationId)?.name ?? "—"}
-                </div>
-              </div>
-              <button onClick={() => setCalibrationOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
+              <div className="text-base font-semibold">Log calibration</div>
+              <button onClick={() => setCalibrationOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
                 ✕
               </button>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Date</label>
-                  <input
-                    type="date"
-                    value={calForm.checked_on}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCalForm((f) => ({ ...f, checked_on: e.target.value || nowISO }))}
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Staff initials</label>
-                  <input
-                    value={calForm.staff_initials}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCalForm((f) => ({ ...f, staff_initials: e.target.value.toUpperCase() }))}
-                    placeholder="WS"
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="mb-1 block text-xs text-slate-500">Asset (optional)</label>
-                  <select
-                    value={calForm.asset_id}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCalForm((f) => ({ ...f, asset_id: e.target.value }))}
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    <option value="">No asset</option>
-                    {calibrationAssets.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name ?? "Unnamed"}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Method (optional)</label>
-                  <input
-                    value={calForm.method}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCalForm((f) => ({ ...f, method: e.target.value }))}
-                    placeholder="Ice bath / probe check / reference device…"
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Result</label>
-                  <select
-                    value={calForm.result}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCalForm((f) => ({ ...f, result: e.target.value }))}
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    <option value="pass">pass</option>
-                    <option value="fail">fail</option>
-                    <option value="n/a">n/a</option>
-                  </select>
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
-                  <textarea
-                    value={calForm.notes}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setCalForm((f) => ({ ...f, notes: e.target.value }))}
-                    placeholder="Optional details…"
-                    rows={4}
-                    className="w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm leading-5 resize-y min-h-[96px]"
-                  />
-                </div>
+            <div className="grid gap-3">
+              <div>
+                <label className="text-xs text-slate-500">Date</label>
+                <input
+                  type="date"
+                  value={calibrationForm.checked_on}
+                  onChange={(e) => setCalibrationForm((f) => ({ ...f, checked_on: e.target.value }))}
+                  className="h-10 w-full rounded-xl border border-slate-300 px-3 text-sm"
+                />
               </div>
 
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCalibrationOpen(false)}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={addCalibrationCheck}
-                  disabled={calibrationSaving || !orgId || !locationId}
-                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-                >
-                  {calibrationSaving ? "Saving…" : "Save check"}
-                </button>
+              <div>
+                <label className="text-xs text-slate-500">Initials</label>
+                <input
+                  value={calibrationForm.staff_initials}
+                  onChange={(e) => setCalibrationForm((f) => ({ ...f, staff_initials: e.target.value.toUpperCase() }))}
+                  className="h-10 w-full rounded-xl border border-slate-300 px-3 text-sm"
+                />
+              </div>
+
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={!!calibrationForm.all_equipment_calibrated}
+                  onChange={(e) => setCalibrationForm((f) => ({ ...f, all_equipment_calibrated: e.target.checked }))}
+                />
+                <span className="text-sm">All equipment calibrated</span>
+              </label>
+
+              <div>
+                <label className="text-xs text-slate-500">Notes</label>
+                <textarea
+                  rows={3}
+                  value={calibrationForm.notes}
+                  onChange={(e) => setCalibrationForm((f) => ({ ...f, notes: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                />
               </div>
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* Individual staff assessment modal */}
-      {staffAssessOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4" onClick={() => setStaffAssessOpen(false)}>
-          <div
-            className={cls("mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-base font-semibold">Individual staff assessment</div>
-                <div className="mt-0.5 text-xs text-slate-500">Manager view of individual performance.</div>
-              </div>
-              <button onClick={() => setStaffAssessOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
-                ✕
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setCalibrationOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={saveCalibrationCheck}
+                disabled={calibrationSaving}
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {calibrationSaving ? "Saving…" : "Save"}
               </button>
             </div>
-
-            {staffAssessErr && (
-              <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{staffAssessErr}</div>
-            )}
-
-            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
-              <div className="grid gap-3 md:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Staff</label>
-                  <select
-                    value={staffAssessStaffId}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setStaffAssessStaffId(e.target.value)}
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    <option value="">Select staff…</option>
-                    {teamOptions.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {tmLabel(t)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Range (days)</label>
-                  <select
-                    value={staffAssessDays}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setStaffAssessDays(Number(e.target.value) || 7)}
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    {[7, 14, 30, 60, 90].map((n) => (
-                      <option key={n} value={n}>
-                        Last {n} days
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!staffAssessStaffId) {
-                        alert("Select staff first.");
-                        return;
-                      }
-                      void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
-                    }}
-                    disabled={staffAssessLoading || !orgId || !locationId}
-                    className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
-                  >
-                    {staffAssessLoading ? "Loading…" : "Load"}
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <KpiTile
-                  title="Cleaning runs"
-                  icon="🧼"
-                  tone="neutral"
-                  value={staffAssess?.cleaningRuns ?? "—"}
-                  sub={staffAssess ? `Completed in last ${staffAssess.rangeDays}d` : "Select staff + load"}
-                />
-                <KpiTile title="Temp logs" icon="🌡" tone="neutral" value={staffAssess?.tempLogs ?? "—"} sub={staffAssess ? `Recorded in last ${staffAssess.rangeDays}d` : "—"} />
-                <KpiTile
-                  title="Temp fails"
-                  icon="🚫"
-                  tone={staffAssess && staffAssess.tempFails > 0 ? "danger" : "ok"}
-                  value={staffAssess?.tempFails ?? "—"}
-                  sub={staffAssess ? `Fails in last ${staffAssess.rangeDays}d` : "—"}
-                />
-                <KpiTile
-                  title="Incidents"
-                  icon="⚠️"
-                  tone={staffAssess && staffAssess.incidents > 0 ? "warn" : "ok"}
-                  value={staffAssess?.incidents ?? "—"}
-                  sub={staffAssess ? `Logged in last ${staffAssess.rangeDays}d` : "—"}
-                />
-                <KpiTile
-                  title="QC avg (30d)"
-                  icon="📋"
-                  tone="neutral"
-                  value={staffAssess ? (staffAssess.qcAvg30d != null ? `${staffAssess.qcAvg30d}/5` : "—") : "—"}
-                  sub={staffAssess ? `Based on ${staffAssess.qcCount30d} reviews` : "—"}
-                />
-                <KpiTile title="Staff" icon="👤" tone="neutral" value={staffAssess?.staffLabel ?? "—"} sub="Selected team member" />
-              </div>
-
-              <div className="mt-4 text-xs text-slate-500">
-                Note: this uses initials across logs (done_by, staff_initials, created_by). If you switch to IDs everywhere later, this becomes rock-solid.
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* QC modal */}
-      {qcOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4" onClick={() => setQcOpen(false)}>
-          <div
-            className={cls("mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-base font-semibold">Manager QC</div>
-                <div className="mt-0.5 text-xs text-slate-500">Manager is your logged-in team member. Staff list is team members.</div>
-              </div>
-
-              <button onClick={() => setQcOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
-                ✕
-              </button>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
-              <div className="mb-3 grid gap-2 sm:grid-cols-2">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Manager</div>
-                  <div className="mt-1 text-sm font-semibold text-slate-900">{managerTeamMember ? tmLabel(managerTeamMember) : "Not linked"}</div>
-                  {!managerTeamMember ? (
-                    <div className="mt-1 text-xs text-rose-700">
-                      Link this login by setting <span className="font-semibold">team_members.user_id</span>.
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Location</div>
-                  <div className="mt-1 text-sm font-semibold text-slate-900">{locations.find((l) => l.id === locationId)?.name ?? "—"}</div>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-4">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Staff</label>
-                  <select
-                    value={qcForm.staff_id}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setQcForm((f) => ({ ...f, staff_id: e.target.value }))}
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    <option value="">Select…</option>
-                    {teamOptions.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {tmLabel(t)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Date</label>
-                  <input
-                    type="date"
-                    value={qcForm.reviewed_on}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQcForm((f) => ({ ...f, reviewed_on: e.target.value }))}
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">Score</label>
-                  <select
-                    value={qcForm.rating}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setQcForm((f) => ({ ...f, rating: Number(e.target.value) }))}
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                  >
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <option key={n} value={n}>
-                        {n}/5
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="md:col-span-4">
-                  <label className="mb-1 block text-xs text-slate-500">Notes</label>
-                  <textarea
-                    value={qcForm.notes}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQcForm((f) => ({ ...f, notes: e.target.value }))}
-                    placeholder="Optional…"
-                    rows={4}
-                    className="w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm leading-5 resize-y min-h-[96px]"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setQcOpen(false)}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Close
-                </button>
-                <button
-                  type="button"
-                  onClick={addQcReview}
-                  disabled={qcSaving || !orgId || !locationId || !managerTeamMember}
-                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-                >
-                  {qcSaving ? "Saving…" : "Add QC"}
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-500">
-                    <th className="px-3 py-2">Date</th>
-                    <th className="px-3 py-2">Staff</th>
-                    <th className="px-3 py-2">Manager</th>
-                    <th className="px-3 py-2">Score</th>
-                    <th className="px-3 py-2">Notes</th>
-                    <th className="px-3 py-2 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {qcLoading ? (
-                    <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
-                        Loading…
-                      </td>
-                    </tr>
-                  ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
-                        No QC reviews logged.
-                      </td>
-                    </tr>
-                  ) : (
-                    (showAllQc ? qcReviews : qcReviews.slice(0, 10)).map((r) => {
-                      const pill =
-                        r.rating >= 4 ? "bg-emerald-100 text-emerald-800" : r.rating === 3 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800";
-
-                      return (
-                        <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                          <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.reviewed_on)}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.manager ?? { initials: null, name: "—" })}</td>
-                          <td className="px-3 py-2">
-                            <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
-                              {r.rating}/5
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 max-w-[18rem] truncate">{r.notes ?? "—"}</td>
-                          <td className="px-3 py-2 text-right">
-                            <button
-                              type="button"
-                              onClick={() => deleteQcReview(r.id)}
-                              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
           </div>
         </div>
       )}
