@@ -37,7 +37,6 @@ type AllergenRow = {
   reviewed_on: string | null; // ISO date/datetime
   next_due: string | null; // ISO datetime
   reviewer: string | null;
-  interval_days: number | null;
   days_until?: number | null;
 };
 
@@ -134,40 +133,6 @@ type UnifiedIncidentRow = {
   source: "incident" | "temp_fail";
 };
 
-/* ===================== Calibration ===================== */
-
-type CalibrationAsset = {
-  id: string;
-  name: string;
-  asset_type: "Fridge" | "Freezer" | "Probe" | string;
-  interval_days: number;
-};
-
-type CalibrationCheck = {
-  id: string;
-  asset_id: string;
-  checked_on: string; // yyyy-mm-dd
-  staff_initials: string | null;
-  method: string | null;
-  result: string | null;
-  notes: string | null;
-  created_at: string | null;
-  asset_name: string;
-  asset_type: string;
-  interval_days: number;
-};
-
-type CalibrationDueRow = {
-  asset_id: string;
-  asset_name: string;
-  asset_type: string;
-  interval_days: number;
-  last_checked_on: string | null; // yyyy-mm-dd
-  next_due_on: string | null; // yyyy-mm-dd
-  days_until: number | null;
-  status: "overdue" | "due_soon" | "ok" | "unknown";
-};
-
 /* ===================== Food Hygiene Rating ===================== */
 
 type HygieneMeta = {
@@ -223,15 +188,11 @@ function formatTimeHM(iso: string | null | undefined): string {
   return `${hh}:${mm}`;
 }
 
-function addDaysISO(ymd: string, days: number): string {
-  const d = new Date(ymd + "T00:00:00");
-  if (Number.isNaN(d.getTime())) return ymd;
-
+function addDaysISO(ymd: string, days: number) {
+  const d = safeDate(ymd) ?? new Date();
   d.setDate(d.getDate() + days);
-
-  return d.toISOString().slice(0, 10);
+  return toISODate(d);
 }
-
 
 function addDays(date: Date, days: number) {
   const d = new Date(date);
@@ -470,7 +431,6 @@ function computeTrainingStatus(awardedISO: string | null, expiresISO: string | n
     return { expires_on: toISODate(exp0!), days_until, status: "amber" as TrainingAreaStatus };
   return { expires_on: toISODate(exp0!), days_until, status: "green" as TrainingAreaStatus };
 }
-
 async function fetchTrainingAreasReport(
   orgId: string,
   locationId: string | null
@@ -478,6 +438,7 @@ async function fetchTrainingAreasReport(
   const rows: TrainingAreaRow[] = [];
 
   async function fetchFromTeamMembers(): Promise<any[] | null> {
+    // 1) location-scoped (if possible)
     if (locationId) {
       const { data: d1, error: e1 } = await supabase
         .from("team_members")
@@ -492,8 +453,10 @@ async function fetchTrainingAreasReport(
       } else if ((d1?.length ?? 0) > 0) {
         return d1 as any[];
       }
+      // ✅ zero rows => fall back to org-wide below
     }
 
+    // 2) org-wide team_members
     const { data: d2, error: e2 } = await supabase
       .from("team_members")
       .select("id,name,initials,email,active,training_areas")
@@ -506,7 +469,38 @@ async function fetchTrainingAreasReport(
     return (d2 ?? []) as any[];
   }
 
+  async function fetchFromStaff(): Promise<any[] | null> {
+    // Some builds store training coverage on staff not team_members.
+    if (locationId) {
+      const { data: d1, error: e1 } = await supabase
+        .from("staff")
+        .select("id,name,initials,email,active,training_areas,location_id")
+        .eq("org_id", orgId)
+        .eq("location_id", locationId)
+        .order("name", { ascending: true })
+        .limit(5000);
+
+      if (e1) {
+        if (!isMissingLocationColumnError(e1)) throw e1;
+      } else if ((d1?.length ?? 0) > 0) {
+        return d1 as any[];
+      }
+    }
+
+    const { data: d2, error: e2 } = await supabase
+      .from("staff")
+      .select("id,name,initials,email,active,training_areas")
+      .eq("org_id", orgId)
+      .order("name", { ascending: true })
+      .limit(5000);
+
+    if (e2) throw e2;
+    return (d2 ?? []) as any[];
+  }
+
+  // Try team_members first (preferred), then staff if it’s empty.
   let data = await fetchFromTeamMembers();
+  if (!data || data.length === 0) data = await fetchFromStaff();
   if (!data || data.length === 0) return [];
 
   for (const m of data) {
@@ -565,7 +559,7 @@ async function fetchLatestHygieneByLocation(orgId: string): Promise<Record<strin
   for (const r of (data ?? []) as any[]) {
     const locId = r.location_id ? String(r.location_id) : null;
     if (!locId) continue;
-    if (map[locId]) continue;
+    if (map[locId]) continue; // keep first (latest) per location
 
     map[locId] = {
       rating: r.rating != null ? Number(r.rating) : null,
@@ -911,7 +905,8 @@ async function fetchIncidentsTrailAsUnifiedIncidentShape(
 }
 
 /**
- * Team due: supports team_member_id (preferred) and staff_id (legacy).
+ * Team due is now location-aware when possible.
+ * If trainings table doesn't have location_id, we fallback to org-wide.
  */
 async function fetchTeamDue(
   withinDays: number,
@@ -920,27 +915,29 @@ async function fetchTeamDue(
 ): Promise<TeamRow[]> {
   let tData: any[] = [];
 
-  // trainings has no location_id in your schema, so we just load org-wide.
-  const { data, error } = await supabase
-    .from("trainings")
-    .select("id, staff_id, team_member_id, expires_on")
-    .eq("org_id", orgId)
-    .limit(5000);
+  if (locationId) {
+    const { data, error } = await supabase
+      .from("trainings")
+      .select("id, staff_id, expires_on, location_id")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId);
 
-  if (error) throw error;
-  tData = (data ?? []) as any[];
+    if (!error) tData = (data ?? []) as any[];
+    else if (!isMissingLocationColumnError(error)) throw error;
+  }
+
+  if (!tData.length) {
+    const { data, error } = await supabase
+      .from("trainings")
+      .select("id, staff_id, expires_on")
+      .eq("org_id", orgId);
+
+    if (error) throw error;
+    tData = (data ?? []) as any[];
+  }
 
   const trainings = (tData ?? []).filter((t: any) => !!t.expires_on);
   if (!trainings.length) return [];
-
-  const teamIds = Array.from(
-    new Set(
-      trainings
-        .map((t: any) => t.team_member_id)
-        .filter((id: any) => typeof id === "string" || typeof id === "number")
-        .map((id: any) => String(id))
-    )
-  );
 
   const staffIds = Array.from(
     new Set(
@@ -951,38 +948,18 @@ async function fetchTeamDue(
     )
   );
 
-  const peopleMap = new Map<string, { name: string; email: string | null; initials: string | null }>();
+  const staffMap = new Map<string, { name: string; email: string | null; initials: string | null }>();
 
-  if (teamIds.length) {
-    let q = supabase
-      .from("team_members")
-      .select("id, name, email, initials, location_id")
-      .eq("org_id", orgId)
-      .in("id", teamIds);
-
-    if (locationId) q = q.eq("location_id", locationId);
-
-    const { data: tm, error: tmErr } = await q;
-    if (tmErr) throw tmErr;
-
-    for (const s of tm ?? []) {
-      peopleMap.set(`tm:${String(s.id)}`, {
-        name: s.name ?? "—",
-        email: s.email ?? null,
-        initials: s.initials ?? null,
-      });
-    }
-  }
-
-  // legacy fallback
   if (staffIds.length) {
-    let q = supabase.from("staff").select("id, name, email, initials").eq("org_id", orgId).in("id", staffIds);
-    if (locationId) q = q.eq("location_id", locationId);
-    const { data: st, error: stErr } = await q;
-    if (stErr) throw stErr;
+    const { data: sData, error: sErr } = await supabase
+      .from("staff")
+      .select("id, name, email, initials")
+      .in("id", staffIds);
 
-    for (const s of st ?? []) {
-      peopleMap.set(`st:${String(s.id)}`, {
+    if (sErr) throw sErr;
+
+    for (const s of sData ?? []) {
+      staffMap.set(String(s.id), {
         name: s.name ?? "—",
         email: s.email ?? null,
         initials: s.initials ?? null,
@@ -995,6 +972,8 @@ async function fetchTeamDue(
 
   return trainings
     .map((r: any): TeamRow | null => {
+      const staff = staffMap.get(String(r.staff_id)) ?? { name: "—", email: null, initials: null };
+
       const exp = safeDate(r.expires_on);
       if (!exp) return null;
 
@@ -1002,13 +981,6 @@ async function fetchTeamDue(
       exp0.setHours(0, 0, 0, 0);
 
       const days_until = Math.round((exp0.getTime() - today0.getTime()) / 86400000);
-
-      const key =
-        r.team_member_id != null ? `tm:${String(r.team_member_id)}` :
-        r.staff_id != null ? `st:${String(r.staff_id)}` :
-        null;
-
-      const staff = key ? (peopleMap.get(key) ?? { name: "—", email: null, initials: null }) : { name: "—", email: null, initials: null };
 
       return {
         id: String(r.id),
@@ -1025,54 +997,78 @@ async function fetchTeamDue(
 }
 
 /**
- * ✅ Allergen schedule uses `allergen_review`
- * (single schedule row per org; no location_id in your schema).
+ * Allergen review schedule now location-aware when possible.
+ * If allergen_review_log has no location_id, fallback to org-wide.
  */
 async function fetchAllergenLog(
-  _withinDays: number,
+  _withinDays: number, // ignored: we want history
   orgId: string,
-  _locationId: string | null
+  locationId: string | null
 ): Promise<AllergenRow[]> {
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
 
-  const { data, error } = await supabase
-    .from("allergen_review")
-    .select("id, last_reviewed, interval_days, reviewer, created_at")
+  const mapRows = (rows: any[]) =>
+    (rows ?? []).map((r: any) => {
+      const reviewed = safeDate(r.reviewed_on);
+
+      const intervalDaysRaw = r.interval_days;
+      const intervalDays =
+        intervalDaysRaw == null || intervalDaysRaw === "" ? null : Number(intervalDaysRaw);
+
+      let nextDue: Date | null = null;
+      if (reviewed && intervalDays && Number.isFinite(intervalDays) && intervalDays > 0) {
+        nextDue = new Date(reviewed.getTime() + intervalDays * 86400000);
+      }
+
+      const next0 = nextDue ? new Date(nextDue) : null;
+      if (next0) next0.setHours(0, 0, 0, 0);
+
+      const days_until = next0
+        ? Math.round((next0.getTime() - today0.getTime()) / 86400000)
+        : null;
+
+      return {
+        id: String(r.id),
+        reviewed_on: reviewed ? reviewed.toISOString() : null,
+        next_due: nextDue ? nextDue.toISOString() : null,
+        reviewer: r.reviewer ?? null,
+        days_until,
+      } as AllergenRow;
+    });
+
+  // 1) Try location-scoped (if locationId exists)
+  if (locationId) {
+    const { data: d1, error: e1 } = await supabase
+      .from("allergen_review_log")
+      .select("id, reviewed_on, interval_days, reviewer, location_id, created_at")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .order("reviewed_on", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    // If table doesn't have location_id, fall through to org-wide
+    if (e1 && !isMissingLocationColumnError(e1)) throw e1;
+
+    // ✅ If location query returns rows, use them.
+    if (!e1 && (d1?.length ?? 0) > 0) return mapRows(d1 ?? []);
+
+    // ✅ If location query returns ZERO rows, fall back to org-wide (data might not be location-tagged)
+  }
+
+  // 2) Org-wide fallback
+  const { data: d2, error: e2 } = await supabase
+    .from("allergen_review_log")
+    .select("id, reviewed_on, interval_days, reviewer, created_at")
     .eq("org_id", orgId)
+    .order("reviewed_on", { ascending: false })
     .order("created_at", { ascending: false })
-    .limit(10);
+    .limit(500);
 
-  if (error) throw error;
+  if (e2) throw e2;
 
-  return (data ?? []).map((r: any) => {
-    const reviewed = safeDate(r.last_reviewed);
-
-    const intervalDaysRaw = r.interval_days;
-    const interval_days =
-      intervalDaysRaw == null || intervalDaysRaw === "" ? null : Number(intervalDaysRaw);
-
-    let nextDue: Date | null = null;
-    if (reviewed && interval_days && Number.isFinite(interval_days) && interval_days > 0) {
-      nextDue = new Date(reviewed.getTime() + interval_days * 86400000);
-    }
-
-    const next0 = nextDue ? new Date(nextDue) : null;
-    if (next0) next0.setHours(0, 0, 0, 0);
-
-    const days_until = next0
-      ? Math.round((next0.getTime() - today0.getTime()) / 86400000)
-      : null;
-
-    return {
-      id: String(r.id),
-      reviewed_on: reviewed ? reviewed.toISOString() : null,
-      next_due: nextDue ? nextDue.toISOString() : null,
-      reviewer: r.reviewer ?? null,
-      interval_days: interval_days,
-      days_until,
-    } as AllergenRow;
-  });
+  return mapRows(d2 ?? []);
 }
 
 async function fetchAllergenChanges(
@@ -1152,44 +1148,63 @@ async function fetchStaffReviews(
 }
 
 /**
- * ✅ Education/trainings: supports team_member_id (preferred) and staff_id (legacy)
+ * Education/trainings table now location-aware when possible.
+ * If trainings has no location_id, fallback to org-wide.
  */
 async function fetchEducation(orgId: string, locationId: string | null): Promise<EducationRow[]> {
-  let q = supabase
-    .from("trainings")
-    .select(
+  let data: any[] | null = null;
+
+  if (locationId) {
+    const { data: d1, error: e1 } = await supabase
+      .from("trainings")
+      .select(
+        `
+        id,
+        type,
+        awarded_on,
+        expires_on,
+        certificate_url,
+        notes,
+        location_id,
+        staff:staff_id ( name, email, initials )
       `
-      id,
-      type,
-      awarded_on,
-      expires_on,
-      certificate_url,
-      notes,
-      provider_name,
-      course_key,
-      team_member:team_member_id (
-        name,
-        email,
-        initials,
-        location_id
       )
-    `
-    )
-    .eq("org_id", orgId)
-    .order("expires_on", { ascending: true })
-    .order("awarded_on", { ascending: true });
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .order("expires_on", { ascending: true })
+      .order("awarded_on", { ascending: true });
 
-  // Filter by *team_members.location_id* (the column that actually exists)
-  if (locationId) q = q.eq("team_member.location_id", locationId);
+    if (!e1) data = (d1 ?? []) as any[];
+    else if (!isMissingLocationColumnError(e1)) throw e1;
+  }
 
-  const { data, error } = await q;
-  if (error) throw error;
+  if (data === null) {
+    const { data: d2, error: e2 } = await supabase
+      .from("trainings")
+      .select(
+        `
+        id,
+        type,
+        awarded_on,
+        expires_on,
+        certificate_url,
+        notes,
+        staff:staff_id ( name, email, initials )
+      `
+      )
+      .eq("org_id", orgId)
+      .order("expires_on", { ascending: true })
+      .order("awarded_on", { ascending: true });
+
+    if (e2) throw e2;
+    data = (d2 ?? []) as any[];
+  }
 
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
 
   return (data ?? []).map((r: any) => {
-    const tm = r.team_member ?? {};
+    const staff = r.staff ?? {};
     const awarded = safeDate(r.awarded_on);
     const expires = safeDate(r.expires_on);
 
@@ -1206,9 +1221,9 @@ async function fetchEducation(orgId: string, locationId: string | null): Promise
 
     return {
       id: String(r.id),
-      staff_name: tm.name ?? "—",
-      staff_initials: tm.initials ?? null,
-      staff_email: tm.email ?? null,
+      staff_name: staff.name ?? "—",
+      staff_initials: staff.initials ?? null,
+      staff_email: staff.email ?? null,
       type: r.type ?? null,
       awarded_on: awarded ? awarded.toISOString() : null,
       expires_on: expires ? expires.toISOString() : null,
@@ -1217,163 +1232,6 @@ async function fetchEducation(orgId: string, locationId: string | null): Promise
       notes: r.notes ?? null,
       certificate_url: r.certificate_url ?? null,
     } as EducationRow;
-  });
-}
-
-/* ===================== Calibration fetch ===================== */
-
-async function fetchCalibrationDue(
-  orgId: string,
-  locationId: string | null
-): Promise<CalibrationDueRow[]> {
-  // Load assets for org + (optionally) location
-  let aq = supabase
-    .from("calibration_assets")
-    .select("id, name, asset_type, interval_days, location_id, active")
-    .eq("org_id", orgId)
-    .eq("active", true)
-    .order("asset_type", { ascending: true })
-    .order("name", { ascending: true })
-    .limit(5000);
-
-  if (locationId) aq = aq.eq("location_id", locationId);
-
-  const { data: assets, error: aErr } = await aq;
-  if (aErr) throw aErr;
-
-  const assetRows = (assets ?? []) as any[];
-  if (!assetRows.length) return [];
-
-  const assetIds = assetRows.map((a) => String(a.id));
-
-  // Load last check per asset
-  let cq = supabase
-    .from("calibration_checks")
-    .select("asset_id, checked_on, created_at")
-    .eq("org_id", orgId)
-    .in("asset_id", assetIds)
-    .order("checked_on", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(5000);
-
-  if (locationId) cq = cq.eq("location_id", locationId);
-
-  const { data: checks, error: cErr } = await cq;
-  if (cErr) throw cErr;
-
-  const lastByAsset = new Map<string, string>();
-  for (const r of (checks ?? []) as any[]) {
-    const id = String(r.asset_id);
-    if (lastByAsset.has(id)) continue;
-    const checked = r.checked_on ? String(r.checked_on) : null;
-    if (checked) lastByAsset.set(id, checked);
-  }
-
-  const today0 = new Date();
-  today0.setHours(0, 0, 0, 0);
-
-  return assetRows.map((a) => {
-    const asset_id = String(a.id);
-    const interval_days = Number(a.interval_days ?? 30) || 30;
-
-    const last_checked_on = lastByAsset.get(asset_id) ?? null;
-
-    let next_due_on: string | null = null;
-    let days_until: number | null = null;
-    let status: CalibrationDueRow["status"] = "unknown";
-
-    if (last_checked_on) {
-      next_due_on = addDaysISO(last_checked_on, interval_days);
-      const due = safeDate(next_due_on);
-      if (due) {
-        due.setHours(0, 0, 0, 0);
-        days_until = Math.round((due.getTime() - today0.getTime()) / 86400000);
-        if (days_until < 0) status = "overdue";
-        else if (days_until <= 7) status = "due_soon";
-        else status = "ok";
-      }
-    } else {
-      // Never checked -> due now
-      next_due_on = toISODate(today0);
-      days_until = 0;
-      status = "due_soon";
-    }
-
-    return {
-      asset_id,
-      asset_name: String(a.name ?? "—"),
-      asset_type: String(a.asset_type ?? "Asset"),
-      interval_days,
-      last_checked_on,
-      next_due_on,
-      days_until,
-      status,
-    } as CalibrationDueRow;
-  });
-}
-
-async function fetchCalibrationChecksTrail(
-  fromISO: string,
-  toISO: string,
-  orgId: string,
-  locationId: string | null
-): Promise<CalibrationCheck[]> {
-  let aq = supabase
-    .from("calibration_assets")
-    .select("id, name, asset_type, interval_days, location_id, active")
-    .eq("org_id", orgId)
-    .eq("active", true)
-    .limit(5000);
-
-  if (locationId) aq = aq.eq("location_id", locationId);
-
-  const { data: assets, error: aErr } = await aq;
-  if (aErr) throw aErr;
-
-  const assetRows = (assets ?? []) as any[];
-  const assetMap = new Map<string, CalibrationAsset>();
-  for (const a of assetRows) {
-    assetMap.set(String(a.id), {
-      id: String(a.id),
-      name: String(a.name ?? "—"),
-      asset_type: a.asset_type ?? "Asset",
-      interval_days: Number(a.interval_days ?? 30) || 30,
-    });
-  }
-
-  const fromStart = new Date(`${fromISO}T00:00:00.000Z`).toISOString();
-  const toEnd = new Date(`${toISO}T23:59:59.999Z`).toISOString();
-
-  let q = supabase
-    .from("calibration_checks")
-    .select("id, asset_id, checked_on, staff_initials, method, result, notes, created_at, location_id")
-    .eq("org_id", orgId)
-    .gte("created_at", fromStart)
-    .lte("created_at", toEnd)
-    .order("checked_on", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(3000);
-
-  if (locationId) q = q.eq("location_id", locationId);
-
-  const { data, error } = await q;
-  if (error) throw error;
-
-  return (data ?? []).map((r: any) => {
-    const a = assetMap.get(String(r.asset_id));
-    return {
-      id: String(r.id),
-      asset_id: String(r.asset_id),
-      checked_on: r.checked_on ? String(r.checked_on) : "—",
-      staff_initials: r.staff_initials ?? null,
-      method: r.method ?? null,
-      result: r.result ?? null,
-      notes: r.notes ?? null,
-      created_at: r.created_at ? String(r.created_at) : null,
-      asset_name: a?.name ?? "—",
-      asset_type: a?.asset_type ?? "Asset",
-      interval_days: a?.interval_days ?? 30,
-    } as CalibrationCheck;
   });
 }
 
@@ -1410,9 +1268,12 @@ export default function ReportsPage() {
   const [locationFilter, setLocationFilter] = useState<string | "all">("all");
   const [locations, setLocations] = useState<LocationOption[]>([]);
 
+  // Boot gate: ensures active location loaded before initial report run
   const [bootReady, setBootReady] = useState(false);
 
+  // Food hygiene rating per location (latest per location)
   const [hygieneByLocation, setHygieneByLocation] = useState<Record<string, HygieneMeta>>({});
+  // Food hygiene rating history for selected location
   const [hygieneHistory, setHygieneHistory] = useState<HygieneHistoryRow[] | null>(null);
 
   const [temps, setTemps] = useState<TempRow[] | null>(null);
@@ -1431,10 +1292,6 @@ export default function ReportsPage() {
 
   const [trainingAreas, setTrainingAreas] = useState<TrainingAreaRow[] | null>(null);
   const [showAllTrainingAreas, setShowAllTrainingAreas] = useState(false);
-
-  // Calibration
-  const [calibrationDue, setCalibrationDue] = useState<CalibrationDueRow[] | null>(null);
-  const [calibrationChecks, setCalibrationChecks] = useState<CalibrationCheck[] | null>(null);
 
   const [showAllTemps, setShowAllTemps] = useState(false);
   const [showAllEducation, setShowAllEducation] = useState(false);
@@ -1511,6 +1368,7 @@ export default function ReportsPage() {
     return rows;
   }, [trainingAreas]);
 
+  // Hygiene display for selected / all (label-only used for "all locations" path)
   const hygieneDisplay = useMemo(() => {
     if (locationFilter !== "all") {
       const meta = hygieneByLocation[String(locationFilter)];
@@ -1533,13 +1391,6 @@ export default function ReportsPage() {
     return { label: "Varies", visit: null as string | null };
   }, [locationFilter, hygieneByLocation]);
 
-  const calibrationSummary = useMemo(() => {
-    const list = calibrationDue ?? [];
-    const overdue = list.filter((x) => x.status === "overdue").length;
-    const dueSoon = list.filter((x) => x.status === "due_soon").length;
-    return { overdue, dueSoon, total: list.length };
-  }, [calibrationDue]);
-
   /* ---------- boot: org + locations + hygiene + active location ---------- */
 
   useEffect(() => {
@@ -1551,6 +1402,7 @@ export default function ReportsPage() {
         setOrgId(id ?? null);
         if (!id) return;
 
+        // locations
         const { data: locData, error: locErr } = await supabase
           .from("locations")
           .select("id,name")
@@ -1561,6 +1413,7 @@ export default function ReportsPage() {
           setLocations(locData.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })));
         }
 
+        // hygiene ratings (latest per location)
         try {
           const map = await fetchLatestHygieneByLocation(id);
           setHygieneByLocation(map);
@@ -1568,6 +1421,7 @@ export default function ReportsPage() {
           setHygieneByLocation({});
         }
 
+        // set active location from header switcher (if any)
         const activeLoc = await getActiveLocationIdClient();
         if (activeLoc) setLocationFilter(activeLoc);
       } finally {
@@ -1599,7 +1453,6 @@ export default function ReportsPage() {
         so,
         cr,
         allergenEditRows,
-        calTrail,
       ] = await Promise.all([
         fetchTemps(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningCount(rangeFrom, rangeTo, orgIdValue, locationId),
@@ -1610,7 +1463,6 @@ export default function ReportsPage() {
         fetchSignoffsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningRunsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchAllergenChanges(rangeFrom, rangeTo, orgIdValue, locationId),
-        fetchCalibrationChecksTrail(rangeFrom, rangeTo, orgIdValue, locationId),
       ]);
 
       setTemps(t);
@@ -1619,8 +1471,6 @@ export default function ReportsPage() {
 
       setLoggedIncidents(loggedInc);
       setAllergenChanges(allergenEditRows);
-
-      setCalibrationChecks(calTrail);
 
       const unified: UnifiedIncidentRow[] = [
         ...(incForUnified ?? []).map((r) => ({
@@ -1652,6 +1502,7 @@ export default function ReportsPage() {
       setShowAllCleaningRuns(false);
       setShowAllStaffReviews(false);
 
+      // Hygiene history for selected location (small list)
       if (locationId) {
         try {
           const hist = await fetchHygieneHistoryForLocation(orgIdValue, locationId);
@@ -1666,19 +1517,17 @@ export default function ReportsPage() {
       if (includeAncillary) {
         const withinDays = 90;
 
-        const [m, a, e, ta, calDue] = await Promise.all([
+        const [m, a, e, ta] = await Promise.all([
           fetchTeamDue(withinDays, orgIdValue, locationId),
           fetchAllergenLog(withinDays, orgIdValue, locationId),
           fetchEducation(orgIdValue, locationId),
           fetchTrainingAreasReport(orgIdValue, locationId),
-          fetchCalibrationDue(orgIdValue, locationId),
         ]);
 
         setTeamDue(m);
         setAllergenLog(a);
         setEducation(e);
         setTrainingAreas(ta);
-        setCalibrationDue(calDue);
 
         setShowAllEducation(false);
         setShowAllTrainingAreas(false);
@@ -1692,8 +1541,6 @@ export default function ReportsPage() {
       setStaffReviews(null);
       setEducation(null);
       setTrainingAreas(null);
-      setCalibrationDue(null);
-      setCalibrationChecks(null);
       setCleaningCount(0);
       setIncidents(null);
       setLoggedIncidents(null);
@@ -1730,6 +1577,7 @@ export default function ReportsPage() {
     await runRange(fromISO, toISO, orgId, locId, true);
   }
 
+  // Initial run: wait for bootReady so locationFilter can be set from header switcher
   useEffect(() => {
     if (!orgId) return;
     if (!bootReady) return;
@@ -1742,6 +1590,7 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, bootReady, initialRunDone]);
 
+  // Location change: re-run everything INCLUDING ancillary so the page stays consistent
   useEffect(() => {
     if (!orgId) return;
     if (!bootReady) return;
@@ -1956,33 +1805,6 @@ export default function ReportsPage() {
               )}
             </div>
 
-            {/* Calibration due summary */}
-            <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 p-3">
-              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">
-                Calibration status
-              </div>
-              {calibrationDue == null ? (
-                <div className="text-sm text-slate-500">Run a report to load calibration status.</div>
-              ) : calibrationSummary.total === 0 ? (
-                <div className="text-sm text-slate-500">No calibration assets configured.</div>
-              ) : (
-                <div className="flex flex-wrap gap-2 text-xs">
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
-                    Total: <span className="font-semibold">{calibrationSummary.total}</span>
-                  </span>
-                  <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-800">
-                    Due soon: <span className="font-semibold">{calibrationSummary.dueSoon}</span>
-                  </span>
-                  <span className="rounded-full bg-red-100 px-3 py-1 text-red-800">
-                    Overdue: <span className="font-semibold">{calibrationSummary.overdue}</span>
-                  </span>
-                </div>
-              )}
-              <div className="mt-2 text-[11px] text-slate-500">
-                {loading ? "Loading…" : "Auto-runs when you change location."}
-              </div>
-            </div>
-
             <div className="mt-2 text-[11px] text-slate-500">
               {loading ? "Loading…" : "Auto-runs when you change location."}
             </div>
@@ -2022,7 +1844,6 @@ export default function ReportsPage() {
                 <li>• Repeat temperature failures</li>
                 <li>• Missed cleaning tasks</li>
                 <li>• Training drift (expired / due soon)</li>
-                <li>• Calibration drift (due / overdue)</li>
               </ul>
             </div>
 
@@ -2042,77 +1863,808 @@ export default function ReportsPage() {
         </Card>
 
         {/* Temperature Logs */}
-        {/* ... (UNCHANGED: the rest of your report cards remain as-is, except the allergen card label below) ... */}
-
-        {/* Calibration due list */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-2 text-base font-semibold">Calibrations (due status)</h3>
+          <h3 className="mb-3 text-base font-semibold">
+            Temperature Logs {temps ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Location</th>
+                  <th className="py-2 pr-3">Item</th>
+                  <th className="py-2 pr-3">Temp (°C)</th>
+                  <th className="py-2 pr-3">Target</th>
+                  <th className="py-2 pr-3">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!temps ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : temps.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      No results for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  visibleTemps!.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">{formatISOToUK(r.date)}</td>
+                      <td className="py-2 pr-3">{r.staff}</td>
+                      <td className="py-2 pr-3">{r.location}</td>
+                      <td className="py-2 pr-3">{r.item}</td>
+                      <td className="py-2 pr-3">{r.temp_c ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.target_key ?? "—"}</td>
+                      <td className="py-2 pr-3">
+                        {r.status ? (
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                              r.status === "pass"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-red-100 text-red-800"
+                            }`}
+                          >
+                            {r.status}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {temps && temps.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing {showAllTemps ? temps.length : Math.min(10, temps.length)} of {temps.length}{" "}
+                entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllTemps((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllTemps ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Logged incidents */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Incidents (logged){" "}
+            {loggedIncidents ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Type</th>
+                  <th className="py-2 pr-3">By</th>
+                  <th className="py-2 pr-3">Details</th>
+                  <th className="py-2 pr-3">Immediate action</th>
+                  <th className="py-2 pr-3">Preventive action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!loggedIncidents ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : loggedIncidents.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      No incidents for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  (showAllLoggedIncidents ? loggedIncidents : visibleLoggedIncidents!).map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">
+                        {r.happened_on ? formatISOToUK(r.happened_on) : "—"}
+                      </td>
+                      <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
+                      <td className="py-2 pr-3 font-semibold">{r.type ?? "Incident"}</td>
+                      <td className="py-2 pr-3">
+                        {r.created_by ? r.created_by.toUpperCase() : "—"}
+                      </td>
+                      <td className="py-2 pr-3 max-w-xs">
+                        {r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}
+                      </td>
+                      <td className="py-2 pr-3 max-w-xs">
+                        {r.immediate_action ? (
+                          <span className="line-clamp-2">{r.immediate_action}</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 max-w-xs">
+                        {r.preventive_action ? (
+                          <span className="line-clamp-2">{r.preventive_action}</span>
+                        ) : (
+                          <span className="text-slate-500">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {loggedIncidents && loggedIncidents.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllLoggedIncidents
+                  ? loggedIncidents.length
+                  : Math.min(10, loggedIncidents.length)}{" "}
+                of {loggedIncidents.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllLoggedIncidents((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllLoggedIncidents ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Failures & corrective actions */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Failures & corrective actions{" "}
+            {incidents ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Type</th>
+                  <th className="py-2 pr-3">By</th>
+                  <th className="py-2 pr-3">Details</th>
+                  <th className="py-2 pr-3">Corrective</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!incidents ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : incidents.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 text-center text-slate-500">
+                      No incidents for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  visibleIncidents!.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">
+                        {r.happened_on ? formatISOToUK(r.happened_on) : "—"}
+                      </td>
+                      <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
+                      <td className="py-2 pr-3 font-semibold">
+                        {r.type ?? "Incident"}
+                        {r.source === "temp_fail" ? (
+                          <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
+                            temp
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.created_by ? r.created_by.toUpperCase() : "—"}
+                      </td>
+                      <td className="py-2 pr-3 max-w-xs">
+                        {r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}
+                      </td>
+                      <td className="py-2 pr-3 max-w-xs">
+                        {r.corrective_action ? (
+                          <span className="line-clamp-2">{r.corrective_action}</span>
+                        ) : r.source === "temp_fail" ? (
+                          <span className="text-red-700">Missing (recommended)</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {incidents && incidents.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing {showAllIncidents ? incidents.length : Math.min(10, incidents.length)} of{" "}
+                {incidents.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllIncidents((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllIncidents ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Cleaning runs trail */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-1 text-base font-semibold">
+            Cleaning runs {cleaningRuns ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
           <p className="mb-3 text-xs text-slate-500">
-            Assets are configured in <code>calibration_assets</code>. Due is calculated from the last
-            check in <code>calibration_checks</code> using <code>interval_days</code>.
+            Total cleaning runs this period:{" "}
+            <span className="font-semibold text-slate-800">{cleaningCount}</span>
           </p>
 
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50/80">
                 <tr className="text-left text-slate-500">
-                  <th className="py-2 pr-3">Asset</th>
-                  <th className="py-2 pr-3">Type</th>
-                  <th className="py-2 pr-3">Interval</th>
-                  <th className="py-2 pr-3">Last check</th>
-                  <th className="py-2 pr-3">Next due</th>
-                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Category</th>
+                  <th className="py-2 pr-3">Task</th>
+                  <th className="py-2 pr-3">Staff</th>
                 </tr>
               </thead>
               <tbody>
-                {!calibrationDue ? (
+                {!cleaningRuns ? (
                   <tr>
-                    <td colSpan={6} className="py-6 text-center text-slate-500">
-                      Run a report to load calibration status
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      Run a report to see results
                     </td>
                   </tr>
-                ) : calibrationDue.length === 0 ? (
+                ) : cleaningRuns.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-6 text-center text-slate-500">
-                      No calibration assets configured
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      No cleaning runs for this range / location
                     </td>
                   </tr>
                 ) : (
-                  calibrationDue.map((r) => {
-                    const pill =
-                      r.status === "overdue"
-                        ? "bg-red-100 text-red-800"
-                        : r.status === "due_soon"
-                        ? "bg-amber-100 text-amber-800"
-                        : "bg-emerald-100 text-emerald-800";
+                  (showAllCleaningRuns ? cleaningRuns : visibleCleaningRuns!).map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">{formatISOToUK(r.run_on)}</td>
+                      <td className="py-2 pr-3">{formatTimeHM(r.done_at)}</td>
+                      <td className="py-2 pr-3">{r.category}</td>
+                      <td className="py-2 pr-3 max-w-xs">{r.task}</td>
+                      <td className="py-2 pr-3">{r.done_by ?? "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
 
-                    const label =
-                      r.status === "overdue"
-                        ? "Overdue"
-                        : r.status === "due_soon"
-                        ? "Due"
-                        : r.status === "ok"
-                        ? "OK"
-                        : "—";
+          {cleaningRuns && cleaningRuns.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllCleaningRuns ? cleaningRuns.length : Math.min(10, cleaningRuns.length)} of{" "}
+                {cleaningRuns.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllCleaningRuns((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllCleaningRuns ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Day sign-offs trail */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Day sign-offs {signoffs ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Signed by</th>
+                  <th className="py-2 pr-3">Notes / corrective actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!signoffs ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : signoffs.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                      No sign-offs for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  (showAllSignoffs ? signoffs : visibleSignoffs!).map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">{formatISOToUK(r.signoff_on)}</td>
+                      <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
+                      <td className="py-2 pr-3 font-semibold">
+                        {r.signed_by ? r.signed_by.toUpperCase() : "—"}
+                      </td>
+                      <td className="py-2 pr-3 max-w-xl">
+                        {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {signoffs && signoffs.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing {showAllSignoffs ? signoffs.length : Math.min(10, signoffs.length)} of{" "}
+                {signoffs.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllSignoffs((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllSignoffs ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Manager QC reviews */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Manager QC reviews{" "}
+            {staffReviews ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Manager</th>
+                  <th className="py-2 pr-3">Location</th>
+                  <th className="py-2 pr-3">Score</th>
+                  <th className="py-2 pr-3">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!staffReviews ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : staffReviews.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 text-center text-slate-500">
+                      No QC reviews for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  visibleStaffReviews!.map((r) => {
+                    const pill =
+                      r.rating >= 4
+                        ? "bg-emerald-100 text-emerald-800"
+                        : r.rating === 3
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-red-100 text-red-800";
+
+                    const staffLabel = r.staff_initials
+                      ? `${r.staff_initials.toUpperCase()} · ${r.staff_name}`
+                      : r.staff_name;
 
                     return (
-                      <tr key={r.asset_id} className="border-t border-slate-100">
-                        <td className="py-2 pr-3 font-semibold">{r.asset_name}</td>
-                        <td className="py-2 pr-3">{r.asset_type}</td>
-                        <td className="py-2 pr-3">{r.interval_days}d</td>
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3 whitespace-nowrap">
+                          {formatISOToUK(r.reviewed_on)}
+                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{staffLabel}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{r.reviewer ?? "—"}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{r.location_name ?? "—"}</td>
                         <td className="py-2 pr-3">
-                          {r.last_checked_on ? formatISOToUK(r.last_checked_on) : "—"}
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${pill}`}
+                          >
+                            {r.rating}/5
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 max-w-xl">
+                          {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {staffReviews && staffReviews.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllStaffReviews ? staffReviews.length : Math.min(10, staffReviews.length)} of{" "}
+                {staffReviews.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllStaffReviews((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllStaffReviews ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Education / training */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">Training & certificates</h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Course</th>
+                  <th className="py-2 pr-3">Awarded</th>
+                  <th className="py-2 pr-3">Expires</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Notes</th>
+                  <th className="py-2 pr-3">Certificate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!education ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : education.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      No training records
+                    </td>
+                  </tr>
+                ) : (
+                  visibleEducation!.map((r) => {
+                    let pill = "bg-slate-100 text-slate-700";
+                    if (r.status === "expired") pill = "bg-red-100 text-red-800";
+                    else if (r.status === "valid") pill = "bg-emerald-100 text-emerald-800";
+
+                    const staffLabel = r.staff_initials
+                      ? `${r.staff_initials.toUpperCase()} · ${r.staff_name}`
+                      : r.staff_name;
+
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3">{staffLabel}</td>
+                        <td className="py-2 pr-3">{r.type ?? "—"}</td>
+                        <td className="py-2 pr-3">
+                          {r.awarded_on ? formatISOToUK(r.awarded_on) : "—"}
                         </td>
                         <td className="py-2 pr-3">
-                          {r.next_due_on ? formatISOToUK(r.next_due_on) : "—"}
+                          {r.expires_on ? formatISOToUK(r.expires_on) : "—"}
                           {r.days_until != null && (
                             <span className="ml-1 text-xs text-slate-500">({r.days_until}d)</span>
                           )}
                         </td>
                         <td className="py-2 pr-3">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${pill}`}>
-                            {label}
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${pill}`}
+                          >
+                            {r.status === "no-expiry"
+                              ? "No expiry"
+                              : r.status === "expired"
+                              ? "Expired"
+                              : "Valid"}
                           </span>
+                        </td>
+                        <td className="py-2 pr-3 max-w-xs">
+                          {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {r.certificate_url ? (
+                            <a
+                              href={r.certificate_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs font-medium text-blue-700 underline"
+                            >
+                              View
+                            </a>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {education && education.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing {showAllEducation ? education.length : Math.min(10, education.length)} of{" "}
+                {education.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllEducation((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllEducation ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* SFBB training areas matrix */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-2 text-base font-semibold">Training areas (SFBB coverage)</h3>
+          <p className="mb-3 text-xs text-slate-500">
+            Each tick shows a team member trained in that SFBB area. Date = latest award date.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Team member</th>
+                  {SFBB_AREAS.map((area) => (
+                    <th key={area} className="py-2 px-2 text-center">
+                      {area}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {!trainingMatrix ? (
+                  <tr>
+                    <td colSpan={1 + SFBB_AREAS.length} className="py-6 text-center text-slate-500">
+                      Run a report to load training areas
+                    </td>
+                  </tr>
+                ) : trainingMatrix.length === 0 ? (
+                  <tr>
+                    <td colSpan={1 + SFBB_AREAS.length} className="py-6 text-center text-slate-500">
+                      No training area data
+                    </td>
+                  </tr>
+                ) : (
+                  (showAllTrainingAreas ? trainingMatrix : trainingMatrix.slice(0, 12)).map(
+                    (row) => (
+                      <tr key={row.member_id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3 whitespace-nowrap text-sm font-medium">
+                          {row.name}
+                        </td>
+                        {SFBB_AREAS.map((area) => {
+                          const meta = row.byArea[area];
+                          if (!meta?.selected) {
+                            return (
+                              <td
+                                key={area}
+                                className="py-2 px-2 text-center text-slate-400 align-top"
+                              >
+                                —
+                              </td>
+                            );
+                          }
+                          return (
+                            <td key={area} className="py-2 px-2 text-center align-top">
+                              <div className="inline-flex flex-col items-center gap-1">
+                                <span className="text-base leading-none">✓</span>
+                                {meta.awarded_on && (
+                                  <span className="text-[10px] text-slate-500">
+                                    {formatISOToUK(meta.awarded_on)}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    )
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {trainingMatrix && trainingMatrix.length > 12 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllTrainingAreas
+                  ? trainingMatrix.length
+                  : Math.min(12, trainingMatrix.length)}{" "}
+                of {trainingMatrix.length} team members
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllTrainingAreas((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllTrainingAreas ? "Show first 12" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Allergen review table */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-2 text-base font-semibold">Allergen reviews (history)</h3>
+<p className="mb-3 text-xs text-slate-500">
+  Historic log from <code>allergen_review_log</code> for the selected location (or all locations).
+</p>
+
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Last review</th>
+                  <th className="py-2 pr-3">Next due</th>
+                  <th className="py-2 pr-3">Days</th>
+                  <th className="py-2 pr-3">Reviewer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!allergenLog ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : allergenLog.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center text-slate-500">
+                    No allergen reviews found
+
+                    </td>
+                  </tr>
+                ) : (
+                  allergenLog.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">
+                        {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
+                      </td>
+                      <td className="py-2 pr-3">{r.next_due ? formatISOToUK(r.next_due) : "—"}</td>
+                      <td className="py-2 pr-3">{r.days_until ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        {/* Allergen edits table */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Allergen edits {allergenChanges ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+          <p className="mb-2 text-xs text-slate-500">
+            Change log from <code>allergen_change_logs</code> for the selected range and location.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Time</th>
+                  <th className="py-2 pr-3">Item</th>
+                  <th className="py-2 pr-3">Action</th>
+                  <th className="py-2 pr-3">By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!allergenChanges ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : allergenChanges.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      No allergen edits for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  allergenChanges.map((r) => {
+                    const actionLabel =
+                      r.action === "create"
+                        ? "Created"
+                        : r.action === "update"
+                        ? "Updated"
+                        : r.action === "delete"
+                        ? "Deleted"
+                        : r.action ?? "—";
+
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3">
+                          {r.created_at ? formatISOToUK(r.created_at) : "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {r.created_at ? formatTimeHM(r.created_at) : "—"}
+                        </td>
+                        <td className="py-2 pr-3 max-w-xs">
+                          {r.item_name ?? <span className="text-slate-400">Unnamed item</span>}
+                        </td>
+                        <td className="py-2 pr-3">{actionLabel}</td>
+                        <td className="py-2 pr-3">
+                          {r.staff_initials ? r.staff_initials.toUpperCase() : "—"}
                         </td>
                       </tr>
                     );
@@ -2122,157 +2674,6 @@ export default function ReportsPage() {
             </table>
           </div>
         </Card>
-
-        {/* Calibration checks trail */}
-        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-3 text-base font-semibold">
-            Calibration checks {calibrationChecks ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
-          </h3>
-
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50/80">
-                <tr className="text-left text-slate-500">
-                  <th className="py-2 pr-3">Date</th>
-                  <th className="py-2 pr-3">Asset</th>
-                  <th className="py-2 pr-3">Type</th>
-                  <th className="py-2 pr-3">By</th>
-                  <th className="py-2 pr-3">Method</th>
-                  <th className="py-2 pr-3">Result</th>
-                  <th className="py-2 pr-3">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {!calibrationChecks ? (
-                  <tr>
-                    <td colSpan={7} className="py-6 text-center text-slate-500">
-                      Run a report to see results
-                    </td>
-                  </tr>
-                ) : calibrationChecks.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-6 text-center text-slate-500">
-                      No calibration checks for this range / location
-                    </td>
-                  </tr>
-                ) : (
-                  calibrationChecks.map((r) => (
-                    <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3 whitespace-nowrap">{formatISOToUK(r.checked_on)}</td>
-                      <td className="py-2 pr-3 font-semibold">{r.asset_name}</td>
-                      <td className="py-2 pr-3">{r.asset_type}</td>
-                      <td className="py-2 pr-3">{r.staff_initials ? r.staff_initials.toUpperCase() : "—"}</td>
-                      <td className="py-2 pr-3">{r.method ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.result ?? "—"}</td>
-                      <td className="py-2 pr-3 max-w-xl">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-
-        {/* Allergen review table */}
-        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-2 text-base font-semibold">Allergen review (schedule)</h3>
-          <p className="mb-3 text-xs text-slate-500">
-            Pulled from <code>allergen_review</code>. (Single schedule row; use change logs for audit history.)
-          </p>
-
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50/80">
-                <tr className="text-left text-slate-500">
-                  <th className="py-2 pr-3">Last review</th>
-                  <th className="py-2 pr-3">Interval</th>
-                  <th className="py-2 pr-3">Next due</th>
-                  <th className="py-2 pr-3">Days</th>
-                  <th className="py-2 pr-3">Reviewer</th>
-                </tr>
-              </thead>
-              <tbody>
-                {!allergenLog ? (
-                  <tr>
-                    <td colSpan={5} className="py-6 text-center text-slate-500">
-                      Run a report to see results
-                    </td>
-                  </tr>
-                ) : allergenLog.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-6 text-center text-slate-500">
-                      No allergen review schedule found
-                    </td>
-                  </tr>
-                ) : (
-                  allergenLog.map((r) => (
-                    <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">
-                        {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
-                      </td>
-                      <td className="py-2 pr-3">{r.interval_days != null ? `${r.interval_days}d` : "—"}</td>
-                      <td className="py-2 pr-3">{r.next_due ? formatISOToUK(r.next_due) : "—"}</td>
-                      <td className="py-2 pr-3">{r.days_until ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-
-      {/* Allergen review table */}
-        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
-          <h3 className="mb-2 text-base font-semibold">Allergen review (schedule)</h3>
-          <p className="mb-3 text-xs text-slate-500">
-            Pulled from <code>allergen_review</code>. (Single schedule row; use change logs for audit history.)
-          </p>
-
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50/80">
-                <tr className="text-left text-slate-500">
-                  <th className="py-2 pr-3">Last review</th>
-                  <th className="py-2 pr-3">Interval</th>
-                  <th className="py-2 pr-3">Next due</th>
-                  <th className="py-2 pr-3">Days</th>
-                  <th className="py-2 pr-3">Reviewer</th>
-                </tr>
-              </thead>
-              <tbody>
-                {!allergenLog ? (
-                  <tr>
-                    <td colSpan={5} className="py-6 text-center text-slate-500">
-                      Run a report to see results
-                    </td>
-                  </tr>
-                ) : allergenLog.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-6 text-center text-slate-500">
-                      No allergen review schedule found
-                    </td>
-                  </tr>
-                ) : (
-                  allergenLog.map((r) => (
-                    <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">
-                        {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
-                      </td>
-                      <td className="py-2 pr-3">{r.interval_days != null ? `${r.interval_days}d` : "—"}</td>
-                      <td className="py-2 pr-3">{r.next_due ? formatISOToUK(r.next_due) : "—"}</td>
-                      <td className="py-2 pr-3">{r.days_until ?? "—"}</td>
-                      <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-
-        {/* Allergen edits table remains unchanged below */}
-        {/* ...your existing allergen_change_logs table... */}
       </div>
 
       <style jsx global>{`

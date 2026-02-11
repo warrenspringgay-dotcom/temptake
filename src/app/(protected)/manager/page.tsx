@@ -2253,19 +2253,6 @@ export default function ManagerDashboardPage() {
         <TableFooterToggle total={allergenLogs.length} showingAll={showAllAllergenLogs} onToggle={() => setShowAllAllergenLogs((v) => !v)} />
       </section>
 
-     {/* Incident modal – with defaultInitials */}
-      {incidentOpen && orgId && locationId && (
-        <IncidentModal
-          open={incidentOpen}
-          onClose={() => setIncidentOpen(false)}
-          defaultDate={selectedDateISO}
-          orgId={orgId}
-          locationId={locationId}
-          defaultInitials={managerTeamMember?.initials?.toUpperCase() ?? ""}
-          onSaved={refreshAll}
-        />
-      )}
-    
 
       {/* Sign-off modal */}
       {signoffOpen && (
