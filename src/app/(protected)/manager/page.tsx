@@ -563,18 +563,25 @@ export default function ManagerDashboardPage() {
     return nm || "—";
   }
 
-  async function loadTeamOptions() {
+  // ✅ UPDATED: scope team list to selected location to stop “ghost” counts + wrong staff choices
+  async function loadTeamOptions(locId?: string | null) {
     if (!orgId) return;
+    const useLoc = locId ?? locationId ?? null;
+
     try {
-      const { data, error } = await supabase
+      let q = supabase
         .from("team_members")
-        .select("id,name,initials,role,active,user_id")
+        .select("id,name,initials,role,active,user_id,location_id")
         .eq("org_id", orgId)
         .eq("active", true)
         .order("name", { ascending: true })
         .limit(5000);
 
+      if (useLoc) q = q.eq("location_id", useLoc);
+
+      const { data, error } = await q;
       if (error) throw error;
+
       setTeamOptions((data ?? []) as TeamMemberOption[]);
     } catch (e) {
       console.error(e);
@@ -599,7 +606,7 @@ export default function ManagerDashboardPage() {
       // 1) Primary: already linked by user_id
       const byUser = await supabase
         .from("team_members")
-        .select("id,name,initials,role,active,user_id,email")
+        .select("id,name,initials,role,active,user_id,email,location_id")
         .eq("org_id", orgId)
         .eq("user_id", user.id)
         .maybeSingle();
@@ -620,7 +627,7 @@ export default function ManagerDashboardPage() {
 
       const byEmail = await supabase
         .from("team_members")
-        .select("id,name,initials,role,active,user_id,email")
+        .select("id,name,initials,role,active,user_id,email,location_id")
         .eq("org_id", orgId)
         .ilike("email", email)
         .maybeSingle();
@@ -808,12 +815,13 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
+  // ✅ UPDATED: reload team options when location changes (prevents cross-location data bleeding)
   useEffect(() => {
     if (!orgId) return;
-    void loadTeamOptions();
     void loadLoggedInManager();
+    if (locationId) void loadTeamOptions(locationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId]);
+  }, [orgId, locationId]);
 
   useEffect(() => {
     if (!signoffOpen) return;
@@ -937,19 +945,21 @@ export default function ManagerDashboardPage() {
           .gte("happened_on", isoDate(sevenDaysAgo))
           .lte("happened_on", selectedDateISO),
 
+        // ✅ UPDATED: enforce INNER join so the location filter actually applies
         supabase
           .from("trainings")
           .select(
             `
             id,
             expires_on,
-            team_member:team_members!trainings_team_member_id_fkey(location_id)
+            team_member:team_members!trainings_team_member_id_fkey!inner(location_id)
           `
           )
           .eq("org_id", orgId)
           .eq("team_member.location_id", locationId)
           .limit(5000),
 
+        // ✅ UPDATED: enforce INNER join so the location filter actually applies
         supabase
           .from("trainings")
           .select(
@@ -963,7 +973,7 @@ export default function ManagerDashboardPage() {
             course_key,
             notes,
             created_at,
-            team_member:team_members!trainings_team_member_id_fkey(name,initials,location_id)
+            team_member:team_members!trainings_team_member_id_fkey!inner(name,initials,location_id)
           `
           )
           .eq("org_id", orgId)
@@ -1283,7 +1293,7 @@ export default function ManagerDashboardPage() {
       reviewed_on: selectedDateISO || f.reviewed_on,
     }));
     setQcOpen(true);
-    await Promise.all([loadTeamOptions(), loadLoggedInManager(), loadQcReviews()]);
+    await Promise.all([loadTeamOptions(locationId), loadLoggedInManager(), loadQcReviews()]);
   }
 
   async function loadStaffAssessment(staffId: string, days: number) {
@@ -1873,7 +1883,7 @@ export default function ManagerDashboardPage() {
               if (!orgId || !locationId) return;
               setQcForm((f) => ({ ...f, reviewed_on: selectedDateISO || f.reviewed_on }));
               setQcOpen(true);
-              await Promise.all([loadTeamOptions(), loadLoggedInManager(), loadQcReviews()]);
+              await Promise.all([loadTeamOptions(locationId), loadLoggedInManager(), loadQcReviews()]);
             }}
             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
           >
@@ -1934,193 +1944,154 @@ export default function ManagerDashboardPage() {
         <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
       </section>
 
-      
+      {/* Education & training */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Education & training</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Training records + staff training areas (selected location)</div>
+        </div>
 
- 
+        {/* Full-width: Training records */}
+        <div>
+          <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training records</h3>
 
-
-{/* Education & training */}
-<section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-  <div className="mb-3">
-    <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-      Education & training
-    </div>
-    <div className="mt-0.5 text-sm font-semibold text-slate-900">
-      Training records + staff training areas (selected location)
-    </div>
-  </div>
-
-  {/* Full-width: Training records */}
-  <div>
-    <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-      Training records
-    </h3>
-
-    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-      <table className="min-w-full text-xs">
-        <thead className="bg-slate-50">
-          <tr className="text-left text-slate-500">
-            <th className="px-3 py-2">Staff</th>
-            <th className="px-3 py-2">Type</th>
-            <th className="px-3 py-2">Awarded</th>
-            <th className="px-3 py-2">Expires</th>
-            <th className="px-3 py-2">Provider</th>
-            <th className="px-3 py-2">Course</th>
-            <th className="px-3 py-2">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {trainingToRender.length === 0 ? (
-            <tr>
-              <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
-                No training records found for this location.
-              </td>
-            </tr>
-          ) : (
-            trainingToRender.map((r) => {
-              const exp = r.expires_on ? safeDate(r.expires_on) : null;
-              const base = safeDate(selectedDateISO) ?? new Date();
-              base.setHours(0, 0, 0, 0);
-
-              let statusLabel = "No expiry";
-              let pill = "bg-slate-100 text-slate-800";
-
-              if (exp) {
-                exp.setHours(0, 0, 0, 0);
-                const diffDays = Math.floor(
-                  (exp.getTime() - base.getTime()) / 86400000
-                );
-
-                if (diffDays < 0) {
-                  statusLabel = "Expired";
-                  pill = "bg-red-100 text-red-800";
-                } else if (diffDays <= 30) {
-                  statusLabel = `Due (${diffDays}d)`;
-                  pill = "bg-amber-100 text-amber-800";
-                } else {
-                  statusLabel = `Valid (${diffDays}d)`;
-                  pill = "bg-emerald-100 text-emerald-800";
-                }
-              }
-
-              const staffLabel = r.team_member
-                ? tmLabel({
-                    initials: r.team_member.initials,
-                    name: r.team_member.name,
-                  })
-                : "—";
-
-              return (
-                <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                  <td className="px-3 py-2 whitespace-nowrap font-semibold">
-                    {staffLabel}
-                  </td>
-                  <td className="px-3 py-2 max-w-[18rem] truncate">
-                    {r.type ?? "—"}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    {formatDDMMYYYY(r.awarded_on)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    {formatDDMMYYYY(r.expires_on)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    {r.provider_name ?? "—"}
-                  </td>
-                  <td className="px-3 py-2 max-w-[14rem] truncate">
-                    {r.course_key ?? "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={cls(
-                        "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                        pill
-                      )}
-                    >
-                      {statusLabel}
-                    </span>
-                  </td>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+            <table className="min-w-full text-xs">
+              <thead className="bg-slate-50">
+                <tr className="text-left text-slate-500">
+                  <th className="px-3 py-2">Staff</th>
+                  <th className="px-3 py-2">Type</th>
+                  <th className="px-3 py-2">Awarded</th>
+                  <th className="px-3 py-2">Expires</th>
+                  <th className="px-3 py-2">Provider</th>
+                  <th className="px-3 py-2">Course</th>
+                  <th className="px-3 py-2">Status</th>
                 </tr>
-              );
-            })
-          )}
-        </tbody>
-      </table>
-    </div>
+              </thead>
+              <tbody>
+                {trainingToRender.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
+                      No training records found for this location.
+                    </td>
+                  </tr>
+                ) : (
+                  trainingToRender.map((r) => {
+                    const exp = r.expires_on ? safeDate(r.expires_on) : null;
+                    const base = safeDate(selectedDateISO) ?? new Date();
+                    base.setHours(0, 0, 0, 0);
 
-    <TableFooterToggle
-      total={trainingRows.length}
-      showingAll={showAllTraining}
-      onToggle={() => setShowAllTraining((v) => !v)}
-    />
-  </div>
+                    let statusLabel = "No expiry";
+                    let pill = "bg-slate-100 text-slate-800";
 
-  {/* Spacer */}
-  <div className="mt-6" />
+                    if (exp) {
+                      exp.setHours(0, 0, 0, 0);
+                      const diffDays = Math.floor((exp.getTime() - base.getTime()) / 86400000);
 
-  {/* Full-width: Training areas */}
-  <div>
-    <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-      Training areas
-    </h3>
+                      if (diffDays < 0) {
+                        statusLabel = "Expired";
+                        pill = "bg-red-100 text-red-800";
+                      } else if (diffDays <= 30) {
+                        statusLabel = `Due (${diffDays}d)`;
+                        pill = "bg-amber-100 text-amber-800";
+                      } else {
+                        statusLabel = `Valid (${diffDays}d)`;
+                        pill = "bg-emerald-100 text-emerald-800";
+                      }
+                    }
 
-    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-      <table className="min-w-full text-xs">
-        <thead className="bg-slate-50">
-          <tr className="text-left text-slate-500">
-            <th className="px-3 py-2">Staff</th>
-            <th className="px-3 py-2">Role</th>
-            <th className="px-3 py-2">Areas</th>
-          </tr>
-        </thead>
-        <tbody>
-          {trainingAreasToRender.length === 0 ? (
-            <tr>
-              <td colSpan={3} className="px-3 py-4 text-center text-slate-500">
-                No team members found for this location.
-              </td>
-            </tr>
-          ) : (
-            trainingAreasToRender.map((t) => {
-              const areas = Array.isArray(t.training_areas) ? t.training_areas : [];
+                    const staffLabel = r.team_member
+                      ? tmLabel({
+                          initials: r.team_member.initials,
+                          name: r.team_member.name,
+                        })
+                      : "—";
 
-              return (
-                <tr key={t.id} className="border-t border-slate-100 text-slate-800">
-                  <td className="px-3 py-2 whitespace-nowrap font-semibold">
-                    {tmLabel({ initials: t.initials ?? null, name: t.name ?? null })}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">{t.role ?? "—"}</td>
-                  <td className="px-3 py-2">
-                    {areas.length === 0 ? (
-                      <span className="text-slate-500">—</span>
-                    ) : (
-                      <div className="flex flex-wrap gap-1.5">
-                        {areas.map((a: any, idx: number) => (
-                          <span
-                            key={`${t.id}_${idx}`}
-                            className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-[2px] text-[10px] font-extrabold uppercase tracking-wide text-emerald-800"
-                          >
-                            {String(a).replace(/_/g, " ")}
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                        <td className="px-3 py-2 whitespace-nowrap font-semibold">{staffLabel}</td>
+                        <td className="px-3 py-2 max-w-[18rem] truncate">{r.type ?? "—"}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.awarded_on)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.expires_on)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{r.provider_name ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[14rem] truncate">{r.course_key ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                            {statusLabel}
                           </span>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              );
-            })
-          )}
-        </tbody>
-      </table>
-    </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
 
-    <TableFooterToggle
-      total={trainingAreasRows.length}
-      showingAll={showAllTrainingAreas}
-      onToggle={() => setShowAllTrainingAreas((v) => !v)}
-    />
-  </div>
-</section>
+          <TableFooterToggle total={trainingRows.length} showingAll={showAllTraining} onToggle={() => setShowAllTraining((v) => !v)} />
+        </div>
+
+        <div className="mt-6" />
+
+        {/* Full-width: Training areas */}
+        <div>
+          <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training areas</h3>
+
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+            <table className="min-w-full text-xs">
+              <thead className="bg-slate-50">
+                <tr className="text-left text-slate-500">
+                  <th className="px-3 py-2">Staff</th>
+                  <th className="px-3 py-2">Role</th>
+                  <th className="px-3 py-2">Areas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trainingAreasToRender.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-4 text-center text-slate-500">
+                      No team members found for this location.
+                    </td>
+                  </tr>
+                ) : (
+                  trainingAreasToRender.map((t) => {
+                    const areas = Array.isArray(t.training_areas) ? t.training_areas : [];
+
+                    return (
+                      <tr key={t.id} className="border-t border-slate-100 text-slate-800">
+                        <td className="px-3 py-2 whitespace-nowrap font-semibold">{tmLabel({ initials: t.initials ?? null, name: t.name ?? null })}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{t.role ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          {areas.length === 0 ? (
+                            <span className="text-slate-500">—</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {areas.map((a: any, idx: number) => (
+                                <span
+                                  key={`${t.id}_${idx}`}
+                                  className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-[2px] text-[10px] font-extrabold uppercase tracking-wide text-emerald-800"
+                                >
+                                  {String(a).replace(/_/g, " ")}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <TableFooterToggle
+            total={trainingAreasRows.length}
+            showingAll={showAllTrainingAreas}
+            onToggle={() => setShowAllTrainingAreas((v) => !v)}
+          />
+        </div>
+      </section>
 
       {/* Allergens - Review history (org-level) */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
@@ -2239,9 +2210,7 @@ export default function ManagerDashboardPage() {
                     <td className="px-3 py-2 whitespace-nowrap">{formatTimeHM(safeDate(r.created_at)) ?? "—"}</td>
                     <td className="px-3 py-2 max-w-[14rem] truncate">{r.item_name ?? "—"}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{r.action ?? "—"}</td>
-                    <td className="px-3 py-2 max-w-[16rem] truncate">
-                      {(r.category_before ?? "—") + " → " + (r.category_after ?? "—")}
-                    </td>
+                    <td className="px-3 py-2 max-w-[16rem] truncate">{(r.category_before ?? "—") + " → " + (r.category_after ?? "—")}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
                   </tr>
                 ))
@@ -2252,7 +2221,6 @@ export default function ManagerDashboardPage() {
 
         <TableFooterToggle total={allergenLogs.length} showingAll={showAllAllergenLogs} onToggle={() => setShowAllAllergenLogs((v) => !v)} />
       </section>
-
 
       {/* Sign-off modal */}
       {signoffOpen && (
@@ -2280,9 +2248,7 @@ export default function ManagerDashboardPage() {
             )}
 
             {alreadySignedOff && (
-              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                This day is already signed off.
-              </div>
+              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">This day is already signed off.</div>
             )}
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -2331,10 +2297,7 @@ export default function ManagerDashboardPage() {
 
       {/* Individual staff assessment modal */}
       {staffAssessOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4"
-          onClick={() => setStaffAssessOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4" onClick={() => setStaffAssessOpen(false)}>
           <div
             className={cls("mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
             onClick={(e) => e.stopPropagation()}
@@ -2412,13 +2375,7 @@ export default function ManagerDashboardPage() {
                   value={staffAssess?.cleaningRuns ?? "—"}
                   sub={staffAssess ? `Completed in last ${staffAssess.rangeDays}d` : "Select staff + load"}
                 />
-                <KpiTile
-                  title="Temp logs"
-                  icon="🌡"
-                  tone="neutral"
-                  value={staffAssess?.tempLogs ?? "—"}
-                  sub={staffAssess ? `Recorded in last ${staffAssess.rangeDays}d` : "—"}
-                />
+                <KpiTile title="Temp logs" icon="🌡" tone="neutral" value={staffAssess?.tempLogs ?? "—"} sub={staffAssess ? `Recorded in last ${staffAssess.rangeDays}d` : "—"} />
                 <KpiTile
                   title="Temp fails"
                   icon="🚫"
@@ -2444,8 +2401,7 @@ export default function ManagerDashboardPage() {
               </div>
 
               <div className="mt-4 text-xs text-slate-500">
-                Note: this uses initials across logs (done_by, staff_initials, created_by). If you switch to IDs everywhere later,
-                this becomes rock-solid.
+                Note: this uses initials across logs (done_by, staff_initials, created_by). If you switch to IDs everywhere later, this becomes rock-solid.
               </div>
             </div>
           </div>
@@ -2474,9 +2430,7 @@ export default function ManagerDashboardPage() {
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                   <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Manager</div>
-                  <div className="mt-1 text-sm font-semibold text-slate-900">
-                    {managerTeamMember ? tmLabel(managerTeamMember) : "Not linked"}
-                  </div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">{managerTeamMember ? tmLabel(managerTeamMember) : "Not linked"}</div>
                   {!managerTeamMember ? (
                     <div className="mt-1 text-xs text-rose-700">
                       Link this login by setting <span className="font-semibold">team_members.user_id</span>.

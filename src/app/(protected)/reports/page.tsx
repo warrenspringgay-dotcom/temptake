@@ -1032,7 +1032,7 @@ async function fetchAllergenLog(
         id: String(r.id),
         reviewed_on: reviewed ? reviewed.toISOString() : null,
         next_due: nextDue ? nextDue.toISOString() : null,
-        reviewer: r.reviewer_nam ?? null,
+        reviewer: r.reviewer ?? null,
         days_until,
       } as AllergenRow;
     });
