@@ -46,7 +46,7 @@ type AllergenChangeRow = {
   created_at: string | null;
   item_name: string | null;
   action: string | null;
-  initials: string | null;
+  staff_initials: string | null;
 };
 
 type StaffReviewRow = {
@@ -54,7 +54,7 @@ type StaffReviewRow = {
   reviewed_on: string;
   created_at: string | null;
   staff_name: string;
-  initials: string | null;
+  staff_initials: string | null;
   location_name: string | null;
   reviewer: string | null;
   rating: number;
@@ -64,7 +64,7 @@ type StaffReviewRow = {
 type EducationRow = {
   id: string;
   staff_name: string;
-  initials: string | null;
+  staff_initials: string | null;
   staff_email: string | null;
   type: string | null;
   awarded_on: string | null; // ISO datetime
@@ -147,7 +147,7 @@ type CalibrationCheck = {
   id: string;
   asset_id: string;
   checked_on: string; // yyyy-mm-dd
-  initials: string | null;
+  staff_initials: string | null;
   method: string | null;
   result: string | null;
   notes: string | null;
@@ -636,7 +636,7 @@ async function fetchTemps(
   return (data ?? []).map((r: any) => ({
     id: String(r.id),
     date: toISODate(r.at ?? r.created_at),
-    staff: r.initials ?? r.initials ?? "—",
+    staff: r.staff_initials ?? r.initials ?? "—",
     location: r.area ?? "—",
     item: r.note ?? "—",
     temp_c: r.temp_c != null ? Number(r.temp_c) : null,
@@ -656,7 +656,7 @@ async function fetchTempFailuresUnified(
 
   let q = supabase
     .from("food_temp_logs")
-    .select("id, at, area, note, temp_c, target_key, status, initials, location_id")
+    .select("id, at, area, note, temp_c, target_key, status, staff_initials, location_id")
     .eq("org_id", orgId)
     .eq("status", "fail")
     .gte("at", fromStart)
@@ -726,8 +726,8 @@ async function fetchTempFailuresUnified(
       happened_on,
       created_at: atISO,
       type: "Temp failure",
-      created_by: (ca?.recorded_by ?? l.initials ?? null)
-        ? String(ca?.recorded_by ?? l.initials)
+      created_by: (ca?.recorded_by ?? l.staff_initials ?? null)
+        ? String(ca?.recorded_by ?? l.staff_initials)
         : null,
       details,
       corrective_action: corrective,
@@ -1086,7 +1086,7 @@ async function fetchAllergenChanges(
 
   let q = supabase
     .from("allergen_change_logs")
-    .select("id, created_at, item_name, action, initials, org_id, location_id")
+    .select("id, created_at, item_name, action, staff_initials, org_id, location_id")
     .eq("org_id", orgId)
     .gte("created_at", fromStart)
     .lte("created_at", toEnd)
@@ -1103,7 +1103,7 @@ async function fetchAllergenChanges(
     created_at: r.created_at ?? null,
     item_name: r.item_name ?? null,
     action: r.action ?? null,
-    initials: r.initials ?? null,
+    staff_initials: r.staff_initials ?? null,
   }));
 }
 
@@ -1143,7 +1143,7 @@ async function fetchStaffReviews(
     reviewed_on: toISODate(r.reviewed_on),
     created_at: r.created_at ?? null,
     staff_name: r.staff?.name ?? "—",
-    initials: r.staff?.initials ?? null,
+    staff_initials: r.staff?.initials ?? null,
     location_name: r.location?.name ?? "—",
     reviewer: r.manager?.initials ?? r.manager?.name ?? "—",
     rating: Number(r.rating),
@@ -1155,7 +1155,7 @@ async function fetchStaffReviews(
  * ✅ Education/trainings: supports team_member_id (preferred) and staff_id (legacy)
  */
 async function fetchEducation(orgId: string, locationId: string | null): Promise<EducationRow[]> {
-  let q = supabase
+  const { data, error } = await supabase
     .from("trainings")
     .select(
       `
@@ -1165,31 +1165,32 @@ async function fetchEducation(orgId: string, locationId: string | null): Promise
       expires_on,
       certificate_url,
       notes,
-      provider_name,
-      course_key,
-      team_member:team_member_id (
-        name,
-        email,
-        initials,
-        location_id
-      )
+      staff_id,
+      team_member_id,
+      team_member:team_member_id ( name, email, initials, location_id ),
+      staff:staff_id ( name, email, initials, location_id )
     `
     )
     .eq("org_id", orgId)
     .order("expires_on", { ascending: true })
-    .order("awarded_on", { ascending: true });
+    .order("awarded_on", { ascending: true })
+    .limit(5000);
 
-  // Filter by *team_members.location_id* (the column that actually exists)
-  if (locationId) q = q.eq("team_member.location_id", locationId);
-
-  const { data, error } = await q;
   if (error) throw error;
 
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
 
-  return (data ?? []).map((r: any) => {
-    const tm = r.team_member ?? {};
+  const filtered = (data ?? []).filter((r: any) => {
+    if (!locationId) return true;
+    const tmLoc = r.team_member?.location_id ? String(r.team_member.location_id) : null;
+    const stLoc = r.staff?.location_id ? String(r.staff.location_id) : null;
+    // if either matches, keep it
+    return tmLoc === locationId || stLoc === locationId;
+  });
+
+  return (filtered ?? []).map((r: any) => {
+    const person = r.team_member ?? r.staff ?? {};
     const awarded = safeDate(r.awarded_on);
     const expires = safeDate(r.expires_on);
 
@@ -1206,9 +1207,9 @@ async function fetchEducation(orgId: string, locationId: string | null): Promise
 
     return {
       id: String(r.id),
-      staff_name: tm.name ?? "—",
-      initials: tm.initials ?? null,
-      staff_email: tm.email ?? null,
+      staff_name: person.name ?? "—",
+      staff_initials: person.initials ?? null,
+      staff_email: person.email ?? null,
       type: r.type ?? null,
       awarded_on: awarded ? awarded.toISOString() : null,
       expires_on: expires ? expires.toISOString() : null,
@@ -1346,7 +1347,7 @@ async function fetchCalibrationChecksTrail(
 
   let q = supabase
     .from("calibration_checks")
-    .select("id, asset_id, checked_on, initials, method, result, notes, created_at, location_id")
+    .select("id, asset_id, checked_on, staff_initials, method, result, notes, created_at, location_id")
     .eq("org_id", orgId)
     .gte("created_at", fromStart)
     .lte("created_at", toEnd)
@@ -1365,7 +1366,7 @@ async function fetchCalibrationChecksTrail(
       id: String(r.id),
       asset_id: String(r.asset_id),
       checked_on: r.checked_on ? String(r.checked_on) : "—",
-      initials: r.initials ?? null,
+      staff_initials: r.staff_initials ?? null,
       method: r.method ?? null,
       result: r.result ?? null,
       notes: r.notes ?? null,
@@ -2161,7 +2162,7 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3 whitespace-nowrap">{formatISOToUK(r.checked_on)}</td>
                       <td className="py-2 pr-3 font-semibold">{r.asset_name}</td>
                       <td className="py-2 pr-3">{r.asset_type}</td>
-                      <td className="py-2 pr-3">{r.initials ? r.initials.toUpperCase() : "—"}</td>
+                      <td className="py-2 pr-3">{r.staff_initials ? r.staff_initials.toUpperCase() : "—"}</td>
                       <td className="py-2 pr-3">{r.method ?? "—"}</td>
                       <td className="py-2 pr-3">{r.result ?? "—"}</td>
                       <td className="py-2 pr-3 max-w-xl">{r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}</td>
