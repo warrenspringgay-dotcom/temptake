@@ -1974,7 +1974,7 @@ export default function ManagerDashboardPage() {
         <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
       </section>
 
-     {/* Education & training */}
+{/* Education & training */}
 <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
   <div className="mb-3">
     <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
@@ -2022,7 +2022,9 @@ export default function ManagerDashboardPage() {
 
               if (exp) {
                 exp.setHours(0, 0, 0, 0);
-                const diffDays = Math.floor((exp.getTime() - base.getTime()) / 86400000);
+                const diffDays = Math.floor(
+                  (exp.getTime() - base.getTime()) / 86400000
+                );
 
                 if (diffDays < 0) {
                   statusLabel = "Expired";
@@ -2037,17 +2039,32 @@ export default function ManagerDashboardPage() {
               }
 
               const staffLabel = r.team_member
-                ? tmLabel({ initials: r.team_member.initials, name: r.team_member.name })
+                ? tmLabel({
+                    initials: r.team_member.initials,
+                    name: r.team_member.name,
+                  })
                 : "—";
 
               return (
                 <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                  <td className="px-3 py-2 whitespace-nowrap font-semibold">{staffLabel}</td>
-                  <td className="px-3 py-2 max-w-[18rem] truncate">{r.type ?? "—"}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.awarded_on)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.expires_on)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{r.provider_name ?? "—"}</td>
-                  <td className="px-3 py-2 max-w-[14rem] truncate">{r.course_key ?? "—"}</td>
+                  <td className="px-3 py-2 whitespace-nowrap font-semibold">
+                    {staffLabel}
+                  </td>
+                  <td className="px-3 py-2 max-w-[18rem] truncate">
+                    {r.type ?? "—"}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {formatDDMMYYYY(r.awarded_on)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {formatDDMMYYYY(r.expires_on)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {r.provider_name ?? "—"}
+                  </td>
+                  <td className="px-3 py-2 max-w-[14rem] truncate">
+                    {r.course_key ?? "—"}
+                  </td>
                   <td className="px-3 py-2">
                     <span
                       className={cls(
@@ -2101,26 +2118,29 @@ export default function ManagerDashboardPage() {
           ) : (
             trainingAreasToRender.map((t) => {
               const areas = Array.isArray(t.training_areas) ? t.training_areas : [];
-              const text = areas.length > 0 ? areas.join(", ") : "—";
 
               return (
                 <tr key={t.id} className="border-t border-slate-100 text-slate-800">
-                  <td className="px-3 py-2">
-  {areas.length === 0 ? (
-    <span className="text-slate-500">—</span>
-  ) : (
-    <div className="flex flex-wrap gap-1.5">
-      {areas.map((a: string, idx: number) => (
-        <Pill key={`${t.id}_${idx}`}>
-          {String(a).replace(/_/g, " ")}
-        </Pill>
-      ))}
-    </div>
-  )}
-</td>
-
+                  <td className="px-3 py-2 whitespace-nowrap font-semibold">
+                    {tmLabel({ initials: t.initials ?? null, name: t.name ?? null })}
+                  </td>
                   <td className="px-3 py-2 whitespace-nowrap">{t.role ?? "—"}</td>
-                  <td className="px-3 py-2">{text}</td>
+                  <td className="px-3 py-2">
+                    {areas.length === 0 ? (
+                      <span className="text-slate-500">—</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {areas.map((a: any, idx: number) => (
+                          <span
+                            key={`${t.id}_${idx}`}
+                            className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-[2px] text-[10px] font-extrabold uppercase tracking-wide text-emerald-800"
+                          >
+                            {String(a).replace(/_/g, " ")}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </td>
                 </tr>
               );
             })
@@ -2136,7 +2156,6 @@ export default function ManagerDashboardPage() {
     />
   </div>
 </section>
-
 
       {/* Allergens - Review history (org-level) */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
