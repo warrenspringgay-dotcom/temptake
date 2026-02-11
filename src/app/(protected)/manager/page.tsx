@@ -1055,7 +1055,7 @@ export default function ManagerDashboardPage() {
 
         /** ✅ Calibration log table (simple) */
         supabase
-          .from("calibration_logs")
+          .from("calibration_checks")
           .select("id, calibrated_on, initials, notes, created_at")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
@@ -1364,7 +1364,7 @@ export default function ManagerDashboardPage() {
 
     setCalibrationSaving(true);
     try {
-      const { error } = await supabase.from("calibration_logs").insert({
+      const { error } = await supabase.from("calibration_checks").insert({
         org_id: orgId,
         location_id: locationId,
         calibrated_on: calibrationDate,
