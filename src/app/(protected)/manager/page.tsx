@@ -147,13 +147,23 @@ type CleaningTaskRun = {
 };
 
 /* ===================== Calibration ===================== */
-type CalibrationRow = {
+
+type CalibrationAssetOption = {
+  id: string;
+  name: string | null;
+  location_id?: string | null;
+};
+
+type CalibrationCheckRow = {
   id: string;
   checked_on: string; // yyyy-mm-dd
   staff_initials: string | null;
-  all_equipment_calibrated: boolean | null;
+  method: string | null;
+  result: string | null;
   notes: string | null;
   created_at: string | null;
+  asset_id: string | null;
+  asset: { name: string | null } | null;
 };
 
 const nowISO = new Date().toISOString().slice(0, 10);
@@ -163,6 +173,14 @@ function safeDate(val: any): Date | null {
   const d = val instanceof Date ? val : new Date(val);
   if (Number.isNaN(d.getTime())) return null;
   return d;
+}
+
+function Pill({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-[2px] text-[10px] font-extrabold uppercase tracking-wide text-emerald-800">
+      {children}
+    </span>
+  );
 }
 
 function formatPrettyDate(dmy: string | null): string {
@@ -181,6 +199,111 @@ function toISODate(val: any): string {
   const d = safeDate(val) ?? new Date();
   return d.toISOString().slice(0, 10);
 }
+
+async function fetchTempFailuresUnifiedForDay(orgId: string, locationId: string, d0: Date, d1: Date) {
+  const { data, error } = await supabase
+    .from("food_temp_logs")
+    .select(
+      `
+      id,
+      at,
+      temp_c,
+      target_key,
+      area,
+      note,
+      staff_initials,
+      status,
+      corrective_action_log:food_temp_corrective_actions!food_temp_corrective_actions_temp_log_id_fkey(
+        id,
+        temp_log_id,
+        created_at,
+        recorded_by,
+        action,
+        recheck_temp_c,
+        recheck_at,
+        recheck_status
+      )
+    `
+    )
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .eq("status", "fail")
+    .gte("at", d0.toISOString())
+    .lt("at", d1.toISOString())
+    .order("at", { ascending: false })
+    .limit(500);
+
+  if (error) throw error;
+
+  const rows: any[] = (data ?? []) as any[];
+
+  const logs = rows.map((r) => ({
+    id: r.id,
+    at: r.at ? String(r.at) : null,
+    temp_c: r.temp_c != null ? Number(r.temp_c) : null,
+    target_key: r.target_key ?? null,
+    area: r.area ?? null,
+    note: r.note ?? null,
+    staff_initials: r.staff_initials ?? null,
+  }));
+
+  const corrective = rows.flatMap((r) => {
+    const arr = r.corrective_action_log ?? [];
+    return Array.isArray(arr) ? arr : [];
+  });
+
+  const byLog = new Map<string, any>();
+  for (const row of corrective as any[]) {
+    const key = String(row.temp_log_id);
+    const existing = byLog.get(key);
+    if (!existing) byLog.set(key, row);
+    else {
+      const a = safeDate(existing.created_at)?.getTime() ?? 0;
+      const b = safeDate(row.created_at)?.getTime() ?? 0;
+      if (b >= a) byLog.set(key, row);
+    }
+  }
+
+  return logs.map((l) => {
+    const ca = byLog.get(String(l.id)) ?? null;
+
+    const atISO = l.at ? String(l.at) : null;
+    const happened_on = toISODate(atISO);
+
+    const tempVal = l.temp_c != null ? `${Number(l.temp_c)}°C` : "—";
+    const target = l.target_key ? String(l.target_key) : "—";
+    const details = `${l.area ?? "—"} • ${l.note ?? "—"} • ${tempVal} (target ${target})`;
+
+    let correctiveText = ca?.action ? String(ca.action) : null;
+
+    if (ca?.recheck_temp_c != null) {
+      const reT = `${Number(ca.recheck_temp_c)}°C`;
+      const reAt = ca.recheck_at
+        ? new Date(String(ca.recheck_at)).toLocaleTimeString("en-GB", {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "—";
+      const reStatus = ca.recheck_status ? String(ca.recheck_status) : "—";
+      const suffix = `Re-check: ${reT} (${reStatus}) at ${reAt}`;
+      correctiveText = correctiveText ? `${correctiveText} • ${suffix}` : suffix;
+    }
+
+    return {
+      id: `temp_fail_${String(l.id)}`,
+      happened_on,
+      created_at: atISO,
+      type: "Temp failure",
+      created_by: (ca?.recorded_by ?? l.staff_initials ?? null) ? String(ca?.recorded_by ?? l.staff_initials) : null,
+      details,
+      immediate_action: null,
+      corrective_action: correctiveText,
+      source: "temp_fail",
+    } as UnifiedIncidentRow;
+  });
+}
+
+
 
 function formatTimeHM(d: Date | null | undefined): string | null {
   if (!d) return null;
@@ -297,108 +420,7 @@ function TableFooterToggle({
   );
 }
 
-async function fetchTempFailuresUnifiedForDay(orgId: string, locationId: string, d0: Date, d1: Date) {
-  const { data, error } = await supabase
-    .from("food_temp_logs")
-    .select(
-      `
-      id,
-      at,
-      temp_c,
-      target_key,
-      area,
-      note,
-      staff_initials,
-      status,
-      corrective_action_log:food_temp_corrective_actions!food_temp_corrective_actions_temp_log_id_fkey(
-        id,
-        temp_log_id,
-        created_at,
-        recorded_by,
-        action,
-        recheck_temp_c,
-        recheck_at,
-        recheck_status
-      )
-    `
-    )
-    .eq("org_id", orgId)
-    .eq("location_id", locationId)
-    .eq("status", "fail")
-    .gte("at", d0.toISOString())
-    .lt("at", d1.toISOString())
-    .order("at", { ascending: false })
-    .limit(500);
-
-  if (error) throw error;
-
-  const rows: any[] = (data ?? []) as any[];
-
-  const logs = rows.map((r) => ({
-    id: r.id,
-    at: r.at ? String(r.at) : null,
-    temp_c: r.temp_c != null ? Number(r.temp_c) : null,
-    target_key: r.target_key ?? null,
-    area: r.area ?? null,
-    note: r.note ?? null,
-    staff_initials: r.staff_initials ?? null,
-  }));
-
-  const corrective = rows.flatMap((r) => {
-    const arr = r.corrective_action_log ?? [];
-    return Array.isArray(arr) ? arr : [];
-  });
-
-  const byLog = new Map<string, any>();
-  for (const row of corrective as any[]) {
-    const key = String(row.temp_log_id);
-    const existing = byLog.get(key);
-    if (!existing) byLog.set(key, row);
-    else {
-      const a = safeDate(existing.created_at)?.getTime() ?? 0;
-      const b = safeDate(row.created_at)?.getTime() ?? 0;
-      if (b >= a) byLog.set(key, row);
-    }
-  }
-
-  return logs.map((l) => {
-    const ca = byLog.get(String(l.id)) ?? null;
-
-    const atISO = l.at ? String(l.at) : null;
-    const happened_on = toISODate(atISO);
-
-    const tempVal = l.temp_c != null ? `${Number(l.temp_c)}°C` : "—";
-    const target = l.target_key ? String(l.target_key) : "—";
-    const details = `${l.area ?? "—"} • ${l.note ?? "—"} • ${tempVal} (target ${target})`;
-
-    let correctiveText = ca?.action ? String(ca.action) : null;
-
-    if (ca?.recheck_temp_c != null) {
-      const reT = `${Number(ca.recheck_temp_c)}°C`;
-      const reAt = ca.recheck_at
-        ? new Date(String(ca.recheck_at)).toLocaleTimeString("en-GB", {
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        : "—";
-      const reStatus = ca.recheck_status ? String(ca.recheck_status) : "—";
-      const suffix = `Re-check: ${reT} (${reStatus}) at ${reAt}`;
-      correctiveText = correctiveText ? `${correctiveText} • ${suffix}` : suffix;
-    }
-
-    return {
-      id: `temp_fail_${String(l.id)}`,
-      happened_on,
-      created_at: atISO,
-      type: "Temp failure",
-      created_by: (ca?.recorded_by ?? l.staff_initials ?? null) ? String(ca?.recorded_by ?? l.staff_initials) : null,
-      details,
-      immediate_action: null,
-      corrective_action: correctiveText,
-      source: "temp_fail",
-    } as UnifiedIncidentRow;
-  });
-}
+/* ---------- Page ---------- */
 
 export default function ManagerDashboardPage() {
   const [orgId, setOrgId] = useState<string | null>(null);
@@ -449,7 +471,9 @@ export default function ManagerDashboardPage() {
   const [qcLoading, setQcLoading] = useState(false);
   const [qcSaving, setQcSaving] = useState(false);
   const [showAllQc, setShowAllQc] = useState(false);
+
   const [qcSummaryLoading, setQcSummaryLoading] = useState(false);
+
   const [managerTeamMember, setManagerTeamMember] = useState<TeamMemberOption | null>(null);
 
   const [qcForm, setQcForm] = useState({
@@ -483,21 +507,20 @@ export default function ManagerDashboardPage() {
   const [trainingAreasRows, setTrainingAreasRows] = useState<TeamMemberOption[]>([]);
   const [showAllTrainingAreas, setShowAllTrainingAreas] = useState(false);
 
-  /* ===== Calibration (simple) ===== */
-  const [calibrationChecks, setCalibrationChecks] = useState<CalibrationRow[]>([]);
+  /* ===== Calibration ===== */
+  const [calibrationChecks, setCalibrationChecks] = useState<CalibrationCheckRow[]>([]);
   const [showAllCalibration, setShowAllCalibration] = useState(false);
+
+  const [calibrationAssets, setCalibrationAssets] = useState<CalibrationAssetOption[]>([]);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [calibrationSaving, setCalibrationSaving] = useState(false);
 
-  const [calibrationForm, setCalibrationForm] = useState<{
-    checked_on: string;
-    staff_initials: string;
-    all_equipment_calibrated: boolean;
-    notes: string;
-  }>({
+  const [calForm, setCalForm] = useState({
     checked_on: nowISO,
+    asset_id: "",
     staff_initials: "",
-    all_equipment_calibrated: true,
+    method: "",
+    result: "pass",
     notes: "",
   });
 
@@ -579,7 +602,7 @@ export default function ManagerDashboardPage() {
     return nm || "—";
   }
 
-  // ✅ scope team list to selected location
+  // ✅ UPDATED: scope team list to selected location to stop “ghost” counts + wrong staff choices
   async function loadTeamOptions(locId?: string | null) {
     if (!orgId) return;
     const useLoc = locId ?? locationId ?? null;
@@ -655,14 +678,14 @@ export default function ManagerDashboardPage() {
         return;
       }
 
-      // 3) Link it now if missing
+      // 3) If found but not linked, link it now
       if (!byEmail.data.user_id) {
         const upd = await supabase
           .from("team_members")
           .update({ user_id: user.id })
           .eq("org_id", orgId)
           .eq("id", byEmail.data.id)
-          .is("user_id", null);
+          .is("user_id", null); // prevent overwriting existing links
 
         if (upd.error) throw upd.error;
       }
@@ -801,63 +824,96 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  function openCalibrationFromActions() {
+  async function loadCalibrationAssets(useLocId?: string | null) {
+    if (!orgId) return;
+    const loc = useLocId ?? locationId ?? null;
+
+    try {
+      // NOTE: assumes calibration_assets has: id, name, org_id, location_id (location_id nullable)
+      // If your schema differs, adjust the select fields accordingly.
+      let q = supabase
+        .from("calibration_assets")
+        .select("id,name,location_id")
+        .eq("org_id", orgId)
+        .order("name", { ascending: true })
+        .limit(5000);
+
+      // Keep assets usable for this location:
+      // - location-specific assets (location_id = loc)
+      // - shared assets (location_id is null)
+      if (loc) {
+        q = q.or(`location_id.eq.${loc},location_id.is.null`);
+      }
+
+      const { data, error } = await q;
+      if (error) throw error;
+
+      setCalibrationAssets((data ?? []) as any);
+    } catch (e) {
+      console.error(e);
+      setCalibrationAssets([]);
+    }
+  }
+
+  async function openCalibrationFromActions() {
     if (!orgId || !locationId) return;
 
     setActionsOpen(false);
 
     const ini = managerTeamMember?.initials?.trim().toUpperCase() ?? "";
-    setCalibrationForm((f) => ({
+    setCalForm((f) => ({
       ...f,
       checked_on: selectedDateISO || nowISO,
       staff_initials: f.staff_initials?.trim() ? f.staff_initials : ini,
-      all_equipment_calibrated: true,
+      result: f.result || "pass",
     }));
 
+    await loadCalibrationAssets(locationId);
     setCalibrationOpen(true);
   }
 
   async function addCalibrationCheck() {
-    if (!orgId || !locationId) return;
+    if (!orgId) return;
+    if (!locationId) return;
 
-    const checked_on = calibrationForm.checked_on || selectedDateISO || nowISO;
-    const staff_initials = (calibrationForm.staff_initials || "").trim().toUpperCase();
-    if (!staff_initials) return alert("Enter initials.");
+    const checked_on = calForm.checked_on || selectedDateISO || nowISO;
+    const staff_initials = (calForm.staff_initials || "").trim().toUpperCase();
+    if (!staff_initials) return alert("Enter staff initials.");
 
     setCalibrationSaving(true);
     try {
-      const { error } = await supabase.from("calibration_checks").insert({
+      const payload = {
         org_id: orgId,
         location_id: locationId,
+        asset_id: calForm.asset_id ? calForm.asset_id : null,
         checked_on,
         staff_initials,
-        all_equipment_calibrated: !!calibrationForm.all_equipment_calibrated,
-        notes: calibrationForm.notes?.trim() || null,
-      });
+        method: calForm.method?.trim() || null,
+        result: calForm.result?.trim() || null,
+        notes: calForm.notes?.trim() || null,
+      };
 
+      const { error } = await supabase.from("calibration_checks").insert(payload);
       if (error) throw error;
 
       setCalibrationOpen(false);
-      setCalibrationForm({
+      setCalForm({
         checked_on: selectedDateISO || nowISO,
-        staff_initials,
-        all_equipment_calibrated: true,
+        asset_id: "",
+        staff_initials: staff_initials,
+        method: "",
+        result: "pass",
         notes: "",
       });
 
       await refreshAll();
     } catch (e: any) {
       console.error(e);
-      alert(e?.message ?? "Failed to save calibration.");
+      alert(e?.message ?? "Failed to save calibration check.");
     } finally {
       setCalibrationSaving(false);
     }
   }
-
-  // Keep calibration date aligned to selected day
-  useEffect(() => {
-    setCalibrationForm((f) => ({ ...f, checked_on: selectedDateISO }));
-  }, [selectedDateISO]);
 
   useEffect(() => {
     (async () => {
@@ -889,7 +945,7 @@ export default function ManagerDashboardPage() {
     })();
   }, []);
 
-  // reload team options when location changes
+  // ✅ UPDATED: reload team options when location changes (prevents cross-location data bleeding)
   useEffect(() => {
     if (!orgId) return;
     void loadLoggedInManager();
@@ -897,7 +953,6 @@ export default function ManagerDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, locationId]);
 
-  // Default initials in signoff modal
   useEffect(() => {
     if (!signoffOpen) return;
     if (signoffInitials.trim()) return;
@@ -906,14 +961,13 @@ export default function ManagerDashboardPage() {
     if (ini) setSignoffInitials(ini);
   }, [signoffOpen, managerTeamMember, signoffInitials]);
 
-  // Default initials in calibration modal
   useEffect(() => {
     if (!calibrationOpen) return;
-    if (calibrationForm.staff_initials.trim()) return;
+    if (calForm.staff_initials.trim()) return;
 
     const ini = managerTeamMember?.initials?.trim().toUpperCase() ?? "";
-    if (ini) setCalibrationForm((f) => ({ ...f, staff_initials: ini }));
-  }, [calibrationOpen, managerTeamMember, calibrationForm.staff_initials]);
+    if (ini) setCalForm((f) => ({ ...f, staff_initials: ini }));
+  }, [calibrationOpen, managerTeamMember, calForm.staff_initials]);
 
   useEffect(() => {
     if (!orgId || !locationId) return;
@@ -1030,6 +1084,7 @@ export default function ManagerDashboardPage() {
           .gte("happened_on", isoDate(sevenDaysAgo))
           .lte("happened_on", selectedDateISO),
 
+        // ✅ UPDATED: enforce INNER join so the location filter actually applies
         supabase
           .from("trainings")
           .select(
@@ -1043,6 +1098,7 @@ export default function ManagerDashboardPage() {
           .eq("team_member.location_id", locationId)
           .limit(5000),
 
+        // ✅ UPDATED: enforce INNER join so the location filter actually applies
         supabase
           .from("trainings")
           .select(
@@ -1100,7 +1156,19 @@ export default function ManagerDashboardPage() {
 
         supabase
           .from("calibration_checks")
-          .select("id, checked_on, staff_initials, all_equipment_calibrated, notes, created_at")
+          .select(
+            `
+            id,
+            checked_on,
+            staff_initials,
+            method,
+            result,
+            notes,
+            created_at,
+            asset_id,
+            asset:calibration_assets(name)
+          `
+          )
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .gte("checked_on", isoDate(ninetyDaysAgo))
@@ -1314,9 +1382,12 @@ export default function ManagerDashboardPage() {
           id: String(r.id),
           checked_on: String(r.checked_on),
           staff_initials: r.staff_initials ? String(r.staff_initials) : null,
-          all_equipment_calibrated: r.all_equipment_calibrated != null ? Boolean(r.all_equipment_calibrated) : null,
+          method: r.method ?? null,
+          result: r.result ?? null,
           notes: r.notes ?? null,
           created_at: r.created_at ? String(r.created_at) : null,
+          asset_id: r.asset_id ? String(r.asset_id) : null,
+          asset: r.asset ? { name: r.asset.name ?? null } : null,
         }))
       );
       setShowAllCalibration(false);
@@ -1591,12 +1662,14 @@ export default function ManagerDashboardPage() {
             </button>
           </div>
 
-          {/* Actions button (portaled) */}
+          {/* ✅ Actions button (menu is PORTALED to body so it can't hide behind layout/overflow) */}
           <div className="relative">
             <button
               ref={actionsBtnRef}
               type="button"
-              onClick={() => setActionsOpen((v) => !v)}
+              onClick={() => {
+                setActionsOpen((v) => !v);
+              }}
               className={cls("rounded-xl px-4 py-2 text-sm font-semibold shadow-sm", "bg-indigo-600 text-white hover:bg-indigo-700")}
             >
               Actions ▾
@@ -1631,7 +1704,7 @@ export default function ManagerDashboardPage() {
                           !orgId || !locationId ? "text-slate-400 cursor-not-allowed" : "text-slate-800 hover:bg-slate-50"
                         )}
                       >
-                        Log calibration
+                        Log calibration check
                       </button>
 
                       <button
@@ -1697,15 +1770,112 @@ export default function ManagerDashboardPage() {
         </div>
       </section>
 
-      {/* Incidents (existing UI continued below...) */}
-      {/* ... keep the rest of your sections exactly as you already had them ... */}
+      {/* Cleaning category progress */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Cleaning progress</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">By category (selected day)</div>
+        </div>
 
-      {/* Calibration checks table */}
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Category</th>
+                <th className="px-3 py-2">Done</th>
+                <th className="px-3 py-2">Total</th>
+                <th className="px-3 py-2">Completion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cleaningCategoryProgress.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                    No cleaning tasks scheduled for this day.
+                  </td>
+                </tr>
+              ) : (
+                cleaningCategoryProgress.map((r) => {
+                  const pct = r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
+                  const pill =
+                    pct === 100
+                      ? "bg-emerald-100 text-emerald-800"
+                      : pct >= 50
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-red-100 text-red-800";
+
+                  return (
+                    <tr key={r.category} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 font-semibold">{r.category}</td>
+                      <td className="px-3 py-2">{r.done}</td>
+                      <td className="px-3 py-2">{r.total}</td>
+                      <td className="px-3 py-2">
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>{pct}%</span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Incidents */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Incidents</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Incident log & corrective actions (last 90 days)</div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Time</th>
+                <th className="px-3 py-2">Type</th>
+                <th className="px-3 py-2">By</th>
+                <th className="px-3 py-2">Details</th>
+                <th className="px-3 py-2">Corrective</th>
+              </tr>
+            </thead>
+            <tbody>
+              {incidentsToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
+                    No incidents logged.
+                  </td>
+                </tr>
+              ) : (
+                incidentsToRender.map((r) => (
+                  <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                    <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.happened_on)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {r.created_at
+                        ? new Date(r.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+                        : "—"}
+                    </td>
+                    <td className="px-3 py-2 font-semibold">{r.type ?? "Incident"}</td>
+                    <td className="px-3 py-2">{r.created_by?.toUpperCase() ?? "—"}</td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.details ?? "—"}</td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.corrective_action ?? "—"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle total={incidentsHistory.length} showingAll={showAllIncidents} onToggle={() => setShowAllIncidents((v) => !v)} />
+      </section>
+
+      {/* Calibration checks */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Calibration</div>
-            <div className="mt-0.5 text-sm font-semibold text-slate-900">Calibration log (last 90 days)</div>
+            <div className="mt-0.5 text-sm font-semibold text-slate-900">Calibration checks (last 90 days)</div>
           </div>
 
           <button
@@ -1726,35 +1896,45 @@ export default function ManagerDashboardPage() {
             <thead className="bg-slate-50">
               <tr className="text-left text-slate-500">
                 <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Asset</th>
                 <th className="px-3 py-2">By</th>
-                <th className="px-3 py-2">Completed</th>
+                <th className="px-3 py-2">Method</th>
+                <th className="px-3 py-2">Result</th>
                 <th className="px-3 py-2">Notes</th>
               </tr>
             </thead>
             <tbody>
               {calibrationToRender.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
-                    No calibrations logged.
+                  <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                    No calibration checks logged.
                   </td>
                 </tr>
               ) : (
-                calibrationToRender.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                    <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.checked_on)}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
-                    <td className="px-3 py-2">
-                      {r.all_equipment_calibrated ? (
-                        <span className="inline-flex rounded-full bg-emerald-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-emerald-800">
-                          ✓ Complete
+                calibrationToRender.map((r) => {
+                  const res = (r.result ?? "").toString().toLowerCase().trim();
+                  const pill =
+                    res === "pass" || res === "ok"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : res === "fail"
+                      ? "bg-red-100 text-red-800"
+                      : "bg-slate-100 text-slate-800";
+
+                  return (
+                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.checked_on)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap font-semibold">{r.asset?.name ?? "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
+                      <td className="px-3 py-2 max-w-[14rem] truncate">{r.method ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                          {(r.result ?? "—").toString()}
                         </span>
-                      ) : (
-                        <span className="text-slate-500">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
-                  </tr>
-                ))
+                      </td>
+                      <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -1763,84 +1943,1024 @@ export default function ManagerDashboardPage() {
         <TableFooterToggle total={calibrationChecks.length} showingAll={showAllCalibration} onToggle={() => setShowAllCalibration((v) => !v)} />
       </section>
 
-      {/* Calibration modal */}
-      {calibrationOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setCalibrationOpen(false)}>
+      {/* Activity */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today&apos;s activity</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Temps + cleaning (category-based)</div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Temperature logs</h3>
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Area</th>
+                    <th className="px-3 py-2">Item</th>
+                    <th className="px-3 py-2">Temp</th>
+                    <th className="px-3 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {todayTemps.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
+                        No temperature logs.
+                      </td>
+                    </tr>
+                  ) : (
+                    tempsToRender.map((r) => (
+                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                        <td className="px-3 py-2">{r.time}</td>
+                        <td className="px-3 py-2">{r.staff}</td>
+                        <td className="px-3 py-2">{r.area}</td>
+                        <td className="px-3 py-2">{r.item}</td>
+                        <td className="px-3 py-2">{r.temp_c != null ? `${r.temp_c}°C` : "—"}</td>
+                        <td className="px-3 py-2">
+                          {r.status ? (
+                            <span
+                              className={cls(
+                                "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                                r.status === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
+                              )}
+                            >
+                              {r.status}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <TableFooterToggle total={todayTemps.length} showingAll={showAllTemps} onToggle={() => setShowAllTemps((v) => !v)} />
+
+            {/* Temp failures & corrective actions */}
+            <h3 className="mt-4 mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Temp failures & corrective actions
+            </h3>
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">By</th>
+                    <th className="px-3 py-2">Details</th>
+                    <th className="px-3 py-2">Corrective</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tempFailsToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                        No temp failures.
+                      </td>
+                    </tr>
+                  ) : (
+                    tempFailsToRender.map((r) => (
+                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {r.created_at
+                            ? new Date(r.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+                            : "—"}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">{r.created_by?.toUpperCase() ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[18rem] truncate">{r.details ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[18rem] truncate">{r.corrective_action ?? "—"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <TableFooterToggle total={tempFailsToday.length} showingAll={showAllTempFails} onToggle={() => setShowAllTempFails((v) => !v)} />
+          </div>
+
+          <div>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Cleaning runs</h3>
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cleaningToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                        No cleaning tasks completed.
+                      </td>
+                    </tr>
+                  ) : (
+                    cleaningToRender.map((r) => (
+                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                        <td className="px-3 py-2">{r.time ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          <div className="font-semibold">{r.category}</div>
+                          {r.task ? <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">{r.task}</div> : null}
+                        </td>
+                        <td className="px-3 py-2">{r.staff ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[14rem] truncate">{r.notes ?? "—"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <TableFooterToggle total={cleaningActivity.length} showingAll={showAllCleaning} onToggle={() => setShowAllCleaning((v) => !v)} />
+          </div>
+        </div>
+      </section>
+
+      {/* Day sign-offs table */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Day sign-offs</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">
+            Daily sign-offs for selected day · Total: {signoffSummary.todayCount}
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Time</th>
+                <th className="px-3 py-2">Signed by</th>
+                <th className="px-3 py-2">Notes / corrective actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signoffsToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                    No sign-offs logged for this day.
+                  </td>
+                </tr>
+              ) : (
+                signoffsToRender.map((r) => {
+                  const t = r.created_at ? formatTimeHM(new Date(r.created_at)) : null;
+                  return (
+                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.signoff_on)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{t ?? "—"}</td>
+                      <td className="px-3 py-2 font-semibold whitespace-nowrap">{r.signed_by ? r.signed_by.toUpperCase() : "—"}</td>
+                      <td className="px-3 py-2 max-w-[28rem] truncate">{r.notes ?? "—"}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle total={signoffsToday.length} showingAll={showAllSignoffs} onToggle={() => setShowAllSignoffs((v) => !v)} />
+      </section>
+
+      {/* Manager QC Summary table */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Manager QC</div>
+            <div className="mt-0.5 text-sm font-semibold text-slate-900">Recent QC reviews (selected location)</div>
+          </div>
+
+          <button
+            type="button"
+            onClick={async () => {
+              if (!orgId || !locationId) return;
+              setQcForm((f) => ({ ...f, reviewed_on: selectedDateISO || f.reviewed_on }));
+              setQcOpen(true);
+              await Promise.all([loadTeamOptions(locationId), loadLoggedInManager(), loadQcReviews()]);
+            }}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            Open QC
+          </button>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Staff</th>
+                <th className="px-3 py-2">Manager</th>
+                <th className="px-3 py-2">Score</th>
+                <th className="px-3 py-2">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {qcSummaryLoading ? (
+                <tr>
+                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                    Loading…
+                  </td>
+                </tr>
+              ) : qcToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                    No QC reviews logged.
+                  </td>
+                </tr>
+              ) : (
+                qcToRender.map((r) => {
+                  const pill =
+                    r.rating >= 4
+                      ? "bg-emerald-100 text-emerald-800"
+                      : r.rating === 3
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-red-100 text-red-800";
+
+                  return (
+                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.reviewed_on)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.manager ?? { initials: null, name: "—" })}</td>
+                      <td className="px-3 py-2">
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>{r.rating}/5</span>
+                      </td>
+                      <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
+      </section>
+
+      {/* Education & training */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Education & training</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Training records + staff training areas (selected location)</div>
+        </div>
+
+        {/* Full-width: Training records */}
+        <div>
+          <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training records</h3>
+
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+            <table className="min-w-full text-xs">
+              <thead className="bg-slate-50">
+                <tr className="text-left text-slate-500">
+                  <th className="px-3 py-2">Staff</th>
+                  <th className="px-3 py-2">Type</th>
+                  <th className="px-3 py-2">Awarded</th>
+                  <th className="px-3 py-2">Expires</th>
+                  <th className="px-3 py-2">Provider</th>
+                  <th className="px-3 py-2">Course</th>
+                  <th className="px-3 py-2">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trainingToRender.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
+                      No training records found for this location.
+                    </td>
+                  </tr>
+                ) : (
+                  trainingToRender.map((r) => {
+                    const exp = r.expires_on ? safeDate(r.expires_on) : null;
+                    const base = safeDate(selectedDateISO) ?? new Date();
+                    base.setHours(0, 0, 0, 0);
+
+                    let statusLabel = "No expiry";
+                    let pill = "bg-slate-100 text-slate-800";
+
+                    if (exp) {
+                      exp.setHours(0, 0, 0, 0);
+                      const diffDays = Math.floor((exp.getTime() - base.getTime()) / 86400000);
+
+                      if (diffDays < 0) {
+                        statusLabel = "Expired";
+                        pill = "bg-red-100 text-red-800";
+                      } else if (diffDays <= 30) {
+                        statusLabel = `Due (${diffDays}d)`;
+                        pill = "bg-amber-100 text-amber-800";
+                      } else {
+                        statusLabel = `Valid (${diffDays}d)`;
+                        pill = "bg-emerald-100 text-emerald-800";
+                      }
+                    }
+
+                    const staffLabel = r.team_member
+                      ? tmLabel({
+                          initials: r.team_member.initials,
+                          name: r.team_member.name,
+                        })
+                      : "—";
+
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                        <td className="px-3 py-2 whitespace-nowrap font-semibold">{staffLabel}</td>
+                        <td className="px-3 py-2 max-w-[18rem] truncate">{r.type ?? "—"}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.awarded_on)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.expires_on)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{r.provider_name ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[14rem] truncate">{r.course_key ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                            {statusLabel}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <TableFooterToggle total={trainingRows.length} showingAll={showAllTraining} onToggle={() => setShowAllTraining((v) => !v)} />
+        </div>
+
+        <div className="mt-6" />
+
+        {/* Full-width: Training areas */}
+        <div>
+          <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training areas</h3>
+
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+            <table className="min-w-full text-xs">
+              <thead className="bg-slate-50">
+                <tr className="text-left text-slate-500">
+                  <th className="px-3 py-2">Staff</th>
+                  <th className="px-3 py-2">Role</th>
+                  <th className="px-3 py-2">Areas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trainingAreasToRender.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-4 text-center text-slate-500">
+                      No team members found for this location.
+                    </td>
+                  </tr>
+                ) : (
+                  trainingAreasToRender.map((t) => {
+                    const areas = Array.isArray(t.training_areas) ? t.training_areas : [];
+
+                    return (
+                      <tr key={t.id} className="border-t border-slate-100 text-slate-800">
+                        <td className="px-3 py-2 whitespace-nowrap font-semibold">{tmLabel({ initials: t.initials ?? null, name: t.name ?? null })}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{t.role ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          {areas.length === 0 ? (
+                            <span className="text-slate-500">—</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {areas.map((a: any, idx: number) => (
+                                <span
+                                  key={`${t.id}_${idx}`}
+                                  className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-[2px] text-[10px] font-extrabold uppercase tracking-wide text-emerald-800"
+                                >
+                                  {String(a).replace(/_/g, " ")}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <TableFooterToggle
+            total={trainingAreasRows.length}
+            showingAll={showAllTrainingAreas}
+            onToggle={() => setShowAllTrainingAreas((v) => !v)}
+          />
+        </div>
+      </section>
+
+      {/* Allergens - Review history (org-level) */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Allergens</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Allergen review history (org)</div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Reviewed</th>
+                <th className="px-3 py-2">Reviewer</th>
+                <th className="px-3 py-2">Interval</th>
+                <th className="px-3 py-2">Next due</th>
+                <th className="px-3 py-2">Days until</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allergenReviewsToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-3 py-4 text-center text-slate-500">
+                    No allergen reviews logged.
+                  </td>
+                </tr>
+              ) : (
+                allergenReviewsToRender.map((r) => {
+                  const reviewed = r.last_reviewed ?? null;
+                  const interval = r.interval_days ?? 180;
+
+                  let nextDue: string | null = null;
+                  let daysUntil: string = "—";
+
+                  if (reviewed && interval && Number.isFinite(interval)) {
+                    const d = new Date(reviewed);
+                    if (!Number.isNaN(d.getTime())) {
+                      d.setDate(d.getDate() + interval);
+                      nextDue = d.toISOString().slice(0, 10);
+
+                      const base = new Date(selectedDateISO);
+                      base.setHours(0, 0, 0, 0);
+                      const due = new Date(nextDue);
+                      due.setHours(0, 0, 0, 0);
+
+                      const diffDays = Math.floor((due.getTime() - base.getTime()) / 86400000);
+                      daysUntil = `${diffDays}`;
+                    }
+                  }
+
+                  const pill =
+                    daysUntil === "—"
+                      ? "bg-slate-100 text-slate-800"
+                      : Number(daysUntil) < 0
+                      ? "bg-red-100 text-red-800"
+                      : Number(daysUntil) <= 30
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-emerald-100 text-emerald-800";
+
+                  return (
+                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(reviewed)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{r.reviewer ?? "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{interval ? `${interval} days` : "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(nextDue)}</td>
+                      <td className="px-3 py-2">
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                          {daysUntil === "—" ? "—" : `${daysUntil}d`}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle
+          total={allergenReviews.length}
+          showingAll={showAllAllergenReviews}
+          onToggle={() => setShowAllAllergenReviews((v) => !v)}
+        />
+      </section>
+
+      {/* Allergen edit log */}
+      <section className="mt-4 mb-6 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Allergens</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Allergen edit log (this location)</div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Time</th>
+                <th className="px-3 py-2">Item</th>
+                <th className="px-3 py-2">Action</th>
+                <th className="px-3 py-2">Category change</th>
+                <th className="px-3 py-2">By</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allergenLogsToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
+                    No allergen edits logged.
+                  </td>
+                </tr>
+              ) : (
+                allergenLogsToRender.map((r) => (
+                  <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                    <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.created_at)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{formatTimeHM(safeDate(r.created_at)) ?? "—"}</td>
+                    <td className="px-3 py-2 max-w-[14rem] truncate">{r.item_name ?? "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{r.action ?? "—"}</td>
+                    <td className="px-3 py-2 max-w-[16rem] truncate">{(r.category_before ?? "—") + " → " + (r.category_after ?? "—")}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle total={allergenLogs.length} showingAll={showAllAllergenLogs} onToggle={() => setShowAllAllergenLogs((v) => !v)} />
+      </section>
+
+      {/* Sign-off modal */}
+      {signoffOpen && (
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
           <div
-            className="mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-lg backdrop-blur"
+            className={cls("mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <div className="text-base font-semibold">Log calibration</div>
-                <div className="mt-0.5 text-xs text-slate-500">{formatDDMMYYYY(selectedDateISO)}</div>
+                <div className="text-base font-semibold">Sign off day</div>
+                <div className="mt-0.5 text-xs text-slate-500">
+                  {formatDDMMYYYY(selectedDateISO)} · {locations.find((l) => l.id === locationId)?.name ?? "—"}
+                </div>
               </div>
-              <button onClick={() => setCalibrationOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
+              <button onClick={() => setSignoffOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
                 ✕
               </button>
             </div>
 
-            <div className="grid gap-3">
+            {!cleaningAllDone && (
+              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                You can’t sign off until all cleaning tasks due today are completed.
+              </div>
+            )}
+
+            {alreadySignedOff && (
+              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">This day is already signed off.</div>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label className="text-xs text-slate-500">Date</label>
+                <label className="mb-1 block text-xs text-slate-500">Initials</label>
                 <input
-                  type="date"
-                  value={calibrationForm.checked_on}
-                  onChange={(e) => setCalibrationForm((f) => ({ ...f, checked_on: e.target.value }))}
-                  className="h-10 w-full rounded-xl border border-slate-300 px-3 text-sm"
+                  value={signoffInitials}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSignoffInitials(e.target.value.toUpperCase())}
+                  placeholder="WS"
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                 />
               </div>
 
               <div>
-                <label className="text-xs text-slate-500">Initials</label>
+                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
                 <input
-                  value={calibrationForm.staff_initials}
-                  onChange={(e) => setCalibrationForm((f) => ({ ...f, staff_initials: e.target.value.toUpperCase() }))}
-                  className="h-10 w-full rounded-xl border border-slate-300 px-3 text-sm"
-                />
-              </div>
-
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={calibrationForm.all_equipment_calibrated}
-                  onChange={(e) => setCalibrationForm((f) => ({ ...f, all_equipment_calibrated: e.target.checked }))}
-                />
-                <span className="text-sm">All equipment calibrated</span>
-              </label>
-
-              <div>
-                <label className="text-xs text-slate-500">Notes</label>
-                <textarea
-                  rows={3}
-                  value={calibrationForm.notes}
-                  onChange={(e) => setCalibrationForm((f) => ({ ...f, notes: e.target.value }))}
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                  value={signoffNotes}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSignoffNotes(e.target.value)}
+                  placeholder="Any corrective actions / comments…"
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                 />
               </div>
             </div>
 
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="mt-4 flex items-center justify-end gap-2">
               <button
-                onClick={() => setCalibrationOpen(false)}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold"
+                type="button"
+                onClick={() => setSignoffOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 Cancel
               </button>
 
               <button
-                onClick={addCalibrationCheck}
-                disabled={calibrationSaving}
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                type="button"
+                onClick={createDaySignoff}
+                disabled={!cleaningAllDone || alreadySignedOff || signoffSaving}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
               >
-                {calibrationSaving ? "Saving…" : "Save"}
+                {signoffSaving ? "Signing…" : "Sign off"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Incident modal */}
+      {/* Calibration modal */}
+      {calibrationOpen && (
+        <div className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4" onClick={() => setCalibrationOpen(false)}>
+          <div
+            className={cls("mx-auto my-6 w-full max-w-2xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold">Log calibration check</div>
+                <div className="mt-0.5 text-xs text-slate-500">
+                  {locations.find((l) => l.id === locationId)?.name ?? "—"}
+                </div>
+              </div>
+              <button onClick={() => setCalibrationOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
+                ✕
+              </button>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Date</label>
+                  <input
+                    type="date"
+                    value={calForm.checked_on}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCalForm((f) => ({ ...f, checked_on: e.target.value || nowISO }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Staff initials</label>
+                  <input
+                    value={calForm.staff_initials}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCalForm((f) => ({ ...f, staff_initials: e.target.value.toUpperCase() }))}
+                    placeholder="WS"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-slate-500">Asset (optional)</label>
+                  <select
+                    value={calForm.asset_id}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCalForm((f) => ({ ...f, asset_id: e.target.value }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    <option value="">No asset</option>
+                    {calibrationAssets.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name ?? "Unnamed"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Method (optional)</label>
+                  <input
+                    value={calForm.method}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCalForm((f) => ({ ...f, method: e.target.value }))}
+                    placeholder="Ice bath / probe check / reference device…"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Result</label>
+                  <select
+                    value={calForm.result}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCalForm((f) => ({ ...f, result: e.target.value }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    <option value="pass">pass</option>
+                    <option value="fail">fail</option>
+                    <option value="n/a">n/a</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
+                  <textarea
+                    value={calForm.notes}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setCalForm((f) => ({ ...f, notes: e.target.value }))}
+                    placeholder="Optional details…"
+                    rows={4}
+                    className="w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm leading-5 resize-y min-h-[96px]"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCalibrationOpen(false)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={addCalibrationCheck}
+                  disabled={calibrationSaving || !orgId || !locationId}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {calibrationSaving ? "Saving…" : "Save check"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Individual staff assessment modal */}
+      {staffAssessOpen && (
+        <div className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4" onClick={() => setStaffAssessOpen(false)}>
+          <div
+            className={cls("mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold">Individual staff assessment</div>
+                <div className="mt-0.5 text-xs text-slate-500">Manager view of individual performance.</div>
+              </div>
+              <button onClick={() => setStaffAssessOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
+                ✕
+              </button>
+            </div>
+
+            {staffAssessErr && (
+              <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{staffAssessErr}</div>
+            )}
+
+            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Staff</label>
+                  <select
+                    value={staffAssessStaffId}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setStaffAssessStaffId(e.target.value)}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    <option value="">Select staff…</option>
+                    {teamOptions.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {tmLabel(t)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Range (days)</label>
+                  <select
+                    value={staffAssessDays}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setStaffAssessDays(Number(e.target.value) || 7)}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    {[7, 14, 30, 60, 90].map((n) => (
+                      <option key={n} value={n}>
+                        Last {n} days
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!staffAssessStaffId) {
+                        alert("Select staff first.");
+                        return;
+                      }
+                      void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
+                    }}
+                    disabled={staffAssessLoading || !orgId || !locationId}
+                    className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
+                  >
+                    {staffAssessLoading ? "Loading…" : "Load"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <KpiTile
+                  title="Cleaning runs"
+                  icon="🧼"
+                  tone="neutral"
+                  value={staffAssess?.cleaningRuns ?? "—"}
+                  sub={staffAssess ? `Completed in last ${staffAssess.rangeDays}d` : "Select staff + load"}
+                />
+                <KpiTile title="Temp logs" icon="🌡" tone="neutral" value={staffAssess?.tempLogs ?? "—"} sub={staffAssess ? `Recorded in last ${staffAssess.rangeDays}d` : "—"} />
+                <KpiTile
+                  title="Temp fails"
+                  icon="🚫"
+                  tone={staffAssess && staffAssess.tempFails > 0 ? "danger" : "ok"}
+                  value={staffAssess?.tempFails ?? "—"}
+                  sub={staffAssess ? `Fails in last ${staffAssess.rangeDays}d` : "—"}
+                />
+                <KpiTile
+                  title="Incidents"
+                  icon="⚠️"
+                  tone={staffAssess && staffAssess.incidents > 0 ? "warn" : "ok"}
+                  value={staffAssess?.incidents ?? "—"}
+                  sub={staffAssess ? `Logged in last ${staffAssess.rangeDays}d` : "—"}
+                />
+                <KpiTile
+                  title="QC avg (30d)"
+                  icon="📋"
+                  tone="neutral"
+                  value={staffAssess ? (staffAssess.qcAvg30d != null ? `${staffAssess.qcAvg30d}/5` : "—") : "—"}
+                  sub={staffAssess ? `Based on ${staffAssess.qcCount30d} reviews` : "—"}
+                />
+                <KpiTile title="Staff" icon="👤" tone="neutral" value={staffAssess?.staffLabel ?? "—"} sub="Selected team member" />
+              </div>
+
+              <div className="mt-4 text-xs text-slate-500">
+                Note: this uses initials across logs (done_by, staff_initials, created_by). If you switch to IDs everywhere later, this becomes rock-solid.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QC modal */}
+      {qcOpen && (
+        <div className="fixed inset-0 z-50 bg-black/30 overflow-y-auto overscroll-contain p-3 sm:p-4" onClick={() => setQcOpen(false)}>
+          <div
+            className={cls("mx-auto my-6 w-full max-w-3xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-base font-semibold">Manager QC</div>
+                <div className="mt-0.5 text-xs text-slate-500">Manager is your logged-in team member. Staff list is team members.</div>
+              </div>
+
+              <button onClick={() => setQcOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
+                ✕
+              </button>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white/90 p-3">
+              <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Manager</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">{managerTeamMember ? tmLabel(managerTeamMember) : "Not linked"}</div>
+                  {!managerTeamMember ? (
+                    <div className="mt-1 text-xs text-rose-700">
+                      Link this login by setting <span className="font-semibold">team_members.user_id</span>.
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Location</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">{locations.find((l) => l.id === locationId)?.name ?? "—"}</div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-4">
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Staff</label>
+                  <select
+                    value={qcForm.staff_id}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setQcForm((f) => ({ ...f, staff_id: e.target.value }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    <option value="">Select…</option>
+                    {teamOptions.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {tmLabel(t)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Date</label>
+                  <input
+                    type="date"
+                    value={qcForm.reviewed_on}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQcForm((f) => ({ ...f, reviewed_on: e.target.value }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Score</label>
+                  <select
+                    value={qcForm.rating}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setQcForm((f) => ({ ...f, rating: Number(e.target.value) }))}
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                  >
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <option key={n} value={n}>
+                        {n}/5
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="md:col-span-4">
+                  <label className="mb-1 block text-xs text-slate-500">Notes</label>
+                  <textarea
+                    value={qcForm.notes}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQcForm((f) => ({ ...f, notes: e.target.value }))}
+                    placeholder="Optional…"
+                    rows={4}
+                    className="w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm leading-5 resize-y min-h-[96px]"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setQcOpen(false)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={addQcReview}
+                  disabled={qcSaving || !orgId || !locationId || !managerTeamMember}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {qcSaving ? "Saving…" : "Add QC"}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Manager</th>
+                    <th className="px-3 py-2">Score</th>
+                    <th className="px-3 py-2">Notes</th>
+                    <th className="px-3 py-2 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {qcLoading ? (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                        Loading…
+                      </td>
+                    </tr>
+                  ) : (showAllQc ? qcReviews : qcReviews.slice(0, 10)).length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                        No QC reviews logged.
+                      </td>
+                    </tr>
+                  ) : (
+                    (showAllQc ? qcReviews : qcReviews.slice(0, 10)).map((r) => {
+                      const pill =
+                        r.rating >= 4 ? "bg-emerald-100 text-emerald-800" : r.rating === 3 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800";
+
+                      return (
+                        <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                          <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.reviewed_on)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.manager ?? { initials: null, name: "—" })}</td>
+                          <td className="px-3 py-2">
+                            <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
+                              {r.rating}/5
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 max-w-[18rem] truncate">{r.notes ?? "—"}</td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              type="button"
+                              onClick={() => deleteQcReview(r.id)}
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
+          </div>
+        </div>
+      )}
+
+      {/* Incident modal – with defaultInitials */}
       {incidentOpen && orgId && locationId && (
         <IncidentModal
           open={incidentOpen}
