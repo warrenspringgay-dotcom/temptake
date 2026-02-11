@@ -2222,6 +2222,55 @@ export default function ReportsPage() {
           </div>
         </Card>
 
+      {/* Allergen review table */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-2 text-base font-semibold">Allergen review (schedule)</h3>
+          <p className="mb-3 text-xs text-slate-500">
+            Pulled from <code>allergen_review</code>. (Single schedule row; use change logs for audit history.)
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Last review</th>
+                  <th className="py-2 pr-3">Interval</th>
+                  <th className="py-2 pr-3">Next due</th>
+                  <th className="py-2 pr-3">Days</th>
+                  <th className="py-2 pr-3">Reviewer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!allergenLog ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : allergenLog.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-500">
+                      No allergen review schedule found
+                    </td>
+                  </tr>
+                ) : (
+                  allergenLog.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100">
+                      <td className="py-2 pr-3">
+                        {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
+                      </td>
+                      <td className="py-2 pr-3">{r.interval_days != null ? `${r.interval_days}d` : "—"}</td>
+                      <td className="py-2 pr-3">{r.next_due ? formatISOToUK(r.next_due) : "—"}</td>
+                      <td className="py-2 pr-3">{r.days_until ?? "—"}</td>
+                      <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
         {/* Allergen edits table remains unchanged below */}
         {/* ...your existing allergen_change_logs table... */}
       </div>
