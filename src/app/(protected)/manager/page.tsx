@@ -149,14 +149,16 @@ type CleaningTaskRun = {
 };
 
 /* ===== Calibration (simple tick + notes) =====
-   Table assumed: calibration_checks
+   Table: calibration_checks
    Columns used:
    - id (uuid)
    - org_id
    - location_id
    - checked_on (date)
    - staff_initials (text)
-   - all_equipment_calibrated (bool)
+   - cold_storage_checked (bool)
+   - probes_checked (bool)
+   - thermometers_checked (bool)
    - notes (text nullable)
    - created_at (timestamp)
 */
@@ -164,7 +166,9 @@ type CalibrationCheckRow = {
   id: string;
   checked_on: string; // yyyy-mm-dd
   staff_initials: string | null;
-  all_equipment_calibrated: boolean | null;
+  cold_storage_checked: boolean | null;
+  probes_checked: boolean | null;
+  thermometers_checked: boolean | null;
   notes: string | null;
   created_at: string | null;
 };
@@ -427,6 +431,8 @@ export default function ManagerDashboardPage() {
   const centeredDate = useMemo(() => formatPrettyDate(selectedDateISO), [selectedDateISO]);
 
   /* ===== KPI state ===== */
+  const [calibrationDue, setCalibrationDue] = useState(false);
+
   const [tempsSummary, setTempsSummary] = useState<TempSummary>({ today: 0, fails7d: 0 });
   const [cleaningTotal, setCleaningTotal] = useState(0);
   const [cleaningDoneTotal, setCleaningDoneTotal] = useState(0);
@@ -509,9 +515,17 @@ export default function ManagerDashboardPage() {
   const [calibrationForm, setCalibrationForm] = useState({
     checked_on: nowISO,
     staff_initials: "",
-    all_equipment_calibrated: true,
+    cold_storage_checked: false,
+    probes_checked: false,
+    thermometers_checked: false,
     notes: "",
   });
+
+  useEffect(() => {
+    if (calibrationDue) {
+      setCalibrationOpen(true);
+    }
+  }, [calibrationDue]);
 
   useEffect(() => {
     // Keep the calibration date pinned to selected day (unless user changes it manually later)
@@ -806,12 +820,15 @@ export default function ManagerDashboardPage() {
     setActionsOpen(false);
 
     const ini = managerTeamMember?.initials?.trim().toUpperCase() ?? "";
-    setCalibrationForm((f) => ({
-      ...f,
+
+    setCalibrationForm({
       checked_on: selectedDateISO || nowISO,
-      staff_initials: f.staff_initials?.trim() ? f.staff_initials : ini,
-      all_equipment_calibrated: f.all_equipment_calibrated ?? true,
-    }));
+      staff_initials: ini,
+      cold_storage_checked: false,
+      probes_checked: false,
+      thermometers_checked: false,
+      notes: "",
+    });
 
     setCalibrationOpen(true);
   }
@@ -830,20 +847,15 @@ export default function ManagerDashboardPage() {
         location_id: locationId,
         checked_on,
         staff_initials,
-        all_equipment_calibrated: !!calibrationForm.all_equipment_calibrated,
+        cold_storage_checked: calibrationForm.cold_storage_checked,
+        probes_checked: calibrationForm.probes_checked,
+        thermometers_checked: calibrationForm.thermometers_checked,
         notes: calibrationForm.notes?.trim() || null,
       });
 
       if (error) throw error;
 
       setCalibrationOpen(false);
-      setCalibrationForm({
-        checked_on: selectedDateISO || nowISO,
-        staff_initials,
-        all_equipment_calibrated: true,
-        notes: "",
-      });
-
       await refreshAll();
     } catch (e: any) {
       console.error(e);
@@ -1102,10 +1114,9 @@ export default function ManagerDashboardPage() {
           .order("created_at", { ascending: false })
           .limit(500),
 
-        // ✅ simple calibration (no assets/result/method)
         supabase
           .from("calibration_checks")
-          .select("id, checked_on, staff_initials, all_equipment_calibrated, notes, created_at")
+          .select("id, checked_on, staff_initials, cold_storage_checked, probes_checked, thermometers_checked, notes, created_at")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .gte("checked_on", isoDate(ninetyDaysAgo))
@@ -1313,18 +1324,38 @@ export default function ManagerDashboardPage() {
       );
       setShowAllAllergenLogs(false);
 
+      /* ===== Calibration mapping + 30 day due logic ===== */
       const calRows: any[] = (calibrationChecksRes.data as any[]) ?? [];
-      setCalibrationChecks(
-        calRows.map((r) => ({
-          id: String(r.id),
-          checked_on: String(r.checked_on),
-          staff_initials: r.staff_initials ? String(r.staff_initials) : null,
-          all_equipment_calibrated: r.all_equipment_calibrated ?? null,
-          notes: r.notes ?? null,
-          created_at: r.created_at ? String(r.created_at) : null,
-        }))
-      );
+      const mappedCalRows: CalibrationCheckRow[] = calRows.map((r) => ({
+        id: String(r.id),
+        checked_on: String(r.checked_on),
+        staff_initials: r.staff_initials ? String(r.staff_initials) : null,
+        cold_storage_checked: r.cold_storage_checked ?? null,
+        probes_checked: r.probes_checked ?? null,
+        thermometers_checked: r.thermometers_checked ?? null,
+        notes: r.notes ?? null,
+        created_at: r.created_at ? String(r.created_at) : null,
+      }));
+
+      setCalibrationChecks(mappedCalRows);
       setShowAllCalibration(false);
+
+      // Due if no checks, or last check + 30 days < selected date (strictly past due)
+      if (mappedCalRows.length === 0) {
+        setCalibrationDue(true);
+      } else {
+        const latest = mappedCalRows[0];
+        const last = new Date(latest.checked_on);
+        last.setHours(0, 0, 0, 0);
+
+        const due = new Date(last);
+        due.setDate(due.getDate() + 30);
+
+        const base = new Date(selectedDateISO);
+        base.setHours(0, 0, 0, 0);
+
+        setCalibrationDue(base > due);
+      }
     } catch (e: any) {
       console.error(e);
       setErr(e?.message ?? "Failed to load manager dashboard.");
@@ -1540,9 +1571,17 @@ export default function ManagerDashboardPage() {
               </>
             }
           />
+
           <KpiTile title="Cleaning" icon="🧼" tone={cleaningTone} value={`${cleaningDoneTotal}/${cleaningTotal}`} sub="Tasks completed today" />
           <KpiTile title="Incidents" icon="⚠️" tone={incidentsTone} value={incidentsToday} sub={`Last 7d: ${incidents7d}`} />
           <KpiTile title="Training" icon="🎓" tone={trainingTone} value={`${trainingExpired} expired`} sub={`${trainingDueSoon} due in 30d`} />
+          <KpiTile
+            title="Calibration"
+            icon="🛠"
+            tone={calibrationDue ? "danger" : "ok"}
+            value={calibrationDue ? "Due" : "Up to date"}
+            sub="30-day cycle"
+          />
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -1801,9 +1840,6 @@ export default function ManagerDashboardPage() {
         <TableFooterToggle total={incidentsHistory.length} showingAll={showAllIncidents} onToggle={() => setShowAllIncidents((v) => !v)} />
       </section>
 
-      
-        
-
       {/* Activity */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
@@ -1865,7 +1901,6 @@ export default function ManagerDashboardPage() {
 
             <TableFooterToggle total={todayTemps.length} showingAll={showAllTemps} onToggle={() => setShowAllTemps((v) => !v)} />
 
-            {/* Temp failures & corrective actions */}
             <h3 className="mt-4 mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
               Temp failures & corrective actions
             </h3>
@@ -2078,7 +2113,7 @@ export default function ManagerDashboardPage() {
           <div className="mt-0.5 text-sm font-semibold text-slate-900">Training records + staff training areas (selected location)</div>
         </div>
 
-        {/* Full-width: Training records */}
+        {/* Training records */}
         <div>
           <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training records</h3>
 
@@ -2160,7 +2195,7 @@ export default function ManagerDashboardPage() {
 
         <div className="mt-6" />
 
-        {/* Full-width: Training areas */}
+        {/* Training areas */}
         <div>
           <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training areas</h3>
 
@@ -2349,7 +2384,6 @@ export default function ManagerDashboardPage() {
         <TableFooterToggle total={allergenLogs.length} showingAll={showAllAllergenLogs} onToggle={() => setShowAllAllergenLogs((v) => !v)} />
       </section>
 
-
       {/* Calibration checks (simple) */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -2389,24 +2423,28 @@ export default function ManagerDashboardPage() {
                   </td>
                 </tr>
               ) : (
-                calibrationToRender.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                    <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.checked_on)}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {r.all_equipment_calibrated ? (
-                        <span className="inline-flex rounded-full bg-emerald-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-emerald-800">
-                          ✓ Complete
-                        </span>
-                      ) : (
-                        <span className="inline-flex rounded-full bg-amber-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-amber-800">
-                          Not complete
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
-                  </tr>
-                ))
+                calibrationToRender.map((r) => {
+                  const complete = !!r.cold_storage_checked && !!r.probes_checked && !!r.thermometers_checked;
+
+                  return (
+                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.checked_on)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {complete ? (
+                          <span className="inline-flex rounded-full bg-emerald-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-emerald-800">
+                            ✓ Complete
+                          </span>
+                        ) : (
+                          <span className="inline-flex rounded-full bg-amber-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-amber-800">
+                            Not complete
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -2522,14 +2560,29 @@ export default function ManagerDashboardPage() {
                 />
               </div>
 
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={!!calibrationForm.all_equipment_calibrated}
-                  onChange={(e) => setCalibrationForm((f) => ({ ...f, all_equipment_calibrated: e.target.checked }))}
-                />
-                <span className="text-sm">All equipment calibrated</span>
-              </label>
+              <div className="space-y-2">
+                <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Calibration checks</div>
+
+                {[
+                  { key: "cold_storage_checked", label: "Cold storage units calibrated" },
+                  { key: "probes_checked", label: "Temperature probes calibrated" },
+                  { key: "thermometers_checked", label: "Infrared / handheld thermometers calibrated" },
+                ].map((item) => (
+                  <label key={item.key} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={!!(calibrationForm as any)[item.key]}
+                      onChange={(e) =>
+                        setCalibrationForm((f: any) => ({
+                          ...f,
+                          [item.key]: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span className="text-sm">{item.label}</span>
+                  </label>
+                ))}
+              </div>
 
               <div>
                 <label className="text-xs text-slate-500">Notes</label>
