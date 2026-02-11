@@ -154,7 +154,7 @@ type TrainingRow = {
 /** ✅ Calibration log (simple: “we calibrated”) */
 type CalibrationRow = {
   id: string;
-  calibrated_on: string; // yyyy-mm-dd
+  checked_on: string; // yyyy-mm-dd
   initials: string | null;
   notes: string | null;
   created_at: string | null;
@@ -1056,12 +1056,12 @@ export default function ManagerDashboardPage() {
         /** ✅ Calibration log table (simple) */
         supabase
           .from("calibration_checks")
-          .select("id, calibrated_on, initials, notes, created_at")
+          .select("id, checked_on, initials, notes, created_at")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .gte("calibrated_on", isoDate(ninetyDaysAgo))
-          .lte("calibrated_on", selectedDateISO)
-          .order("calibrated_on", { ascending: false })
+          .gte("checked_on", isoDate(ninetyDaysAgo))
+          .lte("checked_on", selectedDateISO)
+          .order("checked_on", { ascending: false })
           .order("created_at", { ascending: false })
           .limit(500),
       ]);
@@ -1272,7 +1272,7 @@ export default function ManagerDashboardPage() {
       setCalibrationRows(
         calRows.map((r) => ({
           id: String(r.id),
-          calibrated_on: String(r.calibrated_on),
+          checked_on: String(r.checked_on),
           initials: r.initials ? String(r.initials) : null,
           notes: r.notes ? String(r.notes) : null,
           created_at: r.created_at ? String(r.created_at) : null,
@@ -1803,7 +1803,7 @@ export default function ManagerDashboardPage() {
               ) : (
                 calibrationsToRender.map((r) => (
                   <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                    <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.calibrated_on)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.checked_on)}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{formatTimeHM(safeDate(r.created_at)) ?? "—"}</td>
                     <td className="px-3 py-2 whitespace-nowrap font-semibold">{r.initials?.toUpperCase() ?? "—"}</td>
                     <td className="px-3 py-2 max-w-[28rem] truncate">{r.notes ?? "—"}</td>
