@@ -1965,128 +1965,158 @@ export default function ManagerDashboardPage() {
         <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
       </section>
 
-      {/* Education & training */}
-      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Education & training</div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">Training records + staff training areas (selected location)</div>
-        </div>
+     {/* Education & training */}
+<section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+  <div className="mb-3">
+    <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
+      Education & training
+    </div>
+    <div className="mt-0.5 text-sm font-semibold text-slate-900">
+      Training records + staff training areas (selected location)
+    </div>
+  </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training records</h3>
+  {/* Full-width: Training records */}
+  <div>
+    <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+      Training records
+    </h3>
 
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-500">
-                    <th className="px-3 py-2">Staff</th>
-                    <th className="px-3 py-2">Type</th>
-                    <th className="px-3 py-2">Awarded</th>
-                    <th className="px-3 py-2">Expires</th>
-                    <th className="px-3 py-2">Provider</th>
-                    <th className="px-3 py-2">Course</th>
-                    <th className="px-3 py-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trainingToRender.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
-                        No training records found for this location.
-                      </td>
-                    </tr>
-                  ) : (
-                    trainingToRender.map((r) => {
-                      const exp = r.expires_on ? safeDate(r.expires_on) : null;
-                      const base = safeDate(selectedDateISO) ?? new Date();
-                      base.setHours(0, 0, 0, 0);
+    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+      <table className="min-w-full text-xs">
+        <thead className="bg-slate-50">
+          <tr className="text-left text-slate-500">
+            <th className="px-3 py-2">Staff</th>
+            <th className="px-3 py-2">Type</th>
+            <th className="px-3 py-2">Awarded</th>
+            <th className="px-3 py-2">Expires</th>
+            <th className="px-3 py-2">Provider</th>
+            <th className="px-3 py-2">Course</th>
+            <th className="px-3 py-2">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {trainingToRender.length === 0 ? (
+            <tr>
+              <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
+                No training records found for this location.
+              </td>
+            </tr>
+          ) : (
+            trainingToRender.map((r) => {
+              const exp = r.expires_on ? safeDate(r.expires_on) : null;
+              const base = safeDate(selectedDateISO) ?? new Date();
+              base.setHours(0, 0, 0, 0);
 
-                      let statusLabel = "No expiry";
-                      let pill = "bg-slate-100 text-slate-800";
+              let statusLabel = "No expiry";
+              let pill = "bg-slate-100 text-slate-800";
 
-                      if (exp) {
-                        exp.setHours(0, 0, 0, 0);
-                        const diffDays = Math.floor((exp.getTime() - base.getTime()) / 86400000);
+              if (exp) {
+                exp.setHours(0, 0, 0, 0);
+                const diffDays = Math.floor((exp.getTime() - base.getTime()) / 86400000);
 
-                        if (diffDays < 0) {
-                          statusLabel = "Expired";
-                          pill = "bg-red-100 text-red-800";
-                        } else if (diffDays <= 30) {
-                          statusLabel = `Due (${diffDays}d)`;
-                          pill = "bg-amber-100 text-amber-800";
-                        } else {
-                          statusLabel = `Valid (${diffDays}d)`;
-                          pill = "bg-emerald-100 text-emerald-800";
-                        }
-                      }
+                if (diffDays < 0) {
+                  statusLabel = "Expired";
+                  pill = "bg-red-100 text-red-800";
+                } else if (diffDays <= 30) {
+                  statusLabel = `Due (${diffDays}d)`;
+                  pill = "bg-amber-100 text-amber-800";
+                } else {
+                  statusLabel = `Valid (${diffDays}d)`;
+                  pill = "bg-emerald-100 text-emerald-800";
+                }
+              }
 
-                      const staffLabel = r.team_member ? tmLabel({ initials: r.team_member.initials, name: r.team_member.name }) : "—";
+              const staffLabel = r.team_member
+                ? tmLabel({ initials: r.team_member.initials, name: r.team_member.name })
+                : "—";
 
-                      return (
-                        <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                          <td className="px-3 py-2 whitespace-nowrap font-semibold">{staffLabel}</td>
-                          <td className="px-3 py-2 max-w-[12rem] truncate">{r.type ?? "—"}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.awarded_on)}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.expires_on)}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{r.provider_name ?? "—"}</td>
-                          <td className="px-3 py-2 max-w-[10rem] truncate">{r.course_key ?? "—"}</td>
-                          <td className="px-3 py-2">
-                            <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
-                              {statusLabel}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+              return (
+                <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                  <td className="px-3 py-2 whitespace-nowrap font-semibold">{staffLabel}</td>
+                  <td className="px-3 py-2 max-w-[18rem] truncate">{r.type ?? "—"}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.awarded_on)}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.expires_on)}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{r.provider_name ?? "—"}</td>
+                  <td className="px-3 py-2 max-w-[14rem] truncate">{r.course_key ?? "—"}</td>
+                  <td className="px-3 py-2">
+                    <span
+                      className={cls(
+                        "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
+                        pill
+                      )}
+                    >
+                      {statusLabel}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
 
-            <TableFooterToggle total={trainingRows.length} showingAll={showAllTraining} onToggle={() => setShowAllTraining((v) => !v)} />
-          </div>
+    <TableFooterToggle
+      total={trainingRows.length}
+      showingAll={showAllTraining}
+      onToggle={() => setShowAllTraining((v) => !v)}
+    />
+  </div>
 
-          <div>
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training areas</h3>
+  {/* Spacer */}
+  <div className="mt-6" />
 
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-500">
-                    <th className="px-3 py-2">Staff</th>
-                    <th className="px-3 py-2">Role</th>
-                    <th className="px-3 py-2">Areas</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trainingAreasToRender.length === 0 ? (
-                    <tr>
-                      <td colSpan={3} className="px-3 py-4 text-center text-slate-500">
-                        No team members found for this location.
-                      </td>
-                    </tr>
-                  ) : (
-                    trainingAreasToRender.map((t) => {
-                      const areas = Array.isArray(t.training_areas) ? t.training_areas : [];
-                      const text = areas.length > 0 ? areas.join(", ") : "—";
-                      return (
-                        <tr key={t.id} className="border-t border-slate-100 text-slate-800">
-                          <td className="px-3 py-2 whitespace-nowrap font-semibold">{tmLabel({ initials: t.initials ?? null, name: t.name ?? null })}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{t.role ?? "—"}</td>
-                          <td className="px-3 py-2 max-w-[22rem] truncate">{text}</td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+  {/* Full-width: Training areas */}
+  <div>
+    <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+      Training areas
+    </h3>
 
-            <TableFooterToggle total={trainingAreasRows.length} showingAll={showAllTrainingAreas} onToggle={() => setShowAllTrainingAreas((v) => !v)} />
-          </div>
-        </div>
-      </section>
+    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+      <table className="min-w-full text-xs">
+        <thead className="bg-slate-50">
+          <tr className="text-left text-slate-500">
+            <th className="px-3 py-2">Staff</th>
+            <th className="px-3 py-2">Role</th>
+            <th className="px-3 py-2">Areas</th>
+          </tr>
+        </thead>
+        <tbody>
+          {trainingAreasToRender.length === 0 ? (
+            <tr>
+              <td colSpan={3} className="px-3 py-4 text-center text-slate-500">
+                No team members found for this location.
+              </td>
+            </tr>
+          ) : (
+            trainingAreasToRender.map((t) => {
+              const areas = Array.isArray(t.training_areas) ? t.training_areas : [];
+              const text = areas.length > 0 ? areas.join(", ") : "—";
+
+              return (
+                <tr key={t.id} className="border-t border-slate-100 text-slate-800">
+                  <td className="px-3 py-2 whitespace-nowrap font-semibold">
+                    {tmLabel({ initials: t.initials ?? null, name: t.name ?? null })}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">{t.role ?? "—"}</td>
+                  <td className="px-3 py-2">{text}</td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
+
+    <TableFooterToggle
+      total={trainingAreasRows.length}
+      showingAll={showAllTrainingAreas}
+      onToggle={() => setShowAllTrainingAreas((v) => !v)}
+    />
+  </div>
+</section>
+
 
       {/* Allergens - Review history (org-level) */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
