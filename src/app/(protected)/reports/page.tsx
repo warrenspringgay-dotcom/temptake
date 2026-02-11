@@ -1155,7 +1155,7 @@ async function fetchStaffReviews(
  * ✅ Education/trainings: supports team_member_id (preferred) and staff_id (legacy)
  */
 async function fetchEducation(orgId: string, locationId: string | null): Promise<EducationRow[]> {
-  const { data, error } = await supabase
+  let q = supabase
     .from("trainings")
     .select(
       `
@@ -1165,32 +1165,31 @@ async function fetchEducation(orgId: string, locationId: string | null): Promise
       expires_on,
       certificate_url,
       notes,
-      staff_id,
-      team_member_id,
-      team_member:team_member_id ( name, email, initials, location_id ),
-      staff:staff_id ( name, email, initials, location_id )
+      provider_name,
+      course_key,
+      team_member:team_member_id (
+        name,
+        email,
+        initials,
+        location_id
+      )
     `
     )
     .eq("org_id", orgId)
     .order("expires_on", { ascending: true })
-    .order("awarded_on", { ascending: true })
-    .limit(5000);
+    .order("awarded_on", { ascending: true });
 
+  // Filter by *team_members.location_id* (the column that actually exists)
+  if (locationId) q = q.eq("team_member.location_id", locationId);
+
+  const { data, error } = await q;
   if (error) throw error;
 
   const today0 = new Date();
   today0.setHours(0, 0, 0, 0);
 
-  const filtered = (data ?? []).filter((r: any) => {
-    if (!locationId) return true;
-    const tmLoc = r.team_member?.location_id ? String(r.team_member.location_id) : null;
-    const stLoc = r.staff?.location_id ? String(r.staff.location_id) : null;
-    // if either matches, keep it
-    return tmLoc === locationId || stLoc === locationId;
-  });
-
-  return (filtered ?? []).map((r: any) => {
-    const person = r.team_member ?? r.staff ?? {};
+  return (data ?? []).map((r: any) => {
+    const tm = r.team_member ?? {};
     const awarded = safeDate(r.awarded_on);
     const expires = safeDate(r.expires_on);
 
@@ -1207,9 +1206,9 @@ async function fetchEducation(orgId: string, locationId: string | null): Promise
 
     return {
       id: String(r.id),
-      staff_name: person.name ?? "—",
-      staff_initials: person.initials ?? null,
-      staff_email: person.email ?? null,
+      staff_name: tm.name ?? "—",
+      staff_initials: tm.initials ?? null,
+      staff_email: tm.email ?? null,
       type: r.type ?? null,
       awarded_on: awarded ? awarded.toISOString() : null,
       expires_on: expires ? expires.toISOString() : null,
