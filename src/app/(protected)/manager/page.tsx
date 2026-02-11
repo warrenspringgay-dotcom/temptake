@@ -304,7 +304,6 @@ async function fetchTempFailuresUnifiedForDay(orgId: string, locationId: string,
 }
 
 
-
 function formatTimeHM(d: Date | null | undefined): string | null {
   if (!d) return null;
   const hours = String(d.getHours()).padStart(2, "0");
