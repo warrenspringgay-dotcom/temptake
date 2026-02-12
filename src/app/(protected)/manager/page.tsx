@@ -149,7 +149,7 @@ type CleaningTaskRun = {
 };
 
 /* ===== Calibration (simple tick + notes) =====
-   Table: calibration_checks
+   Table assumed: calibration_checks
    Columns used:
    - id (uuid)
    - org_id
@@ -166,9 +166,7 @@ type CalibrationCheckRow = {
   id: string;
   checked_on: string; // yyyy-mm-dd
   staff_initials: string | null;
-  cold_storage_checked: boolean | null;
-  probes_checked: boolean | null;
-  thermometers_checked: boolean | null;
+  all_equipment_calibrated: boolean | null;
   notes: string | null;
   created_at: string | null;
 };
@@ -537,7 +535,7 @@ export default function ManagerDashboardPage() {
   const actionsBtnRef = useRef<HTMLButtonElement | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
   const [portalReady, setPortalReady] = useState(false);
-  const [actionsPos, setActionsPos] = useState<{ top: number; right: number } | null>(null);
+  const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | null>(null);
 
   const lastStaffAssessKeyRef = useRef<string>("");
 
@@ -546,10 +544,22 @@ export default function ManagerDashboardPage() {
   const updateActionsPos = () => {
     const btn = actionsBtnRef.current;
     if (!btn) return;
+
+    // Menu has fixed width (w-56 = 14rem = 224px). Clamp within viewport for mobile.
+    const MENU_W = 224;
+    const PAD = 8;
+
     const r = btn.getBoundingClientRect();
-    const right = Math.max(8, window.innerWidth - r.right);
-    const top = r.bottom + 8;
-    setActionsPos({ top, right });
+    const preferredLeft = r.left;
+    const left = Math.min(Math.max(PAD, preferredLeft), Math.max(PAD, window.innerWidth - MENU_W - PAD));
+
+    // Best-effort vertical positioning: open below unless it would likely overflow.
+    const estMenuH = 280; // rough height for our menu items
+    const belowTop = r.bottom + PAD;
+    const aboveTop = Math.max(PAD, r.top - PAD - estMenuH);
+    const top = belowTop + estMenuH > window.innerHeight ? aboveTop : belowTop;
+
+    setActionsPos({ top, left });
   };
 
   useEffect(() => {
@@ -1324,15 +1334,13 @@ export default function ManagerDashboardPage() {
       );
       setShowAllAllergenLogs(false);
 
-      /* ===== Calibration mapping + 30 day due logic ===== */
       const calRows: any[] = (calibrationChecksRes.data as any[]) ?? [];
+
       const mappedCalRows: CalibrationCheckRow[] = calRows.map((r) => ({
         id: String(r.id),
         checked_on: String(r.checked_on),
         staff_initials: r.staff_initials ? String(r.staff_initials) : null,
-        cold_storage_checked: r.cold_storage_checked ?? null,
-        probes_checked: r.probes_checked ?? null,
-        thermometers_checked: r.thermometers_checked ?? null,
+        all_equipment_calibrated: !!r.cold_storage_checked && !!r.probes_checked && !!r.thermometers_checked,
         notes: r.notes ?? null,
         created_at: r.created_at ? String(r.created_at) : null,
       }));
@@ -1340,7 +1348,7 @@ export default function ManagerDashboardPage() {
       setCalibrationChecks(mappedCalRows);
       setShowAllCalibration(false);
 
-      // Due if no checks, or last check + 30 days < selected date (strictly past due)
+      // 30-day due logic
       if (mappedCalRows.length === 0) {
         setCalibrationDue(true);
       } else {
@@ -1351,10 +1359,10 @@ export default function ManagerDashboardPage() {
         const due = new Date(last);
         due.setDate(due.getDate() + 30);
 
-        const base = new Date(selectedDateISO);
-        base.setHours(0, 0, 0, 0);
+        const today = new Date(selectedDateISO);
+        today.setHours(0, 0, 0, 0);
 
-        setCalibrationDue(base > due);
+        setCalibrationDue(today > due);
       }
     } catch (e: any) {
       console.error(e);
@@ -1575,13 +1583,7 @@ export default function ManagerDashboardPage() {
           <KpiTile title="Cleaning" icon="🧼" tone={cleaningTone} value={`${cleaningDoneTotal}/${cleaningTotal}`} sub="Tasks completed today" />
           <KpiTile title="Incidents" icon="⚠️" tone={incidentsTone} value={incidentsToday} sub={`Last 7d: ${incidents7d}`} />
           <KpiTile title="Training" icon="🎓" tone={trainingTone} value={`${trainingExpired} expired`} sub={`${trainingDueSoon} due in 30d`} />
-          <KpiTile
-            title="Calibration"
-            icon="🛠"
-            tone={calibrationDue ? "danger" : "ok"}
-            value={calibrationDue ? "Due" : "Up to date"}
-            sub="30-day cycle"
-          />
+          <KpiTile title="Calibration" icon="🛠" tone={calibrationDue ? "danger" : "ok"} value={calibrationDue ? "Due" : "Up to date"} sub="30-day cycle" />
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -1651,8 +1653,8 @@ export default function ManagerDashboardPage() {
                     <div className="fixed inset-0 z-[9998]" onClick={() => setActionsOpen(false)} />
                     <div
                       ref={actionsMenuRef}
-                      className="fixed z-[9999] w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
-                      style={{ top: actionsPos.top, right: actionsPos.right }}
+                      className="fixed z-[9999] w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl max-h-[calc(100vh-16px)] overflow-y-auto"
+                      style={{ top: actionsPos.top, left: actionsPos.left }}
                     >
                       <button
                         type="button"
@@ -1901,6 +1903,7 @@ export default function ManagerDashboardPage() {
 
             <TableFooterToggle total={todayTemps.length} showingAll={showAllTemps} onToggle={() => setShowAllTemps((v) => !v)} />
 
+            {/* Temp failures & corrective actions */}
             <h3 className="mt-4 mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
               Temp failures & corrective actions
             </h3>
@@ -2113,7 +2116,6 @@ export default function ManagerDashboardPage() {
           <div className="mt-0.5 text-sm font-semibold text-slate-900">Training records + staff training areas (selected location)</div>
         </div>
 
-        {/* Training records */}
         <div>
           <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training records</h3>
 
@@ -2195,7 +2197,6 @@ export default function ManagerDashboardPage() {
 
         <div className="mt-6" />
 
-        {/* Training areas */}
         <div>
           <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training areas</h3>
 
@@ -2247,11 +2248,7 @@ export default function ManagerDashboardPage() {
             </table>
           </div>
 
-          <TableFooterToggle
-            total={trainingAreasRows.length}
-            showingAll={showAllTrainingAreas}
-            onToggle={() => setShowAllTrainingAreas((v) => !v)}
-          />
+          <TableFooterToggle total={trainingAreasRows.length} showingAll={showAllTrainingAreas} onToggle={() => setShowAllTrainingAreas((v) => !v)} />
         </div>
       </section>
 
@@ -2332,11 +2329,7 @@ export default function ManagerDashboardPage() {
           </table>
         </div>
 
-        <TableFooterToggle
-          total={allergenReviews.length}
-          showingAll={showAllAllergenReviews}
-          onToggle={() => setShowAllAllergenReviews((v) => !v)}
-        />
+        <TableFooterToggle total={allergenReviews.length} showingAll={showAllAllergenReviews} onToggle={() => setShowAllAllergenReviews((v) => !v)} />
       </section>
 
       {/* Allergen edit log */}
@@ -2423,28 +2416,24 @@ export default function ManagerDashboardPage() {
                   </td>
                 </tr>
               ) : (
-                calibrationToRender.map((r) => {
-                  const complete = !!r.cold_storage_checked && !!r.probes_checked && !!r.thermometers_checked;
-
-                  return (
-                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.checked_on)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {complete ? (
-                          <span className="inline-flex rounded-full bg-emerald-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-emerald-800">
-                            ✓ Complete
-                          </span>
-                        ) : (
-                          <span className="inline-flex rounded-full bg-amber-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-amber-800">
-                            Not complete
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
-                    </tr>
-                  );
-                })
+                calibrationToRender.map((r) => (
+                  <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                    <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.checked_on)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {r.all_equipment_calibrated ? (
+                        <span className="inline-flex rounded-full bg-emerald-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-emerald-800">
+                          ✓ Complete
+                        </span>
+                      ) : (
+                        <span className="inline-flex rounded-full bg-amber-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-amber-800">
+                          Not complete
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
@@ -2596,10 +2585,7 @@ export default function ManagerDashboardPage() {
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setCalibrationOpen(false)}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold"
-              >
+              <button onClick={() => setCalibrationOpen(false)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold">
                 Cancel
               </button>
 
