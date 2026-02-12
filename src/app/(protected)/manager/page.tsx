@@ -1951,7 +1951,7 @@ export default function ManagerDashboardPage() {
                 <thead className="bg-slate-50">
                   <tr className="text-left text-slate-500">
                     <th className="px-3 py-2">Time</th>
-                    <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2">Task</th>
                     <th className="px-3 py-2">Staff</th>
                     <th className="px-3 py-2">Notes</th>
                   </tr>
@@ -1968,8 +1968,8 @@ export default function ManagerDashboardPage() {
                       <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                         <td className="px-3 py-2">{r.time ?? "—"}</td>
                         <td className="px-3 py-2">
-                          <div className="font-semibold">{r.category}</div>
-                          {r.task ? <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">{r.task}</div> : null}
+                          <div className="font-semibold">{r.task ?? "—"}</div>
+                          <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">{r.category}</div>
                         </td>
                         <td className="px-3 py-2">{r.staff ?? "—"}</td>
                         <td className="px-3 py-2 max-w-[14rem] truncate">{r.notes ?? "—"}</td>
