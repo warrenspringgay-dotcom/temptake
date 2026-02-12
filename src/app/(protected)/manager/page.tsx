@@ -535,32 +535,35 @@ export default function ManagerDashboardPage() {
   const actionsBtnRef = useRef<HTMLButtonElement | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
   const [portalReady, setPortalReady] = useState(false);
-  const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | null>(null);
+const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | null>(null);
+
 
   const lastStaffAssessKeyRef = useRef<string>("");
 
   useEffect(() => setPortalReady(true), []);
 
-  const updateActionsPos = () => {
-    const btn = actionsBtnRef.current;
-    if (!btn) return;
+ const updateActionsPos = () => {
+  const btn = actionsBtnRef.current;
+  if (!btn) return;
 
-    // Menu has fixed width (w-56 = 14rem = 224px). Clamp within viewport for mobile.
-    const MENU_W = 224;
-    const PAD = 8;
+  const r = btn.getBoundingClientRect();
 
-    const r = btn.getBoundingClientRect();
-    const preferredLeft = r.left;
-    const left = Math.min(Math.max(PAD, preferredLeft), Math.max(PAD, window.innerWidth - MENU_W - PAD));
+  // Keep menu fully on-screen on mobile.
+  const MENU_W = 224; // matches w-56 (14rem)
+  const MENU_H_EST = 320; // rough cap, avoids off-screen on short viewports
 
-    // Best-effort vertical positioning: open below unless it would likely overflow.
-    const estMenuH = 280; // rough height for our menu items
-    const belowTop = r.bottom + PAD;
-    const aboveTop = Math.max(PAD, r.top - PAD - estMenuH);
-    const top = belowTop + estMenuH > window.innerHeight ? aboveTop : belowTop;
+  const left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - MENU_W - 8));
 
-    setActionsPos({ top, left });
-  };
+  // Default: open below
+  let top = r.bottom + 8;
+
+  // If it would overflow bottom, open above
+  if (top + MENU_H_EST > window.innerHeight - 8) {
+    top = Math.max(8, r.top - 8 - MENU_H_EST);
+  }
+
+  setActionsPos({ top, left });
+};
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -1553,8 +1556,10 @@ export default function ManagerDashboardPage() {
   }
 
   return (
-    <>
+  
+    <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-[1100px]">
       <header className="py-2">
+
         <div className="text-center">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today</div>
           <h1 className="mt-1 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">{centeredDate}</h1>
@@ -1576,6 +1581,9 @@ export default function ManagerDashboardPage() {
               <>
                 Fails (7d):{" "}
                 <span className={cls("font-semibold", tempsSummary.fails7d > 0 && "text-red-700")}>{tempsSummary.fails7d}</span>
+                
+                
+                
               </>
             }
           />
@@ -2613,6 +2621,7 @@ export default function ManagerDashboardPage() {
           onSaved={refreshAll}
         />
       )}
-    </>
+      </div>
+    
   );
 }
