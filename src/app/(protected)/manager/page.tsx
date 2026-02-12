@@ -535,35 +535,34 @@ export default function ManagerDashboardPage() {
   const actionsBtnRef = useRef<HTMLButtonElement | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
   const [portalReady, setPortalReady] = useState(false);
-const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | null>(null);
-
+  const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | null>(null);
 
   const lastStaffAssessKeyRef = useRef<string>("");
 
   useEffect(() => setPortalReady(true), []);
 
- const updateActionsPos = () => {
-  const btn = actionsBtnRef.current;
-  if (!btn) return;
+  const updateActionsPos = () => {
+    const btn = actionsBtnRef.current;
+    if (!btn) return;
 
-  const r = btn.getBoundingClientRect();
+    const r = btn.getBoundingClientRect();
 
-  // Keep menu fully on-screen on mobile.
-  const MENU_W = 224; // matches w-56 (14rem)
-  const MENU_H_EST = 320; // rough cap, avoids off-screen on short viewports
+    // Keep menu fully on-screen on mobile.
+    const MENU_W = 224; // matches w-56 (14rem)
+    const MENU_H_EST = 320; // rough cap, avoids off-screen on short viewports
 
-  const left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - MENU_W - 8));
+    const left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - MENU_W - 8));
 
-  // Default: open below
-  let top = r.bottom + 8;
+    // Default: open below
+    let top = r.bottom + 8;
 
-  // If it would overflow bottom, open above
-  if (top + MENU_H_EST > window.innerHeight - 8) {
-    top = Math.max(8, r.top - 8 - MENU_H_EST);
-  }
+    // If it would overflow bottom, open above
+    if (top + MENU_H_EST > window.innerHeight - 8) {
+      top = Math.max(8, r.top - 8 - MENU_H_EST);
+    }
 
-  setActionsPos({ top, left });
-};
+    setActionsPos({ top, left });
+  };
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -846,6 +845,12 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
     setCalibrationOpen(true);
   }
 
+  function openIncidentFromActions() {
+    if (!orgId || !locationId) return;
+    setActionsOpen(false);
+    setIncidentOpen(true);
+  }
+
   async function saveCalibrationCheck() {
     if (!orgId || !locationId) return;
 
@@ -927,6 +932,13 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
     if (locationId) void loadTeamOptions(locationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, locationId]);
+
+  useEffect(() => {
+    if (!staffAssessOpen) return;
+    if (staffAssessStaffId) return;
+    if (teamOptions.length === 0) return;
+    setStaffAssessStaffId(teamOptions[0].id);
+  }, [staffAssessOpen, staffAssessStaffId, teamOptions]);
 
   useEffect(() => {
     if (!signoffOpen) return;
@@ -1453,6 +1465,14 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
     await Promise.all([loadTeamOptions(locationId), loadLoggedInManager(), loadQcReviews()]);
   }
 
+  async function openStaffAssessFromActions() {
+    if (!orgId || !locationId) return;
+    setActionsOpen(false);
+    setStaffAssessErr(null);
+    setStaffAssess(null);
+    setStaffAssessOpen(true);
+    await loadTeamOptions(locationId);
+  }
   async function loadStaffAssessment(staffId: string, days: number) {
     if (!orgId || !locationId) return;
     setStaffAssessLoading(true);
@@ -1534,7 +1554,9 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
       const qcRows = (qcRes.data ?? []) as Array<{ rating: number }>;
       const qcCount30d = qcRows.length;
       const qcAvg30d =
-        qcCount30d > 0 ? Math.round((qcRows.reduce((a, r) => a + Number(r.rating || 0), 0) / qcCount30d) * 10) / 10 : null;
+        qcCount30d > 0
+          ? Math.round((qcRows.reduce((a, r) => a + Number(r.rating || 0), 0) / qcCount30d) * 10) / 10
+          : null;
 
       setStaffAssess({
         staffId,
@@ -1556,10 +1578,8 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
   }
 
   return (
-  
     <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-[1100px]">
       <header className="py-2">
-
         <div className="text-center">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today</div>
           <h1 className="mt-1 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">{centeredDate}</h1>
@@ -1581,9 +1601,6 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
               <>
                 Fails (7d):{" "}
                 <span className={cls("font-semibold", tempsSummary.fails7d > 0 && "text-red-700")}>{tempsSummary.fails7d}</span>
-                
-                
-                
               </>
             }
           />
@@ -1666,11 +1683,12 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
                     >
                       <button
                         type="button"
-                        onClick={() => {
-                          setActionsOpen(false);
-                          setIncidentOpen(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                        onClick={openIncidentFromActions}
+                        disabled={!orgId || !locationId}
+                        className={cls(
+                          "w-full px-4 py-2 text-left text-sm font-semibold",
+                          !orgId || !locationId ? "text-slate-400 cursor-not-allowed" : "text-slate-800 hover:bg-slate-50"
+                        )}
                       >
                         Log incident
                       </button>
@@ -1689,10 +1707,7 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
 
                       <button
                         type="button"
-                        onClick={() => {
-                          setActionsOpen(false);
-                          setStaffAssessOpen(true);
-                        }}
+                        onClick={openStaffAssessFromActions}
                         className="w-full px-4 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"
                       >
                         Staff assessment
@@ -1750,7 +1765,7 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
         </div>
       </section>
 
-      {/* Cleaning category progress */}
+           {/* Cleaning category progress */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Cleaning progress</div>
@@ -2450,162 +2465,466 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
         <TableFooterToggle total={calibrationChecks.length} showingAll={showAllCalibration} onToggle={() => setShowAllCalibration((v) => !v)} />
       </section>
 
-      {/* Sign-off modal */}
+
+      {/* Signoff modal */}
       {signoffOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
-          <div
-            className={cls("mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
-            onClick={(e) => e.stopPropagation()}
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setSignoffOpen(false)} />
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="relative w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-4 shadow-xl"
           >
-            <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-base font-semibold">Sign off day</div>
-                <div className="mt-0.5 text-xs text-slate-500">
-                  {formatDDMMYYYY(selectedDateISO)} · {locations.find((l) => l.id === locationId)?.name ?? "—"}
-                </div>
+                <div className="text-sm font-extrabold text-slate-900">Sign off day</div>
+                <div className="text-xs text-slate-600">Date: {formatDDMMYYYY(selectedDateISO)}</div>
               </div>
-              <button onClick={() => setSignoffOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
-                ✕
-              </button>
-            </div>
-
-            {!cleaningAllDone && (
-              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                You can’t sign off until all cleaning tasks due today are completed.
-              </div>
-            )}
-
-            {alreadySignedOff && (
-              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">This day is already signed off.</div>
-            )}
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Initials</label>
-                <input
-                  value={signoffInitials}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSignoffInitials(e.target.value.toUpperCase())}
-                  placeholder="WS"
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
-                <input
-                  value={signoffNotes}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSignoffNotes(e.target.value)}
-                  placeholder="Any corrective actions / comments…"
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                />
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setSignoffOpen(false)}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={createDaySignoff}
-                disabled={!cleaningAllDone || alreadySignedOff || signoffSaving}
-                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
-              >
-                {signoffSaving ? "Signing…" : "Sign off"}
+                Close
               </button>
             </div>
-          </div>
+
+            <div className="mt-3 grid gap-3">
+              {!cleaningAllDone ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                  You must complete all cleaning tasks due today before signing off.
+                </div>
+              ) : null}
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="text-xs font-semibold text-slate-600">
+                  Initials
+                  <input
+                    value={signoffInitials}
+                    onChange={(e) => setSignoffInitials(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="e.g. WS"
+                  />
+                </label>
+
+                <label className="text-xs font-semibold text-slate-600">
+                  Notes (optional)
+                  <input
+                    value={signoffNotes}
+                    onChange={(e) => setSignoffNotes(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Anything to note?"
+                  />
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSignoffOpen(false)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={createDaySignoff}
+                  disabled={signoffSaving || !cleaningAllDone}
+                  className={cls(
+                    "rounded-xl px-4 py-2 text-sm font-semibold text-white",
+                    signoffSaving || !cleaningAllDone ? "bg-slate-300 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
+                  )}
+                >
+                  {signoffSaving ? "Saving…" : "Sign off"}
+                </button>
+              </div>
+            </div>
+          </motion.div>
         </div>
       )}
 
-      {/* Calibration modal (simple) */}
+      {/* Calibration modal */}
       {calibrationOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setCalibrationOpen(false)}>
-          <div
-            className="mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-lg backdrop-blur"
-            onClick={(e) => e.stopPropagation()}
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setCalibrationOpen(false)} />
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="relative w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-4 shadow-xl"
           >
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">Log calibration</div>
-              <button onClick={() => setCalibrationOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
-                ✕
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-extrabold text-slate-900">Calibration check</div>
+                <div className="text-xs text-slate-600">Log the equipment check for {formatDDMMYYYY(calibrationForm.checked_on)}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCalibrationOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Close
               </button>
             </div>
 
-            <div className="grid gap-3">
-              <div>
-                <label className="text-xs text-slate-500">Date</label>
-                <input
-                  type="date"
-                  value={calibrationForm.checked_on}
-                  onChange={(e) => setCalibrationForm((f) => ({ ...f, checked_on: e.target.value }))}
-                  className="h-10 w-full rounded-xl border border-slate-300 px-3 text-sm"
-                />
+            <div className="mt-3 grid gap-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="text-xs font-semibold text-slate-600">
+                  Date
+                  <input
+                    type="date"
+                    value={calibrationForm.checked_on}
+                    onChange={(e) => setCalibrationForm((f) => ({ ...f, checked_on: e.target.value || nowISO }))}
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+
+                <label className="text-xs font-semibold text-slate-600">
+                  Initials
+                  <input
+                    value={calibrationForm.staff_initials}
+                    onChange={(e) => setCalibrationForm((f) => ({ ...f, staff_initials: e.target.value }))}
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="e.g. WS"
+                  />
+                </label>
               </div>
 
-              <div>
-                <label className="text-xs text-slate-500">Initials</label>
-                <input
-                  value={calibrationForm.staff_initials}
-                  onChange={(e) => setCalibrationForm((f) => ({ ...f, staff_initials: e.target.value.toUpperCase() }))}
-                  className="h-10 w-full rounded-xl border border-slate-300 px-3 text-sm"
-                />
+              <div className="grid grid-cols-1 gap-2">
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={calibrationForm.cold_storage_checked}
+                    onChange={(e) => setCalibrationForm((f) => ({ ...f, cold_storage_checked: e.target.checked }))}
+                  />
+                  Cold storage checked
+                </label>
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={calibrationForm.probes_checked}
+                    onChange={(e) => setCalibrationForm((f) => ({ ...f, probes_checked: e.target.checked }))}
+                  />
+                  Probes checked
+                </label>
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={calibrationForm.thermometers_checked}
+                    onChange={(e) => setCalibrationForm((f) => ({ ...f, thermometers_checked: e.target.checked }))}
+                  />
+                  Thermometers checked
+                </label>
               </div>
 
-              <div className="space-y-2">
-                <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Calibration checks</div>
-
-                {[
-                  { key: "cold_storage_checked", label: "Cold storage units calibrated" },
-                  { key: "probes_checked", label: "Temperature probes calibrated" },
-                  { key: "thermometers_checked", label: "Infrared / handheld thermometers calibrated" },
-                ].map((item) => (
-                  <label key={item.key} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={!!(calibrationForm as any)[item.key]}
-                      onChange={(e) =>
-                        setCalibrationForm((f: any) => ({
-                          ...f,
-                          [item.key]: e.target.checked,
-                        }))
-                      }
-                    />
-                    <span className="text-sm">{item.label}</span>
-                  </label>
-                ))}
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-500">Notes</label>
+              <label className="text-xs font-semibold text-slate-600">
+                Notes (optional)
                 <textarea
-                  rows={3}
                   value={calibrationForm.notes}
                   onChange={(e) => setCalibrationForm((f) => ({ ...f, notes: e.target.value }))}
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  rows={3}
                 />
+              </label>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCalibrationOpen(false)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveCalibrationCheck}
+                  disabled={calibrationSaving}
+                  className={cls(
+                    "rounded-xl px-4 py-2 text-sm font-semibold text-white",
+                    calibrationSaving ? "bg-slate-300 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
+                  )}
+                >
+                  {calibrationSaving ? "Saving…" : "Save"}
+                </button>
               </div>
             </div>
+          </motion.div>
+        </div>
+      )}
 
-            <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setCalibrationOpen(false)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold">
-                Cancel
-              </button>
-
+      {/* Staff assessment modal */}
+      {staffAssessOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setStaffAssessOpen(false)} />
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="relative w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-4 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-extrabold text-slate-900">Staff assessment</div>
+                <div className="text-xs text-slate-600">Performance snapshot (by initials) for this location</div>
+              </div>
               <button
-                onClick={saveCalibrationCheck}
-                disabled={calibrationSaving}
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                type="button"
+                onClick={() => setStaffAssessOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
-                {calibrationSaving ? "Saving…" : "Save"}
+                Close
               </button>
             </div>
-          </div>
+
+            <div className="mt-3 grid gap-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="text-xs font-semibold text-slate-600">
+                  Staff member
+                  <select
+                    value={staffAssessStaffId}
+                    onChange={(e) => setStaffAssessStaffId(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">Select…</option>
+                    {teamOptions.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {tmLabel({ initials: t.initials, name: t.name })}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="text-xs font-semibold text-slate-600">
+                  Range (days)
+                  <select
+                    value={staffAssessDays}
+                    onChange={(e) => setStaffAssessDays(Number(e.target.value) || 7)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value={7}>7</option>
+                    <option value={14}>14</option>
+                    <option value={30}>30</option>
+                  </select>
+                </label>
+              </div>
+
+              {staffAssessErr ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800">{staffAssessErr}</div>
+              ) : null}
+
+              {staffAssessLoading ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
+                  Loading assessment…
+                </div>
+              ) : null}
+
+              {staffAssess ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                    <div className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-slate-500">Staff</div>
+                    <div className="mt-1 text-sm font-extrabold text-slate-900">{staffAssess.staffLabel}</div>
+                    <div className="text-xs text-slate-600">{staffAssess.rangeDays} day range</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                    <div className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-slate-500">QC avg</div>
+                    <div className="mt-1 text-sm font-extrabold text-slate-900">{staffAssess.qcAvg30d ?? "—"}</div>
+                    <div className="text-xs text-slate-600">{staffAssess.qcCount30d} reviews (30d)</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                    <div className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-slate-500">Cleaning runs</div>
+                    <div className="mt-1 text-sm font-extrabold text-slate-900">{staffAssess.cleaningRuns}</div>
+                    <div className="text-xs text-slate-600">Completed</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                    <div className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-slate-500">Temp logs</div>
+                    <div className="mt-1 text-sm font-extrabold text-slate-900">{staffAssess.tempLogs}</div>
+                    <div className="text-xs text-slate-600">Logged</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                    <div className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-slate-500">Temp fails</div>
+                    <div className={cls("mt-1 text-sm font-extrabold", staffAssess.tempFails > 0 ? "text-red-700" : "text-slate-900")}>
+                      {staffAssess.tempFails}
+                    </div>
+                    <div className="text-xs text-slate-600">In range</div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                    <div className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-slate-500">Incidents</div>
+                    <div className={cls("mt-1 text-sm font-extrabold", staffAssess.incidents > 0 ? "text-amber-700" : "text-slate-900")}>
+                      {staffAssess.incidents}
+                    </div>
+                    <div className="text-xs text-slate-600">Created by staff</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  Select a staff member to view results.
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Staff QC modal */} 
+      {qcOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setQcOpen(false)} />
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="relative w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-4 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-extrabold text-slate-900">Staff QC</div>
+                <div className="text-xs text-slate-600">Manager QC reviews for this location</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQcOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-3 grid gap-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-extrabold uppercase tracking-[0.2em] text-slate-500">Add review</div>
+
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-4">
+                  <label className="text-xs font-semibold text-slate-600 sm:col-span-2">
+                    Staff
+                    <select
+                      value={qcForm.staff_id}
+                      onChange={(e) => setQcForm((f) => ({ ...f, staff_id: e.target.value }))}
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                    >
+                      <option value="">Select…</option>
+                      {teamOptions.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {tmLabel({ initials: t.initials, name: t.name })}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="text-xs font-semibold text-slate-600">
+                    Date
+                    <input
+                      type="date"
+                      value={qcForm.reviewed_on}
+                      onChange={(e) => setQcForm((f) => ({ ...f, reviewed_on: e.target.value || nowISO }))}
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                    />
+                  </label>
+
+                  <label className="text-xs font-semibold text-slate-600">
+                    Score (1–5)
+                    <input
+                      type="number"
+                      min={1}
+                      max={5}
+                      value={qcForm.rating}
+                      onChange={(e) => setQcForm((f) => ({ ...f, rating: Number(e.target.value) }))}
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                    />
+                  </label>
+                </div>
+
+                <label className="mt-2 block text-xs font-semibold text-slate-600">
+                  Notes (optional)
+                  <textarea
+                    value={qcForm.notes}
+                    onChange={(e) => setQcForm((f) => ({ ...f, notes: e.target.value }))}
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                    rows={2}
+                  />
+                </label>
+
+                <div className="mt-2 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void loadQcReviews()}
+                    disabled={qcLoading || qcSummaryLoading}
+                    className={cls(
+                      "rounded-xl border px-4 py-2 text-sm font-semibold",
+                      qcLoading || qcSummaryLoading ? "border-slate-200 bg-white text-slate-300 cursor-not-allowed" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                    )}
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addQcReview}
+                    disabled={qcSaving}
+                    className={cls(
+                      "rounded-xl px-4 py-2 text-sm font-semibold text-white",
+                      qcSaving ? "bg-slate-300 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
+                    )}
+                  >
+                    {qcSaving ? "Saving…" : "Add"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-3xl border border-white/40 bg-white/80 shadow-lg shadow-slate-900/5 backdrop-blur">
+                <div className="border-b border-slate-100 px-4 py-3">
+                  <div className="text-xs font-extrabold uppercase tracking-[0.22em] text-slate-500">Recent QC reviews</div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-left text-xs">
+                    <thead className="bg-slate-50/70">
+                      <tr className="text-slate-600">
+                        <th className="px-4 py-2 font-semibold">Date</th>
+                        <th className="px-4 py-2 font-semibold">Staff</th>
+                        <th className="px-4 py-2 font-semibold">Manager</th>
+                        <th className="px-4 py-2 font-semibold">Score</th>
+                        <th className="px-4 py-2 font-semibold">Notes</th>
+                        <th className="px-4 py-2 font-semibold" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {qcToRender.length === 0 ? (
+                        <tr>
+                          <td className="px-4 py-4 text-slate-500" colSpan={6}>
+                            No QC reviews yet.
+                          </td>
+                        </tr>
+                      ) : (
+                        qcToRender.map((r) => (
+                          <tr key={r.id} className="hover:bg-slate-50/50">
+                            <td className="px-4 py-2 text-slate-700">{formatDDMMYYYY(r.reviewed_on)}</td>
+                            <td className="px-4 py-2 text-slate-700">{tmLabel({ initials: r.staff?.initials ?? null, name: r.staff?.name ?? null })}</td>
+                            <td className="px-4 py-2 text-slate-700">
+                              {tmLabel({ initials: r.manager?.initials ?? null, name: r.manager?.name ?? null })}
+                            </td>
+                            <td className="px-4 py-2 font-extrabold text-slate-900">{r.rating}</td>
+                            <td className="px-4 py-2 text-slate-700">{r.notes ?? "—"}</td>
+                            <td className="px-4 py-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => void deleteQcReview(r.id)}
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
+              </div>
+            </div>
+          </motion.div>
         </div>
       )}
 
@@ -2621,7 +2940,6 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
           onSaved={refreshAll}
         />
       )}
-      </div>
-    
+    </div>
   );
 }
