@@ -28,7 +28,7 @@ export function getOriginFromEnv(fallbackOrigin: string) {
   return (env || fallbackOrigin).replace(/\/$/, "");
 }
 
-export function wrapHtml(title: string, body: string) {
+export function wrapHtml(title: string, body: string) 
   return `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.5;color:#111">
       <h2 style="margin:0 0 12px">${title}</h2>
