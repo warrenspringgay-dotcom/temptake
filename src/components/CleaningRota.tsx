@@ -16,6 +16,7 @@ type Frequency = "daily" | "weekly" | "monthly";
 
 type Task = {
   id: string;
+   location_id: string; // ✅ add
   org_id: string;
   task: string;
   area: string | null;
@@ -299,6 +300,7 @@ export default function CleaningRotaPage() {
         .from("cleaning_tasks")
         .select("id,org_id,task,area,category,frequency,weekday,month_day")
         .eq("org_id", oid)
+        .eq("location_id", lid) // ✅ key fix
         .order("category", { ascending: true })
         .order("task", { ascending: true });
 
