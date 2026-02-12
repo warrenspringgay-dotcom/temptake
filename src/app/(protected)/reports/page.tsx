@@ -133,6 +133,20 @@ type UnifiedIncidentRow = {
   source: "incident" | "temp_fail";
 };
 
+/* ===================== Calibration checks ===================== */
+
+type CalibrationRow = {
+  id: string;
+  checked_on: string; // yyyy-mm-dd
+  staff_initials: string;
+  cold_storage_checked: boolean;
+  probes_checked: boolean;
+  thermometers_checked: boolean;
+  all_equipment_calibrated: boolean;
+  notes: string | null;
+  created_at: string | null; // ISO datetime
+};
+
 /* ===================== Food Hygiene Rating ===================== */
 
 type HygieneMeta = {
@@ -431,6 +445,7 @@ function computeTrainingStatus(awardedISO: string | null, expiresISO: string | n
     return { expires_on: toISODate(exp0!), days_until, status: "amber" as TrainingAreaStatus };
   return { expires_on: toISODate(exp0!), days_until, status: "green" as TrainingAreaStatus };
 }
+
 async function fetchTrainingAreasReport(
   orgId: string,
   locationId: string | null
@@ -904,6 +919,45 @@ async function fetchIncidentsTrailAsUnifiedIncidentShape(
   }));
 }
 
+/* ===================== Calibration fetch (LOCATION SPECIFIC ONLY) ===================== */
+
+async function fetchCalibrationChecksTrail(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<CalibrationRow[]> {
+  // Location-specific only means: if no location selected, we return nothing.
+  if (!locationId) return [];
+
+  const { data, error } = await supabase
+    .from("calibration_checks")
+    .select(
+      "id, org_id, location_id, checked_on, staff_initials, all_equipment_calibrated, notes, created_at, cold_storage_checked, probes_checked, thermometers_checked"
+    )
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .gte("checked_on", fromISO)
+    .lte("checked_on", toISO)
+    .order("checked_on", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(2000);
+
+  if (error) throw error;
+
+  return (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    checked_on: String(r.checked_on),
+    staff_initials: String(r.staff_initials ?? "—"),
+    cold_storage_checked: Boolean(r.cold_storage_checked),
+    probes_checked: Boolean(r.probes_checked),
+    thermometers_checked: Boolean(r.thermometers_checked),
+    all_equipment_calibrated: Boolean(r.all_equipment_calibrated),
+    notes: r.notes ? String(r.notes) : null,
+    created_at: r.created_at ? String(r.created_at) : null,
+  }));
+}
+
 /**
  * Team due is now location-aware when possible.
  * If trainings table doesn't have location_id, we fallback to org-wide.
@@ -1293,6 +1347,10 @@ export default function ReportsPage() {
   const [trainingAreas, setTrainingAreas] = useState<TrainingAreaRow[] | null>(null);
   const [showAllTrainingAreas, setShowAllTrainingAreas] = useState(false);
 
+  // Calibration checks (location-specific only)
+  const [calibrationChecks, setCalibrationChecks] = useState<CalibrationRow[] | null>(null);
+  const [showAllCalibration, setShowAllCalibration] = useState(false);
+
   const [showAllTemps, setShowAllTemps] = useState(false);
   const [showAllEducation, setShowAllEducation] = useState(false);
   const [showAllIncidents, setShowAllIncidents] = useState(false);
@@ -1342,6 +1400,11 @@ export default function ReportsPage() {
     if (!staffReviews) return null;
     return showAllStaffReviews ? staffReviews : staffReviews.slice(0, 10);
   }, [staffReviews, showAllStaffReviews]);
+
+  const visibleCalibrationChecks = useMemo(() => {
+    if (!calibrationChecks) return null;
+    return showAllCalibration ? calibrationChecks : calibrationChecks.slice(0, 10);
+  }, [calibrationChecks, showAllCalibration]);
 
   const trainingMatrix = useMemo(() => {
     if (!trainingAreas) return null;
@@ -1453,6 +1516,7 @@ export default function ReportsPage() {
         so,
         cr,
         allergenEditRows,
+        calibrations,
       ] = await Promise.all([
         fetchTemps(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningCount(rangeFrom, rangeTo, orgIdValue, locationId),
@@ -1463,6 +1527,7 @@ export default function ReportsPage() {
         fetchSignoffsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningRunsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchAllergenChanges(rangeFrom, rangeTo, orgIdValue, locationId),
+        fetchCalibrationChecksTrail(rangeFrom, rangeTo, orgIdValue, locationId),
       ]);
 
       setTemps(t);
@@ -1471,6 +1536,8 @@ export default function ReportsPage() {
 
       setLoggedIncidents(loggedInc);
       setAllergenChanges(allergenEditRows);
+
+      setCalibrationChecks(calibrations);
 
       const unified: UnifiedIncidentRow[] = [
         ...(incForUnified ?? []).map((r) => ({
@@ -1501,6 +1568,7 @@ export default function ReportsPage() {
       setShowAllSignoffs(false);
       setShowAllCleaningRuns(false);
       setShowAllStaffReviews(false);
+      setShowAllCalibration(false);
 
       // Hygiene history for selected location (small list)
       if (locationId) {
@@ -1547,6 +1615,7 @@ export default function ReportsPage() {
       setSignoffs(null);
       setCleaningRuns(null);
       setHygieneHistory(null);
+      setCalibrationChecks(null);
     } finally {
       setLoading(false);
     }
@@ -1940,6 +2009,111 @@ export default function ReportsPage() {
                 className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
               >
                 {showAllTemps ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
+        {/* Calibration checks */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-2 text-base font-semibold">
+            Calibration checks {calibrationChecks ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+          <p className="mb-3 text-xs text-slate-500">
+            Log from <code>calibration_checks</code>. This section is <span className="font-semibold">location-specific</span>. If you pick “All locations”, it will show nothing.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Cold storage</th>
+                  <th className="py-2 pr-3">Probes</th>
+                  <th className="py-2 pr-3">Thermometers</th>
+                  <th className="py-2 pr-3">All calibrated</th>
+                  <th className="py-2 pr-3">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!calibrationChecks ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : locationFilter === "all" ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      Select a specific location to view calibration checks
+                    </td>
+                  </tr>
+                ) : calibrationChecks.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-500">
+                      No calibration checks for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  visibleCalibrationChecks!.map((r) => {
+                    const yesPill = "bg-emerald-100 text-emerald-800";
+                    const noPill = "bg-slate-100 text-slate-700";
+                    const allPill = r.all_equipment_calibrated ? yesPill : "bg-red-100 text-red-800";
+
+                    const pill = (v: boolean) => (
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                          v ? yesPill : noPill
+                        }`}
+                      >
+                        {v ? "Yes" : "No"}
+                      </span>
+                    );
+
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3 whitespace-nowrap">{formatISOToUK(r.checked_on)}</td>
+                        <td className="py-2 pr-3 font-semibold">
+                          {r.staff_initials ? r.staff_initials.toUpperCase() : "—"}
+                        </td>
+                        <td className="py-2 pr-3">{pill(r.cold_storage_checked)}</td>
+                        <td className="py-2 pr-3">{pill(r.probes_checked)}</td>
+                        <td className="py-2 pr-3">{pill(r.thermometers_checked)}</td>
+                        <td className="py-2 pr-3">
+                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${allPill}`}>
+                            {r.all_equipment_calibrated ? "Yes" : "No"}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 max-w-xl">
+                          {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {calibrationChecks && calibrationChecks.length > 10 && locationFilter !== "all" && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllCalibration
+                  ? calibrationChecks.length
+                  : Math.min(10, calibrationChecks.length)}{" "}
+                of {calibrationChecks.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllCalibration((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllCalibration ? "Show first 10" : "View all"}
               </button>
             </div>
           )}
@@ -2561,10 +2735,9 @@ export default function ReportsPage() {
         {/* Allergen review table */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-2 text-base font-semibold">Allergen reviews (history)</h3>
-<p className="mb-3 text-xs text-slate-500">
-  Historic log from <code>allergen_review_log</code> for the selected location (or all locations).
-</p>
-
+          <p className="mb-3 text-xs text-slate-500">
+            Historic log from <code>allergen_review_log</code> for the selected location (or all locations).
+          </p>
 
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -2586,8 +2759,7 @@ export default function ReportsPage() {
                 ) : allergenLog.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="py-6 text-center text-slate-500">
-                    No allergen reviews found
-
+                      No allergen reviews found
                     </td>
                   </tr>
                 ) : (
