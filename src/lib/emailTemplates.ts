@@ -1,4 +1,6 @@
 // src/lib/emailTemplates.ts
+import "server-only";
+
 export function baseEmailHtml(opts: { title: string; body: string }) {
   return `
   <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px">
@@ -10,7 +12,6 @@ export function baseEmailHtml(opts: { title: string; body: string }) {
     </div>
   </div>`;
 }
-import "server-only";
 
 export function fmtDDMMYYYY(d: Date) {
   const dd = String(d.getUTCDate()).padStart(2, "0");
@@ -28,7 +29,7 @@ export function getOriginFromEnv(fallbackOrigin: string) {
   return (env || fallbackOrigin).replace(/\/$/, "");
 }
 
-export function wrapHtml(title: string, body: string) 
+export function wrapHtml(title: string, body: string) {
   return `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.5;color:#111">
       <h2 style="margin:0 0 12px">${title}</h2>
