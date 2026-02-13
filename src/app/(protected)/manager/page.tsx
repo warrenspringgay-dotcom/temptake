@@ -610,7 +610,7 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
   }
 
   async function loadTeamOptions(locId?: string | null): Promise<TeamMemberOption[]> {
-    if (!orgId) return;
+    if (!orgId) return[]
     const useLoc = locId ?? locationId ?? null;
 
     try {
