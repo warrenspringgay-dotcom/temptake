@@ -649,9 +649,9 @@ export default function TempFab() {
 
   function getDashboardPathForRole(role: MemberRole | null) {
     // Manager-ish roles go to /dashboard, everyone else goes to /staff
-    if (!role) return "/dashboard";
+    if (!role) return "/manager";
     const r = String(role).toLowerCase();
-    if (r === "manager" || r === "admin" || r === "owner") return "/dashboard";
+    if (r === "manager" || r === "admin" || r === "owner") return "/manager";
     return "/staff";
   }
 
