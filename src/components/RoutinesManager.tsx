@@ -10,8 +10,6 @@ import RoutineRunModal from "@/components/RoutineRunModal";
 
 const LS_LAST_INITIALS = "tt_last_initials";
 
-
-
 type RoutineItem = {
   id?: string;
   routine_id?: string;
@@ -158,17 +156,44 @@ export default function RoutineManager() {
     refresh();
   }, []);
 
-  // ================= Permissions =================
+  // ================= Permissions (FIXED for multi-location) =================
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       try {
-        const [id, userRes] = await Promise.all([
-          getActiveOrgIdClient(),
-          supabase.auth.getUser(),
-        ]);
-        const email = userRes.data.user?.email?.toLowerCase() ?? null;
-        if (!id || !email) {
-          setCanManage(false);
+        const [id, userRes] = await Promise.all([getActiveOrgIdClient(), supabase.auth.getUser()]);
+        const emailRaw = userRes.data.user?.email ?? null;
+        const email = emailRaw ? emailRaw.trim().toLowerCase() : null;
+        const userId = userRes.data.user?.id ?? null;
+
+        if (!id || (!email && !userId)) {
+          if (!cancelled) setCanManage(false);
+          return;
+        }
+
+        const isAllowedRole = (role: any) => {
+          const r = String(role ?? "").toLowerCase().trim();
+          return r === "owner" || r === "manager" || r === "admin";
+        };
+
+        // 1) Try user_id (multi rows possible)
+        if (userId) {
+          const { data, error } = await supabase
+            .from("team_members")
+            .select("role")
+            .eq("org_id", id)
+            .eq("user_id", userId);
+
+          if (!error && Array.isArray(data) && data.some((row) => isAllowedRole((row as any).role))) {
+            if (!cancelled) setCanManage(true);
+            return;
+          }
+        }
+
+        // 2) Fallback email (multi rows possible)
+        if (!email) {
+          if (!cancelled) setCanManage(false);
           return;
         }
 
@@ -176,20 +201,22 @@ export default function RoutineManager() {
           .from("team_members")
           .select("role,email")
           .eq("org_id", id)
-          .eq("email", email)
-          .maybeSingle();
+          .ilike("email", email);
 
-        if (error) {
-          setCanManage(false);
+        if (error || !Array.isArray(data) || data.length === 0) {
+          if (!cancelled) setCanManage(false);
           return;
         }
 
-        const role = (data?.role ?? "").toLowerCase();
-        setCanManage(role === "owner" || role === "manager" || role === "admin");
+        if (!cancelled) setCanManage(data.some((row) => isAllowedRole((row as any).role)));
       } catch {
-        setCanManage(false);
+        if (!cancelled) setCanManage(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ================= Default initials for run modal =================
@@ -243,13 +270,12 @@ export default function RoutineManager() {
       alert("Only managers / owners can edit routines.");
       return;
     }
-    // Deep clone so edits don’t mutate the table list until saved
     setEditing(JSON.parse(JSON.stringify(r)));
     setEditOpen(true);
   }
 
   function openRun(r: RoutineRow) {
-    if (!r.id) return; // only saved routines can be run
+    if (!r.id) return;
     setRunRoutine(r);
   }
 
@@ -266,14 +292,11 @@ export default function RoutineManager() {
         currentOrgId = await getActiveOrgIdClient();
         setOrgId(currentOrgId);
       }
-      if (!currentOrgId) {
-        throw new Error("No organisation found.");
-      }
+      if (!currentOrgId) throw new Error("No organisation found.");
 
       let routineId = editing.id;
 
       if (!routineId) {
-        // NEW routine → INSERT into temp_routines first
         const { data, error } = await supabase
           .from("temp_routines")
           .insert({
@@ -287,7 +310,6 @@ export default function RoutineManager() {
         if (error) throw error;
         routineId = data.id as string;
       } else {
-        // Existing routine → UPDATE
         const { error: uErr } = await supabase
           .from("temp_routines")
           .update({
@@ -298,11 +320,9 @@ export default function RoutineManager() {
 
         if (uErr) throw uErr;
 
-        // Clear old items before re-inserting
         await supabase.from("temp_routine_items").delete().eq("routine_id", routineId);
       }
 
-      // Insert items for both new + existing routines
       const inserts = editing.items.map((it, i) => ({
         routine_id: routineId,
         position: it.position ?? i + 1,
@@ -446,13 +466,9 @@ export default function RoutineManager() {
                     disabled={!r.id}
                     title={r.id ? "Open routine" : "Not saved yet"}
                   >
-                    <div className="truncate text-sm font-semibold text-slate-900">
-                      {r.name}
-                    </div>
+                    <div className="truncate text-sm font-semibold text-slate-900">{r.name}</div>
                     <div className="mt-1 flex max-w-full flex-wrap items-center gap-2 overflow-hidden">
-                      <Pill tone={isActive ? "emerald" : "amber"}>
-                        {isActive ? "Active" : "Inactive"}
-                      </Pill>
+                      <Pill tone={isActive ? "emerald" : "amber"}>{isActive ? "Active" : "Inactive"}</Pill>
                       <Pill>{r.items.length} steps</Pill>
                     </div>
                   </button>
@@ -467,13 +483,7 @@ export default function RoutineManager() {
                         : []),
                       ...(canManage ? [{ label: "Edit", onClick: () => openEdit(r) }] : []),
                       ...(canManage && r.id
-                        ? [
-                            {
-                              label: "Delete",
-                              onClick: () => removeRoutine(r.id),
-                              variant: "danger" as const,
-                            },
-                          ]
+                        ? [{ label: "Delete", onClick: () => removeRoutine(r.id), variant: "danger" as const }]
                         : []),
                     ]}
                   />
@@ -529,9 +539,7 @@ export default function RoutineManager() {
                         <span className="font-semibold text-slate-900">{r.name}</span>
                       )}
                       <div className="mt-1">
-                        <Pill tone={isActive ? "emerald" : "amber"}>
-                          {isActive ? "Active" : "Inactive"}
-                        </Pill>
+                        <Pill tone={isActive ? "emerald" : "amber"}>{isActive ? "Active" : "Inactive"}</Pill>
                       </div>
                     </td>
 
@@ -548,13 +556,7 @@ export default function RoutineManager() {
                             : []),
                           ...(canManage ? [{ label: "Edit", onClick: () => openEdit(r) }] : []),
                           ...(canManage && r.id
-                            ? [
-                                {
-                                  label: "Delete",
-                                  onClick: () => removeRoutine(r.id),
-                                  variant: "danger" as const,
-                                },
-                              ]
+                            ? [{ label: "Delete", onClick: () => removeRoutine(r.id), variant: "danger" as const }]
                             : []),
                         ]}
                       />
@@ -576,26 +578,18 @@ export default function RoutineManager() {
       {/* ===== View Card ===== */}
       {viewOpen && viewing && viewing.id && (
         <ModalPortal>
-          <div
-            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
-            onClick={() => setViewOpen(false)}
-          >
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" onClick={() => setViewOpen(false)}>
             <div
               className="mx-auto mt-10 w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 text-slate-900 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3 rounded-t-3xl bg-slate-900 px-4 py-3 text-white">
                 <div className="min-w-0">
-                  <div className="text-[11px] uppercase tracking-[0.2em] opacity-70">
-                    Routine
-                  </div>
+                  <div className="text-[11px] uppercase tracking-[0.2em] opacity-70">Routine</div>
                   <div className="truncate text-xl font-semibold">{viewing.name}</div>
 
-                  {/* FIX: clamp/wrap pills inside header */}
                   <div className="mt-1 flex max-w-full flex-wrap gap-2 overflow-hidden">
-                    <Pill tone={viewing.active ? "emerald" : "amber"}>
-                      {viewing.active ? "Active" : "Inactive"}
-                    </Pill>
+                    <Pill tone={viewing.active ? "emerald" : "amber"}>{viewing.active ? "Active" : "Inactive"}</Pill>
                     <Pill>{viewing.items.length} steps</Pill>
                   </div>
                 </div>
@@ -618,9 +612,7 @@ export default function RoutineManager() {
                         className="rounded-2xl border border-slate-200 bg-white/80 p-3"
                       >
                         <div className="flex items-center justify-between">
-                          <div className="text-sm font-semibold text-slate-900">
-                            Step {it.position}
-                          </div>
+                          <div className="text-sm font-semibold text-slate-900">Step {it.position}</div>
                           <Pill>{it.target_key}</Pill>
                         </div>
                         <div className="mt-1 text-sm text-slate-600">
@@ -662,19 +654,13 @@ export default function RoutineManager() {
       {/* ===== Edit Modal ===== */}
       {editOpen && editing && (
         <ModalPortal>
-          <div
-            className="fixed inset-0 z-50 overflow-y-auto bg-black/40 backdrop-blur-sm"
-            onClick={() => setEditOpen(false)}
-          >
-            {/* FIX: overflow-hidden so nothing leaks outside rounded corners */}
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 backdrop-blur-sm" onClick={() => setEditOpen(false)}>
             <div
               className="mx-auto mt-10 w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-3 flex items-center justify-between">
-                <div className="text-base font-semibold">
-                  {editing.id ? "Edit routine" : "New routine"}
-                </div>
+                <div className="text-base font-semibold">{editing.id ? "Edit routine" : "New routine"}</div>
                 <button
                   onClick={() => setEditOpen(false)}
                   className="rounded-xl p-2 text-slate-500 hover:bg-slate-100"
@@ -730,10 +716,7 @@ export default function RoutineManager() {
 
                 <div className="space-y-2">
                   {editing.items.map((it, i) => (
-                    <div
-                      key={i}
-                      className="rounded-2xl border border-slate-200 bg-white/80 p-3"
-                    >
+                    <div key={i} className="rounded-2xl border border-slate-200 bg-white/80 p-3">
                       <div className="grid gap-2 sm:grid-cols-[88px_1fr_1fr_1fr_auto]">
                         <input
                           className="h-10 rounded-2xl border border-slate-300 bg-white/80 px-3 text-sm"
@@ -742,10 +725,7 @@ export default function RoutineManager() {
                           value={it.position}
                           onChange={(e) => {
                             const copy: RoutineRow = { ...editing, items: [...editing.items] };
-                            copy.items[i] = {
-                              ...copy.items[i],
-                              position: Number(e.target.value) || 0,
-                            };
+                            copy.items[i] = { ...copy.items[i], position: Number(e.target.value) || 0 };
                             setEditing(copy);
                           }}
                         />
@@ -755,10 +735,7 @@ export default function RoutineManager() {
                           value={it.location ?? ""}
                           onChange={(e) => {
                             const copy: RoutineRow = { ...editing, items: [...editing.items] };
-                            copy.items[i] = {
-                              ...copy.items[i],
-                              location: e.target.value || null,
-                            };
+                            copy.items[i] = { ...copy.items[i], location: e.target.value || null };
                             setEditing(copy);
                           }}
                         />
@@ -789,12 +766,7 @@ export default function RoutineManager() {
                         </select>
                         <button
                           className="h-10 rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-700 hover:bg-slate-50"
-                          onClick={() =>
-                            setEditing({
-                              ...editing,
-                              items: editing.items.filter((_, idx) => idx !== i),
-                            })
-                          }
+                          onClick={() => setEditing({ ...editing, items: editing.items.filter((_, idx) => idx !== i) })}
                           type="button"
                         >
                           Remove
