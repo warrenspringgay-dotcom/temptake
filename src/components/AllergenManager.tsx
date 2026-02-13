@@ -69,8 +69,7 @@ const LS_ROWS = "tt_allergens_rows_v3";
 const LS_REVIEW = "tt_allergens_review_v2";
 
 /* ---------- Helpers ---------- */
-const emptyFlags = (): Flags =>
-  Object.fromEntries(ALLERGENS.map((a) => [a.key, false])) as Flags;
+const emptyFlags = (): Flags => Object.fromEntries(ALLERGENS.map((a) => [a.key, false])) as Flags;
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -121,18 +120,32 @@ async function logAllergenChange(params: {
       if (!userErr && userData?.user?.email) {
         const email = userData.user.email.toLowerCase().trim();
 
-        const { data: tm, error: tmErr } = await supabase
+        const { data: tms, error: tmErr } = await supabase
           .from("team_members")
-          .select("name, initials")
+          .select("name, initials, role")
           .eq("org_id", params.orgId)
           .ilike("email", email)
-          .maybeSingle();
+          .limit(50);
 
-        if (!tmErr && tm) {
-          if (tm.initials && tm.initials.trim()) {
-            staffInitials = tm.initials.trim().toUpperCase();
-          } else if (tm.name && tm.name.trim()) {
-            const parts: string[] = tm.name.trim().split(/\s+/);
+        if (!tmErr && Array.isArray(tms) && tms.length) {
+          // Prefer a manager/owner/admin row, then any with initials, then first.
+          const pick = [...tms].sort((a: any, b: any) => {
+            const ra = String(a?.role ?? "").toLowerCase();
+            const rb = String(b?.role ?? "").toLowerCase();
+            const prio = (r: string) => (r === "owner" ? 0 : r === "manager" ? 1 : r === "admin" ? 2 : 3);
+            const pa = prio(ra);
+            const pb = prio(rb);
+            if (pa !== pb) return pa - pb;
+            const ia = (a?.initials ?? "").trim() ? 0 : 1;
+            const ib = (b?.initials ?? "").trim() ? 0 : 1;
+            return ia - ib;
+          })[0] as any;
+
+          const ini = (pick?.initials ?? "").trim().toUpperCase();
+          if (ini) {
+            staffInitials = ini;
+          } else if (pick?.name && String(pick.name).trim()) {
+            const parts: string[] = String(pick.name).trim().split(/\s+/);
             staffInitials = parts
               .slice(0, 2)
               .map((p: string) => p[0]?.toUpperCase() ?? "")
@@ -164,53 +177,50 @@ async function logAllergenChange(params: {
     console.error("Failed to log allergen change (unexpected):", e);
   }
 }
-async function resolveCanManage(params: {
-  orgId: string | null;
-  userId: string | null;
-  email: string | null;
-  locationId?: string | null; // OPTIONAL: gate per-location
-}): Promise<boolean> {
+
+async function resolveCanManage(params: { orgId: string | null; userId: string | null; email: string | null }): Promise<boolean> {
+  // If orgId is missing, we allow local editing when signed in.
   if (!params.orgId) return !!(params.userId || params.email);
 
   const orgId = params.orgId;
   const email = (params.email ?? "").trim().toLowerCase();
   const userId = params.userId ?? null;
-  const locationId = params.locationId ?? null;
 
-  const isPrivRole = (role: any) => {
+  const roleAllows = (role: any) => {
     const r = String(role ?? "").toLowerCase();
     return r === "owner" || r === "manager" || r === "admin";
   };
 
-  // 1) Try by user_id (preferred)
+  // Prefer user_id match (multi-location accounts may have >1 row).
   if (userId) {
-    const { data, error } = await supabase
-      .from("team_members")
-      .select("role, location_id")
-      .eq("org_id", orgId)
-      .eq("user_id", userId);
+    try {
+      const { data, error } = await supabase
+        .from("team_members")
+        .select("role")
+        .eq("org_id", orgId)
+        .eq("user_id", userId)
+        .limit(50);
 
-    if (!error && Array.isArray(data) && data.length) {
-      const scoped = locationId ? data.filter((r) => String(r.location_id ?? "") === String(locationId)) : data;
-      return scoped.some((r) => isPrivRole(r.role));
+      if (!error && Array.isArray(data) && data.some((r) => roleAllows((r as any).role))) return true;
+    } catch {
+      // ignore
     }
   }
 
-  // 2) Fallback by email (case-insensitive)
+  // Fallback: email match (case-insensitive). Also allow multiple rows.
   if (!email) return false;
 
   const { data, error } = await supabase
     .from("team_members")
-    .select("role, email, location_id")
+    .select("role,email")
     .eq("org_id", orgId)
-    .ilike("email", email);
+    .ilike("email", email)
+    .limit(50);
 
-  if (error || !Array.isArray(data) || data.length === 0) return false;
+  if (error || !Array.isArray(data)) return false;
 
-  const scoped = locationId ? data.filter((r) => String(r.location_id ?? "") === String(locationId)) : data;
-  return scoped.some((r) => isPrivRole(r.role));
+  return data.some((r) => roleAllows((r as any).role));
 }
-
 
 /* ---------- Component ---------- */
 export default function AllergenManager() {
@@ -246,10 +256,7 @@ export default function AllergenManager() {
         // Always prime local first so UI isn't dead while org resolves
         primeLocal();
 
-        const [{ data: auth }, org] = await Promise.all([
-          supabase.auth.getUser(),
-          getActiveOrgIdClient().catch(() => null),
-        ]);
+        const [{ data: auth }, org] = await Promise.all([supabase.auth.getUser(), getActiveOrgIdClient().catch(() => null)]);
 
         if (cancelled) return;
 
@@ -258,15 +265,11 @@ export default function AllergenManager() {
 
         setOrgId(org ?? null);
 
-    const activeLoc = await getActiveLocationIdClient().catch(() => null);
-
-const allowed = await resolveCanManage({
-  orgId: org ?? null,
-  userId,
-  email,
-  locationId: activeLoc, // gate permissions per selected/active location
-});
-
+        const allowed = await resolveCanManage({
+          orgId: org ?? null,
+          userId,
+          email,
+        });
 
         if (!cancelled) setCanManage(allowed);
 
@@ -299,30 +302,9 @@ const allowed = await resolveCanManage({
         );
       } else {
         setRows([
-          {
-            id: uid(),
-            item: "White Bread",
-            category: "Side",
-            flags: { ...emptyFlags(), gluten: true },
-            notes: "",
-            locked: true,
-          },
-          {
-            id: uid(),
-            item: "Prawn Cocktail",
-            category: "Starter",
-            flags: { ...emptyFlags(), crustaceans: true },
-            notes: "",
-            locked: true,
-          },
-          {
-            id: uid(),
-            item: "Fruit Salad",
-            category: "Dessert",
-            flags: { ...emptyFlags() },
-            notes: "",
-            locked: true,
-          },
+          { id: uid(), item: "White Bread", category: "Side", flags: { ...emptyFlags(), gluten: true }, notes: "", locked: true },
+          { id: uid(), item: "Prawn Cocktail", category: "Starter", flags: { ...emptyFlags(), crustaceans: true }, notes: "", locked: true },
+          { id: uid(), item: "Fruit Salad", category: "Dessert", flags: { ...emptyFlags() }, notes: "", locked: true },
         ]);
       }
     } catch {}
@@ -358,10 +340,7 @@ const allowed = await resolveCanManage({
     let flagsByItem: Record<string, Flags> = {};
 
     if (ids.length) {
-      const { data: flags, error: flagsErr } = await supabase
-        .from("allergen_flags")
-        .select("item_id,key,value")
-        .in("item_id", ids);
+      const { data: flags, error: flagsErr } = await supabase.from("allergen_flags").select("item_id,key,value").in("item_id", ids);
 
       if (flagsErr) {
         setCloudBusy(false);
@@ -400,7 +379,6 @@ const allowed = await resolveCanManage({
 
     const nextState: ReviewInfo = { intervalDays: 30 };
 
-    // ✅ include reviewer here, so UI can display it and cache it
     const { data: settings, error: settingsErr } = await supabase
       .from("allergen_review")
       .select("last_reviewed, interval_days, reviewer")
@@ -424,8 +402,6 @@ const allowed = await resolveCanManage({
     if (!logErr && logRow) {
       if (!nextState.lastReviewedOn && logRow.reviewed_on) nextState.lastReviewedOn = logRow.reviewed_on;
       if (typeof logRow.interval_days === "number" && !settings?.interval_days) nextState.intervalDays = logRow.interval_days;
-
-      // Prefer log reviewer if present, otherwise keep settings reviewer
       if (logRow.reviewer) nextState.lastReviewedBy = logRow.reviewer;
     }
 
@@ -451,13 +427,7 @@ const allowed = await resolveCanManage({
   }, [review, hydrated]);
 
   /* ---------- CRUD ---------- */
-  async function upsertItem(d: {
-    id?: string;
-    item: string;
-    category?: Category;
-    notes?: string;
-    flags: Flags;
-  }) {
+  async function upsertItem(d: { id?: string; item: string; category?: Category; notes?: string; flags: Flags }) {
     if (!canManage) {
       alert("Only managers / owners can edit the allergen matrix.");
       return;
@@ -479,9 +449,7 @@ const allowed = await resolveCanManage({
           locked: true,
         };
         const exists = rs.some((r) => r.id === idToUse);
-        return exists
-          ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r))
-          : [...rs, patch];
+        return exists ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r)) : [...rs, patch];
       });
     };
 
@@ -534,13 +502,8 @@ const allowed = await resolveCanManage({
         }));
 
         if (payload.length) {
-          const { error: flagsErr } = await supabase
-            .from("allergen_flags")
-            .upsert(payload, { onConflict: "item_id,key" });
-
-          if (flagsErr) {
-            console.warn("Saving allergen flags failed (ignored):", flagsErr.message);
-          }
+          const { error: flagsErr } = await supabase.from("allergen_flags").upsert(payload, { onConflict: "item_id,key" });
+          if (flagsErr) console.warn("Saving allergen flags failed (ignored):", flagsErr.message);
         }
       }
 
@@ -621,23 +584,39 @@ const allowed = await resolveCanManage({
     const id = orgId ?? (await getActiveOrgIdClient().catch(() => null));
     const today = todayISO();
 
-    // ✅ reviewer: initials > name > email
+    // reviewer: initials > name > email
     let reviewer = "Manager";
     try {
       const userRes = await supabase.auth.getUser();
       const email = userRes.data.user?.email?.toLowerCase().trim() ?? null;
 
       if (email && id) {
-        const { data: tm } = await supabase
+        const { data: tms } = await supabase
           .from("team_members")
-          .select("name, initials")
+          .select("name, initials, role")
           .eq("org_id", id)
           .ilike("email", email)
-          .maybeSingle();
+          .limit(50);
 
-        const ini = (tm?.initials ?? "").trim().toUpperCase();
-        const name = (tm?.name ?? "").trim();
-        reviewer = ini || name || email || reviewer;
+        if (Array.isArray(tms) && tms.length) {
+          const pick = [...tms].sort((a: any, b: any) => {
+            const ra = String(a?.role ?? "").toLowerCase();
+            const rb = String(b?.role ?? "").toLowerCase();
+            const prio = (r: string) => (r === "owner" ? 0 : r === "manager" ? 1 : r === "admin" ? 2 : 3);
+            const pa = prio(ra);
+            const pb = prio(rb);
+            if (pa !== pb) return pa - pb;
+            const ia = (a?.initials ?? "").trim() ? 0 : 1;
+            const ib = (b?.initials ?? "").trim() ? 0 : 1;
+            return ia - ib;
+          })[0] as any;
+
+          const ini = (pick?.initials ?? "").trim().toUpperCase();
+          const name = (pick?.name ?? "").trim();
+          reviewer = ini || name || email || reviewer;
+        } else {
+          reviewer = email || reviewer;
+        }
       } else if (email) {
         reviewer = email;
       }
@@ -658,11 +637,7 @@ const allowed = await resolveCanManage({
       return;
     }
 
-    const { data: existing, error: existingErr } = await supabase
-      .from("allergen_review")
-      .select("org_id")
-      .eq("org_id", id)
-      .maybeSingle();
+    const { data: existing, error: existingErr } = await supabase.from("allergen_review").select("org_id").eq("org_id", id).maybeSingle();
 
     if (existingErr) {
       alert(`Failed to save review: ${existingErr.message}`);
@@ -675,7 +650,7 @@ const allowed = await resolveCanManage({
         .update({
           last_reviewed: today,
           interval_days: newInterval,
-          reviewer, // ✅ persist
+          reviewer,
         })
         .eq("org_id", id);
 
@@ -688,7 +663,7 @@ const allowed = await resolveCanManage({
         org_id: id,
         last_reviewed: today,
         interval_days: newInterval,
-        reviewer, // ✅ persist
+        reviewer,
       });
 
       if (insErr) {
@@ -700,7 +675,7 @@ const allowed = await resolveCanManage({
     const { error: logErr } = await supabase.from("allergen_review_log").insert({
       org_id: id,
       reviewed_on: today,
-      reviewer, // ✅ persist
+      reviewer,
       interval_days: newInterval,
       notes: null,
     });
@@ -790,13 +765,8 @@ const allowed = await resolveCanManage({
             <div className="font-medium text-slate-900">Allergen register review</div>
             <div className="text-xs text-slate-600">
               Last reviewed:{" "}
-              {review.lastReviewedOn ? (
-                <span className="font-medium">{formatDateUK(review.lastReviewedOn)}</span>
-              ) : (
-                <span className="italic">never</span>
-              )}
-              {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} · Interval (days):{" "}
-              {review.intervalDays}
+              {review.lastReviewedOn ? <span className="font-medium">{formatDateUK(review.lastReviewedOn)}</span> : <span className="italic">never</span>}
+              {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} · Interval (days): {review.intervalDays}
             </div>
           </div>
           <div className="flex w-full max-w-[360px] items-center gap-2 sm:w-auto sm:max-w-none">
@@ -825,9 +795,7 @@ const allowed = await resolveCanManage({
       </div>
 
       <details className="mb-4 rounded-2xl border border-slate-200 bg-white/70 p-3 backdrop-blur-sm">
-        <summary className="cursor-pointer select-none text-sm font-medium text-slate-900">
-          Allergen Query (safe foods)
-        </summary>
+        <summary className="cursor-pointer select-none text-sm font-medium text-slate-900">Allergen Query (safe foods)</summary>
 
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
@@ -861,31 +829,23 @@ const allowed = await resolveCanManage({
                     className="accent-emerald-600"
                   />
                   <span title={a.label}>
-                    {a.icon}{" "}
-                    <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
+                    {a.icon} <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
                   </span>
                 </label>
               ))}
             </div>
             <div className="mt-3 flex items-center gap-2">
-              <button
-                className="rounded border border-slate-200 bg-white px-2 py-1 text-xs hover:bg-slate-50"
-                onClick={() => setQFlags(emptyFlags())}
-              >
+              <button className="rounded border border-slate-200 bg-white px-2 py-1 text-xs hover:bg-slate-50" onClick={() => setQFlags(emptyFlags())}>
                 Clear selection
               </button>
-              <span className="text-xs text-slate-600">
-                Selected: {Object.values(qFlags).filter(Boolean).length}
-              </span>
+              <span className="text-xs text-slate-600">Selected: {Object.values(qFlags).filter(Boolean).length}</span>
             </div>
           </div>
         </div>
 
         {hydrated && selectedAllergenKeys.length > 0 && (
           <div className="mt-4">
-            <div className="mb-2 text-sm font-semibold text-slate-900">
-              Safe foods ({safeFoods.length})
-            </div>
+            <div className="mb-2 text-sm font-semibold text-slate-900">Safe foods ({safeFoods.length})</div>
             <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white/80 backdrop-blur-sm">
               <table className="w-full min-w-[640px] text-sm">
                 <thead className="bg-slate-50/80">
@@ -945,8 +905,7 @@ const allowed = await resolveCanManage({
               <th className="px-2 py-2 font-medium">Category</th>
               {ALLERGENS.map((a) => (
                 <th key={a.key} className="whitespace-nowrap px-2 py-2 text-center font-medium">
-                  {a.icon}{" "}
-                  <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
+                  {a.icon} <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
                 </th>
               ))}
               <th className="px-3 py-2 text-right font-medium">Actions</th>
@@ -1105,19 +1064,14 @@ const allowed = await resolveCanManage({
                 {ALLERGENS.map((a) => {
                   const val = draft.flags[a.key];
                   return (
-                    <div
-                      key={a.key}
-                      className="flex items-center justify-between rounded border border-slate-200 bg-white/80 p-2"
-                    >
+                    <div key={a.key} className="flex items-center justify-between rounded border border-slate-200 bg-white/80 p-2">
                       <span title={a.label} className="text-sm text-slate-800">
                         {a.icon} <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
                       </span>
                       <div className="inline-flex overflow-hidden rounded border border-slate-200 bg-white/80">
                         <button
                           type="button"
-                          className={`px-2 py-1 text-xs ${
-                            val ? "bg-red-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
-                          }`}
+                          className={`px-2 py-1 text-xs ${val ? "bg-red-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"}`}
                           onClick={() => setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: true } }))}
                         >
                           Yes
@@ -1153,11 +1107,7 @@ const allowed = await resolveCanManage({
             </div>
 
             <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t border-slate-200 bg-white/90 px-4 py-3 backdrop-blur">
-              <button
-                type="button"
-                className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-                onClick={closeModal}
-              >
+              <button type="button" className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50" onClick={closeModal}>
                 Cancel
               </button>
               <button className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
