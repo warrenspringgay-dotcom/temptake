@@ -164,53 +164,53 @@ async function logAllergenChange(params: {
     console.error("Failed to log allergen change (unexpected):", e);
   }
 }
-
 async function resolveCanManage(params: {
   orgId: string | null;
   userId: string | null;
   email: string | null;
+  locationId?: string | null; // OPTIONAL: gate per-location
 }): Promise<boolean> {
-  // If orgId is missing, we allow local editing when signed in.
   if (!params.orgId) return !!(params.userId || params.email);
 
   const orgId = params.orgId;
   const email = (params.email ?? "").trim().toLowerCase();
   const userId = params.userId ?? null;
+  const locationId = params.locationId ?? null;
 
-  // Try by user_id if your table has it (safe even if it doesn't; we catch).
+  const isPrivRole = (role: any) => {
+    const r = String(role ?? "").toLowerCase();
+    return r === "owner" || r === "manager" || r === "admin";
+  };
+
+  // 1) Try by user_id (preferred)
   if (userId) {
-    try {
-      const { data, error } = await supabase
-        .from("team_members")
-        .select("role")
-        .eq("org_id", orgId)
-        .eq("user_id", userId)
-        .maybeSingle();
+    const { data, error } = await supabase
+      .from("team_members")
+      .select("role, location_id")
+      .eq("org_id", orgId)
+      .eq("user_id", userId);
 
-      if (!error && data?.role) {
-        const r = String(data.role).toLowerCase();
-        return r === "owner" || r === "manager" || r === "admin";
-      }
-    } catch {
-      // ignore
+    if (!error && Array.isArray(data) && data.length) {
+      const scoped = locationId ? data.filter((r) => String(r.location_id ?? "") === String(locationId)) : data;
+      return scoped.some((r) => isPrivRole(r.role));
     }
   }
 
-  // Fallback: email match (case-insensitive)
+  // 2) Fallback by email (case-insensitive)
   if (!email) return false;
 
   const { data, error } = await supabase
     .from("team_members")
-    .select("role,email")
+    .select("role, email, location_id")
     .eq("org_id", orgId)
-    .ilike("email", email)
-    .maybeSingle();
+    .ilike("email", email);
 
-  if (error || !data) return false;
+  if (error || !Array.isArray(data) || data.length === 0) return false;
 
-  const role = String((data as any).role ?? "").toLowerCase();
-  return role === "owner" || role === "manager" || role === "admin";
+  const scoped = locationId ? data.filter((r) => String(r.location_id ?? "") === String(locationId)) : data;
+  return scoped.some((r) => isPrivRole(r.role));
 }
+
 
 /* ---------- Component ---------- */
 export default function AllergenManager() {
@@ -258,11 +258,15 @@ export default function AllergenManager() {
 
         setOrgId(org ?? null);
 
-        const allowed = await resolveCanManage({
-          orgId: org ?? null,
-          userId,
-          email,
-        });
+    const activeLoc = await getActiveLocationIdClient().catch(() => null);
+
+const allowed = await resolveCanManage({
+  orgId: org ?? null,
+  userId,
+  email,
+  locationId: activeLoc, // gate permissions per selected/active location
+});
+
 
         if (!cancelled) setCanManage(allowed);
 
