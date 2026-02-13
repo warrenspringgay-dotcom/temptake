@@ -609,7 +609,7 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
     return nm || "—";
   }
 
-  async function loadTeamOptions(locId?: string | null) {
+  async function loadTeamOptions(locId?: string | null): Promise<TeamMemberOption[]> {
     if (!orgId) return;
     const useLoc = locId ?? locationId ?? null;
 
@@ -627,10 +627,13 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
       const { data, error } = await q;
       if (error) throw error;
 
-      setTeamOptions((data ?? []) as TeamMemberOption[]);
+      const rows = (data ?? []) as TeamMemberOption[];
+      setTeamOptions(rows);
+      return rows;
     } catch (e) {
       console.error(e);
       setTeamOptions([]);
+      return [];
     }
   }
 
@@ -648,54 +651,68 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
         return;
       }
 
-      const byUser = await supabase
-        .from("team_members")
-        .select("id,name,initials,role,active,user_id,email,location_id")
-        .eq("org_id", orgId)
-        .eq("user_id", user.id)
-        .maybeSingle();
+      const userId = user.id;
+      const email = (user.email ?? "").trim().toLowerCase();
 
-      if (byUser.error) throw byUser.error;
+      // Helper: safe pick first row (avoids maybeSingle throwing when duplicates exist)
+      const pickOne = async (q: any) => {
+        const { data, error } = await q.limit(2);
+        if (error) throw error;
+        const rows = (data ?? []) as any[];
+        if (rows.length === 0) return null;
+        return rows[0] ?? null;
+      };
 
-      if (byUser.data) {
-        setManagerTeamMember(byUser.data as any);
+      // 1) Try by user_id (most reliable)
+      const byUser = await pickOne(
+        supabase
+          .from("team_members")
+          .select("id,name,initials,role,active,user_id,email,location_id,created_at")
+          .eq("org_id", orgId)
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+      );
+
+      if (byUser) {
+        setManagerTeamMember(byUser as any);
         return;
       }
 
-      const email = (user.email ?? "").trim().toLowerCase();
+      // 2) Fall back to email match (for older rows not linked yet)
       if (!email) {
         setManagerTeamMember(null);
         return;
       }
 
-      const byEmail = await supabase
-        .from("team_members")
-        .select("id,name,initials,role,active,user_id,email,location_id")
-        .eq("org_id", orgId)
-        .ilike("email", email)
-        .maybeSingle();
+      const byEmail = await pickOne(
+        supabase
+          .from("team_members")
+          .select("id,name,initials,role,active,user_id,email,location_id,created_at")
+          .eq("org_id", orgId)
+          .ilike("email", email)
+          .order("created_at", { ascending: false })
+      );
 
-      if (byEmail.error) throw byEmail.error;
-
-      if (!byEmail.data) {
+      if (!byEmail) {
         setManagerTeamMember(null);
         return;
       }
 
-      if (!byEmail.data.user_id) {
+      // If row isn't linked yet, link it now.
+      if (!byEmail.user_id) {
         const upd = await supabase
           .from("team_members")
-          .update({ user_id: user.id })
+          .update({ user_id: userId })
           .eq("org_id", orgId)
-          .eq("id", byEmail.data.id)
+          .eq("id", byEmail.id)
           .is("user_id", null);
 
         if (upd.error) throw upd.error;
       }
 
       setManagerTeamMember({
-        ...byEmail.data,
-        user_id: user.id,
+        ...byEmail,
+        user_id: userId,
       } as any);
     } catch (e) {
       console.error(e);
@@ -703,7 +720,7 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
     }
   }
 
-  async function loadQcReviews() {
+async function loadQcReviews() {
     if (!orgId || !locationId) return;
     setQcLoading(true);
     try {
@@ -1442,40 +1459,17 @@ const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | nul
     }
   }
 
-  
-  async function openStaffAssessmentFromActions() {
+    async function openStaffAssessmentFromActions() {
     if (!orgId || !locationId) return;
     setActionsOpen(false);
+    setStaffAssessErr(null);
 
-    try {
-      // Pull fresh staff list for this location (avoid state race conditions).
-      const { data, error } = await supabase
-        .from("team_members")
-        .select("id,name,initials,role,active,user_id,location_id")
-        .eq("org_id", orgId)
-        .eq("location_id", locationId)
-        .eq("active", true)
-        .order("name", { ascending: true })
-        .limit(5000);
+    const rows = await loadTeamOptions(locationId);
+    const firstId = rows[0]?.id ? String(rows[0].id) : "";
+    setStaffAssessStaffId((prev) => prev || firstId);
 
-      if (error) throw error;
-
-      const rows = (data ?? []) as TeamMemberOption[];
-      setTeamOptions(rows);
-
-      setStaffAssessErr(null);
-      setStaffAssess(null);
-      setStaffAssessDays(7);
-
-      const firstId = rows[0]?.id ? String(rows[0].id) : "";
-      setStaffAssessStaffId((cur) => cur || firstId);
-
-      setStaffAssessOpen(true);
-    } catch (e) {
-      console.error(e);
-      setStaffAssessErr("Failed to load staff list.");
-      setStaffAssessOpen(true); // still open so user sees error
-    }
+    setStaffAssessDays(7);
+    setStaffAssessOpen(true);
   }
 
 async function openQcFromActions() {
@@ -1726,11 +1720,7 @@ async function openQcFromActions() {
                       <button
                         type="button"
                         onClick={openStaffAssessmentFromActions}
-                        disabled={!orgId || !locationId}
-                        className={cls(
-                          "w-full px-4 py-2 text-left text-sm font-semibold",
-                          !orgId || !locationId ? "text-slate-400 cursor-not-allowed" : "text-slate-800 hover:bg-slate-50"
-                        )}
+                        className="w-full px-4 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"
                       >
                         Staff assessment
                       </button>
@@ -2646,295 +2636,6 @@ async function openQcFromActions() {
         </div>
       )}
 
-      
-      {/* Staff Assessment modal */}
-      {portalReady && staffAssessOpen
-        ? createPortal(
-            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-              <div className="absolute inset-0 bg-black/30" onClick={() => setStaffAssessOpen(false)} />
-              <div className="relative w-full max-w-[720px] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-                <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-                  <div>
-                    <div className="text-sm font-extrabold text-slate-900">Staff assessment</div>
-                    <div className="text-xs text-slate-500">Performance snapshot for this location</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setStaffAssessOpen(false)}
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    Close
-                  </button>
-                </div>
-
-                <div className="p-5">
-                  {staffAssessErr ? (
-                    <div className="mb-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
-                      {staffAssessErr}
-                    </div>
-                  ) : null}
-
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    <div className="sm:col-span-2">
-                      <label className="block text-xs font-semibold text-slate-600">Staff</label>
-                      <select
-                        value={staffAssessStaffId}
-                        onChange={(e) => setStaffAssessStaffId(e.target.value)}
-                        className="mt-1 h-10 w-full rounded-2xl border border-slate-300 bg-white/90 px-3 text-sm"
-                      >
-                        <option value="">Select staff…</option>
-                        {teamOptions.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {tmLabel({ initials: t.initials, name: t.name })}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600">Range</label>
-                      <select
-                        value={staffAssessDays}
-                        onChange={(e) => setStaffAssessDays(Number(e.target.value))}
-                        className="mt-1 h-10 w-full rounded-2xl border border-slate-300 bg-white/90 px-3 text-sm"
-                      >
-                        <option value={7}>Last 7 days</option>
-                        <option value={14}>Last 14 days</option>
-                        <option value={30}>Last 30 days</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50/50 p-4">
-                    {staffAssessLoading ? (
-                      <div className="text-sm font-semibold text-slate-600">Loading…</div>
-                    ) : !staffAssess ? (
-                      <div className="text-sm text-slate-600">Select a staff member to view their stats.</div>
-                    ) : (
-                      <>
-                        <div className="mb-3 text-sm font-extrabold text-slate-900">{staffAssess.staffLabel}</div>
-                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                          <div className="rounded-2xl border border-white/60 bg-white p-3">
-                            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                              Cleaning runs
-                            </div>
-                            <div className="mt-1 text-2xl font-extrabold text-slate-900">{staffAssess.cleaningRuns}</div>
-                            <div className="mt-1 text-xs text-slate-600">{staffAssess.rangeDays}d window</div>
-                          </div>
-
-                          <div className="rounded-2xl border border-white/60 bg-white p-3">
-                            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                              Temp logs
-                            </div>
-                            <div className="mt-1 text-2xl font-extrabold text-slate-900">{staffAssess.tempLogs}</div>
-                            <div className="mt-1 text-xs text-slate-600">
-                              Fails: <span className={cls("font-semibold", staffAssess.tempFails > 0 && "text-red-700")}>{staffAssess.tempFails}</span>
-                            </div>
-                          </div>
-
-                          <div className="rounded-2xl border border-white/60 bg-white p-3">
-                            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                              Incidents logged
-                            </div>
-                            <div className="mt-1 text-2xl font-extrabold text-slate-900">{staffAssess.incidents}</div>
-                            <div className="mt-1 text-xs text-slate-600">{staffAssess.rangeDays}d window</div>
-                          </div>
-
-                          <div className="rounded-2xl border border-white/60 bg-white p-3 sm:col-span-3">
-                            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                              QC average (last 30 days)
-                            </div>
-                            <div className="mt-1 flex items-baseline gap-2">
-                              <div className="text-2xl font-extrabold text-slate-900">{staffAssess.qcAvg30d ?? "—"}</div>
-                              <div className="text-xs text-slate-600">from {staffAssess.qcCount30d} review(s)</div>
-                            </div>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
-
-      {/* Staff QC modal */}
-      {portalReady && qcOpen
-        ? createPortal(
-            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-              <div className="absolute inset-0 bg-black/30" onClick={() => setQcOpen(false)} />
-              <div className="relative w-full max-w-[820px] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-                <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-                  <div>
-                    <div className="text-sm font-extrabold text-slate-900">Staff QC</div>
-                    <div className="text-xs text-slate-500">Manager QC reviews for this location</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setQcOpen(false)}
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    Close
-                  </button>
-                </div>
-
-                <div className="p-5">
-                  {!managerTeamMember?.id ? (
-                    <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
-                      Your login is not linked to a team member (team_members.user_id). You can still view reviews, but you can’t add one until your user is linked.
-                    </div>
-                  ) : null}
-
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50/50 p-4">
-                    <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Add review</div>
-
-                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      <div className="sm:col-span-1">
-                        <label className="block text-xs font-semibold text-slate-600">Staff</label>
-                        <select
-                          value={qcForm.staff_id}
-                          onChange={(e) => setQcForm((f) => ({ ...f, staff_id: e.target.value }))}
-                          className="mt-1 h-10 w-full rounded-2xl border border-slate-300 bg-white/90 px-3 text-sm"
-                        >
-                          <option value="">Select…</option>
-                          {teamOptions.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {tmLabel({ initials: t.initials, name: t.name })}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600">Date</label>
-                        <input
-                          type="date"
-                          value={qcForm.reviewed_on}
-                          onChange={(e) => setQcForm((f) => ({ ...f, reviewed_on: e.target.value }))}
-                          className="mt-1 h-10 w-full rounded-2xl border border-slate-300 bg-white/90 px-3 text-sm"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600">Score (1–5)</label>
-                        <select
-                          value={qcForm.rating}
-                          onChange={(e) => setQcForm((f) => ({ ...f, rating: Number(e.target.value) }))}
-                          className="mt-1 h-10 w-full rounded-2xl border border-slate-300 bg-white/90 px-3 text-sm"
-                        >
-                          {[1, 2, 3, 4, 5].map((n) => (
-                            <option key={n} value={n}>
-                              {n}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="sm:col-span-3">
-                        <label className="block text-xs font-semibold text-slate-600">Notes (optional)</label>
-                        <textarea
-                          value={qcForm.notes}
-                          onChange={(e) => setQcForm((f) => ({ ...f, notes: e.target.value }))}
-                          rows={3}
-                          className="mt-1 w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2 text-sm"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="mt-3 flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void loadQcReviews()}
-                        disabled={qcLoading || !orgId || !locationId}
-                        className={cls(
-                          "rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold",
-                          qcLoading || !orgId || !locationId ? "text-slate-400 cursor-not-allowed" : "text-slate-700 hover:bg-slate-50"
-                        )}
-                      >
-                        {qcLoading ? "Loading…" : "Refresh"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => void addQcReview()}
-                        disabled={qcSaving || !managerTeamMember?.id || !qcForm.staff_id}
-                        className={cls(
-                          "rounded-xl px-4 py-2 text-xs font-semibold text-white shadow-sm",
-                          qcSaving || !managerTeamMember?.id || !qcForm.staff_id ? "bg-indigo-300 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
-                        )}
-                      >
-                        {qcSaving ? "Adding…" : "Add"}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200 bg-white">
-                    <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-                      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Recent QC reviews</div>
-                      <button
-                        type="button"
-                        onClick={() => setShowAllQc((v) => !v)}
-                        className="text-xs font-semibold text-indigo-700 hover:underline"
-                      >
-                        {showAllQc ? "Show less" : "Show all"}
-                      </button>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full text-left text-xs">
-                        <thead className="bg-slate-50 text-slate-600">
-                          <tr>
-                            <th className="px-4 py-2 font-semibold">Date</th>
-                            <th className="px-4 py-2 font-semibold">Staff</th>
-                            <th className="px-4 py-2 font-semibold">Manager</th>
-                            <th className="px-4 py-2 font-semibold">Score</th>
-                            <th className="px-4 py-2 font-semibold">Notes</th>
-                            <th className="px-4 py-2" />
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {qcToRender.length === 0 ? (
-                            <tr>
-                              <td colSpan={6} className="px-4 py-4 text-slate-500">
-                                No QC reviews yet.
-                              </td>
-                            </tr>
-                          ) : (
-                            qcToRender.map((r) => (
-                              <tr key={r.id} className="border-t border-slate-100">
-                                <td className="px-4 py-2">{formatDDMMYYYY(r.reviewed_on)}</td>
-                                <td className="px-4 py-2">{tmLabel({ initials: r.staff?.initials ?? null, name: r.staff?.name ?? null })}</td>
-                                <td className="px-4 py-2">
-                                  {tmLabel({ initials: r.manager?.initials ?? null, name: r.manager?.name ?? null })}
-                                </td>
-                                <td className="px-4 py-2 font-semibold">{r.rating}</td>
-                                <td className="px-4 py-2">{r.notes ?? "—"}</td>
-                                <td className="px-4 py-2 text-right">
-                                  <button
-                                    type="button"
-                                    onClick={() => void deleteQcReview(r.id)}
-                                    className="text-xs font-semibold text-red-700 hover:underline"
-                                  >
-                                    Delete
-                                  </button>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
-
-
       {/* Incident modal – with defaultInitials */}
       {incidentOpen && orgId && locationId && (
         <IncidentModal
@@ -2947,6 +2648,273 @@ async function openQcFromActions() {
           onSaved={refreshAll}
         />
       )}
+
+      {/* Staff QC modal */}
+      {portalReady && qcOpen
+        ? createPortal(
+            <>
+              <div className="fixed inset-0 z-[9998] bg-black/30" onClick={() => setQcOpen(false)} />
+              <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3">
+                <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+                  <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                    <div>
+                      <div className="text-lg font-extrabold text-slate-900">Staff QC</div>
+                      <div className="text-sm text-slate-500">Manager QC reviews for this location</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setQcOpen(false)}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="p-5">
+                    {!managerTeamMember?.id ? (
+                      <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+                        Your login is not linked to a team member (team_members.user_id). You can still view reviews, but you can’t add one until your user is linked.
+                      </div>
+                    ) : null}
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/40 p-4">
+                      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Add review</div>
+
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div className="sm:col-span-1">
+                          <div className="text-xs font-semibold text-slate-600">Staff</div>
+                          <select
+                            value={qcForm.staff_id}
+                            onChange={(e) => setQcForm((f) => ({ ...f, staff_id: e.target.value }))}
+                            className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
+                          >
+                            <option value="">Select…</option>
+                            {teamOptions.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {tmLabel({ initials: t.initials, name: t.name })}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="sm:col-span-1">
+                          <div className="text-xs font-semibold text-slate-600">Date</div>
+                          <input
+                            type="date"
+                            value={qcForm.reviewed_on}
+                            onChange={(e) => setQcForm((f) => ({ ...f, reviewed_on: e.target.value || nowISO }))}
+                            className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-1">
+                          <div className="text-xs font-semibold text-slate-600">Score (1–5)</div>
+                          <select
+                            value={String(qcForm.rating)}
+                            onChange={(e) => setQcForm((f) => ({ ...f, rating: Number(e.target.value) }))}
+                            className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
+                          >
+                            {[1, 2, 3, 4, 5].map((n) => (
+                              <option key={n} value={n}>
+                                {n}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="sm:col-span-3">
+                          <div className="text-xs font-semibold text-slate-600">Notes (optional)</div>
+                          <textarea
+                            value={qcForm.notes}
+                            onChange={(e) => setQcForm((f) => ({ ...f, notes: e.target.value }))}
+                            className="mt-1 h-28 w-full resize-none rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-3 flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void loadQcReviews()}
+                            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            Refresh
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void addQcReview()}
+                            disabled={qcSaving || !managerTeamMember?.id}
+                            className={cls(
+                              "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm",
+                              qcSaving || !managerTeamMember?.id ? "bg-indigo-300 text-white cursor-not-allowed" : "bg-indigo-600 text-white hover:bg-indigo-700"
+                            )}
+                          >
+                            {qcSaving ? "Saving…" : "Add"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 flex items-center justify-between">
+                      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Recent QC reviews</div>
+                      {qcReviews.length > 10 ? (
+                        <button type="button" onClick={() => setShowAllQc((v) => !v)} className="text-sm font-semibold text-indigo-700 hover:underline">
+                          {showAllQc ? "Show less" : "Show all"}
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-2 overflow-hidden rounded-2xl border border-slate-200">
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-slate-50">
+                            <tr className="text-left text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">
+                              <th className="px-3 py-2">Date</th>
+                              <th className="px-3 py-2">Staff</th>
+                              <th className="px-3 py-2">Manager</th>
+                              <th className="px-3 py-2">Score</th>
+                              <th className="px-3 py-2">Notes</th>
+                              <th className="px-3 py-2 text-right"> </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {qcToRender.length === 0 ? (
+                              <tr>
+                                <td className="px-3 py-3 text-slate-500" colSpan={6}>
+                                  No QC reviews yet.
+                                </td>
+                              </tr>
+                            ) : (
+                              qcToRender.map((r) => (
+                                <tr key={r.id} className="border-t border-slate-100">
+                                  <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.reviewed_on)}</td>
+                                  <td className="px-3 py-2 whitespace-nowrap">{tmLabel({ initials: r.staff?.initials ?? null, name: r.staff?.name ?? null })}</td>
+                                  <td className="px-3 py-2 whitespace-nowrap">{tmLabel({ initials: r.manager?.initials ?? null, name: r.manager?.name ?? null })}</td>
+                                  <td className="px-3 py-2 whitespace-nowrap font-semibold">{r.rating}</td>
+                                  <td className="px-3 py-2 min-w-[220px]">{r.notes ?? "—"}</td>
+                                  <td className="px-3 py-2 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={() => void deleteQcReview(r.id)}
+                                      className="rounded-lg px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50"
+                                    >
+                                      Delete
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>,
+            document.body
+          )
+        : null}
+
+      {/* Staff assessment modal */}
+      {portalReady && staffAssessOpen
+        ? createPortal(
+            <>
+              <div className="fixed inset-0 z-[9998] bg-black/30" onClick={() => setStaffAssessOpen(false)} />
+              <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3">
+                <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+                  <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                    <div>
+                      <div className="text-lg font-extrabold text-slate-900">Staff assessment</div>
+                      <div className="text-sm text-slate-500">Quick performance snapshot</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setStaffAssessOpen(false)}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="p-5">
+                    {staffAssessErr ? (
+                      <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">{staffAssessErr}</div>
+                    ) : null}
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div className="sm:col-span-2">
+                        <div className="text-xs font-semibold text-slate-600">Staff</div>
+                        <select
+                          value={staffAssessStaffId}
+                          onChange={(e) => setStaffAssessStaffId(e.target.value)}
+                          className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
+                        >
+                          <option value="">Select…</option>
+                          {teamOptions.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {tmLabel({ initials: t.initials, name: t.name })}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="sm:col-span-1">
+                        <div className="text-xs font-semibold text-slate-600">Range</div>
+                        <select
+                          value={String(staffAssessDays)}
+                          onChange={(e) => setStaffAssessDays(Number(e.target.value))}
+                          className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
+                        >
+                          {[7, 14, 30].map((d) => (
+                            <option key={d} value={d}>
+                              Last {d} days
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/40 p-4">
+                      {staffAssessLoading ? (
+                        <div className="text-sm font-semibold text-slate-600">Loading…</div>
+                      ) : staffAssess ? (
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div className="rounded-xl bg-white p-3">
+                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">Cleaning runs</div>
+                            <div className="mt-1 text-2xl font-extrabold text-slate-900">{staffAssess.cleaningRuns}</div>
+                          </div>
+                          <div className="rounded-xl bg-white p-3">
+                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">Temp logs</div>
+                            <div className="mt-1 text-2xl font-extrabold text-slate-900">{staffAssess.tempLogs}</div>
+                          </div>
+                          <div className="rounded-xl bg-white p-3">
+                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">Temp fails</div>
+                            <div className="mt-1 text-2xl font-extrabold text-slate-900">{staffAssess.tempFails}</div>
+                          </div>
+                          <div className="rounded-xl bg-white p-3">
+                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">Incidents</div>
+                            <div className="mt-1 text-2xl font-extrabold text-slate-900">{staffAssess.incidents}</div>
+                          </div>
+                          <div className="col-span-2 rounded-xl bg-white p-3">
+                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">QC average (30d)</div>
+                            <div className="mt-1 text-2xl font-extrabold text-slate-900">
+                              {staffAssess.qcAvg30d != null ? `${staffAssess.qcAvg30d} / 5` : "—"}{" "}
+                              <span className="text-sm font-semibold text-slate-500">({staffAssess.qcCount30d} reviews)</span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-sm text-slate-600">Select a staff member to see stats.</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>,
+            document.body
+          )
+        : null}
+
       </div>
     
   );
