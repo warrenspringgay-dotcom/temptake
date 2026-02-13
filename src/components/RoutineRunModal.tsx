@@ -3,6 +3,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
@@ -18,6 +19,8 @@ type Props = {
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 };
+
+type MemberRole = "manager" | "staff" | "owner" | "admin" | string;
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
@@ -108,6 +111,57 @@ async function resolveLoggedInInitials(orgId: string): Promise<string | null> {
   }
 }
 
+/* ---------- role → redirect helpers ---------- */
+function getDashboardPathForRole(role: MemberRole | null) {
+  if (!role) return "/manager"; // safer default: send to manager dashboard
+  const r = String(role).toLowerCase();
+  if (r === "manager" || r === "admin" || r === "owner") return "/manager";
+  return "/staff";
+}
+
+async function getDashboardPathForCurrentUser(orgId: string): Promise<string> {
+  try {
+    const { data: authData, error: authErr } = await supabase.auth.getUser();
+    if (authErr) throw authErr;
+
+    const user = authData?.user;
+    if (!user) return "/manager";
+
+    const userId = user.id;
+    const email = user.email?.toLowerCase() ?? null;
+
+    // Prefer user_id match; fallback to email match
+    // (If your team_members table doesn't have user_id, this will just return no rows.)
+    const byUserId = await supabase
+      .from("team_members")
+      .select("role")
+      .eq("org_id", orgId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (!byUserId.error && byUserId.data?.role) {
+      return getDashboardPathForRole(byUserId.data.role as MemberRole);
+    }
+
+    if (email) {
+      const byEmail = await supabase
+        .from("team_members")
+        .select("role")
+        .eq("org_id", orgId)
+        .ilike("email", email)
+        .maybeSingle();
+
+      if (!byEmail.error && byEmail.data?.role) {
+        return getDashboardPathForRole(byEmail.data.role as MemberRole);
+      }
+    }
+
+    return "/manager";
+  } catch {
+    return "/manager";
+  }
+}
+
 /** Render modal at document.body level so it isn't "fixed inside a transformed parent" */
 function ModalPortal({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
@@ -124,6 +178,8 @@ export default function RoutineRunModal({
   onClose,
   onSaved,
 }: Props) {
+  const router = useRouter();
+
   const [date, setDate] = useState(defaultDate);
   const [initials, setInitials] = useState(defaultInitials || "");
   const [temps, setTemps] = useState<Record<string, string>>({});
@@ -132,9 +188,9 @@ export default function RoutineRunModal({
   const [activeIdx, setActiveIdx] = useState(0);
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const rowRefs = useRef<Record<string, HTMLTableRowElement | HTMLDivElement | null>>(
-    {}
-  );
+  const rowRefs = useRef<
+    Record<string, HTMLTableRowElement | HTMLDivElement | null>
+  >({});
 
   const items = useMemo(() => routine?.items ?? [], [routine]);
 
@@ -291,8 +347,17 @@ export default function RoutineRunModal({
         return;
       }
 
+      // ✅ decide redirect target by role
+      const redirectTo = await getDashboardPathForCurrentUser(String(org_id));
+
       await onSaved();
+
+      // close modal before navigating
+      if (listening) stop();
       onClose();
+
+      // ✅ redirect
+      router.replace(redirectTo);
     } finally {
       setSaving(false);
     }
@@ -384,7 +449,8 @@ export default function RoutineRunModal({
             {voiceSupported && (
               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
                 Say: <strong>"fish 75.2"</strong> or <strong>"stop"</strong>.
-                It matches your phrase to the closest routine item name and fills that temp.
+                It matches your phrase to the closest routine item name and fills
+                that temp.
               </div>
             )}
 
@@ -457,7 +523,10 @@ export default function RoutineRunModal({
                             )}
                             value={temps[it.id] ?? ""}
                             onChange={(e) =>
-                              setTemps((t) => ({ ...t, [it.id]: e.target.value }))
+                              setTemps((t) => ({
+                                ...t,
+                                [it.id]: e.target.value,
+                              }))
                             }
                             placeholder="e.g. 75.1"
                             inputMode="decimal"
