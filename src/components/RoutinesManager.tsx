@@ -156,44 +156,14 @@ export default function RoutineManager() {
     refresh();
   }, []);
 
-  // ================= Permissions (FIXED for multi-location) =================
+  // ================= Permissions =================
   useEffect(() => {
-    let cancelled = false;
-
     (async () => {
       try {
         const [id, userRes] = await Promise.all([getActiveOrgIdClient(), supabase.auth.getUser()]);
-        const emailRaw = userRes.data.user?.email ?? null;
-        const email = emailRaw ? emailRaw.trim().toLowerCase() : null;
-        const userId = userRes.data.user?.id ?? null;
-
-        if (!id || (!email && !userId)) {
-          if (!cancelled) setCanManage(false);
-          return;
-        }
-
-        const isAllowedRole = (role: any) => {
-          const r = String(role ?? "").toLowerCase().trim();
-          return r === "owner" || r === "manager" || r === "admin";
-        };
-
-        // 1) Try user_id (multi rows possible)
-        if (userId) {
-          const { data, error } = await supabase
-            .from("team_members")
-            .select("role")
-            .eq("org_id", id)
-            .eq("user_id", userId);
-
-          if (!error && Array.isArray(data) && data.some((row) => isAllowedRole((row as any).role))) {
-            if (!cancelled) setCanManage(true);
-            return;
-          }
-        }
-
-        // 2) Fallback email (multi rows possible)
-        if (!email) {
-          if (!cancelled) setCanManage(false);
+        const email = userRes.data.user?.email?.toLowerCase() ?? null;
+        if (!id || !email) {
+          setCanManage(false);
           return;
         }
 
@@ -201,22 +171,20 @@ export default function RoutineManager() {
           .from("team_members")
           .select("role,email")
           .eq("org_id", id)
-          .ilike("email", email);
+          .eq("email", email)
+          .maybeSingle();
 
-        if (error || !Array.isArray(data) || data.length === 0) {
-          if (!cancelled) setCanManage(false);
+        if (error) {
+          setCanManage(false);
           return;
         }
 
-        if (!cancelled) setCanManage(data.some((row) => isAllowedRole((row as any).role)));
+        const role = (data?.role ?? "").toLowerCase();
+        setCanManage(role === "owner" || role === "manager" || role === "admin");
       } catch {
-        if (!cancelled) setCanManage(false);
+        setCanManage(false);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   // ================= Default initials for run modal =================
@@ -270,12 +238,13 @@ export default function RoutineManager() {
       alert("Only managers / owners can edit routines.");
       return;
     }
+    // Deep clone so edits don’t mutate the table list until saved
     setEditing(JSON.parse(JSON.stringify(r)));
     setEditOpen(true);
   }
 
   function openRun(r: RoutineRow) {
-    if (!r.id) return;
+    if (!r.id) return; // only saved routines can be run
     setRunRoutine(r);
   }
 
@@ -292,11 +261,14 @@ export default function RoutineManager() {
         currentOrgId = await getActiveOrgIdClient();
         setOrgId(currentOrgId);
       }
-      if (!currentOrgId) throw new Error("No organisation found.");
+      if (!currentOrgId) {
+        throw new Error("No organisation found.");
+      }
 
       let routineId = editing.id;
 
       if (!routineId) {
+        // NEW routine → INSERT into temp_routines first
         const { data, error } = await supabase
           .from("temp_routines")
           .insert({
@@ -310,6 +282,7 @@ export default function RoutineManager() {
         if (error) throw error;
         routineId = data.id as string;
       } else {
+        // Existing routine → UPDATE
         const { error: uErr } = await supabase
           .from("temp_routines")
           .update({
@@ -320,9 +293,11 @@ export default function RoutineManager() {
 
         if (uErr) throw uErr;
 
+        // Clear old items before re-inserting
         await supabase.from("temp_routine_items").delete().eq("routine_id", routineId);
       }
 
+      // Insert items for both new + existing routines
       const inserts = editing.items.map((it, i) => ({
         routine_id: routineId,
         position: it.position ?? i + 1,
@@ -654,7 +629,10 @@ export default function RoutineManager() {
       {/* ===== Edit Modal ===== */}
       {editOpen && editing && (
         <ModalPortal>
-          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 backdrop-blur-sm" onClick={() => setEditOpen(false)}>
+          <div
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/40 backdrop-blur-sm"
+            onClick={() => setEditOpen(false)}
+          >
             <div
               className="mx-auto mt-10 w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
@@ -690,28 +668,9 @@ export default function RoutineManager() {
               </div>
 
               <div className="mt-4">
+                {/* CHANGED: removed header-level Add step button */}
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-sm font-semibold text-slate-900">Steps</div>
-                  <button
-                    className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                    onClick={() =>
-                      setEditing({
-                        ...editing,
-                        items: [
-                          ...editing.items,
-                          {
-                            position: (editing.items.at(-1)?.position ?? 0) + 1,
-                            location: "",
-                            item: "",
-                            target_key: "chill",
-                          },
-                        ],
-                      })
-                    }
-                    type="button"
-                  >
-                    + Add step
-                  </button>
                 </div>
 
                 <div className="space-y-2">
@@ -766,7 +725,12 @@ export default function RoutineManager() {
                         </select>
                         <button
                           className="h-10 rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-700 hover:bg-slate-50"
-                          onClick={() => setEditing({ ...editing, items: editing.items.filter((_, idx) => idx !== i) })}
+                          onClick={() =>
+                            setEditing({
+                              ...editing,
+                              items: editing.items.filter((_, idx) => idx !== i),
+                            })
+                          }
                           type="button"
                         >
                           Remove
@@ -783,7 +747,29 @@ export default function RoutineManager() {
                 </div>
               </div>
 
-              <div className="mt-4 flex justify-end gap-2">
+              {/* CHANGED: Add step moved to footer near Save/Cancel */}
+              <div className="mt-4 flex flex-wrap justify-end gap-2">
+                <button
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  onClick={() =>
+                    setEditing({
+                      ...editing,
+                      items: [
+                        ...editing.items,
+                        {
+                          position: (editing.items.at(-1)?.position ?? 0) + 1,
+                          location: "",
+                          item: "",
+                          target_key: "chill",
+                        },
+                      ],
+                    })
+                  }
+                  type="button"
+                >
+                  + Add step
+                </button>
+
                 <button
                   className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   onClick={() => setEditOpen(false)}
