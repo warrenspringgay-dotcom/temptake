@@ -1621,7 +1621,7 @@ async function openQcFromActions() {
           <KpiTile title="Cleaning" icon="🧼" tone={cleaningTone} value={`${cleaningDoneTotal}/${cleaningTotal}`} sub="Tasks completed today" />
           <KpiTile title="Incidents" icon="⚠️" tone={incidentsTone} value={incidentsToday} sub={`Last 7d: ${incidents7d}`} />
           <KpiTile title="Training" icon="🎓" tone={trainingTone} value={`${trainingExpired} expired`} sub={`${trainingDueSoon} due in 30d`} />
-          <KpiTile title="Calibration" icon="🛠" tone={calibrationDue ? "danger" : "ok"} value={calibrationDue ? "Due" : "Up to date"} sub="30-day cycle" />
+         
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
