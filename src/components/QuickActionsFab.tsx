@@ -41,6 +41,8 @@ type FormState = {
   temp_c: string;
 };
 
+type MemberRole = "manager" | "staff" | "owner" | "admin" | string;
+
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
 
@@ -581,6 +583,9 @@ export default function TempFab() {
     temp_c: "",
   });
 
+  // ✅ Logged-in user's role (resolved once)
+  const [myRole, setMyRole] = useState<MemberRole | null>(null);
+
   const canSave =
     !!form.date &&
     !!form.location &&
@@ -641,6 +646,19 @@ export default function TempFab() {
   // ✅ Incident modal state (NEW)
   const [incidentOpen, setIncidentOpen] = useState(false);
   const [incidentArea, setIncidentArea] = useState<string | null>(null);
+
+  function getDashboardPathForRole(role: MemberRole | null) {
+    // Manager-ish roles go to /dashboard, everyone else goes to /staff
+    if (!role) return "/dashboard";
+    const r = String(role).toLowerCase();
+    if (r === "manager" || r === "admin" || r === "owner") return "/dashboard";
+    return "/staff";
+  }
+
+  function redirectAfterTemp() {
+    const path = getDashboardPathForRole(myRole);
+    router.push(path);
+  }
 
   function closeCorrective() {
     setCorrective((c) => ({ ...c, open: false }));
@@ -703,6 +721,9 @@ export default function TempFab() {
       try {
         window.dispatchEvent(new Event("tt-temps-changed"));
       } catch {}
+
+      // ✅ Now that the "failed temp" flow is complete, redirect
+      redirectAfterTemp();
     } catch (e: any) {
       console.error(e);
       addToast({
@@ -1047,7 +1068,7 @@ export default function TempFab() {
             supabase.auth.getUser(),
             supabase
               .from("team_members")
-              .select("initials,email")
+              .select("initials,email,role")
               .eq("org_id", orgId)
               .order("initials", { ascending: true }),
           ]);
@@ -1061,17 +1082,20 @@ export default function TempFab() {
               )
               .filter(Boolean) || [];
 
+          const mineRow =
+            (tmData ?? []).find(
+              (r: any) =>
+                r.email &&
+                email &&
+                r.email.toString().toLowerCase() === email
+            ) ?? null;
+
           let mine =
-            (tmData ?? [])
-              .find(
-                (r: any) =>
-                  r.email &&
-                  email &&
-                  r.email.toString().toLowerCase() === email
-              )
-              ?.initials?.toString()
-              .toUpperCase()
-              .trim() || "";
+            mineRow?.initials?.toString().toUpperCase().trim() || "";
+
+          // ✅ capture role for redirects
+          const role = (mineRow?.role ?? null) as MemberRole | null;
+          if (role) setMyRole(role);
 
           if (!mine) {
             try {
@@ -1321,7 +1345,7 @@ export default function TempFab() {
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
     await refreshEntriesToday();
 
-    // ✅ If FAIL, open corrective action modal
+    // ✅ If FAIL, open corrective action modal (and redirect only after corrective saved)
     if (status === "fail" && inserted?.id) {
       const staffIni = (form.staff_initials || "").toUpperCase().trim();
       setCorrective({
@@ -1343,7 +1367,10 @@ export default function TempFab() {
       return;
     }
 
+    // ✅ PASS: close and redirect immediately
     setOpen(false);
+    setShowMenu(false);
+    redirectAfterTemp();
   }
 
   /* --------- routines --------- */
@@ -1523,7 +1550,8 @@ export default function TempFab() {
                     posthog.capture("fab_choose_quick_temp");
                   }}
                   className="w-full rounded-xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/40 hover:brightness-105"
-                ><Thermometer className="inline h-4 w-4 mr-2" />
+                >
+                  <Thermometer className="inline h-4 w-4 mr-2" />
                   Quick temp log
                 </button>
 
@@ -1558,29 +1586,29 @@ export default function TempFab() {
                 <button
                   type="button"
                   onClick={async () => {
-  setShowMenu(false);
+                    setShowMenu(false);
 
-  const orgId = await getActiveOrgIdClient();
-  const locationId = await getActiveLocationIdClient();
+                    const orgId = await getActiveOrgIdClient();
+                    const locationId = await getActiveLocationIdClient();
 
-  if (!orgId || !locationId) {
-    addToast({
-      title: "Select a location first",
-      message: "You need an active site/location to log an incident.",
-      type: "error",
-    });
-    return;
-  }
+                    if (!orgId || !locationId) {
+                      addToast({
+                        title: "Select a location first",
+                        message:
+                          "You need an active site/location to log an incident.",
+                        type: "error",
+                      });
+                      return;
+                    }
 
-  setActiveOrgId(orgId);
-  setActiveLocationId(locationId);
+                    setActiveOrgId(orgId);
+                    setActiveLocationId(locationId);
 
-  setIncidentArea(form.location ? String(form.location) : null);
-  setIncidentOpen(true);
+                    setIncidentArea(form.location ? String(form.location) : null);
+                    setIncidentOpen(true);
 
-  posthog.capture("fab_choose_log_incident");
-}}
-
+                    posthog.capture("fab_choose_log_incident");
+                  }}
                   className="w-full rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:brightness-105"
                 >
                   <span className="inline-flex items-center justify-center gap-2">
@@ -1597,7 +1625,8 @@ export default function TempFab() {
                     posthog.capture("fab_choose_wall");
                   }}
                   className="w-full rounded-xl bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-500/40 hover:brightness-105"
-                ><MessageSquare className="inline h-4 w-4 mr-2" />
+                >
+                  <MessageSquare className="inline h-4 w-4 mr-2" />
                   Open wall
                 </button>
 
@@ -1630,21 +1659,20 @@ export default function TempFab() {
         area={form.location ? String(form.location) : null}
       />
 
-  <IncidentModal
-  open={incidentOpen}
-  onClose={() => setIncidentOpen(false)}
-  orgId={activeOrgId ?? ""}
-  locationId={activeLocationId ?? ""}
-  defaultDate={isoToday()}
-  defaultInitials={form.staff_initials || ""}
-  defaultArea={incidentArea || form.location || null}
-  onSaved={() => {
-    try {
-      window.dispatchEvent(new Event("tt-incidents-changed"));
-    } catch {}
-  }}
-/>
-
+      <IncidentModal
+        open={incidentOpen}
+        onClose={() => setIncidentOpen(false)}
+        orgId={activeOrgId ?? ""}
+        locationId={activeLocationId ?? ""}
+        defaultDate={isoToday()}
+        defaultInitials={form.staff_initials || ""}
+        defaultArea={incidentArea || form.location || null}
+        onSaved={() => {
+          try {
+            window.dispatchEvent(new Event("tt-incidents-changed"));
+          } catch {}
+        }}
+      />
 
       {/* Day sign-off modal */}
       <SignoffModal
