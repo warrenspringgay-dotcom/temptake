@@ -110,6 +110,29 @@ function todayISODate() {
   return d.toISOString().slice(0, 10);
 }
 
+function addYearsISO(isoDate: string, years: number) {
+  // isoDate: "YYYY-MM-DD"
+  if (!isoDate) return "";
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return "";
+
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const targetYear = dt.getUTCFullYear() + years;
+  const targetMonth = dt.getUTCMonth();
+  const targetDay = dt.getUTCDate();
+
+  const candidate = new Date(Date.UTC(targetYear, targetMonth, targetDay));
+
+  // Handle Feb 29 -> Feb 28 on non-leap years
+  if (candidate.getUTCMonth() !== targetMonth) {
+    const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0));
+    return lastDay.toISOString().slice(0, 10);
+  }
+
+  return candidate.toISOString().slice(0, 10);
+}
+
+
 /** Global rule: render as DD/MM/YYYY */
 function formatDate(d: string | null | undefined) {
   if (!d) return "—";
@@ -826,10 +849,17 @@ export default function TeamManager() {
         certificate_url = up.url || certificate_url;
       }
 
-      const awarded_on =
-        (editCertForm.awarded_on ?? "").trim() || new Date().toISOString().slice(0, 10);
+ const awarded_on =
+  (editCertForm.awarded_on ?? "").trim() || new Date().toISOString().slice(0, 10);
 
-      const expires_on = (editCertForm.expires_on ?? "").trim() || null;
+const expires_on_raw = (editCertForm.expires_on ?? "").trim();
+
+const expires_on =
+  expires_on_raw
+    ? expires_on_raw
+    : awarded_on
+    ? addYearsISO(awarded_on, 2)
+    : null;
 
       await createTrainingServer({
         teamMemberId: editing.id,
@@ -1373,9 +1403,17 @@ export default function TeamManager() {
                             type="date"
                             className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
                             value={editCertForm.awarded_on}
-                            onChange={(e) =>
-                              setEditCertForm((p) => ({ ...p, awarded_on: e.target.value }))
-                            }
+                            onChange={(e) => {
+  const awarded = e.target.value;
+
+  setEditCertForm((p) => ({
+    ...p,
+    awarded_on: awarded,
+    // hard rule: 2 years from pass date
+    expires_on: awarded ? addYearsISO(awarded, 2) : "",
+  }));
+}}
+
                             aria-label="Date passed"
                           />
                         </div>
@@ -1384,15 +1422,15 @@ export default function TeamManager() {
                           <label className="block text-[11px] font-medium text-slate-600">
                             Expiry date
                           </label>
-                          <input
-                            type="date"
-                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                            value={editCertForm.expires_on}
-                            onChange={(e) =>
-                              setEditCertForm((p) => ({ ...p, expires_on: e.target.value }))
-                            }
-                            aria-label="Expiry date"
-                          />
+                        <input
+  type="date"
+  className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+  value={editCertForm.expires_on}
+  readOnly
+  aria-label="Expiry date"
+/>
+
+                         
                         </div>
                       </div>
 
