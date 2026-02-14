@@ -1,5 +1,4 @@
 // src/app/api/webhooks/welcome-email/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { sendEmail } from "@/lib/email";
@@ -21,6 +20,29 @@ function getHeader(req: NextRequest, name: string) {
   return req.headers.get(name) ?? req.headers.get(name.toLowerCase());
 }
 
+function mask(s?: string | null) {
+  if (!s) return null;
+  if (s.length <= 8) return "********";
+  return `${s.slice(0, 4)}…${s.slice(-4)}`;
+}
+
+// Quick “is this route deployed + env present?” check
+export async function GET() {
+  return json(200, {
+    ok: true,
+    route: "welcome-email",
+    hasSecret: !!process.env.TT_DB_WEBHOOK_SECRET,
+    hasResendKey:
+      !!process.env.RESEND_API_KEY ||
+      !!process.env.RESEND_API_KEY_PROD ||
+      !!process.env.RESEND_KEY, // in case you named it weirdly
+    appUrl:
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      null,
+  });
+}
+
 export async function POST(req: NextRequest) {
   try {
     // 1) Verify secret
@@ -28,11 +50,24 @@ export async function POST(req: NextRequest) {
     const received = getHeader(req, "x-tt-webhook-secret");
 
     if (!expected || !received || received !== expected) {
+      console.warn("welcome-email: webhook auth failed", {
+        expected: mask(expected),
+        received: mask(received),
+        hasExpected: !!expected,
+        hasReceived: !!received,
+      });
       return json(401, { ok: false, reason: "unauthorized" });
     }
 
     // 2) Parse payload
     const payload = (await req.json()) as SupabaseDbWebhookPayload;
+
+    console.log("welcome-email: payload received", {
+      type: payload?.type,
+      table: payload?.table,
+      schema: payload?.schema,
+      hasRecord: !!payload?.record,
+    });
 
     if (payload.type !== "INSERT") return json(200, { ok: true, ignored: "not_insert" });
     if (payload.table !== "billing_subscriptions")
@@ -50,7 +85,7 @@ export async function POST(req: NextRequest) {
 
     // Optional: only trialing
     if (sub.status && sub.status !== "trialing") {
-      return json(200, { ok: true, ignored: "not_trialing" });
+      return json(200, { ok: true, ignored: "not_trialing", status: sub.status });
     }
 
     // 3) Idempotency guard
@@ -95,8 +130,11 @@ export async function POST(req: NextRequest) {
       return json(200, { ok: true, ignored: "no_email" });
     }
 
-    // 5) Build branded email (PROPERLY using wrapHtml(title, body))
-    const fallbackOrigin = process.env.NEXT_PUBLIC_SITE_URL || "https://temptake.com";
+    // 5) Build email
+    const fallbackOrigin =
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      "https://temptake.com";
     const origin = getOriginFromEnv(fallbackOrigin);
 
     const logoUrl = `${origin}/logo.png`;
@@ -148,17 +186,36 @@ export async function POST(req: NextRequest) {
     const subject = "Welcome to TempTake | Your trial is live";
     const html = wrapHtml("Welcome to TempTake", body);
 
-    // 6) Send
-    await sendEmail({
-      to: toEmail,
-      subject,
-      html,
-      // from: "TempTake <info@temptake.com>", // enable if your sendEmail supports it
-    });
+    // 6) Send (and LOG RESULT)
+    let sendResult: any = null;
+    try {
+      sendResult = await sendEmail({ to: toEmail, subject, html });
+      console.log("welcome-email: sent", { to: toEmail, org_id: updated.org_id, sendResult });
+    } catch (e: any) {
+      console.error("welcome-email: send failed", e?.message ?? e, {
+        to: toEmail,
+        org_id: updated.org_id,
+      });
 
-    return json(200, { ok: true, sent: true, to: toEmail, org_id: updated.org_id, sub_id: updated.id });
-  } catch (err) {
-    console.error("welcome-email fatal", err);
-    return json(500, { ok: false, reason: "fatal" });
+      // roll back the idempotency mark so you can retry
+      await supabaseAdmin
+        .from("billing_subscriptions")
+        .update({ welcome_email_sent_at: null })
+        .eq("id", updated.id);
+
+      return json(500, { ok: false, reason: "send_failed", message: e?.message ?? "error" });
+    }
+
+    return json(200, {
+      ok: true,
+      sent: true,
+      to: toEmail,
+      org_id: updated.org_id,
+      sub_id: updated.id,
+      sendResult,
+    });
+  } catch (err: any) {
+    console.error("welcome-email fatal", err?.message ?? err);
+    return json(500, { ok: false, reason: "fatal", message: err?.message ?? "error" });
   }
 }
