@@ -937,7 +937,7 @@ const expires_on =
           Loading…
         </div>
       ) : filtered.length ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 lg:grid-cols-2">
           {filtered.map((m) => {
             const initials = safeInitials(m) || "—";
             const roleLabel = prettyRole(m.role);
@@ -1037,7 +1037,7 @@ const expires_on =
                 </div>
 
                 {/* Body */}
-                <div className="space-y-1 text-xs text-slate-800">
+                <div className="space-y-3 text-xs text-slate-800">
                   <div className="flex justify-between gap-2">
                     <span className="text-slate-500">Email</span>
                     <span className="max-w-[70%] truncate text-right">{m.email ?? "—"}</span>
