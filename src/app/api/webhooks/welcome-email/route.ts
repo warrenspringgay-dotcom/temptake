@@ -20,29 +20,6 @@ function getHeader(req: NextRequest, name: string) {
   return req.headers.get(name) ?? req.headers.get(name.toLowerCase());
 }
 
-function mask(s?: string | null) {
-  if (!s) return null;
-  if (s.length <= 8) return "********";
-  return `${s.slice(0, 4)}…${s.slice(-4)}`;
-}
-
-// Quick “is this route deployed + env present?” check
-export async function GET() {
-  return json(200, {
-    ok: true,
-    route: "welcome-email",
-    hasSecret: !!process.env.TT_DB_WEBHOOK_SECRET,
-    hasResendKey:
-      !!process.env.RESEND_API_KEY ||
-      !!process.env.RESEND_API_KEY_PROD ||
-      !!process.env.RESEND_KEY, // in case you named it weirdly
-    appUrl:
-      process.env.NEXT_PUBLIC_SITE_URL ||
-      process.env.NEXT_PUBLIC_APP_URL ||
-      null,
-  });
-}
-
 export async function POST(req: NextRequest) {
   try {
     // 1) Verify secret
@@ -50,28 +27,14 @@ export async function POST(req: NextRequest) {
     const received = getHeader(req, "x-tt-webhook-secret");
 
     if (!expected || !received || received !== expected) {
-      console.warn("welcome-email: webhook auth failed", {
-        expected: mask(expected),
-        received: mask(received),
-        hasExpected: !!expected,
-        hasReceived: !!received,
-      });
       return json(401, { ok: false, reason: "unauthorized" });
     }
 
     // 2) Parse payload
     const payload = (await req.json()) as SupabaseDbWebhookPayload;
 
-    console.log("welcome-email: payload received", {
-      type: payload?.type,
-      table: payload?.table,
-      schema: payload?.schema,
-      hasRecord: !!payload?.record,
-    });
-
     if (payload.type !== "INSERT") return json(200, { ok: true, ignored: "not_insert" });
-    if (payload.table !== "billing_subscriptions")
-      return json(200, { ok: true, ignored: "wrong_table" });
+    if (payload.table !== "billing_subscriptions") return json(200, { ok: true, ignored: "wrong_table" });
     if (!payload.record) return json(200, { ok: true, ignored: "no_record" });
 
     const sub = payload.record as {
@@ -79,37 +42,43 @@ export async function POST(req: NextRequest) {
       org_id: string;
       user_id?: string | null;
       status?: string | null;
+      welcome_email_sent_at?: string | null;
     };
 
     if (!sub.id || !sub.org_id) return json(200, { ok: true, ignored: "missing_ids" });
 
     // Optional: only trialing
     if (sub.status && sub.status !== "trialing") {
-      return json(200, { ok: true, ignored: "not_trialing", status: sub.status });
+      return json(200, { ok: true, ignored: "not_trialing" });
     }
 
-    // 3) Idempotency guard
-    const { data: updated, error: updateError } = await supabaseAdmin
+    // 3) Idempotency lock WITHOUT marking as sent:
+    // Claim the right to send by setting a "lock" timestamp if sent_at is null
+    // We'll use welcome_email_sent_at as a lock but revert if send fails.
+    // Better long-term: add welcome_email_lock_at + welcome_email_sent_at.
+    const lockStamp = new Date().toISOString();
+
+    const { data: locked, error: lockError } = await supabaseAdmin
       .from("billing_subscriptions")
-      .update({ welcome_email_sent_at: new Date().toISOString() })
+      .update({ welcome_email_sent_at: lockStamp }) // temporary lock
       .eq("id", sub.id)
       .is("welcome_email_sent_at", null)
       .select("id, org_id, user_id")
       .maybeSingle();
 
-    if (updateError) {
-      console.error("welcome-email: idempotency failed", updateError);
-      return json(500, { ok: false, reason: "db_guard_failed" });
+    if (lockError) {
+      console.error("welcome-email: lock failed", lockError);
+      return json(500, { ok: false, reason: "db_lock_failed" });
     }
 
-    if (!updated) return json(200, { ok: true, ignored: "already_sent" });
+    if (!locked) return json(200, { ok: true, ignored: "already_sent_or_locked" });
 
     // 4) Resolve recipient email
     let toEmail: string | null = null;
 
-    if (updated.user_id) {
+    if (locked.user_id) {
       const { data: userRes, error: userErr } =
-        await supabaseAdmin.auth.admin.getUserById(updated.user_id);
+        await supabaseAdmin.auth.admin.getUserById(locked.user_id);
 
       if (userErr) console.error("welcome-email: getUser error", userErr);
       toEmail = userRes?.user?.email ?? null;
@@ -119,22 +88,27 @@ export async function POST(req: NextRequest) {
       const { data: org } = await supabaseAdmin
         .from("organisations")
         .select("owner_email")
-        .eq("id", updated.org_id)
+        .eq("id", locked.org_id)
         .maybeSingle();
 
       if (org?.owner_email) toEmail = org.owner_email;
     }
 
     if (!toEmail) {
-      console.warn("welcome-email: no recipient found", { org_id: updated.org_id });
+      console.warn("welcome-email: no recipient found", { org_id: locked.org_id });
+
+      // Release lock so it can be retried later if email gets populated
+      await supabaseAdmin
+        .from("billing_subscriptions")
+        .update({ welcome_email_sent_at: null })
+        .eq("id", locked.id)
+        .eq("welcome_email_sent_at", lockStamp);
+
       return json(200, { ok: true, ignored: "no_email" });
     }
 
-    // 5) Build email
-    const fallbackOrigin =
-      process.env.NEXT_PUBLIC_SITE_URL ||
-      process.env.NEXT_PUBLIC_APP_URL ||
-      "https://temptake.com";
+    // 5) Build branded email
+    const fallbackOrigin = process.env.NEXT_PUBLIC_SITE_URL || "https://temptake.com";
     const origin = getOriginFromEnv(fallbackOrigin);
 
     const logoUrl = `${origin}/logo.png`;
@@ -186,36 +160,27 @@ export async function POST(req: NextRequest) {
     const subject = "Welcome to TempTake | Your trial is live";
     const html = wrapHtml("Welcome to TempTake", body);
 
-    // 6) Send (and LOG RESULT)
-    let sendResult: any = null;
+    // 6) Send (if this throws, we release the lock)
     try {
-      sendResult = await sendEmail({ to: toEmail, subject, html });
-      console.log("welcome-email: sent", { to: toEmail, org_id: updated.org_id, sendResult });
-    } catch (e: any) {
-      console.error("welcome-email: send failed", e?.message ?? e, {
-        to: toEmail,
-        org_id: updated.org_id,
-      });
+      await sendEmail({ to: toEmail, subject, html });
+    } catch (e) {
+      console.error("welcome-email: send failed", e);
 
-      // roll back the idempotency mark so you can retry
+      // Release lock so a retry can happen
       await supabaseAdmin
         .from("billing_subscriptions")
         .update({ welcome_email_sent_at: null })
-        .eq("id", updated.id);
+        .eq("id", locked.id)
+        .eq("welcome_email_sent_at", lockStamp);
 
-      return json(500, { ok: false, reason: "send_failed", message: e?.message ?? "error" });
+      return json(500, { ok: false, reason: "send_failed" });
     }
 
-    return json(200, {
-      ok: true,
-      sent: true,
-      to: toEmail,
-      org_id: updated.org_id,
-      sub_id: updated.id,
-      sendResult,
-    });
-  } catch (err: any) {
-    console.error("welcome-email fatal", err?.message ?? err);
-    return json(500, { ok: false, reason: "fatal", message: err?.message ?? "error" });
+    // If you want *real* sent_at, add a new column.
+    // For now this stays as "sent" timestamp (it already is lockStamp).
+    return json(200, { ok: true, sent: true, to: toEmail, org_id: locked.org_id, sub_id: locked.id });
+  } catch (err) {
+    console.error("welcome-email fatal", err);
+    return json(500, { ok: false, reason: "fatal" });
   }
 }
