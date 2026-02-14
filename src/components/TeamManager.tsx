@@ -1087,10 +1087,12 @@ const expires_on =
       {editOpen && editing && (
         <ModalPortal>
           <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setEditOpen(false)}>
-            <div
-              className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-6rem)] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
+          <div
+  className="mx-auto mt-10 w-[min(1100px,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur
+             max-h-[calc(100dvh-5rem)] overflow-y-auto"
+  onClick={(e) => e.stopPropagation()}
+>
+
               <div className="mb-3 flex items-center justify-between">
                 <div className="text-base font-semibold">
                   {editing.id ? "Edit member" : "Add member"}
