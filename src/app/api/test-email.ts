@@ -7,7 +7,7 @@ export async function GET() {
 
   await resend.emails.send({
     from: "info@temptake.com",
-    to: "yourpersonalemail@gmail.com",
+    to: "warrenspringgay@gmail.com",
     subject: "Test",
     html: "<p>Test email</p>",
   });
