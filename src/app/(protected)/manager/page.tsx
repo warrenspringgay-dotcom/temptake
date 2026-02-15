@@ -2085,7 +2085,7 @@ async function openQcFromActions() {
               setQcOpen(true);
               await Promise.all([loadTeamOptions(locationId), loadLoggedInManager(), loadQcReviews()]);
             }}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            className="rounded-xl border border-slate-200 bg-white px-4 py-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
           >
             Open QC
           </button>
@@ -2425,7 +2425,7 @@ async function openQcFromActions() {
             onClick={openCalibrationFromActions}
             disabled={!orgId || !locationId}
             className={cls(
-              "rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm",
+              "rounded-xl border border-slate-200 bg-white px-4 py-4 text-sm font-semibold text-slate-700 shadow-sm",
               !orgId || !locationId ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50"
             )}
           >
