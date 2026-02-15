@@ -2075,6 +2075,7 @@ async function openQcFromActions() {
 
       {/* Manager QC Summary table */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="min-w-0">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Manager QC</div>
@@ -2089,12 +2090,12 @@ async function openQcFromActions() {
               setQcOpen(true);
               await Promise.all([loadTeamOptions(locationId), loadLoggedInManager(), loadQcReviews()]);
             }}
-            className="rounded-xl border border-slate-200 bg-white px-6 py-6 text-sm font-semibold text-center text-slate-700 shadow-sm hover:bg-slate-50"
-          >
+             className="shrink-0 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+  >
             Open QC
           </button>
         </div>
-
+</div>
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
           <table className="min-w-full text-xs">
             <thead className="bg-slate-50">
