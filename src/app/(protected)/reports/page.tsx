@@ -2020,7 +2020,7 @@ export default function ReportsPage() {
             Calibration checks {calibrationChecks ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
           <p className="mb-3 text-xs text-slate-500">
-            Log from <code>calibration_checks</code>. This section is <span className="font-semibold">location-specific</span>. If you pick “All locations”, it will show nothing.
+            Systimatic calibrations carried out on cold stores, probes and thermometers.
           </p>
 
           <div className="overflow-x-auto">
