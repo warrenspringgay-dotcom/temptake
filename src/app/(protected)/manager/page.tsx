@@ -2419,18 +2419,20 @@ async function openQcFromActions() {
 
       {/* Calibration checks (simple) */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+      <div className="min-w-0">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Calibration</div>
             <div className="mt-0.5 text-sm font-semibold text-slate-900">Calibration log (this location)</div>
           </div>
-
+</div>
           <button
             type="button"
             onClick={openCalibrationFromActions}
             disabled={!orgId || !locationId}
             className={cls(
-              "rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm",
+              "shrink-0 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50",
+  
               !orgId || !locationId ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50"
             )}
           >
