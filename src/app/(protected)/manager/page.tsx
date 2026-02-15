@@ -1877,18 +1877,20 @@ async function openQcFromActions() {
         <TableFooterToggle total={incidentsHistory.length} showingAll={showAllIncidents} onToggle={() => setShowAllIncidents((v) => !v)} />
       </section>
 
-      {/* Activity */}
+           {/* Activity */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today&apos;s activity</div>
           <div className="mt-0.5 text-sm font-semibold text-slate-900">Temps + cleaning (category-based)</div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
+        {/* ✅ Key fix: min-w-0 on grid + children so tables can't blow out the card */}
+        <div className="grid gap-4 md:grid-cols-2 min-w-0">
+          {/* LEFT COLUMN */}
+          <div className="min-w-0">
             <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Temperature logs</h3>
 
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+            <div className="w-full overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
                 <thead className="bg-slate-50">
                   <tr className="text-left text-slate-500">
@@ -1943,7 +1945,7 @@ async function openQcFromActions() {
               Temp failures & corrective actions
             </h3>
 
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+            <div className="w-full overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
                 <thead className="bg-slate-50">
                   <tr className="text-left text-slate-500">
@@ -1981,10 +1983,11 @@ async function openQcFromActions() {
             <TableFooterToggle total={tempFailsToday.length} showingAll={showAllTempFails} onToggle={() => setShowAllTempFails((v) => !v)} />
           </div>
 
-          <div>
+          {/* RIGHT COLUMN */}
+          <div className="min-w-0">
             <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Cleaning runs</h3>
 
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+            <div className="w-full overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
                 <thead className="bg-slate-50">
                   <tr className="text-left text-slate-500">
@@ -2022,6 +2025,7 @@ async function openQcFromActions() {
           </div>
         </div>
       </section>
+
 
       {/* Day sign-offs table */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
@@ -2085,7 +2089,7 @@ async function openQcFromActions() {
               setQcOpen(true);
               await Promise.all([loadTeamOptions(locationId), loadLoggedInManager(), loadQcReviews()]);
             }}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
           >
             Open QC
           </button>
@@ -2425,7 +2429,7 @@ async function openQcFromActions() {
             onClick={openCalibrationFromActions}
             disabled={!orgId || !locationId}
             className={cls(
-              "rounded-xl border border-slate-200 bg-white px-4 py-4 text-sm font-semibold text-slate-700 shadow-sm",
+              "rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm",
               !orgId || !locationId ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50"
             )}
           >
