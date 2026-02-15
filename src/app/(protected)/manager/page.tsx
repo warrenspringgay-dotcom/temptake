@@ -2089,7 +2089,7 @@ async function openQcFromActions() {
               setQcOpen(true);
               await Promise.all([loadTeamOptions(locationId), loadLoggedInManager(), loadQcReviews()]);
             }}
-            className="rounded-xl border border-slate-200 bg-white px-6 py-6 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            className="rounded-xl border border-slate-200 bg-white px-6 py-6 text-sm font-semibold text-center text-slate-700 shadow-sm hover:bg-slate-50"
           >
             Open QC
           </button>
