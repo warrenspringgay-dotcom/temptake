@@ -2641,7 +2641,7 @@ export default function ReportsPage() {
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-2 text-base font-semibold">Training areas (SFBB coverage)</h3>
           <p className="mb-3 text-xs text-slate-500">
-            Each tick shows a team member trained in that SFBB area. Date = latest award date.
+            Each tick shows a team member trained in that area.
           </p>
 
           <div className="overflow-x-auto">
@@ -2736,7 +2736,7 @@ export default function ReportsPage() {
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-2 text-base font-semibold">Allergen reviews (history)</h3>
           <p className="mb-3 text-xs text-slate-500">
-            Historic log from <code>allergen_review_log</code> for the selected location (or all locations).
+            Historic log of reviews of allergen info for the selected location (or all locations).
           </p>
 
           <div className="overflow-x-auto">
@@ -2785,7 +2785,7 @@ export default function ReportsPage() {
             Allergen edits {allergenChanges ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
           <p className="mb-2 text-xs text-slate-500">
-            Change log from <code>allergen_change_logs</code> for the selected range and location.
+            Changes made to allergen info for the selected range and location.
           </p>
 
           <div className="overflow-x-auto">
