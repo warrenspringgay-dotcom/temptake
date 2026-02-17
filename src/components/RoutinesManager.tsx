@@ -359,7 +359,8 @@ export default function RoutineManager() {
 
   // ================= Render =================
   return (
-    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 text-slate-900 shadow-xl backdrop-blur-sm sm:p-6">
+    <div className="mx-auto w-full max-w-6xl px-0 sm:px-4">
+    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
@@ -373,6 +374,7 @@ export default function RoutineManager() {
             <Pill tone="emerald">{activeCount} active</Pill>
             {!canManage ? <Pill tone="amber">View-only</Pill> : null}
           </div>
+        </div>
         </div>
 
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
