@@ -346,8 +346,8 @@ export default function SuppliersManager() {
 
   /* -------------------- Render -------------------- */
   return (
-    <div className="space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 text-slate-900 shadow-xl backdrop-blur-sm sm:p-6">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="mx-auto w-full max-w-6xl px-0 sm:px-4">
+    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
         <h1 className="text-lg font-semibold text-slate-900">Suppliers</h1>
         <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
           <input
