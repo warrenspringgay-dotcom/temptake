@@ -360,7 +360,7 @@ export default function RoutineManager() {
   // ================= Render =================
   return (
     <div className="mx-auto w-full max-w-6xl px-0 sm:px-4">
-    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 text-slate-900 shadow-xl backdrop-blur-sm sm:p-6">
+    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 text-slate-900 backdrop-blur-sm sm:p-6">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
