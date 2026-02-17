@@ -897,62 +897,72 @@ export default function AllergenManager() {
       </div>
 
       <div className="mb-2 hidden text-sm font-semibold text-slate-900 md:block">Allergen matrix</div>
-      <div className="hidden overflow-x-auto rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm md:block">
-        <table className="w-full min-w-[700px] text-sm">
-          <thead className="bg-slate-50/80">
-            <tr className="text-left text-slate-500">
-              <th className="px-2 py-2 font-medium">Item</th>
-              <th className="px-2 py-2 font-medium">Category</th>
-              {ALLERGENS.map((a) => (
-                <th key={a.key} className="whitespace-nowrap px-2 py-2 text-center font-medium">
-                  {a.icon} <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
-                </th>
-              ))}
-              <th className="px-3 py-2 text-right font-medium">Actions</th>
+     <div className="mb-2 hidden text-sm font-semibold text-slate-900 md:block">Allergen matrix</div>
+
+{/* Desktop: scrollable grid with sticky header */}
+<div className="hidden md:block">
+  <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm">
+    {/* This is the scroll container (vertical + horizontal) */}
+    <div className="max-h-[70vh] overflow-auto rounded-2xl">
+      <table className="w-full min-w-[900px] text-sm">
+        <thead className="sticky top-0 z-20 bg-slate-50/95 backdrop-blur">
+          <tr className="text-left text-slate-500">
+            <th className="px-2 py-2 font-medium">Item</th>
+            <th className="px-2 py-2 font-medium">Category</th>
+            {ALLERGENS.map((a) => (
+              <th key={a.key} className="whitespace-nowrap px-2 py-2 text-center font-medium">
+                {a.icon} <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
+              </th>
+            ))}
+            <th className="px-3 py-2 text-right font-medium">Actions</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={2 + ALLERGENS.length + 1} className="px-3 py-6 text-center text-slate-500">
+                {loadErr ? `Error: ${loadErr}` : "No items."}
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={2 + ALLERGENS.length + 1} className="px-3 py-6 text-center text-slate-500">
-                  {loadErr ? `Error: ${loadErr}` : "No items."}
+          ) : (
+            rows.map((row) => (
+              <tr key={row.id} className="border-t border-slate-100 align-top">
+                <td className="px-3 py-2 text-slate-900">{row.item}</td>
+                <td className="px-3 py-2 text-slate-900">{row.category ?? ""}</td>
+                {ALLERGENS.map((a) => {
+                  const yes = row.flags[a.key];
+                  return (
+                    <td key={a.key} className="px-2 py-2 text-center">
+                      <span
+                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                          yes ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"
+                        }`}
+                      >
+                        {yes ? "Yes" : "No"}
+                      </span>
+                    </td>
+                  );
+                })}
+                <td className="px-3 py-2 text-right">
+                  {canManage && (
+                    <ActionMenu
+                      items={[
+                        { label: "Edit", onClick: () => openEdit(row) },
+                        { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
+                      ]}
+                    />
+                  )}
                 </td>
               </tr>
-            ) : (
-              rows.map((row) => (
-                <tr key={row.id} className="border-t border-slate-100 align-top">
-                  <td className="px-3 py-2 text-slate-900">{row.item}</td>
-                  <td className="px-3 py-2 text-slate-900">{row.category ?? ""}</td>
-                  {ALLERGENS.map((a) => {
-                    const yes = row.flags[a.key];
-                    return (
-                      <td key={a.key} className="px-2 py-2 text-center">
-                        <span
-                          className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                            yes ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"
-                          }`}
-                        >
-                          {yes ? "Yes" : "No"}
-                        </span>
-                      </td>
-                    );
-                  })}
-                  <td className="px-3 py-2 text-right">
-                    {canManage && (
-                      <ActionMenu
-                        items={[
-                          { label: "Edit", onClick: () => openEdit(row) },
-                          { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
-                        ]}
-                      />
-                    )}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 
       <div className="md:hidden">
         {rows.length === 0 ? (
