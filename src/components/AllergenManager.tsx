@@ -754,7 +754,8 @@ export default function AllergenManager() {
     : "border-slate-200 bg-white/70";
 
   return (
-    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
+    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur md:px-8">
+
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold text-slate-900">Allergens</h1>
       </div>
