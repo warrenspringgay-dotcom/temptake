@@ -119,7 +119,7 @@ export default function Leaderboard() {
 return (
   <>
     {/* Page content wrapper (narrow) */}
-    <div className="mx-auto w-full max-w-4xl space-y-4 px-3 sm:px-4">
+    <div className="mx-auto w-full max-w-6xl space-y-4 px-3 sm:px-4">
       {/* Header + Employee of the month card */}
       <div className="flex flex-wrap items-start gap-4">
         <div className="min-w-[220px] flex-1">
