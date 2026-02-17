@@ -12,7 +12,8 @@ export default function ProtectedLayout({
      
 
       {/* Single app content area used by ALL protected pages */}
-     <main className="w-full px-0 md:mx-auto md:max-w-6xl md:px-4">
+     <main className="w-full px-0 md:mx-auto md:max-w-screen-2xl
+">
   {children}
 </main>
 
