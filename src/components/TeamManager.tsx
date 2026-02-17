@@ -900,6 +900,7 @@ async function addEditCertificate() {
 
   /* -------------------- Render -------------------- */
   return (
+    <div className="mx-auto w-full max-w-6xl px-0 sm:px-4">
     <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
@@ -923,7 +924,7 @@ async function addEditCertificate() {
           )}
         </div>
       </div>
-
+</div>
       {/* Card grid */}
       {loading ? (
         <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
