@@ -3,10 +3,10 @@
 import { createClient } from "@supabase/supabase-js";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { getActiveOrgIdServer } from "@/lib/orgServer";
-import { getActiveLocationIdServer } from "@/lib/locationServer";
 
 /* ============================================================
    Admin client (service role) for invites
+   – only used on the server in this file
 ============================================================ */
 
 const supabaseAdmin = createClient(
@@ -40,7 +40,6 @@ export type TeamMemberInput = {
 export type TeamMember = {
   id?: string;
   org_id?: string;
-  location_id?: string | null;
   initials?: string | null;
   name?: string | null;
   role?: string | null;
@@ -67,82 +66,62 @@ type TrainingInput = {
 };
 
 /* ============================================================
-   Helper: require the current user to be OWNER/ADMIN in active org
-   ✅ Multi-location safe: does NOT assume one row per email.
+   Helper: require the current user to be OWNER in active org
 ============================================================ */
 
 async function requireOwnerOrg() {
   const supabase = await getServerSupabase();
 
   const orgId = await getActiveOrgIdServer();
-  if (!orgId) throw new Error("No active organisation found.");
+  if (!orgId) {
+    throw new Error("No active organisation found.");
+  }
 
   const {
     data: { user },
     error: userErr,
   } = await supabase.auth.getUser();
 
-  if (userErr || !user) throw new Error("You must be signed in to manage the team.");
-
-  const userId = user.id ?? null;
-  const email = (user.email ?? "").trim().toLowerCase();
-
-  if (!userId && !email) throw new Error("You must be signed in to manage the team.");
-
-  // Pull ALL matching rows within org (multi-location safe)
-  // Prefer user_id match; fallback to email match.
-  let q = supabase
-    .from("team_members")
-    .select("id, role, user_id, email, org_id, location_id")
-    .eq("org_id", orgId)
-    .limit(100);
-
-  if (userId) {
-    q = q.eq("user_id", userId);
-  } else {
-    q = q.ilike("email", email);
+  if (userErr || !user || !user.email) {
+    throw new Error("You must be signed in to manage the team.");
   }
 
-  const { data: rows, error } = await q;
+  const { data: member, error: memberErr } = await supabase
+    .from("team_members")
+    .select("id, role")
+    .eq("org_id", orgId)
+    .eq("email", user.email)
+    .maybeSingle();
 
-  if (error || !Array.isArray(rows) || rows.length === 0) {
+  if (memberErr || !member) {
     throw new Error("You are not a member of this organisation.");
   }
 
-  const roleAllows = (role: any) => {
-    const r = String(role ?? "").toLowerCase();
-    return r === "owner" || r === "admin";
-  };
-
-  if (!rows.some((r: any) => roleAllows(r?.role))) {
+  if ((member.role ?? "").toLowerCase() !== "owner") {
     throw new Error("Only organisation owners can manage the team.");
   }
 
-  // Pick any stable memberId (doesn't matter, it's just a marker)
-  return { orgId, userId: userId ?? null, memberId: String((rows[0] as any).id) };
+  return { orgId, userId: user.id, memberId: member.id };
 }
 
 /* ============================================================
    Core mutations (original API)
-   ✅ Now location-aware: uses active location for create/update
 ============================================================ */
 
 export async function saveTeamMember(input: TeamMemberInput) {
   const supabase = await getServerSupabase();
   const { orgId } = await requireOwnerOrg();
 
-  const locationId = await getActiveLocationIdServer();
-  if (!locationId) throw new Error("No active location selected.");
-
-  if (!input.name?.trim()) throw new Error("Name is required");
+  if (!input.name?.trim()) {
+    throw new Error("Name is required");
+  }
 
   const payload = {
-    location_id: locationId,
     initials: input.initials?.trim().toUpperCase() || null,
     name: input.name.trim(),
-    role: input.role?.trim().toLowerCase() || null,
+    role: input.role?.trim() || null,
     phone: input.phone ?? null,
-    email: input.email ? input.email.trim().toLowerCase() : null,
+    email: input.email ?? null,
     active: input.active ?? true,
     notes: input.notes ?? null,
     training_expires_on: input.training_expires_on ?? null,
@@ -182,25 +161,19 @@ export async function deleteTeamMember(id: string) {
 
 /* ============================================================
    Core queries (original API)
-   ✅ Now location-aware: returns active location only (if set)
 ============================================================ */
 
 export async function listTeamMembers(): Promise<TeamMember[]> {
   const supabase = await getServerSupabase();
   const orgId = await getActiveOrgIdServer();
+
   if (!orgId) return [];
 
-  const locationId = await getActiveLocationIdServer().catch(() => null);
-
-  let q = supabase
+  const { data, error } = await supabase
     .from("team_members")
     .select("*")
     .eq("org_id", orgId)
     .order("name", { ascending: true });
-
-  if (locationId) q = q.eq("location_id", locationId);
-
-  const { data, error } = await q;
 
   if (error) throw new Error(error.message);
   return (data ?? []) as TeamMember[];
@@ -216,21 +189,21 @@ export async function listStaffInitials(): Promise<string[]> {
     // ignore
   }
 
-  const locationId = await getActiveLocationIdServer().catch(() => null);
-
   let query = supabase
     .from("team_members")
-    .select("initials,name,email,org_id,location_id")
+    .select("initials,name,email")
     .order("name", { ascending: true });
 
-  if (orgId) query = query.eq("org_id", orgId);
-  if (locationId) query = query.eq("location_id", locationId);
+  if (orgId) {
+    query = query.eq("org_id", orgId);
+  }
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
   const vals = (data ?? []).map((r: any) => {
-    const fromInitials = r.initials && String(r.initials).trim().toUpperCase();
+    const fromInitials =
+      r.initials && String(r.initials).trim().toUpperCase();
     const fromName =
       !fromInitials && r.name
         ? String(r.name).trim().slice(0, 1).toUpperCase()
@@ -254,8 +227,12 @@ export async function listTeam(): Promise<TeamMember[]> {
   return listTeamMembers();
 }
 
-export async function upsertTeamMember(input: Partial<TeamMember>): Promise<void> {
-  if (!input.name?.trim()) throw new Error("Name is required");
+export async function upsertTeamMember(
+  input: Partial<TeamMember>
+): Promise<void> {
+  if (!input.name?.trim()) {
+    throw new Error("Name is required");
+  }
 
   const payload: TeamMemberInput = {
     id: input.id,
@@ -273,10 +250,16 @@ export async function upsertTeamMember(input: Partial<TeamMember>): Promise<void
   await saveTeamMember(payload);
 }
 
-export async function ensureStaffByInitials(initials: string, name: string): Promise<string> {
+export async function ensureStaffByInitials(
+  initials: string,
+  name: string
+): Promise<string> {
   const supabase = await getServerSupabase();
   const orgId = await getActiveOrgIdServer();
-  if (!orgId) throw new Error("No active organisation found.");
+
+  if (!orgId) {
+    throw new Error("No active organisation found.");
+  }
 
   const cleanInitials = initials.trim().toUpperCase();
   const displayName = name?.trim() || cleanInitials;
@@ -290,7 +273,9 @@ export async function ensureStaffByInitials(initials: string, name: string): Pro
 
   if (findError) throw new Error(findError.message);
 
-  if (existing?.id) return String(existing.id);
+  if (existing?.id) {
+    return String(existing.id);
+  }
 
   const { data: created, error: insertError } = await supabase
     .from("staff")
@@ -303,10 +288,13 @@ export async function ensureStaffByInitials(initials: string, name: string): Pro
     .single();
 
   if (insertError) throw new Error(insertError.message);
+
   return String(created.id);
 }
 
-export async function listTrainingsForStaff(staffId: string): Promise<TrainingRow[]> {
+export async function listTrainingsForStaff(
+  staffId: string
+): Promise<TrainingRow[]> {
   const supabase = await getServerSupabase();
 
   const { data, error } = await supabase
@@ -319,7 +307,10 @@ export async function listTrainingsForStaff(staffId: string): Promise<TrainingRo
   return (data ?? []) as TrainingRow[];
 }
 
-export async function insertTraining(staffId: string, input: TrainingInput): Promise<void> {
+export async function insertTraining(
+  staffId: string,
+  input: TrainingInput
+): Promise<void> {
   const supabase = await getServerSupabase();
 
   const { error } = await supabase.from("trainings").insert({
@@ -334,9 +325,6 @@ export async function insertTraining(staffId: string, input: TrainingInput): Pro
 
 /* ============================================================
    Invite flow using Supabase Admin API
-   ✅ Now location-aware:
-   - attaches invited user to ACTIVE location
-   - upserts by (org_id, location_id, email)
 ============================================================ */
 
 export type InviteTeamMemberResult = {
@@ -353,10 +341,7 @@ export async function inviteTeamMemberServer(args: {
   const { orgId } = await requireOwnerOrg();
   const db = await getServerSupabase();
 
-  const locationId = await getActiveLocationIdServer();
-  if (!locationId) return { ok: false, message: "No active location selected." };
-
-  const email = (args.email ?? "").trim().toLowerCase();
+  const email = args.email.trim().toLowerCase();
   if (!email) return { ok: false, message: "Email is required." };
 
   const name = (args.name ?? "").trim() || email;
@@ -372,6 +357,7 @@ export async function inviteTeamMemberServer(args: {
       .join("");
   const initials = initialsRaw.toUpperCase().slice(0, 4);
 
+  // ✅ Build a stable redirect URL for the invite email
   const origin =
     process.env.NEXT_PUBLIC_SITE_URL ||
     (process.env.NEXT_PUBLIC_VERCEL_URL?.startsWith("http")
@@ -380,39 +366,44 @@ export async function inviteTeamMemberServer(args: {
       ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`
       : "https://temptake.com");
 
+  // Where the invited user lands after accepting the invite
+  // (You can change this to /login, /dashboard, /setup, etc.)
   const redirectTo = `${origin}/invite/accept`;
 
   // 1) Create user + send invite email
-  const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-    redirectTo,
-    data: { name },
-  });
+  const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(
+    email,
+    {
+      redirectTo,
+      data: { name },
+    }
+  );
 
-  if (error) return { ok: false, message: error.message };
+  if (error) {
+    return { ok: false, message: error.message };
+  }
 
   const user = data?.user ?? null;
 
-  // 2) Upsert into team_members for THIS location
-  // IMPORTANT: your DB must support this with a unique index:
-  // (org_id, location_id, lower(email))
+  // 2) Upsert into team_members
   const { error: tmErr } = await db.from("team_members").upsert(
     {
       org_id: orgId,
-      location_id: locationId,
       user_id: user?.id ?? null,
       email,
       name,
       initials,
       role,
       active: true,
-      login_enabled: true,
     },
     {
-      onConflict: "org_id,location_id,email",
+      onConflict: "org_id,email",
     }
   );
 
-  if (tmErr) return { ok: false, message: tmErr.message };
+  if (tmErr) {
+    return { ok: false, message: tmErr.message };
+  }
 
   return { ok: true };
 }
