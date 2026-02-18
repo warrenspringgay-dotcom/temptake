@@ -8,6 +8,7 @@ import { Trophy } from "lucide-react";
 
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { useAuth } from "@/components/AuthProvider";
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 
@@ -91,7 +92,11 @@ export default function NavTabs() {
       setRoleLoading(true);
 
       try {
-        const orgId = await getActiveOrgIdClient();
+        const [orgId, locationId] = await Promise.all([
+          getActiveOrgIdClient(),
+          getActiveLocationIdClient().catch(() => null),
+        ]);
+
         const email = (user.email ?? "").trim().toLowerCase();
         const userId = user.id;
 
@@ -104,28 +109,35 @@ export default function NavTabs() {
           return;
         }
 
-        // ✅ Option A: org-wide role comes from team_members row where location_id IS NULL.
-        // Prefer user_id match; fallback to email match.
+        // No active location = be conservative (no manager tabs)
+        if (!locationId) {
+          setRoleName("staff");
+          setIsManager(false);
+          setRoleLoading(false);
+          return;
+        }
+
+        // ✅ Location-aware role (your new data model)
         let rows: Array<{ role: string | null }> = [];
 
-        // 1) Try user_id
+        // 1) Prefer user_id match
         const byUser = await supabase
           .from("team_members")
           .select("role")
           .eq("org_id", orgId)
-          .eq("user_id", userId)
-          .is("location_id", null);
+          .eq("location_id", locationId)
+          .eq("user_id", userId);
 
         if (!byUser.error && Array.isArray(byUser.data) && byUser.data.length) {
           rows = byUser.data as any;
         } else if (email) {
-          // 2) Fallback email
+          // 2) Fallback email match (legacy rows)
           const byEmail = await supabase
             .from("team_members")
             .select("role")
             .eq("org_id", orgId)
-            .eq("email", email)
-            .is("location_id", null);
+            .eq("location_id", locationId)
+            .ilike("email", email);
 
           if (!byEmail.error && Array.isArray(byEmail.data) && byEmail.data.length) {
             rows = byEmail.data as any;
@@ -135,13 +147,14 @@ export default function NavTabs() {
         if (!alive) return;
 
         if (!rows.length) {
+          // Not found at this location = treat as staff
           setRoleName("staff");
           setIsManager(false);
           setRoleLoading(false);
           return;
         }
 
-        // ✅ Deterministic: pick highest privilege
+        // ✅ Deterministic: pick highest privilege (in case duplicates exist)
         const best = rows
           .map((r) => (r.role ?? "staff").toLowerCase())
           .sort((a, b) => roleScore(b) - roleScore(a))[0];
