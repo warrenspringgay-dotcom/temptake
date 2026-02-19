@@ -10,8 +10,12 @@ import ManageCleaningTasksModal, {
   CLEANING_CATEGORIES,
 } from "@/components/ManageCleaningTasksModal";
 
+<<<<<<< Updated upstream
 const PAGE = "w-full px-3 sm:px-4 md:mx-auto md:max-w-[1100px]";
 
+=======
+const PAGE = "w-full px-3 sm:px-4 md:mx-auto max-w-screen-2xl";
+>>>>>>> Stashed changes
 const CARD =
   "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md";
 
@@ -19,6 +23,10 @@ type Frequency = "daily" | "weekly" | "monthly";
 
 type Task = {
   id: string;
+<<<<<<< Updated upstream
+=======
+  location_id: string; // ✅
+>>>>>>> Stashed changes
   org_id: string;
   task: string;
   area: string | null;
@@ -45,6 +53,8 @@ type DaySignoff = {
   id: string;
   signoff_on: string;
   signed_by: string | null;
+  signed_by_team_member_id: string | null;
+  signed_by_user_id: string | null;
   notes: string | null;
   created_at: string | null;
 };
@@ -167,6 +177,14 @@ export default function CleaningRotaPage() {
   const [manageOpen, setManageOpen] = useState(false);
   const [initials, setInitials] = useState<string>("");
 
+<<<<<<< Updated upstream
+=======
+  // ✅ Logged-in user's initials + team member id (authoritative default)
+  const [userInitials, setUserInitials] = useState<string>("");
+  const [userTeamMemberId, setUserTeamMemberId] = useState<string | null>(null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+
+>>>>>>> Stashed changes
   const [showConfetti, setShowConfetti] = useState(false);
 
   // Collapsible categories (default expanded)
@@ -222,7 +240,9 @@ export default function CleaningRotaPage() {
   async function loadSignoff(oid: string, lid: string) {
     const { data, error } = await supabase
       .from("daily_signoffs")
-      .select("id, signoff_on, signed_by, notes, created_at")
+      .select(
+        "id, signoff_on, signed_by, signed_by_team_member_id, signed_by_user_id, notes, created_at"
+      )
       .eq("org_id", oid)
       .eq("location_id", lid)
       .eq("signoff_on", todayIso)
@@ -245,9 +265,104 @@ export default function CleaningRotaPage() {
       id: String((data as any).id),
       signoff_on: String((data as any).signoff_on),
       signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+      signed_by_team_member_id: (data as any).signed_by_team_member_id
+        ? String((data as any).signed_by_team_member_id)
+        : null,
+      signed_by_user_id: (data as any).signed_by_user_id
+        ? String((data as any).signed_by_user_id)
+        : null,
       notes: (data as any).notes ? String((data as any).notes) : null,
       created_at: (data as any).created_at ? String((data as any).created_at) : null,
     });
+  }
+
+  async function loadCurrentUserDefaults(oid: string, lid: string) {
+    try {
+      const { data: userRes } = await supabase.auth.getUser();
+      const userId = userRes.user?.id ?? null;
+      setAuthUserId(userId);
+
+      if (!userId) return;
+
+      // Prefer location-specific team_members row; fallback to org-wide row (location_id is null)
+      const byLoc = await supabase
+        .from("team_members")
+        .select("id, initials")
+        .eq("org_id", oid)
+        .eq("user_id", userId)
+        .eq("location_id", lid)
+        .maybeSingle();
+
+      let row: any = null;
+
+      if (!byLoc.error && byLoc.data) {
+        row = byLoc.data;
+      } else {
+        const byOrgWide = await supabase
+          .from("team_members")
+          .select("id, initials")
+          .eq("org_id", oid)
+          .eq("user_id", userId)
+          .is("location_id", null)
+          .maybeSingle();
+
+        if (!byOrgWide.error && byOrgWide.data) row = byOrgWide.data;
+      }
+
+      if (row?.initials) {
+        const ini = String(row.initials).trim().toUpperCase();
+        if (ini) {
+          setUserInitials(ini);
+          setInitials((prev) => (prev.trim() ? prev : ini));
+        }
+      }
+
+      if (row?.id) {
+        setUserTeamMemberId(String(row.id));
+      }
+    } catch (e) {
+      console.warn("[cleaning] unable to auto-load user defaults", e);
+    }
+  }
+
+  async function resolveSignerTeamMemberId(
+    oid: string,
+    lid: string,
+    ini: string
+  ): Promise<string | null> {
+    const clean = (ini ?? "").trim().toUpperCase();
+    if (!clean) return null;
+
+    // If they used their own initials and we know their tm id, use it.
+    if (userInitials && clean === userInitials && userTeamMemberId) {
+      return userTeamMemberId;
+    }
+
+    // Otherwise try to find someone at this location with those initials.
+    const byLoc = await supabase
+      .from("team_members")
+      .select("id")
+      .eq("org_id", oid)
+      .eq("location_id", lid)
+      .eq("initials", clean)
+      .limit(1)
+      .maybeSingle();
+
+    if (!byLoc.error && byLoc.data?.id) return String(byLoc.data.id);
+
+    // Fallback: org-wide record
+    const byOrgWide = await supabase
+      .from("team_members")
+      .select("id")
+      .eq("org_id", oid)
+      .is("location_id", null)
+      .eq("initials", clean)
+      .limit(1)
+      .maybeSingle();
+
+    if (!byOrgWide.error && byOrgWide.data?.id) return String(byOrgWide.data.id);
+
+    return null;
   }
 
   async function loadAll() {
@@ -269,6 +384,7 @@ export default function CleaningRotaPage() {
         return;
       }
 
+<<<<<<< Updated upstream
       // 🔹 Auto-load current user's initials from team_members
       try {
         const { data: userRes } = await supabase.auth.getUser();
@@ -293,11 +409,19 @@ export default function CleaningRotaPage() {
         // non-fatal; user can still type initials manually
         console.warn("[cleaning] unable to auto-load initials", e);
       }
+=======
+      // ✅ Load current user's initials + team member id
+      await loadCurrentUserDefaults(oid, lid);
+>>>>>>> Stashed changes
 
       const { data: tData, error: tErr } = await supabase
         .from("cleaning_tasks")
-        .select("id,org_id,task,area,category,frequency,weekday,month_day")
+        .select("id,org_id,task,area,category,frequency,weekday,month_day,location_id")
         .eq("org_id", oid)
+<<<<<<< Updated upstream
+=======
+        .eq("location_id", lid)
+>>>>>>> Stashed changes
         .order("category", { ascending: true })
         .order("task", { ascending: true });
 
@@ -323,15 +447,12 @@ export default function CleaningRotaPage() {
         .gte("from_on", weekStart)
         .lte("to_on", weekEnd);
 
-      if (dErr) {
-        console.warn("[cleaning] deferrals fetch failed:", dErr.message);
-      }
+      if (dErr) console.warn("[cleaning] deferrals fetch failed:", dErr.message);
 
       setTasks((tData ?? []) as Task[]);
       setRuns((rData ?? []) as Run[]);
       setDeferrals(((dData ?? []) as Deferral[]) || []);
 
-      // load signoff for today
       await loadSignoff(oid, lid);
     } catch (e: any) {
       setErr(e?.message ?? "Something went wrong");
@@ -370,12 +491,10 @@ export default function CleaningRotaPage() {
 
     const wasAllDone = prevAllDoneRef.current;
 
-    // confetti on transition to all done (user action only)
     if (!wasAllDone && allDone && userActionRef.current) {
       setShowConfetti(true);
       window.setTimeout(() => setShowConfetti(false), 1600);
 
-      // auto-open signoff prompt if not already signed off
       if (!signoff) {
         setSignoffInitials((prev) =>
           prev.trim() ? prev : initials.trim().toUpperCase()
@@ -407,7 +526,6 @@ export default function CleaningRotaPage() {
     return ordered;
   }, [dueToday]);
 
-  // Ensure we have an explicit collapsed state for new categories (default expanded)
   useEffect(() => {
     setCollapsed((prev) => {
       const next = { ...prev };
@@ -581,18 +699,24 @@ export default function CleaningRotaPage() {
 
     setSignoffSaving(true);
     try {
+      const signerTeamMemberId = await resolveSignerTeamMemberId(orgId, locationId, ini);
+
       const payload = {
         org_id: orgId,
         location_id: locationId,
         signoff_on: todayIso,
         signed_by: ini,
+        signed_by_team_member_id: signerTeamMemberId,
+        signed_by_user_id: authUserId,
         notes: signoffNotes.trim() || null,
       };
 
       const { data, error } = await supabase
         .from("daily_signoffs")
         .insert(payload)
-        .select("id, signoff_on, signed_by, notes, created_at")
+        .select(
+          "id, signoff_on, signed_by, signed_by_team_member_id, signed_by_user_id, notes, created_at"
+        )
         .single();
 
       if (error) throw error;
@@ -601,13 +725,18 @@ export default function CleaningRotaPage() {
         id: String((data as any).id),
         signoff_on: String((data as any).signoff_on),
         signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+        signed_by_team_member_id: (data as any).signed_by_team_member_id
+          ? String((data as any).signed_by_team_member_id)
+          : null,
+        signed_by_user_id: (data as any).signed_by_user_id
+          ? String((data as any).signed_by_user_id)
+          : null,
         notes: (data as any).notes ? String((data as any).notes) : null,
         created_at: (data as any).created_at ? String((data as any).created_at) : null,
       });
 
       setSignoffOpen(false);
       setSignoffNotes("");
-      // keep initials in state for convenience
     } catch (e: any) {
       console.error(e);
       alert(e?.message ?? "Failed to sign off the day.");
@@ -616,7 +745,10 @@ export default function CleaningRotaPage() {
     }
   }
 
+<<<<<<< Updated upstream
   // 🔹 When the sign-off modal opens, auto-fill initials from current user if blank
+=======
+>>>>>>> Stashed changes
   useEffect(() => {
     if (!signoffOpen) return;
     if (signoffInitials.trim()) return;
@@ -645,7 +777,10 @@ export default function CleaningRotaPage() {
       <ClassicConfetti show={showConfetti} />
 
       <div className={`${CARD} p-4 sm:p-5`}>
+<<<<<<< Updated upstream
         {/* Header: mobile-safe wrapping (buttons were overflowing the viewport) */}
+=======
+>>>>>>> Stashed changes
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="text-lg font-semibold text-slate-900">
@@ -662,7 +797,6 @@ export default function CleaningRotaPage() {
               Manage tasks
             </button>
 
-            {/* ✅ Sign off button */}
             <button
               onClick={() => {
                 setSignoffInitials((prev) =>
@@ -681,11 +815,15 @@ export default function CleaningRotaPage() {
                   : "bg-emerald-600 text-white hover:bg-emerald-700",
               ].join(" ")}
               title={
+<<<<<<< Updated upstream
                 signoff
                   ? "Day signed off"
                   : allDone
                   ? "Sign off the day"
                   : "Complete all tasks first"
+=======
+                signoff ? "Day signed off" : allDone ? "Sign off the day" : "Complete all tasks first"
+>>>>>>> Stashed changes
               }
             >
               {signoff ? "Day signed off" : "Sign off day"}
@@ -715,11 +853,15 @@ export default function CleaningRotaPage() {
         </div>
 
         <div className="mt-4 text-xs text-slate-500">
+<<<<<<< Updated upstream
           Tip: On phones you can swipe a task card left to complete and right to
           undo, or just use the Tick / Undo buttons.
+=======
+          Tip: On phones you can swipe a task card left to complete and right to undo, or just use
+          the Tick / Undo buttons.
+>>>>>>> Stashed changes
         </div>
 
-        {/* Optional hint banner when all done but not signed off */}
         {allDone && !signoff && (
           <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
             All cleaning tasks are complete. Sign off the day to lock it in.
@@ -733,11 +875,15 @@ export default function CleaningRotaPage() {
             const isCollapsed = collapsed[category] ?? false;
 
             return (
+<<<<<<< Updated upstream
               <div
                 key={category}
                 className="rounded-2xl border border-slate-200 bg-white p-3"
               >
                 {/* Collapsible header */}
+=======
+              <div key={category} className="rounded-2xl border border-slate-200 bg-white p-3">
+>>>>>>> Stashed changes
                 <div className="flex items-start justify-between gap-3">
                   <button
                     type="button"
@@ -855,7 +1001,6 @@ export default function CleaningRotaPage() {
         onSaved={loadAll}
       />
 
-      {/* ✅ Sign-off modal */}
       {signoffOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/30"
@@ -902,6 +1047,9 @@ export default function CleaningRotaPage() {
                   placeholder="WS"
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                 />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  We’ll link this to a team member where possible.
+                </p>
               </div>
 
               <div>
@@ -940,4 +1088,8 @@ export default function CleaningRotaPage() {
       )}
     </div>
   );
+<<<<<<< Updated upstream
 }
+=======
+}
+>>>>>>> Stashed changes

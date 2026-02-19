@@ -19,6 +19,8 @@ import HeaderSwitcher from "@/components/HeaderSwitcher";
 import CookieBanner from "@/components/CookieBanner";
 import ConsentBootstrap from "@/components/ConsentBootstrap";
 
+
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
