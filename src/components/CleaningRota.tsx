@@ -10,12 +10,7 @@ import ManageCleaningTasksModal, {
   CLEANING_CATEGORIES,
 } from "@/components/ManageCleaningTasksModal";
 
-<<<<<<< Updated upstream
-const PAGE = "w-full px-3 sm:px-4 md:mx-auto md:max-w-[1100px]";
-
-=======
 const PAGE = "w-full px-3 sm:px-4 md:mx-auto max-w-screen-2xl";
->>>>>>> Stashed changes
 const CARD =
   "rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md";
 
@@ -23,10 +18,7 @@ type Frequency = "daily" | "weekly" | "monthly";
 
 type Task = {
   id: string;
-<<<<<<< Updated upstream
-=======
   location_id: string; // ✅
->>>>>>> Stashed changes
   org_id: string;
   task: string;
   area: string | null;
@@ -98,6 +90,11 @@ function isDueOn(task: Task, date: Date) {
   }
 
   return false;
+}
+
+/** Pick the most reliable initials value (userInitials wins). */
+function bestInitials(userInitials: string, initials: string) {
+  return (userInitials || initials).trim().toUpperCase();
 }
 
 /** Classic confetti overlay (no emojis) using framer-motion only. */
@@ -175,16 +172,15 @@ export default function CleaningRotaPage() {
   const [err, setErr] = useState<string | null>(null);
 
   const [manageOpen, setManageOpen] = useState(false);
+
+  // Header initials box (staff can still override)
   const [initials, setInitials] = useState<string>("");
 
-<<<<<<< Updated upstream
-=======
   // ✅ Logged-in user's initials + team member id (authoritative default)
   const [userInitials, setUserInitials] = useState<string>("");
   const [userTeamMemberId, setUserTeamMemberId] = useState<string | null>(null);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
 
->>>>>>> Stashed changes
   const [showConfetti, setShowConfetti] = useState(false);
 
   // Collapsible categories (default expanded)
@@ -384,44 +380,14 @@ export default function CleaningRotaPage() {
         return;
       }
 
-<<<<<<< Updated upstream
-      // 🔹 Auto-load current user's initials from team_members
-      try {
-        const { data: userRes } = await supabase.auth.getUser();
-        const userId = userRes.user?.id;
-        if (userId) {
-          const { data: tm, error: tmErr } = await supabase
-            .from("team_members")
-            .select("initials")
-            .eq("org_id", oid)
-            .eq("user_id", userId)
-            .maybeSingle();
-
-          if (!tmErr && tm && (tm as any).initials) {
-            const ini = String((tm as any).initials).trim().toUpperCase();
-            if (ini) {
-              setInitials(ini);
-              // don't overwrite signoffInitials here; we handle that when the modal opens
-            }
-          }
-        }
-      } catch (e) {
-        // non-fatal; user can still type initials manually
-        console.warn("[cleaning] unable to auto-load initials", e);
-      }
-=======
       // ✅ Load current user's initials + team member id
       await loadCurrentUserDefaults(oid, lid);
->>>>>>> Stashed changes
 
       const { data: tData, error: tErr } = await supabase
         .from("cleaning_tasks")
         .select("id,org_id,task,area,category,frequency,weekday,month_day,location_id")
         .eq("org_id", oid)
-<<<<<<< Updated upstream
-=======
         .eq("location_id", lid)
->>>>>>> Stashed changes
         .order("category", { ascending: true })
         .order("task", { ascending: true });
 
@@ -466,6 +432,13 @@ export default function CleaningRotaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ✅ If we later discover userInitials, ensure header initials is defaulted (unless user already typed)
+  useEffect(() => {
+    const ini = userInitials.trim().toUpperCase();
+    if (!ini) return;
+    setInitials((prev) => (prev.trim() ? prev : ini));
+  }, [userInitials]);
+
   const dueToday = useMemo(() => {
     return tasks.filter((t) => isDueEffective(t, today));
   }, [tasks, today, deferralsFromMap, deferralsToMap]);
@@ -496,9 +469,8 @@ export default function CleaningRotaPage() {
       window.setTimeout(() => setShowConfetti(false), 1600);
 
       if (!signoff) {
-        setSignoffInitials((prev) =>
-          prev.trim() ? prev : initials.trim().toUpperCase()
-        );
+        const best = bestInitials(userInitials, initials);
+        setSignoffInitials((prev) => (prev.trim() ? prev : best));
         setSignoffNotes("");
         setSignoffOpen(true);
       }
@@ -507,7 +479,7 @@ export default function CleaningRotaPage() {
     }
 
     prevAllDoneRef.current = allDone;
-  }, [allDone, initials, signoff]);
+  }, [allDone, initials, userInitials, signoff]);
 
   const groupedByCategory = useMemo(() => {
     const m = new Map<string, Task[]>();
@@ -545,12 +517,14 @@ export default function CleaningRotaPage() {
 
     userActionRef.current = true;
 
+    const doneBy = bestInitials(userInitials, initials) || null;
+
     const payload = {
       org_id: orgId,
       location_id: locationId,
       task_id: taskId,
       run_on: todayIso,
-      done_by: initials?.trim() || null,
+      done_by: doneBy,
     };
 
     const { data, error } = await supabase
@@ -639,7 +613,7 @@ export default function CleaningRotaPage() {
     userActionRef.current = true;
 
     const nowIso = new Date().toISOString();
-    const doneBy = initials?.trim() || null;
+    const doneBy = bestInitials(userInitials, initials) || null;
 
     const payloads = idsToDo.map((task_id) => ({
       org_id: orgId,
@@ -745,16 +719,15 @@ export default function CleaningRotaPage() {
     }
   }
 
-<<<<<<< Updated upstream
-  // 🔹 When the sign-off modal opens, auto-fill initials from current user if blank
-=======
->>>>>>> Stashed changes
   useEffect(() => {
     if (!signoffOpen) return;
     if (signoffInitials.trim()) return;
-    if (!initials.trim()) return;
-    setSignoffInitials(initials.trim().toUpperCase());
-  }, [signoffOpen, signoffInitials, initials]);
+
+    const best = bestInitials(userInitials, initials);
+    if (!best) return;
+
+    setSignoffInitials(best);
+  }, [signoffOpen, signoffInitials, userInitials, initials]);
 
   if (loading) {
     return (
@@ -772,20 +745,16 @@ export default function CleaningRotaPage() {
     );
   }
 
+  const doneCountDisplay = `${runsByTask.size}/${dueToday.length}`;
+
   return (
     <div className={PAGE}>
       <ClassicConfetti show={showConfetti} />
 
       <div className={`${CARD} p-4 sm:p-5`}>
-<<<<<<< Updated upstream
-        {/* Header: mobile-safe wrapping (buttons were overflowing the viewport) */}
-=======
->>>>>>> Stashed changes
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="text-lg font-semibold text-slate-900">
-              Cleaning rota
-            </div>
+            <div className="text-lg font-semibold text-slate-900">Cleaning rota</div>
             <div className="text-xs text-slate-500">{todayIso}</div>
           </div>
 
@@ -799,9 +768,8 @@ export default function CleaningRotaPage() {
 
             <button
               onClick={() => {
-                setSignoffInitials((prev) =>
-                  prev.trim() ? prev : initials.trim().toUpperCase()
-                );
+                const best = bestInitials(userInitials, initials);
+                setSignoffInitials((prev) => (prev.trim() ? prev : best));
                 setSignoffNotes("");
                 setSignoffOpen(true);
               }}
@@ -815,15 +783,7 @@ export default function CleaningRotaPage() {
                   : "bg-emerald-600 text-white hover:bg-emerald-700",
               ].join(" ")}
               title={
-<<<<<<< Updated upstream
-                signoff
-                  ? "Day signed off"
-                  : allDone
-                  ? "Sign off the day"
-                  : "Complete all tasks first"
-=======
                 signoff ? "Day signed off" : allDone ? "Sign off the day" : "Complete all tasks first"
->>>>>>> Stashed changes
               }
             >
               {signoff ? "Day signed off" : "Sign off day"}
@@ -840,7 +800,7 @@ export default function CleaningRotaPage() {
             </div>
 
             <div className="flex h-9 items-center whitespace-nowrap rounded-full bg-slate-900 px-3 text-xs font-semibold leading-none text-white">
-              {doneCount}/{dueToday.length}
+              {doneCountDisplay}
             </div>
 
             <button
@@ -853,13 +813,8 @@ export default function CleaningRotaPage() {
         </div>
 
         <div className="mt-4 text-xs text-slate-500">
-<<<<<<< Updated upstream
-          Tip: On phones you can swipe a task card left to complete and right to
-          undo, or just use the Tick / Undo buttons.
-=======
           Tip: On phones you can swipe a task card left to complete and right to undo, or just use
           the Tick / Undo buttons.
->>>>>>> Stashed changes
         </div>
 
         {allDone && !signoff && (
@@ -875,15 +830,7 @@ export default function CleaningRotaPage() {
             const isCollapsed = collapsed[category] ?? false;
 
             return (
-<<<<<<< Updated upstream
-              <div
-                key={category}
-                className="rounded-2xl border border-slate-200 bg-white p-3"
-              >
-                {/* Collapsible header */}
-=======
               <div key={category} className="rounded-2xl border border-slate-200 bg-white p-3">
->>>>>>> Stashed changes
                 <div className="flex items-start justify-between gap-3">
                   <button
                     type="button"
@@ -900,9 +847,7 @@ export default function CleaningRotaPage() {
                     </span>
 
                     <div className="flex-1">
-                      <div className="text-sm font-semibold text-slate-900">
-                        {category}
-                      </div>
+                      <div className="text-sm font-semibold text-slate-900">{category}</div>
                       <div className="text-xs text-slate-500">
                         {catDone}/{list.length} complete · {open} open
                       </div>
@@ -936,9 +881,7 @@ export default function CleaningRotaPage() {
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <div className="text-sm font-semibold text-slate-900">
-                                {t.task}
-                              </div>
+                              <div className="text-sm font-semibold text-slate-900">{t.task}</div>
                               <div className="text-xs text-slate-500">
                                 {t.area ?? "—"} · {t.frequency}
                               </div>
@@ -1002,10 +945,7 @@ export default function CleaningRotaPage() {
       />
 
       {signoffOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setSignoffOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
           <div
             className="mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
@@ -1038,9 +978,7 @@ export default function CleaningRotaPage() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Initials
-                </label>
+                <label className="mb-1 block text-xs text-slate-500">Initials</label>
                 <input
                   value={signoffInitials}
                   onChange={(e) => setSignoffInitials(e.target.value.toUpperCase())}
@@ -1053,9 +991,7 @@ export default function CleaningRotaPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Notes (optional)
-                </label>
+                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
                 <input
                   value={signoffNotes}
                   onChange={(e) => setSignoffNotes(e.target.value)}
@@ -1088,8 +1024,4 @@ export default function CleaningRotaPage() {
       )}
     </div>
   );
-<<<<<<< Updated upstream
 }
-=======
-}
->>>>>>> Stashed changes
