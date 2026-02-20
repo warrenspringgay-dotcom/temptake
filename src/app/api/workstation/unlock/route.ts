@@ -5,59 +5,59 @@ import { getServerSupabase } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
-type Body = {
-  orgId: string;
-  locationId: string;
-  teamMemberId: string;
-  pin: string;
-};
-
 function cleanPin(pin: unknown) {
-  const s = String(pin ?? "").trim();
-  // keep digits only (kitchens love sticky screens and random characters)
-  const digits = s.replace(/\D+/g, "");
-  return digits.slice(0, 8); // allow 4-8
+  // IMPORTANT: keep as STRING (leading zeros matter)
+  const digits = String(pin ?? "").trim().replace(/\D+/g, "");
+  return digits.slice(0, 8);
 }
 
-function json(status: number, data: any) {
-  return NextResponse.json(data, { status });
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function addMinutes(mins: number) {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + mins);
+  return d.toISOString();
 }
 
 export async function POST(req: Request) {
-  // Require a logged-in Supabase user (manager session / workstation session)
   const supabase = await getServerSupabase();
   const { data: auth } = await supabase.auth.getUser();
-  if (!auth?.user?.id) return json(401, { ok: false, reason: "no-auth" });
+  const userId = auth?.user?.id ?? null;
 
-  let body: Body;
-  try {
-    body = (await req.json()) as Body;
-  } catch {
-    return json(400, { ok: false, reason: "bad-json" });
+  if (!userId) {
+    return NextResponse.json({ ok: false, reason: "no-auth" }, { status: 401 });
   }
 
+  const body = await req.json().catch(() => ({}));
   const orgId = String(body.orgId ?? "").trim();
   const locationId = String(body.locationId ?? "").trim();
   const teamMemberId = String(body.teamMemberId ?? "").trim();
   const pin = cleanPin(body.pin);
 
   if (!orgId || !locationId || !teamMemberId || pin.length < 4) {
-    return json(400, { ok: false, reason: "missing" });
+    return NextResponse.json({ ok: false, reason: "missing" }, { status: 400 });
   }
 
-  // 1) Ensure team member exists + belongs to org + location and active
-  const { data: tm, error: tmErr } = await supabaseAdmin
+  // Make sure the team member belongs to this org/location and can log in
+  const { data: member, error: mErr } = await supabaseAdmin
     .from("team_members")
-    .select("id, org_id, location_id, name, initials, role, active, user_id, email")
+    .select("id, org_id, location_id, name, initials, role, login_enabled, active")
     .eq("org_id", orgId)
     .eq("location_id", locationId)
     .eq("id", teamMemberId)
     .maybeSingle();
 
-  if (tmErr) return json(400, { ok: false, reason: "tm-select-failed", detail: tmErr.message });
-  if (!tm || tm.active === false) return json(404, { ok: false, reason: "not-found" });
+  if (mErr || !member) {
+    return NextResponse.json({ ok: false, reason: "user-not-found" }, { status: 404 });
+  }
 
-  // 2) Fetch pin hash + lockout state
+  if (member.active === false || member.login_enabled === false) {
+    return NextResponse.json({ ok: false, reason: "login-disabled" }, { status: 403 });
+  }
+
+  // Load PIN record
   const { data: pinRow, error: pErr } = await supabaseAdmin
     .from("team_member_pins")
     .select("id, pin_hash, failed_attempts, locked_until")
@@ -65,67 +65,72 @@ export async function POST(req: Request) {
     .eq("team_member_id", teamMemberId)
     .maybeSingle();
 
-  if (pErr) return json(400, { ok: false, reason: "pin-select-failed", detail: pErr.message });
-  if (!pinRow) return json(400, { ok: false, reason: "no-pin-set" });
-
-  const lockedUntil = pinRow.locked_until ? new Date(pinRow.locked_until).getTime() : 0;
-  if (lockedUntil && lockedUntil > Date.now()) {
-    return json(423, { ok: false, reason: "locked", lockedUntil: pinRow.locked_until });
+  if (pErr) {
+    return NextResponse.json({ ok: false, reason: "pin-read-failed", detail: pErr.message }, { status: 400 });
   }
 
-  // 3) Verify using Postgres crypt() in a single DB round-trip
-  //    We avoid pulling bcrypt libs into node; Postgres does it fine.
-  const { data: verified, error: vErr } = await supabaseAdmin.rpc("verify_team_member_pin", {
-    p_org_id: orgId,
-    p_team_member_id: teamMemberId,
+  if (!pinRow?.pin_hash) {
+    return NextResponse.json({ ok: false, reason: "no-pin-set" }, { status: 400 });
+  }
+
+  // Lockout check
+  if (pinRow.locked_until) {
+    const lockedUntil = new Date(pinRow.locked_until).getTime();
+    if (!Number.isNaN(lockedUntil) && lockedUntil > Date.now()) {
+      return NextResponse.json({ ok: false, reason: "locked" }, { status: 423 });
+    }
+  }
+
+  // ✅ Verify PIN correctly (DO NOT rehash and compare)
+  const { data: ok, error: vErr } = await supabaseAdmin.rpc("verify_pin_bcrypt", {
     p_pin: pin,
+    p_hash: String(pinRow.pin_hash),
   });
 
-  if (vErr) return json(400, { ok: false, reason: "verify-failed", detail: vErr.message });
+  if (vErr) {
+    return NextResponse.json({ ok: false, reason: "verify-failed", detail: vErr.message }, { status: 400 });
+  }
 
-  const ok = !!verified;
+  const isValid = !!ok;
 
-  // 4) Update lockout counters
-  if (ok) {
-    await supabaseAdmin
-      .from("team_member_pins")
-      .update({ failed_attempts: 0, locked_until: null, updated_at: new Date().toISOString() })
-      .eq("org_id", orgId)
-      .eq("team_member_id", teamMemberId);
-  } else {
-    const attempts = Number(pinRow.failed_attempts ?? 0) + 1;
+  if (!isValid) {
+    const nextFails = Math.min((pinRow.failed_attempts ?? 0) + 1, 999);
 
-    // simple lockout ladder: 5 attempts -> 5 min, 8 -> 30 min
-    let locked_until: string | null = null;
-    if (attempts >= 8) {
-      locked_until = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-    } else if (attempts >= 5) {
-      locked_until = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-    }
+    // After 5 fails, lock for 5 minutes (tune as you like)
+    const lock = nextFails >= 5 ? addMinutes(5) : null;
 
     await supabaseAdmin
       .from("team_member_pins")
       .update({
-        failed_attempts: attempts,
-        locked_until,
-        updated_at: new Date().toISOString(),
+        failed_attempts: nextFails,
+        locked_until: lock,
+        updated_at: nowIso(),
       })
-      .eq("org_id", orgId)
-      .eq("team_member_id", teamMemberId);
+      .eq("id", pinRow.id);
 
-    return json(401, { ok: false, reason: "bad-pin", attempts, lockedUntil: locked_until });
+    return NextResponse.json({ ok: false, reason: "wrong-pin" }, { status: 401 });
   }
 
-  // 5) Return active operator payload (this is what the UI stores)
-  return json(200, {
+  // Success: reset fails/lock
+  await supabaseAdmin
+    .from("team_member_pins")
+    .update({
+      failed_attempts: 0,
+      locked_until: null,
+      updated_at: nowIso(),
+    })
+    .eq("id", pinRow.id);
+
+  // Return operator payload expected by WorkstationLockProvider + UI
+  return NextResponse.json({
     ok: true,
     operator: {
-      teamMemberId: tm.id,
-      orgId: tm.org_id,
-      locationId: tm.location_id,
-      name: tm.name,
-      initials: tm.initials,
-      role: tm.role,
+      teamMemberId: String(member.id),
+      orgId,
+      locationId,
+      name: member.name ? String(member.name) : "Unnamed",
+      initials: member.initials ? String(member.initials) : null,
+      role: member.role ? String(member.role) : null,
     },
   });
 }
