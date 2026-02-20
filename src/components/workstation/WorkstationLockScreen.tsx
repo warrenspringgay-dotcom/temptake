@@ -43,6 +43,8 @@ function isPublicPath(pathname: string) {
   );
 }
 
+type Mode = "unlock" | "set-pin";
+
 export default function WorkstationLockScreen() {
   const pathname = usePathname();
   const { locked, operator, setOperator, clearOperator } = useWorkstation();
@@ -57,7 +59,15 @@ export default function WorkstationLockScreen() {
   const [loading, setLoading] = useState(true);
 
   const [selected, setSelected] = useState<StaffRow | null>(null);
+
+  // Unlock PIN
   const [pin, setPin] = useState("");
+
+  // Set PIN flow
+  const [mode, setMode] = useState<Mode>("unlock");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -173,6 +183,19 @@ export default function WorkstationLockScreen() {
 
   const visible = useMemo(() => staff, [staff]);
 
+  function resetPins() {
+    setPin("");
+    setNewPin("");
+    setConfirmPin("");
+  }
+
+  function selectUser(s: StaffRow) {
+    setSelected(s);
+    setMsg(null);
+    setMode("unlock");
+    resetPins();
+  }
+
   async function unlock() {
     if (!orgId || !locationId) return;
     if (!selected) return setMsg("Pick a user.");
@@ -198,15 +221,85 @@ export default function WorkstationLockScreen() {
 
       if (!res.ok || !json?.ok) {
         const reason = json?.reason ?? "unlock-failed";
-        if (reason === "locked") setMsg("Too many wrong PINs. Wait a bit and try again.");
-        else if (reason === "no-pin-set") setMsg("This user has no PIN set.");
-        else setMsg("Wrong PIN.");
+        if (reason === "locked") {
+          setMsg("Too many wrong PINs. Wait a bit and try again.");
+        } else if (reason === "no-pin-set") {
+          // ✅ Flip into set-pin mode instead of dead-ending
+          setMode("set-pin");
+          setMsg("This user has no PIN set. Create one now.");
+          setNewPin("");
+          setConfirmPin("");
+        } else {
+          setMsg("Wrong PIN.");
+        }
         return;
       }
 
-      setOperator(json.operator);
-      setPin("");
+      // ✅ Make sure shape matches provider expectations
+      const op = json?.operator ?? {};
+      setOperator({
+        teamMemberId: String(op.teamMemberId ?? op.team_member_id ?? selected.team_member_id),
+        orgId: String(op.orgId ?? op.org_id ?? orgId),
+        locationId: String(op.locationId ?? op.location_id ?? locationId),
+        name: String(op.name ?? selected.name ?? "Operator"),
+        initials: (op.initials ?? selected.initials ?? null) as string | null,
+        role: (op.role ?? selected.role ?? null) as string | null,
+      });
+
+      resetPins();
       setSelected(null);
+      setMode("unlock");
+    } catch (e: any) {
+      setMsg(e?.message ?? "Unlock failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setPinForUser() {
+    if (!orgId || !locationId) return;
+    if (!selected) return setMsg("Pick a user.");
+
+    const p1 = onlyDigits(newPin);
+    const p2 = onlyDigits(confirmPin);
+
+    if (p1.length < 4) return setMsg("PIN must be 4–8 digits.");
+    if (p1 !== p2) return setMsg("PINs do not match.");
+
+    setBusy(true);
+    setMsg(null);
+
+    try {
+      // You need an API route that calls your RPC:
+      // - set_my_team_member_pin(org_id, team_member_id, pin)
+      const res = await fetch("/api/workstation/set-pin", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          orgId,
+          locationId,
+          teamMemberId: selected.team_member_id,
+          pin: p1,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || !json?.ok) {
+        const reason = json?.reason ?? "set-pin-failed";
+        if (reason === "forbidden") setMsg("Not allowed to set PIN for this user.");
+        else setMsg("Failed to set PIN.");
+        return;
+      }
+
+      // ✅ PIN set, go back to unlock
+      setMode("unlock");
+      setMsg("PIN set. Enter it to unlock.");
+      setPin("");
+      setNewPin("");
+      setConfirmPin("");
+    } catch (e: any) {
+      setMsg(e?.message ?? "Failed to set PIN.");
     } finally {
       setBusy(false);
     }
@@ -236,7 +329,11 @@ export default function WorkstationLockScreen() {
 
           <button
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            onClick={clearOperator}
+            onClick={() => {
+              setMode("unlock");
+              resetPins();
+              clearOperator();
+            }}
             type="button"
             title="Clears active operator on this device"
           >
@@ -265,10 +362,7 @@ export default function WorkstationLockScreen() {
                 return (
                   <button
                     key={s.team_member_id}
-                    onClick={() => {
-                      setSelected(s);
-                      setMsg(null);
-                    }}
+                    onClick={() => selectUser(s)}
                     className={[
                       "flex items-center gap-3 rounded-2xl border p-3 text-left transition",
                       active
@@ -281,7 +375,9 @@ export default function WorkstationLockScreen() {
                       {initials}
                     </div>
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-slate-900">{s.name ?? "Unnamed"}</div>
+                      <div className="truncate text-sm font-semibold text-slate-900">
+                        {s.name ?? "Unnamed"}
+                      </div>
                       <div className="text-[11px] text-slate-500">{(s.role ?? "staff").toString()}</div>
                     </div>
                   </button>
@@ -290,42 +386,103 @@ export default function WorkstationLockScreen() {
             </div>
 
             <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <div className="text-xs font-semibold text-slate-700">PIN</div>
-                  <input
-                    inputMode="numeric"
-                    value={pin}
-                    onChange={(e) => setPin(onlyDigits(e.target.value))}
-                    className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-lg tracking-widest"
-                    placeholder="••••"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void unlock();
-                    }}
-                  />
-                  <div className="mt-1 text-[11px] text-slate-500">4–8 digits</div>
-                </div>
+              {mode === "unlock" ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700">PIN</div>
+                    <input
+                      inputMode="numeric"
+                      value={pin}
+                      onChange={(e) => setPin(onlyDigits(e.target.value))}
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-lg tracking-widest"
+                      placeholder="••••"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void unlock();
+                      }}
+                    />
+                    <div className="mt-1 text-[11px] text-slate-500">4–8 digits</div>
+                  </div>
 
-                <div className="flex items-end justify-end gap-2">
-                  {msg ? <div className="mr-auto text-xs text-rose-700">{msg}</div> : null}
+                  <div className="flex items-end justify-end gap-2">
+                    {msg ? <div className="mr-auto text-xs text-rose-700">{msg}</div> : null}
 
-                  <button
-                    onClick={() => void unlock()}
-                    disabled={!selected || pin.length < 4 || busy}
-                    className="h-11 rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                    type="button"
-                  >
-                    {busy ? "Checking…" : "Unlock"}
-                  </button>
+                    <button
+                      onClick={() => void unlock()}
+                      disabled={!selected || pin.length < 4 || busy}
+                      className="h-11 rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                      type="button"
+                    >
+                      {busy ? "Checking…" : "Unlock"}
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700">Set new PIN</div>
+                    <input
+                      inputMode="numeric"
+                      value={newPin}
+                      onChange={(e) => setNewPin(onlyDigits(e.target.value))}
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-lg tracking-widest"
+                      placeholder="••••"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void setPinForUser();
+                      }}
+                    />
+                    <div className="mt-1 text-[11px] text-slate-500">4–8 digits</div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700">Confirm PIN</div>
+                    <input
+                      inputMode="numeric"
+                      value={confirmPin}
+                      onChange={(e) => setConfirmPin(onlyDigits(e.target.value))}
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-lg tracking-widest"
+                      placeholder="••••"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void setPinForUser();
+                      }}
+                    />
+                    <div className="mt-1 text-[11px] text-slate-500">Must match</div>
+                  </div>
+
+                  <div className="sm:col-span-2 flex items-center justify-end gap-2">
+                    {msg ? <div className="mr-auto text-xs text-rose-700">{msg}</div> : null}
+
+                    <button
+                      onClick={() => {
+                        setMode("unlock");
+                        setMsg(null);
+                        setNewPin("");
+                        setConfirmPin("");
+                      }}
+                      className="h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+
+                    <button
+                      onClick={() => void setPinForUser()}
+                      disabled={!selected || newPin.length < 4 || confirmPin.length < 4 || busy}
+                      className="h-11 rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                      type="button"
+                    >
+                      {busy ? "Saving…" : "Set PIN"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
 
         {operator ? (
           <div className="mt-3 text-[11px] text-slate-600">
-            Previously active: <span className="font-semibold">{operator.initials ?? operator.name}</span>
+            Previously active:{" "}
+            <span className="font-semibold">{operator.initials ?? operator.name}</span>
           </div>
         ) : null}
       </div>
