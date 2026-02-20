@@ -19,7 +19,7 @@ import HeaderSwitcher from "@/components/HeaderSwitcher";
 import CookieBanner from "@/components/CookieBanner";
 import ConsentBootstrap from "@/components/ConsentBootstrap";
 
-
+import ClientProviders from "@/app/ClientProviders";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -48,6 +48,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
+        <ClientProviders>
         <PHProvider>
           <ToastProvider>
             <GlobalLoadingProvider>
@@ -76,7 +77,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </GlobalLoadingProvider>
           </ToastProvider>
         </PHProvider>
-
+</ClientProviders>
         <Analytics />
       </body>
     </html>
