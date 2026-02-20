@@ -21,6 +21,9 @@ import ConsentBootstrap from "@/components/ConsentBootstrap";
 
 import ClientProviders from "@/app/ClientProviders";
 
+import { WorkstationLockProvider } from "@/components/workstation/WorkstationLockProvider";
+import WorkstationLockScreen from "@/components/workstation/WorkstationLockScreen";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -47,7 +50,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
+      
+      
       <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
+        <WorkstationLockProvider>
         <ClientProviders>
         <PHProvider>
           <ToastProvider>
@@ -78,6 +84,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           </ToastProvider>
         </PHProvider>
 </ClientProviders>
+<WorkstationLockScreen />
+</WorkstationLockProvider>
         <Analytics />
       </body>
     </html>
