@@ -15,7 +15,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
-import IncidentModal from "@/components/IncidentModal"; // ✅ ADD (adjust path/name if different)
+import IncidentModal from "@/components/IncidentModal";
 
 import {
   Thermometer,
@@ -25,23 +25,23 @@ import {
   ClipboardList,
   CheckSquare,
   MessageSquare,
-  AlertTriangle, // ✅ ADD
+  AlertTriangle,
 } from "lucide-react";
 import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
 
-const LS_LAST_INITIALS = "tt_last_initials";
+// ✅ Workstation operator (PIN user)
+import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
+
 const LS_LAST_LOCATION = "tt_last_location";
 
 type FormState = {
   date: string;
-  staff_initials: string;
+  staff_initials: string; // now derived from workstation operator
   location: string;
   item: string;
   target_key: string;
   temp_c: string;
 };
-
-type MemberRole = "manager" | "staff" | "owner" | "admin" | string;
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
@@ -110,6 +110,7 @@ function SignoffModal({
   onSave,
   setInitials,
   setNotes,
+  operatorLocked,
 }: {
   open: boolean;
   dateLabel: string;
@@ -121,6 +122,7 @@ function SignoffModal({
   onSave: () => void;
   setInitials: (v: string) => void;
   setNotes: (v: string) => void;
+  operatorLocked: boolean;
 }) {
   if (!open) return null;
 
@@ -157,17 +159,27 @@ function SignoffModal({
                 Already signed off today. Saving again updates initials/notes.
               </div>
             ) : null}
+            {operatorLocked ? (
+              <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Workstation is locked. Select an operator and enter PIN before
+                signing off.
+              </div>
+            ) : null}
           </div>
 
           <div>
             <div className="text-sm font-semibold text-slate-900">Initials</div>
             <input
               value={initials}
-              onChange={(e) => setInitials(e.target.value)}
-              className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+              onChange={(e) => setInitials(e.target.value.toUpperCase())}
+              className="mt-2 w-full rounded-2xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm uppercase shadow-sm"
               placeholder="e.g. WS"
               maxLength={8}
+              readOnly
             />
+            <div className="mt-1 text-[11px] text-slate-500">
+              Taken from workstation operator (PIN).
+            </div>
           </div>
 
           <div>
@@ -196,7 +208,7 @@ function SignoffModal({
             <button
               type="button"
               onClick={onSave}
-              disabled={saving}
+              disabled={saving || operatorLocked}
               className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
             >
               {saving ? "Saving..." : "Sign off"}
@@ -287,12 +299,10 @@ function CorrectiveModal({
           <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-800 space-y-1">
             <div className="font-semibold text-red-900">Details</div>
             <div>
-              <span className="font-semibold">Area:</span>{" "}
-              {draft.area || "—"}
+              <span className="font-semibold">Area:</span> {draft.area || "—"}
             </div>
             <div>
-              <span className="font-semibold">Item:</span>{" "}
-              {draft.item || "—"}
+              <span className="font-semibold">Item:</span> {draft.item || "—"}
             </div>
             <div>
               <span className="font-semibold">Target:</span>{" "}
@@ -567,15 +577,18 @@ export default function TempFab() {
   const { addToast } = useToast();
   const router = useRouter();
 
+  // ✅ Workstation operator (PIN user)
+  const { operator, locked } = useWorkstation();
+  const operatorInitials = (operator?.initials ?? "").toString().trim().toUpperCase();
+
   const [open, setOpen] = useState(false);
   const [entriesToday, setEntriesToday] = useState<number | null>(null);
   const [openCleaning, setOpenCleaning] = useState<number | null>(null);
   const [showMenu, setShowMenu] = useState(false);
 
-  const [initials, setInitials] = useState<string[]>([]);
   const [locations, setLocations] = useState<string[]>([]);
   const [form, setForm] = useState<FormState>({
-    date: new Date().toISOString().slice(0, 10),
+    date: isoToday(),
     staff_initials: "",
     location: "",
     item: "",
@@ -583,15 +596,19 @@ export default function TempFab() {
     temp_c: "",
   });
 
-  // ✅ Logged-in user's role (resolved once)
-  const [myRole, setMyRole] = useState<MemberRole | null>(null);
+  // Keep form.staff_initials synced to operator
+  useEffect(() => {
+    setForm((f) => ({ ...f, staff_initials: operatorInitials }));
+  }, [operatorInitials]);
 
   const canSave =
     !!form.date &&
     !!form.location &&
     !!form.item &&
     !!form.target_key &&
-    form.temp_c.trim().length > 0;
+    form.temp_c.trim().length > 0 &&
+    !!operatorInitials &&
+    !locked;
 
   // Routine picker / runner
   const [showPicker, setShowPicker] = useState(false);
@@ -623,7 +640,7 @@ export default function TempFab() {
     [signoffDateISO]
   );
 
-  // ✅ Corrective action state (FAB-only logging)
+  // Corrective action state
   const [corrective, setCorrective] = useState<CorrectiveDraft>({
     open: false,
     tempLogId: null,
@@ -640,24 +657,23 @@ export default function TempFab() {
   const [correctiveRecheckEnabled, setCorrectiveRecheckEnabled] = useState(true);
   const [correctiveRecheckTemp, setCorrectiveRecheckTemp] = useState("");
 
-  // ✅ Feedback modal state
+  // Feedback modal state
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
-  // ✅ Incident modal state (NEW)
+  // Incident modal state
   const [incidentOpen, setIncidentOpen] = useState(false);
   const [incidentArea, setIncidentArea] = useState<string | null>(null);
 
-  function getDashboardPathForRole(role: MemberRole | null) {
-    // Manager-ish roles go to /dashboard, everyone else goes to /staff
-    if (!role) return "/manager";
-    const r = String(role).toLowerCase();
-    if (r === "manager" || r === "admin" || r === "owner") return "/manager";
-    return "/staff";
-  }
-
-  function redirectAfterTemp() {
-    const path = getDashboardPathForRole(myRole);
-    router.push(path);
+  function requireOperator(): boolean {
+    if (locked || !operatorInitials) {
+      addToast({
+        title: "Workstation locked",
+        message: "Select a user and enter PIN to continue.",
+        type: "error",
+      });
+      return false;
+    }
+    return true;
   }
 
   function closeCorrective() {
@@ -674,9 +690,7 @@ export default function TempFab() {
       corrective.target_key
     ];
 
-    const reTemp = correctiveRecheckEnabled
-      ? Number(correctiveRecheckTemp)
-      : NaN;
+    const reTemp = correctiveRecheckEnabled ? Number(correctiveRecheckTemp) : NaN;
 
     const recheck_temp_c =
       correctiveRecheckEnabled && Number.isFinite(reTemp) ? reTemp : null;
@@ -717,13 +731,9 @@ export default function TempFab() {
       setCorrectiveRecheckEnabled(true);
       setCorrectiveRecheckTemp("");
 
-      // nudge reports/other pages to refresh if they listen
       try {
         window.dispatchEvent(new Event("tt-temps-changed"));
       } catch {}
-
-      // ✅ Now that the "failed temp" flow is complete, redirect
-      redirectAfterTemp();
     } catch (e: any) {
       console.error(e);
       addToast({
@@ -736,7 +746,7 @@ export default function TempFab() {
     }
   }
 
-  // ✅ Voice hook must be top-level (not inside useEffect)
+  // Voice hook (do NOT override operator initials)
   const { supported: voiceSupported, listening, start, stop } = useVoiceTempEntry(
     {
       lang: "en-GB",
@@ -746,7 +756,7 @@ export default function TempFab() {
           temp_c: r.temp_c ?? f.temp_c,
           item: r.item ?? f.item,
           location: r.location ?? f.location,
-          staff_initials: r.staff_initials ?? f.staff_initials,
+          staff_initials: operatorInitials || f.staff_initials,
         }));
 
         posthog.capture("temp_voice_parsed", {
@@ -796,8 +806,7 @@ export default function TempFab() {
     }
   }
 
-  // Count today’s *open* cleaning tasks:
-  // tasks due today minus runs recorded today
+  // Count today’s open cleaning tasks
   async function refreshCleaningOpen(force = false) {
     if (cleaningRefreshInFlight.current) {
       cleaningRefreshQueued.current = true;
@@ -880,8 +889,7 @@ export default function TempFab() {
         (rData ?? []).map((r: any) => String(r.task_id))
       );
 
-      const openCount = dueToday.filter((t) => !doneIds.has(String(t.id)))
-        .length;
+      const openCount = dueToday.filter((t) => !doneIds.has(String(t.id))).length;
       setOpenCleaning(openCount);
     } catch {
       setOpenCleaning(0);
@@ -899,6 +907,8 @@ export default function TempFab() {
   async function openDaySignoff() {
     setShowMenu(false);
 
+    if (!requireOperator()) return;
+
     try {
       const orgId = await getActiveOrgIdClient();
       const locationId = await getActiveLocationIdClient();
@@ -911,15 +921,6 @@ export default function TempFab() {
         });
         return;
       }
-
-      // Prefill initials from last-used, then from current form
-      let prefIni = "";
-      try {
-        prefIni = (localStorage.getItem(LS_LAST_INITIALS) || "")
-          .toUpperCase()
-          .trim();
-      } catch {}
-      if (!prefIni) prefIni = (form.staff_initials || "").toUpperCase().trim();
 
       const todayISO = isoToday();
 
@@ -950,7 +951,7 @@ export default function TempFab() {
         : null;
 
       setSignoffExisting(existing);
-      setSignoffInitials((existing?.signed_by ?? prefIni).toUpperCase());
+      setSignoffInitials((existing?.signed_by ?? operatorInitials).toUpperCase());
       setSignoffNotes(existing?.notes ?? "");
       setSignoffOpen(true);
 
@@ -967,11 +968,13 @@ export default function TempFab() {
 
   // Save sign-off (upsert by unique index)
   async function saveDaySignoff() {
-    const initialsTxt = signoffInitials.trim().toUpperCase();
+    if (!requireOperator()) return;
+
+    const initialsTxt = operatorInitials;
     if (!initialsTxt) {
       addToast({
-        title: "Initials required",
-        message: "Add initials to sign off the day.",
+        title: "Operator required",
+        message: "Select a user and enter PIN first.",
         type: "error",
       });
       return;
@@ -1007,18 +1010,10 @@ export default function TempFab() {
         org_id: String((data as any).org_id),
         location_id: String((data as any).location_id),
         signoff_on: String((data as any).signoff_on),
-        signed_by: (data as any).signed_by
-          ? String((data as any).signed_by)
-          : null,
+        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
         notes: (data as any).notes ? String((data as any).notes) : null,
-        created_at: (data as any).created_at
-          ? String((data as any).created_at)
-          : null,
+        created_at: (data as any).created_at ? String((data as any).created_at) : null,
       });
-
-      try {
-        localStorage.setItem(LS_LAST_INITIALS, initialsTxt);
-      } catch {}
 
       addToast({ title: "Day signed off", type: "success" });
       setSignoffOpen(false);
@@ -1036,20 +1031,18 @@ export default function TempFab() {
     }
   }
 
-  /* --------- boot: initials + locations + last used values --------- */
+  /* --------- boot: locations + last used values --------- */
 
   useEffect(() => {
     setForm((f) => ({
       ...f,
-      date: new Date().toISOString().slice(0, 10),
+      date: isoToday(),
     }));
 
     try {
-      const lsIni = localStorage.getItem(LS_LAST_INITIALS) || "";
       const lsLoc = localStorage.getItem(LS_LAST_LOCATION) || "";
       setForm((f) => ({
         ...f,
-        staff_initials: lsIni || f.staff_initials,
         location: lsLoc || f.location,
       }));
     } catch {}
@@ -1062,62 +1055,6 @@ export default function TempFab() {
         const locationId = await getActiveLocationIdClient();
         setActiveOrgId(orgId ?? null);
         setActiveLocationId(locationId ?? null);
-
-        if (orgId) {
-          const [{ data: authData }, { data: tmData }] = await Promise.all([
-            supabase.auth.getUser(),
-            supabase
-              .from("team_members")
-              .select("initials,email,role")
-              .eq("org_id", orgId)
-              .order("initials", { ascending: true }),
-          ]);
-
-          const email = authData?.user?.email?.toLowerCase() ?? null;
-
-          const iniList: string[] =
-            (tmData ?? [])
-              .map((r: any) =>
-                r.initials ? r.initials.toString().toUpperCase().trim() : ""
-              )
-              .filter(Boolean) || [];
-
-          const mineRow =
-            (tmData ?? []).find(
-              (r: any) =>
-                r.email &&
-                email &&
-                r.email.toString().toLowerCase() === email
-            ) ?? null;
-
-          let mine =
-            mineRow?.initials?.toString().toUpperCase().trim() || "";
-
-          // ✅ capture role for redirects
-          const role = (mineRow?.role ?? null) as MemberRole | null;
-          if (role) setMyRole(role);
-
-          if (!mine) {
-            try {
-              const fromLs = localStorage.getItem(LS_LAST_INITIALS) || "";
-              mine = fromLs.toUpperCase().trim();
-            } catch {}
-          }
-
-          let sorted = iniList;
-          if (mine && iniList.includes(mine)) {
-            sorted = [mine, ...iniList.filter((i) => i !== mine)];
-          }
-
-          setInitials(sorted);
-
-          if (!form.staff_initials) {
-            const chosen = mine || sorted[0] || "";
-            if (chosen) {
-              setForm((f) => ({ ...f, staff_initials: chosen }));
-            }
-          }
-        }
 
         if (orgId) {
           let q = supabase
@@ -1139,7 +1076,6 @@ export default function TempFab() {
               .filter((s: string) => s.length > 0);
 
           const unique: string[] = Array.from(new Set<string>(fromAreas));
-
           const finalAreas: string[] = unique.length ? unique : ["Kitchen"];
 
           setLocations(finalAreas);
@@ -1176,7 +1112,7 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId, activeLocationId]);
 
-  // Refresh on focus/visibility so it never "lags" when you come back
+  // Refresh on focus/visibility
   useEffect(() => {
     const onVis = () => {
       if (document.visibilityState === "visible") void refreshCleaningOpen(true);
@@ -1192,7 +1128,7 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Allow other pages to force immediate refresh (recommended)
+  // Allow other pages to force immediate refresh
   useEffect(() => {
     const onCleaningChanged = () => {
       void refreshCleaningOpen(true);
@@ -1203,7 +1139,7 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime: update orb instantly when logs change (kept as-is)
+  // Realtime: update orb instantly when logs change
   useEffect(() => {
     if (!activeOrgId || !activeLocationId) return;
     const channel = supabase
@@ -1249,10 +1185,9 @@ export default function TempFab() {
 
   async function handleSave() {
     if (!canSave) return;
+    if (!requireOperator()) return;
 
-    const tempNum = Number.isFinite(Number(form.temp_c))
-      ? Number(form.temp_c)
-      : null;
+    const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
     const preset = (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
       form.target_key
     ];
@@ -1297,21 +1232,23 @@ export default function TempFab() {
       atIso = new Date().toISOString();
     }
 
-    const payload = {
+    const payload: any = {
       org_id,
       location_id,
       at: atIso,
       area: form.location || null,
       note: form.item || null,
-      staff_initials: form.staff_initials
-        ? form.staff_initials.toUpperCase()
-        : null,
+      staff_initials: operatorInitials || null,
       target_key: form.target_key || null,
       temp_c: tempNum,
       status,
     };
 
-    // ✅ Return inserted log id so corrective action can link properly
+    // Optional: stamp operator ids if your schema has them
+    const opAny = operator as any;
+    if (opAny?.team_member_id) payload.done_by_team_member_id = opAny.team_member_id;
+    if (opAny?.location_staff_id) payload.location_staff_id = opAny.location_staff_id;
+
     const { data: inserted, error } = await supabase
       .from("food_temp_logs")
       .insert(payload)
@@ -1328,8 +1265,6 @@ export default function TempFab() {
     }
 
     try {
-      if (form.staff_initials)
-        localStorage.setItem(LS_LAST_INITIALS, form.staff_initials);
       if (form.location) localStorage.setItem(LS_LAST_LOCATION, form.location);
     } catch {}
 
@@ -1345,15 +1280,14 @@ export default function TempFab() {
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
     await refreshEntriesToday();
 
-    // ✅ If FAIL, open corrective action modal (and redirect only after corrective saved)
+    // If FAIL, open corrective action modal
     if (status === "fail" && inserted?.id) {
-      const staffIni = (form.staff_initials || "").toUpperCase().trim();
       setCorrective({
         open: true,
         tempLogId: String(inserted.id),
         org_id,
         location_id,
-        staff_initials: staffIni,
+        staff_initials: operatorInitials,
         area: form.location || "",
         item: form.item || "",
         target_key: form.target_key || "",
@@ -1367,15 +1301,14 @@ export default function TempFab() {
       return;
     }
 
-    // ✅ PASS: close and redirect immediately
     setOpen(false);
-    setShowMenu(false);
-    redirectAfterTemp();
   }
 
   /* --------- routines --------- */
 
   async function openRoutinePicker() {
+    if (!requireOperator()) return;
+
     setShowPicker(true);
     setPickerLoading(true);
     setPickerErr(null);
@@ -1541,6 +1474,17 @@ export default function TempFab() {
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
                 What would you like to do?
               </div>
+
+              {!operatorInitials || locked ? (
+                <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Workstation locked. Select operator + PIN to log anything.
+                </div>
+              ) : (
+                <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  Operator: <span className="font-semibold">{operatorInitials}</span>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <button
                   type="button"
@@ -1551,7 +1495,6 @@ export default function TempFab() {
                   }}
                   className="w-full rounded-xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/40 hover:brightness-105"
                 >
-                  <Thermometer className="inline h-4 w-4 mr-2" />
                   Quick temp log
                 </button>
 
@@ -1582,11 +1525,12 @@ export default function TempFab() {
                   </span>
                 </button>
 
-                {/* ✅ Log incident (NEW) */}
+                {/* Log incident */}
                 <button
                   type="button"
                   onClick={async () => {
                     setShowMenu(false);
+                    if (!requireOperator()) return;
 
                     const orgId = await getActiveOrgIdClient();
                     const locationId = await getActiveLocationIdClient();
@@ -1626,11 +1570,10 @@ export default function TempFab() {
                   }}
                   className="w-full rounded-xl bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-blue-500/40 hover:brightness-105"
                 >
-                  <MessageSquare className="inline h-4 w-4 mr-2" />
                   Open wall
                 </button>
 
-                {/* ✅ Feedback (trial FAB action) */}
+                {/* Feedback */}
                 <button
                   type="button"
                   onClick={() => {
@@ -1651,7 +1594,7 @@ export default function TempFab() {
         </div>
       )}
 
-      {/* ✅ Feedback modal */}
+      {/* Feedback modal */}
       <FeedbackModal
         open={feedbackOpen}
         onClose={() => setFeedbackOpen(false)}
@@ -1659,13 +1602,14 @@ export default function TempFab() {
         area={form.location ? String(form.location) : null}
       />
 
+      {/* Incident modal */}
       <IncidentModal
         open={incidentOpen}
         onClose={() => setIncidentOpen(false)}
         orgId={activeOrgId ?? ""}
         locationId={activeLocationId ?? ""}
         defaultDate={isoToday()}
-        defaultInitials={form.staff_initials || ""}
+        defaultInitials={operatorInitials || ""}
         defaultArea={incidentArea || form.location || null}
         onSaved={() => {
           try {
@@ -1678,7 +1622,7 @@ export default function TempFab() {
       <SignoffModal
         open={signoffOpen}
         dateLabel={signoffDateLabel}
-        initials={signoffInitials}
+        initials={operatorInitials || signoffInitials}
         notes={signoffNotes}
         saving={signoffSaving}
         signedAlready={!!signoffExisting}
@@ -1686,9 +1630,10 @@ export default function TempFab() {
         onSave={saveDaySignoff}
         setInitials={setSignoffInitials}
         setNotes={setSignoffNotes}
+        operatorLocked={!operatorInitials || locked}
       />
 
-      {/* ✅ Corrective action modal (opens only after FAIL) */}
+      {/* Corrective action modal */}
       <CorrectiveModal
         open={corrective.open}
         saving={correctiveSaving}
@@ -1799,7 +1744,7 @@ export default function TempFab() {
                       Voice entry
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      Say: “Walk-in fridge 3.4 degrees JB”
+                      Say: “Walk-in fridge 3.4 degrees”
                     </div>
                   </div>
 
@@ -1834,6 +1779,17 @@ export default function TempFab() {
                 </div>
               </div>
 
+              {!operatorInitials || locked ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Workstation locked. Select operator + PIN to log temperatures.
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  Operator:{" "}
+                  <span className="font-semibold">{operatorInitials}</span>
+                </div>
+              )}
+
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="block text-xs font-medium text-slate-700">
@@ -1851,25 +1807,14 @@ export default function TempFab() {
 
                 <div>
                   <label className="block text-xs font-medium text-slate-700">
-                    Initials
+                    Initials (operator)
                   </label>
-                  <select
-                    value={form.staff_initials}
-                    onChange={(e) =>
-                      setForm((f) => ({
-                        ...f,
-                        staff_initials: e.target.value,
-                      }))
-                    }
-                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
-                  >
-                    <option value="">Select…</option>
-                    {initials.map((i) => (
-                      <option key={i} value={i}>
-                        {i}
-                      </option>
-                    ))}
-                  </select>
+                  <input
+                    value={operatorInitials}
+                    readOnly
+                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 uppercase shadow-sm"
+                    placeholder="Locked"
+                  />
                 </div>
               </div>
 
@@ -1899,9 +1844,7 @@ export default function TempFab() {
                 </label>
                 <input
                   value={form.item}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, item: e.target.value }))
-                  }
+                  onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
                   className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                   placeholder="e.g. Chicken curry hot hold"
                 />
@@ -1968,7 +1911,7 @@ export default function TempFab() {
         open={!!runRoutine}
         routine={runRoutine as any}
         defaultDate={isoToday()}
-        defaultInitials={form.staff_initials || ""}
+        defaultInitials={operatorInitials || ""}
         onClose={() => setRunRoutine(null)}
         onSaved={async () => {
           setRunRoutine(null);

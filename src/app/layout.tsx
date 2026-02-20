@@ -18,7 +18,8 @@ import FabShell from "@/app/FabShell";
 import HeaderSwitcher from "@/components/HeaderSwitcher";
 import CookieBanner from "@/components/CookieBanner";
 import ConsentBootstrap from "@/components/ConsentBootstrap";
-import AppFooter from "@/components/AppFooter";
+
+import ClientProviders from "@/app/ClientProviders";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -46,43 +47,37 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className="min-h-[100dvh] bg-gray-100 text-gray-900">
+      <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
+        <ClientProviders>
         <PHProvider>
           <ToastProvider>
             <GlobalLoadingProvider>
               <AuthProvider>
-                <div className="flex min-h-[100dvh] flex-col">
-                  <Pwa />
+                <Pwa />
 
-                  {/* Cookie consent + PostHog opt-in/out */}
-                  <ConsentBootstrap />
-                  <CookieBanner />
+                {/* Cookie consent + PostHog opt-in/out */}
+                <ConsentBootstrap />
+                <CookieBanner />
 
-                  <Suspense fallback={null}>
-                    <HeaderSwitcher />
-                  </Suspense>
+                <Suspense fallback={null}>
+                  <HeaderSwitcher />
+                </Suspense>
 
-                  {/* Main app content */}
-                  <main className="w-full flex-1">
-                    <div className="w-full px-0 sm:px-4 md:mx-auto md:max-w-screen-2xl
-">
-                      {children}
-                    </div>
-                  </main>
+                <main className="w-full">
+                  <div className="w-full px-0 sm:px-4 md:mx-auto md:max-w-6xl">
+                    {children}
+                  </div>
+                </main>
 
-                  {/* Footer sits outside content container so it behaves like a real footer */}
-                  <AppFooter />
-
-                  <Suspense fallback={null}>
-                    <FabShell />
-                    <ServiceWorkerRegister />
-                  </Suspense>
-                </div>
+                <Suspense fallback={null}>
+                  <FabShell />
+                  <ServiceWorkerRegister />
+                </Suspense>
               </AuthProvider>
             </GlobalLoadingProvider>
           </ToastProvider>
         </PHProvider>
-
+</ClientProviders>
         <Analytics />
       </body>
     </html>
