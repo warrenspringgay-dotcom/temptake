@@ -1,19 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseBrowser";
+import { useToast } from "@/components/ui/use-toast";
+
+// ✅ Workstation operator (PIN user)
+import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
 type Props = {
   open: boolean;
   onClose: () => void;
 
-  // In your app these are UUID strings, but typed as string
   orgId: string;
   locationId: string;
 
   defaultDate: string; // YYYY-MM-DD
-  defaultInitials: string;
+  defaultInitials: string; // legacy input (ignored once operator exists)
   defaultArea?: string | null; // UI-only
   onSaved: () => void;
 };
@@ -28,9 +31,19 @@ export default function IncidentModal({
   defaultArea,
   onSaved,
 }: Props) {
+  const { addToast } = useToast();
+
+  // ✅ Workstation operator (PIN user)
+  const { operator, locked } = useWorkstation();
+  const operatorInitials = useMemo(
+    () => (operator?.initials ?? "").toString().trim().toUpperCase(),
+    [operator?.initials]
+  );
+
   const [mounted, setMounted] = useState(false);
 
   const [date, setDate] = useState(defaultDate);
+  // ✅ initials now derived from operator, not user-editable
   const [initials, setInitials] = useState(defaultInitials || "");
   const [area, setArea] = useState<string>(defaultArea?.toString() ?? ""); // UI-only
 
@@ -47,7 +60,8 @@ export default function IncidentModal({
     if (!open) return;
 
     setDate(defaultDate);
-    setInitials(defaultInitials || "");
+    // ✅ when opened, snap to operator initials if available; otherwise keep whatever default came in
+    setInitials(operatorInitials || defaultInitials || "");
     setArea(defaultArea?.toString() ?? "");
 
     setType("General");
@@ -61,17 +75,52 @@ export default function IncidentModal({
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [open, defaultDate, defaultInitials, defaultArea]);
+  }, [open, defaultDate, defaultInitials, defaultArea, operatorInitials]);
+
+  // Keep initials synced if operator changes while open
+  useEffect(() => {
+    if (!open) return;
+    if (!operatorInitials) return;
+    setInitials(operatorInitials);
+  }, [open, operatorInitials]);
 
   if (!open || !mounted) return null;
 
+  function requireOperator(): boolean {
+    if (locked || !operatorInitials) {
+      addToast({
+        title: "Workstation locked",
+        message: "Select a user and enter PIN to log an incident.",
+        type: "error",
+      });
+      return false;
+    }
+    return true;
+  }
+
   async function saveIncident() {
-    if (!date) return alert("Date is required.");
-    if (!details.trim()) return alert("Details are required.");
+    if (!requireOperator()) return;
+
+    if (!date) {
+      addToast({ title: "Date required", message: "Pick a date.", type: "error" });
+      return;
+    }
+    if (!details.trim()) {
+      addToast({
+        title: "Details required",
+        message: "Add what happened.",
+        type: "error",
+      });
+      return;
+    }
 
     // Guard: these must be UUID strings for your NOT NULL uuid columns
     if (!orgId || !locationId) {
-      alert("Missing org/location. Select a location first.");
+      addToast({
+        title: "Missing org/location",
+        message: "Select a location first.",
+        type: "error",
+      });
       return;
     }
 
@@ -81,7 +130,7 @@ export default function IncidentModal({
       const areaPrefix = area.trim() ? `[Area: ${area.trim()}]\n` : "";
       const finalDetails = `${areaPrefix}${details.trim()}`;
 
-      const payload = {
+      const payload: any = {
         // Your schema wants BOTH text + uuid columns, all NOT NULL
         org_id: String(orgId),
         location_id: String(locationId),
@@ -93,17 +142,30 @@ export default function IncidentModal({
         details: finalDetails || null,
         immediate_action: immediateAction.trim() || null,
         preventive_action: preventiveAction.trim() || null,
-        created_by: initials.trim().toUpperCase() || null,
+
+        // ✅ enforce operator initials
+        created_by: operatorInitials,
       };
+
+      // Optional: stamp operator ids if your schema supports them
+      const opAny = operator as any;
+      if (opAny?.team_member_id) payload.created_by_team_member_id = opAny.team_member_id;
+      if (opAny?.location_staff_id) payload.location_staff_id = opAny.location_staff_id;
 
       const { error } = await supabase.from("incidents").insert(payload);
       if (error) throw error;
+
+      addToast({ title: "Incident saved", type: "success" });
 
       onClose();
       onSaved();
     } catch (e: any) {
       console.error(e);
-      alert(e?.message ?? "Failed to log incident.");
+      addToast({
+        title: "Failed to log incident",
+        message: e?.message ?? "Something went wrong.",
+        type: "error",
+      });
     } finally {
       setSaving(false);
     }
@@ -140,6 +202,17 @@ export default function IncidentModal({
           </div>
 
           <div className="flex-1 overflow-y-auto px-4 py-4">
+            {/* ✅ Operator warning */}
+            {!operatorInitials || locked ? (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Workstation locked. Select operator + PIN to log an incident.
+              </div>
+            ) : (
+              <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                Operator: <span className="font-semibold">{operatorInitials}</span>
+              </div>
+            )}
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">
@@ -155,14 +228,17 @@ export default function IncidentModal({
 
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">
-                  Initials
+                  Initials (operator)
                 </label>
                 <input
                   value={initials}
-                  onChange={(e) => setInitials(e.target.value.toUpperCase())}
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
-                  placeholder="e.g. WS"
+                  readOnly
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-slate-50 px-3 text-sm uppercase"
+                  placeholder="Locked"
                 />
+                <div className="mt-1 text-[11px] text-slate-500">
+                  Taken from workstation operator (PIN).
+                </div>
               </div>
 
               <div className="sm:col-span-2">
@@ -252,7 +328,7 @@ export default function IncidentModal({
             <button
               type="button"
               onClick={saveIncident}
-              disabled={saving}
+              disabled={saving || locked || !operatorInitials}
               className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
             >
               {saving ? "Saving…" : "Save incident"}

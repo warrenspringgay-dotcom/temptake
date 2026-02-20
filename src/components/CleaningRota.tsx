@@ -513,45 +513,52 @@ export default function CleaningRotaPage() {
   }
 
   async function tickTask(taskId: string) {
-    if (!orgId || !locationId) return;
+  if (!orgId || !locationId) return;
 
-    userActionRef.current = true;
+  userActionRef.current = true;
 
-    const doneBy = bestInitials(userInitials, initials) || null;
+  const doneBy = bestInitials(userInitials, initials) || null;
 
-    const payload = {
-      org_id: orgId,
-      location_id: locationId,
-      task_id: taskId,
-      run_on: todayIso,
-      done_by: doneBy,
-    };
+  // If the doer is the logged-in user, we can link the team_member id
+  const doneByTeamMemberId =
+    doneBy && userInitials && doneBy === userInitials && userTeamMemberId
+      ? userTeamMemberId
+      : null;
 
-    const { data, error } = await supabase
-      .from("cleaning_task_runs")
-      .upsert(payload, { onConflict: "task_id,run_on" })
-      .select("task_id,run_on,done_by,done_at")
-      .maybeSingle();
+  const payload = {
+    org_id: orgId,
+    location_id: locationId,
+    task_id: taskId,
+    run_on: todayIso,
+    done_by: doneBy,
+    done_by_team_member_id: doneByTeamMemberId,
+    done_at: new Date().toISOString(), // ensures update gets a fresh timestamp on re-tick
+  };
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
+  const { data, error } = await supabase
+    .from("cleaning_task_runs")
+    .upsert(payload, { onConflict: "org_id,location_id,task_id,run_on" })
+    .select("task_id,run_on,done_by,done_at")
+    .maybeSingle();
 
-    const row: Run = (data as any) ?? {
-      task_id: taskId,
-      run_on: todayIso,
-      done_by: payload.done_by,
-      done_at: new Date().toISOString(),
-    };
-
-    setRuns((prev) => {
-      const next = prev.filter((r) => r.task_id !== taskId);
-      next.push(row);
-      return next;
-    });
+  if (error) {
+    alert(error.message);
+    return;
   }
 
+  const row: Run = (data as any) ?? {
+    task_id: taskId,
+    run_on: todayIso,
+    done_by: payload.done_by,
+    done_at: payload.done_at,
+  };
+
+  setRuns((prev) => {
+    const next = prev.filter((r) => r.task_id !== taskId);
+    next.push(row);
+    return next;
+  });
+}
   async function undoTask(taskId: string) {
     if (!orgId || !locationId) return;
 
@@ -605,57 +612,62 @@ export default function CleaningRotaPage() {
   }
 
   async function completeAllInCategory(taskIds: string[]) {
-    if (!orgId || !locationId) return;
+  if (!orgId || !locationId) return;
 
-    const idsToDo = taskIds.filter((id) => !runsByTask.has(id));
-    if (idsToDo.length === 0) return;
+  const idsToDo = taskIds.filter((id) => !runsByTask.has(id));
+  if (idsToDo.length === 0) return;
 
-    userActionRef.current = true;
+  userActionRef.current = true;
 
-    const nowIso = new Date().toISOString();
-    const doneBy = bestInitials(userInitials, initials) || null;
+  const nowIso = new Date().toISOString();
+  const doneBy = bestInitials(userInitials, initials) || null;
 
-    const payloads = idsToDo.map((task_id) => ({
-      org_id: orgId,
-      location_id: locationId,
-      task_id,
-      run_on: todayIso,
-      done_by: doneBy,
-      done_at: nowIso,
-    }));
+  const doneByTeamMemberId =
+    doneBy && userInitials && doneBy === userInitials && userTeamMemberId
+      ? userTeamMemberId
+      : null;
 
-    const { data, error } = await supabase
-      .from("cleaning_task_runs")
-      .upsert(payloads, { onConflict: "task_id,run_on" })
-      .select("task_id,run_on,done_by,done_at");
+  const payloads = idsToDo.map((task_id) => ({
+    org_id: orgId,
+    location_id: locationId,
+    task_id,
+    run_on: todayIso,
+    done_by: doneBy,
+    done_by_team_member_id: doneByTeamMemberId,
+    done_at: nowIso,
+  }));
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
+  const { data, error } = await supabase
+    .from("cleaning_task_runs")
+    .upsert(payloads, { onConflict: "org_id,location_id,task_id,run_on" })
+    .select("task_id,run_on,done_by,done_at");
 
-    const returned = (data ?? []) as any[];
-    const returnedRuns: Run[] =
-      returned.length > 0
-        ? returned.map((r) => ({
-            task_id: r.task_id,
-            run_on: r.run_on,
-            done_by: r.done_by,
-            done_at: r.done_at,
-          }))
-        : payloads.map((p) => ({
-            task_id: p.task_id,
-            run_on: p.run_on,
-            done_by: p.done_by,
-            done_at: p.done_at,
-          }));
-
-    setRuns((prev) => {
-      const keep = prev.filter((r) => !idsToDo.includes(r.task_id));
-      return [...keep, ...returnedRuns];
-    });
+  if (error) {
+    alert(error.message);
+    return;
   }
 
+  const returned = (data ?? []) as any[];
+  const returnedRuns: Run[] =
+    returned.length > 0
+      ? returned.map((r) => ({
+          task_id: r.task_id,
+          run_on: r.run_on,
+          done_by: r.done_by,
+          done_at: r.done_at,
+        }))
+      : payloads.map((p) => ({
+          task_id: p.task_id,
+          run_on: p.run_on,
+          done_by: p.done_by,
+          done_at: p.done_at,
+        }));
+
+  setRuns((prev) => {
+    const keep = prev.filter((r) => !idsToDo.includes(r.task_id));
+    return [...keep, ...returnedRuns];
+  });
+}
   async function createSignoff() {
     if (!orgId || !locationId) return;
 

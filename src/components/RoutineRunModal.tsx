@@ -9,6 +9,7 @@ import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 import { useVoiceRoutineEntry } from "@/lib/useVoiceRoutineEntry";
+import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
 type Props = {
   open: boolean;
@@ -46,13 +47,13 @@ function tokenScore(phrase: string, candidate: string) {
   const p = norm(phrase);
   const c = norm(candidate);
   if (!p || !c) return 0;
-  if (c === p) return 999; // exact
-  if (c.includes(p)) return 200; // phrase contained
+  if (c === p) return 999;
+  if (c.includes(p)) return 200;
   const pTokens = new Set(p.split(" "));
   const cTokens = new Set(c.split(" "));
   let hit = 0;
   for (const t of pTokens) if (cTokens.has(t)) hit++;
-  return hit; // overlap score
+  return hit;
 }
 
 function bestMatchIndex(phrase: string, items: { item?: string | null }[]) {
@@ -72,42 +73,6 @@ function bestMatchIndex(phrase: string, items: { item?: string | null }[]) {
   return -1;
 }
 
-/* ---------- initials helpers ---------- */
-function initialsFromName(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  return parts
-    .slice(0, 2)
-    .map((p: string) => (p[0] ? p[0].toUpperCase() : ""))
-    .join("");
-}
-
-async function resolveLoggedInInitials(orgId: string): Promise<string | null> {
-  try {
-    const { data: userData } = await supabase.auth.getUser();
-    const email = userData?.user?.email?.toLowerCase() ?? null;
-    if (!email) return null;
-
-    const { data: tm, error } = await supabase
-      .from("team_members")
-      .select("initials,name,email,active")
-      .eq("org_id", orgId)
-      .eq("email", email)
-      .maybeSingle();
-
-    if (error || !tm) return null;
-
-    const ini =
-      (tm.initials ?? "").toString().trim().toUpperCase() ||
-      ((tm.name ?? "").toString().trim()
-        ? initialsFromName((tm.name ?? "").toString())
-        : "");
-
-    return ini || null;
-  } catch {
-    return null;
-  }
-}
-
 /** Render modal at document.body level so it isn't "fixed inside a transformed parent" */
 function ModalPortal({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
@@ -124,6 +89,8 @@ export default function RoutineRunModal({
   onClose,
   onSaved,
 }: Props) {
+  const { operator, locked } = useWorkstation();
+
   const [date, setDate] = useState(defaultDate);
   const [initials, setInitials] = useState(defaultInitials || "");
   const [temps, setTemps] = useState<Record<string, string>>({});
@@ -132,9 +99,9 @@ export default function RoutineRunModal({
   const [activeIdx, setActiveIdx] = useState(0);
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const rowRefs = useRef<Record<string, HTMLTableRowElement | HTMLDivElement | null>>(
-    {}
-  );
+  const rowRefs = useRef<
+    Record<string, HTMLTableRowElement | HTMLDivElement | null>
+  >({});
 
   const items = useMemo(() => routine?.items ?? [], [routine]);
 
@@ -152,25 +119,11 @@ export default function RoutineRunModal({
     });
     setActiveIdx(0);
 
-    // default initials immediately, then resolve logged-in initials
-    setInitials(defaultInitials || "");
-
-    (async () => {
-      const orgId = await getActiveOrgIdClient();
-      if (!orgId) return;
-
-      const mine = await resolveLoggedInInitials(orgId);
-      if (mine) setInitials(mine);
-      else if (!defaultInitials) {
-        // last resort: try first letter of email
-        try {
-          const { data: userData } = await supabase.auth.getUser();
-          const email = userData?.user?.email ?? "";
-          if (email) setInitials(email[0].toUpperCase());
-        } catch {}
-      }
-    })();
-  }, [open, routine, defaultDate, defaultInitials]);
+    // Operator-first initials
+    const opIni = (operator?.initials ?? "").toString().trim().toUpperCase();
+    if (opIni) setInitials(opIni);
+    else setInitials((defaultInitials || "").toUpperCase());
+  }, [open, routine, defaultDate, defaultInitials, operator?.initials]);
 
   // Voice hook
   const { supported: voiceSupported, listening, start, stop } =
@@ -223,9 +176,21 @@ export default function RoutineRunModal({
 
   if (!open || !routine) return null;
 
+  function requireOperatorOrBail(): boolean {
+    if (locked || !operator?.initials) {
+      alert("Workstation is locked. Select a user and enter a PIN to continue.");
+      return false;
+    }
+    return true;
+  }
+
   async function handleSave(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!date || !initials) return;
+    if (!date) return;
+    if (!requireOperatorOrBail()) return;
+
+    const opInitials = (operator?.initials ?? "").toString().trim().toUpperCase();
+    if (!opInitials) return;
 
     setSaving(true);
     try {
@@ -254,6 +219,12 @@ export default function RoutineRunModal({
         atIso = at.toISOString();
       } catch {}
 
+      // Optional: stamp auth user id too (manager piggyback)
+      const { data: authData } = await supabase.auth.getUser();
+      const authUserId = authData?.user?.id ?? null;
+
+      const opAny = operator as any;
+
       const rows = items
         .map((it) => {
           const raw = (temps[it.id] ?? "").trim();
@@ -266,17 +237,25 @@ export default function RoutineRunModal({
             ];
           const status = inferStatus(temp, preset);
 
-          return {
+          // Base payload (matches your existing schema)
+          const base: any = {
             org_id,
             location_id,
             at: atIso,
             area: it.location ?? null,
             note: it.item ?? null,
-            staff_initials: initials.toUpperCase(),
+            staff_initials: opInitials,
             target_key: it.target_key,
             temp_c: temp,
             status,
           };
+
+          // Optional operator stamping (only works if columns exist)
+          if (opAny?.team_member_id) base.done_by_team_member_id = opAny.team_member_id;
+          if (opAny?.location_staff_id) base.location_staff_id = opAny.location_staff_id;
+          if (authUserId) base.created_by = authUserId; // if you have a created_by column
+
+          return base;
         })
         .filter((x): x is NonNullable<typeof x> => !!x);
 
@@ -371,12 +350,11 @@ export default function RoutineRunModal({
               </label>
 
               <label className="text-sm font-medium">
-                Initials (auto from logged-in user)
+                Operator (PIN)
                 <input
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm uppercase shadow-sm"
-                  value={initials}
-                  onChange={(e) => setInitials(e.target.value.toUpperCase())}
-                  required
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm uppercase shadow-sm"
+                  value={(operator?.initials ?? initials ?? "").toString().toUpperCase()}
+                  readOnly
                 />
               </label>
             </div>
@@ -388,7 +366,6 @@ export default function RoutineRunModal({
               </div>
             )}
 
-            {/* Now / Next (hands-free hint) */}
             <div className="mt-3 text-xs text-slate-600">
               <span className="font-semibold text-slate-800">Now:</span>{" "}
               {items[activeIdx]?.item ?? "—"}{" "}
