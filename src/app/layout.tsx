@@ -6,11 +6,6 @@ import React, { Suspense } from "react";
 import type { Metadata, Viewport } from "next";
 import { Analytics } from "@vercel/analytics/next";
 
-import { ToastProvider } from "@/components/ui/use-toast";
-import { GlobalLoadingProvider } from "@/components/GlobalLoadingProvider";
-import { PHProvider } from "@/components/PosthogProvider";
-import { AuthProvider } from "@/components/AuthProvider";
-
 import Pwa from "@/components/Pwa";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import FabShell from "@/app/FabShell";
@@ -20,9 +15,6 @@ import CookieBanner from "@/components/CookieBanner";
 import ConsentBootstrap from "@/components/ConsentBootstrap";
 
 import ClientProviders from "@/app/ClientProviders";
-
-import { WorkstationLockProvider } from "@/components/workstation/WorkstationLockProvider";
-import WorkstationLockScreen from "@/components/workstation/WorkstationLockScreen";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -37,11 +29,7 @@ export const metadata: Metadata = {
   title: "TempTake",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: [
-      { url: "/favicon.ico" },
-      // Optional but helps some browsers behave:
-      { url: "/favicon.png", type: "image/png" },
-    ],
+    icon: [{ url: "/favicon.ico" }, { url: "/favicon.png", type: "image/png" }],
     shortcut: "/favicon.ico",
     apple: "/apple-touch-icon.png",
   },
@@ -50,42 +38,28 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      
-      
       <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
-        <WorkstationLockProvider>
         <ClientProviders>
-        <PHProvider>
-          <ToastProvider>
-            <GlobalLoadingProvider>
-              <AuthProvider>
-                <Pwa />
+          <Pwa />
 
-                {/* Cookie consent + PostHog opt-in/out */}
-                <ConsentBootstrap />
-                <CookieBanner />
+          {/* Cookie consent + PostHog opt-in/out */}
+          <ConsentBootstrap />
+          <CookieBanner />
 
-                <Suspense fallback={null}>
-                  <HeaderSwitcher />
-                </Suspense>
+          <Suspense fallback={null}>
+            <HeaderSwitcher />
+          </Suspense>
 
-                <main className="w-full">
-                  <div className="w-full px-0 sm:px-4 md:mx-auto md:max-w-6xl">
-                    {children}
-                  </div>
-                </main>
+          <main className="w-full">
+            <div className="w-full px-0 sm:px-4 md:mx-auto md:max-w-6xl">{children}</div>
+          </main>
 
-                <Suspense fallback={null}>
-                  <FabShell />
-                  <ServiceWorkerRegister />
-                </Suspense>
-              </AuthProvider>
-            </GlobalLoadingProvider>
-          </ToastProvider>
-        </PHProvider>
-</ClientProviders>
-<WorkstationLockScreen />
-</WorkstationLockProvider>
+          <Suspense fallback={null}>
+            <FabShell />
+            <ServiceWorkerRegister />
+          </Suspense>
+        </ClientProviders>
+
         <Analytics />
       </body>
     </html>
