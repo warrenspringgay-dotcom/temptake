@@ -151,66 +151,6 @@ useEffect(() => {
     alive = false;
   };
 }, [pathname, hasSession]);
-// Load staff list
-useEffect(() => {
-  let alive = true;
-
-  (async () => {
-    setLoading(true);
-    setMsg(null);
-
-    if (isPublicPath(pathname) || !hasSession) {
-      setStaff([]);
-      setOrgId(null);
-      setLocationId(null);
-      setLoading(false);
-      return;
-    }
-
-    const oid = await getActiveOrgIdClient();
-    const lid = await getActiveLocationIdClient();
-    if (!alive) return;
-
-    setOrgId(oid);
-    setLocationId(lid);
-
-    if (!oid || !lid) {
-      setStaff([]);
-      setLoading(false);
-      return;
-    }
-
-    const res = await fetch(
-      `/api/workstation/operators?orgId=${oid}&locationId=${lid}`,
-      { cache: "no-store" }
-    );
-
-    const json = await res.json().catch(() => ({}));
-    if (!alive) return;
-
-    if (!res.ok || !json?.ok) {
-      setMsg(json?.detail ?? "Failed to load operators.");
-      setStaff([]);
-      setLoading(false);
-      return;
-    }
-
-    setStaff(
-      (json.operators ?? []).map((o: any) => ({
-        team_member_id: String(o.id),
-        name: o.name ?? null,
-        initials: o.initials ?? null,
-        role: o.role ?? null,
-      }))
-    );
-
-    setLoading(false);
-  })();
-
-  return () => {
-    alive = false;
-  };
-}, [pathname, hasSession]);
 
 const visible = useMemo(() => {
   return staff;
