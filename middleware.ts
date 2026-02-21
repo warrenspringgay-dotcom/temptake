@@ -19,12 +19,12 @@ const OPERATOR_ROLE_COOKIE = "tt_operator_role";
 
 // ✅ Routes that require manager/admin/owner when using workstation operator mode
 const MANAGER_ONLY_PREFIXES = [
-  "/reports",
+
   "/team",
-  "/staff",
+  "/suppliers",
   "/billing",
   "/settings",
-  "/admin",
+  "/manager",
 ];
 
 function isStaticAsset(pathname: string) {
