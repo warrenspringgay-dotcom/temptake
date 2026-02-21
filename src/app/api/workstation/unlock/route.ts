@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getServerSupabase } from "@/lib/supabaseServer";
-import { OP_COOKIE_NAME } from "@/lib/workstationServer";
+import { setOperatorCookie } from "@/lib/workstationServer";
 import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,9 @@ export async function POST(req: Request) {
   const supabase = await getServerSupabase();
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth?.user?.id ?? null;
-  if (!userId) return NextResponse.json({ ok: false, reason: "no-auth" }, { status: 401 });
+  if (!userId) {
+    return NextResponse.json({ ok: false, reason: "no-auth" }, { status: 401 });
+  }
 
   const body = await req.json().catch(() => ({}));
   const orgId = String(body.orgId ?? "").trim();
@@ -34,17 +36,24 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, reason: "missing" }, { status: 400 });
   }
 
+  // ✅ Target member must be active + pin_enabled (NOT login_enabled)
   const { data: member, error: mErr } = await supabaseAdmin
     .from("team_members")
-    .select("id, org_id, location_id, name, initials, role, active, login_enabled")
+    .select("id, org_id, location_id, name, initials, role, active, pin_enabled")
     .eq("org_id", orgId)
     .eq("location_id", locationId)
     .eq("id", teamMemberId)
     .maybeSingle();
 
-  if (mErr || !member) return NextResponse.json({ ok: false, reason: "target-not-found" }, { status: 404 });
-  if (!(member as any).active) return NextResponse.json({ ok: false, reason: "inactive" }, { status: 403 });
-  if (!(member as any).login_enabled) return NextResponse.json({ ok: false, reason: "pin-not-enabled" }, { status: 403 });
+  if (mErr || !member) {
+    return NextResponse.json({ ok: false, reason: "target-not-found" }, { status: 404 });
+  }
+  if (!(member as any).active) {
+    return NextResponse.json({ ok: false, reason: "inactive" }, { status: 403 });
+  }
+  if (!(member as any).pin_enabled) {
+    return NextResponse.json({ ok: false, reason: "pin-not-enabled" }, { status: 403 });
+  }
 
   const { data: pinRow, error: pErr } = await supabaseAdmin
     .from("team_member_pins")
@@ -53,8 +62,12 @@ export async function POST(req: Request) {
     .eq("team_member_id", teamMemberId)
     .maybeSingle();
 
-  if (pErr) return NextResponse.json({ ok: false, reason: "pin-fetch-failed" }, { status: 400 });
-  if (!pinRow?.pin_hash) return NextResponse.json({ ok: false, reason: "no-pin-set" }, { status: 400 });
+  if (pErr) {
+    return NextResponse.json({ ok: false, reason: "pin-fetch-failed" }, { status: 400 });
+  }
+  if (!pinRow?.pin_hash) {
+    return NextResponse.json({ ok: false, reason: "no-pin-set" }, { status: 400 });
+  }
 
   const lockedUntil = pinRow.locked_until ? new Date(String(pinRow.locked_until)).getTime() : 0;
   if (lockedUntil && lockedUntil > Date.now()) {
@@ -66,7 +79,12 @@ export async function POST(req: Request) {
     p_hash: String(pinRow.pin_hash),
   });
 
-  if (vErr) return NextResponse.json({ ok: false, reason: "verify-failed", detail: vErr.message }, { status: 400 });
+  if (vErr) {
+    return NextResponse.json(
+      { ok: false, reason: "verify-failed", detail: vErr.message },
+      { status: 400 }
+    );
+  }
 
   if (!ok) {
     const attempts = Number(pinRow.failed_attempts ?? 0) + 1;
@@ -78,7 +96,10 @@ export async function POST(req: Request) {
       .eq("org_id", orgId)
       .eq("team_member_id", teamMemberId);
 
-    return NextResponse.json({ ok: false, reason: attempts >= 5 ? "locked" : "wrong-pin" }, { status: 401 });
+    return NextResponse.json(
+      { ok: false, reason: attempts >= 5 ? "locked" : "wrong-pin" },
+      { status: 401 }
+    );
   }
 
   await supabaseAdmin
@@ -100,7 +121,9 @@ export async function POST(req: Request) {
     expires_at: expiresAt,
   });
 
-  const res = NextResponse.json({
+  await setOperatorCookie(token, maxAge);
+
+  return NextResponse.json({
     ok: true,
     operator: {
       teamMemberId: String((member as any).id),
@@ -111,15 +134,4 @@ export async function POST(req: Request) {
       role: (member as any).role ?? "staff",
     },
   });
-
-  // ✅ Cookie set HERE (avoids cookies().set type errors)
-  res.cookies.set(OP_COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge,
-  });
-
-  return res;
 }

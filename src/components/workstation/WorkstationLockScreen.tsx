@@ -140,13 +140,13 @@ export default function WorkstationLockScreen() {
       // Fallback if view is empty
       if (rows.length === 0) {
         const fallback = await supabase
-          .from("team_members")
-          .select("id,name,initials,role")
-          .eq("org_id", oid)
-          .eq("location_id", lid)
-          .eq("active", true)
-          .eq("login_enabled", true)
-          .order("name", { ascending: true });
+  .from("team_members")
+  .select("id,name,initials,role")
+  .eq("org_id", oid)
+  .eq("location_id", lid)
+  .eq("active", true)
+  .eq("pin_enabled", true)
+  .order("name", { ascending: true });
 
         if (!alive) return;
 

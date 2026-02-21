@@ -22,7 +22,8 @@ function roleRank(role: string | null) {
 }
 
 export async function getOperatorSessionOrNull(): Promise<OperatorSession | null> {
-  const token = cookies().get(OP_COOKIE_NAME)?.value ?? "";
+  const jar = await cookies();
+  const token = jar.get(OP_COOKIE_NAME)?.value ?? "";
   if (!token) return null;
 
   const nowIso = new Date().toISOString();
@@ -79,6 +80,33 @@ export async function requireOperatorForOrgLocation(
   return base;
 }
 
-export function operatorRoleAtLeast(role: string | null, minRole: "staff" | "supervisor" | "manager" | "admin" | "owner") {
+export function operatorRoleAtLeast(
+  role: string | null,
+  minRole: "staff" | "supervisor" | "manager" | "admin" | "owner"
+) {
   return roleRank(role) >= roleRank(minRole);
+}
+
+/** Set workstation operator cookie (API routes) */
+export async function setOperatorCookie(token: string, maxAgeSeconds: number) {
+  const jar = await cookies();
+  jar.set(OP_COOKIE_NAME, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: maxAgeSeconds,
+  });
+}
+
+/** Clear workstation operator cookie */
+export async function clearOperatorCookie() {
+  const jar = await cookies();
+  jar.set(OP_COOKIE_NAME, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  });
 }
