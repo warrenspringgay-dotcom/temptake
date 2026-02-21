@@ -18,11 +18,12 @@ function roleRank(role: string | null) {
   if (r === "admin") return 3;
   if (r === "manager") return 2;
   if (r === "supervisor") return 1;
-  return 0; // staff
+  return 0;
 }
 
 export async function getOperatorSessionOrNull(): Promise<OperatorSession | null> {
-  const token = cookies().get(COOKIE_NAME)?.value ?? "";
+  const cookieStore = await cookies();
+  const token = cookieStore.get(COOKIE_NAME)?.value ?? "";
   if (!token) return null;
 
   const nowIso = new Date().toISOString();
@@ -46,20 +47,21 @@ export async function getOperatorSessionOrNull(): Promise<OperatorSession | null
   };
 }
 
-export async function requireOperatorRole(minRole: "staff" | "supervisor" | "manager" | "admin" | "owner") {
+export async function requireOperatorRole(
+  minRole: "staff" | "supervisor" | "manager" | "admin" | "owner"
+) {
   const sess = await getOperatorSessionOrNull();
-  if (!sess) {
-    return { ok: false as const, reason: "no-operator" };
-  }
+  if (!sess) return { ok: false as const, reason: "no-operator" };
+
   const ok = roleRank(sess.role) >= roleRank(minRole);
-  if (!ok) {
-    return { ok: false as const, reason: "insufficient-role", operatorRole: sess.role };
-  }
+  if (!ok) return { ok: false as const, reason: "insufficient-role", operatorRole: sess.role };
+
   return { ok: true as const, session: sess };
 }
 
-export function clearOperatorCookie() {
-  cookies().set(COOKIE_NAME, "", {
+export async function clearOperatorCookie() {
+  const cookieStore = await cookies();
+  cookieStore.set(COOKIE_NAME, "", {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
@@ -68,8 +70,9 @@ export function clearOperatorCookie() {
   });
 }
 
-export function setOperatorCookie(token: string, maxAgeSeconds: number) {
-  cookies().set(COOKIE_NAME, token, {
+export async function setOperatorCookie(token: string, maxAgeSeconds: number) {
+  const cookieStore = await cookies();
+  cookieStore.set(COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

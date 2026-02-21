@@ -5,6 +5,6 @@ import { clearOperatorCookie } from "@/lib/workstationServer";
 export const dynamic = "force-dynamic";
 
 export async function POST() {
-  clearOperatorCookie();
+await clearOperatorCookie();
   return NextResponse.json({ ok: true });
 }

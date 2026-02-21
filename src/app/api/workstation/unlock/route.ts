@@ -105,7 +105,7 @@ export async function POST(req: Request) {
     expires_at: expiresAt,
   });
 
-  setOperatorCookie(token, maxAge);
+  await setOperatorCookie(token, maxAge);
 
   return NextResponse.json({
     ok: true,
