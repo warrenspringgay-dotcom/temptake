@@ -1,63 +1,48 @@
 // src/app/(protected)/dashboard/page.tsx
 "use client";
 
-import React, { useEffect } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import React, { useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 
 import FoodTempLogger from "@/components/FoodTempLogger";
 import WelcomeGate from "@/components/WelcomeGate";
 import SubscriptionBanner from "@/components/SubscriptionBanner";
-
-// ⚠️ Your hook exists, but it does NOT return { toast }
 import { useToast } from "@/components/ui/use-toast";
 
 export const dynamic = "force-dynamic";
 
-function AccessBlockedToast() {
+function AccessBlockedToastOnce() {
   const params = useSearchParams();
-  const router = useRouter();
-
-  // Your ToastContextType doesn't have `toast`, so we treat it as unknown API.
-  const toastApi = useToast() as any;
+  const firedRef = useRef(false);
+  const { addToast } = useToast();
 
   useEffect(() => {
-    const blocked = params.get("blocked");
+    // Hard guard: only ever fire once per mount
+    if (firedRef.current) return;
+
     const noaccess = params.get("noaccess");
+    const blocked = params.get("blocked");
 
     const isManagerOnly =
       blocked === "manager-only" || noaccess === "1" || noaccess === "manager-only";
 
     if (!isManagerOnly) return;
 
-    // Try a few common toast APIs without exploding the build.
-    const fire =
-      toastApi?.toast ||
-      toastApi?.addToast ||
-      toastApi?.notify ||
-      toastApi?.show ||
-      toastApi?.push;
+    firedRef.current = true;
 
-    if (typeof fire === "function") {
-      // Support both “string toast” and “object toast” styles
-      try {
-        fire({
-          title: "Manager access only",
-          description: "You do not have permission to view that page.",
-        });
-      } catch {
-        fire("Manager access only");
-      }
-    } else {
-      // If there's no toast method, don't block the redirect.
-      console.warn("[access] No toast method found on ToastContextType");
-    }
+    addToast({
+      title: "Manager access only",
+      message: "You don’t have permission to view that page.",
+      type: "warning",
+      duration: 3500,
+    });
 
-    // Clean URL so it doesn't re-toast on refresh
-    const next = new URL(window.location.href);
-    next.searchParams.delete("blocked");
-    next.searchParams.delete("noaccess");
-    router.replace(next.pathname + next.search);
-  }, [params, router, toastApi]);
+    // Strip params WITHOUT router churn (prevents repeated firing)
+    const url = new URL(window.location.href);
+    url.searchParams.delete("noaccess");
+    url.searchParams.delete("blocked");
+    window.history.replaceState({}, "", url.pathname + url.search);
+  }, [params, addToast]);
 
   return null;
 }
@@ -68,8 +53,8 @@ export default function DashboardPage() {
       <WelcomeGate />
 
       <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-6xl">
+        <AccessBlockedToastOnce />
         <SubscriptionBanner />
-        <AccessBlockedToast />
         <FoodTempLogger />
       </div>
     </>
