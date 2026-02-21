@@ -11,6 +11,8 @@ import { getActiveLocationIdClient } from "@/lib/locationClient";
 import OnboardingBanner from "@/components/OnboardingBanner";
 import WelcomeGate from "@/components/WelcomeGate";
 
+
+
 /* ---------- CONFIG ---------- */
 
 const WALL_TABLE = "kitchen_wall";

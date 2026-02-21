@@ -150,7 +150,7 @@ export async function middleware(req: NextRequest) {
     if (!isManagerRole(operatorRole)) {
       const url = req.nextUrl.clone();
       url.pathname = "/dashboard";
-      url.searchParams.set("noaccess", "1");
+     url.searchParams.set("blocked", "manager-only");
       return NextResponse.redirect(url);
     }
   }
