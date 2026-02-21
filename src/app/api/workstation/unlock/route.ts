@@ -7,6 +7,8 @@ import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
+const OPERATOR_ROLE_COOKIE = "tt_operator_role";
+
 function cleanPin(pin: unknown) {
   const digits = String(pin ?? "").trim().replace(/\D+/g, "");
   return digits.slice(0, 8);
@@ -16,6 +18,11 @@ function ttlSeconds() {
   const hours = Number(process.env.WORKSTATION_SESSION_TTL_HOURS ?? "12");
   const safe = Number.isFinite(hours) && hours > 0 ? hours : 12;
   return Math.floor(safe * 60 * 60);
+}
+
+function normalizeRole(role: unknown) {
+  const r = String(role ?? "staff").trim().toLowerCase();
+  return r || "staff";
 }
 
 export async function POST(req: Request) {
@@ -51,9 +58,9 @@ export async function POST(req: Request) {
   if (!(member as any).active) {
     return NextResponse.json({ ok: false, reason: "inactive" }, { status: 403 });
   }
- if (!(member as any).pin_enabled) {
-  return NextResponse.json({ ok: false, reason: "pin-not-enabled" }, { status: 403 });
-}
+  if (!(member as any).pin_enabled) {
+    return NextResponse.json({ ok: false, reason: "pin-not-enabled" }, { status: 403 });
+  }
 
   const { data: pinRow, error: pErr } = await supabaseAdmin
     .from("team_member_pins")
@@ -112,18 +119,22 @@ export async function POST(req: Request) {
   const maxAge = ttlSeconds();
   const expiresAt = new Date(Date.now() + maxAge * 1000).toISOString();
 
+  const role = normalizeRole((member as any).role);
+
   await supabaseAdmin.from("workstation_operator_sessions").insert({
     org_id: orgId,
     location_id: locationId,
     team_member_id: teamMemberId,
-    role: (member as any).role ?? "staff",
+    role,
     token,
     expires_at: expiresAt,
   });
 
+  // Existing: sets the operator token cookie you already rely on
   await setOperatorCookie(token, maxAge);
 
-  return NextResponse.json({
+  // ✅ NEW: also set operator role cookie for middleware gating
+  const res = NextResponse.json({
     ok: true,
     operator: {
       teamMemberId: String((member as any).id),
@@ -131,7 +142,17 @@ export async function POST(req: Request) {
       locationId,
       name: (member as any).name ?? "—",
       initials: (member as any).initials ?? null,
-      role: (member as any).role ?? "staff",
+      role,
     },
   });
+
+  res.cookies.set(OPERATOR_ROLE_COOKIE, role, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge,
+  });
+
+  return res;
 }

@@ -15,6 +15,18 @@ const PUBLIC_PATHS = new Set<string>([
   "/cookies",
 ]);
 
+const OPERATOR_ROLE_COOKIE = "tt_operator_role";
+
+// ✅ Routes that require manager/admin/owner when using workstation operator mode
+const MANAGER_ONLY_PREFIXES = [
+  "/reports",
+  "/team",
+  "/staff",
+  "/billing",
+  "/settings",
+  "/admin",
+];
+
 function isStaticAsset(pathname: string) {
   return (
     pathname.startsWith("/_next") ||
@@ -24,6 +36,10 @@ function isStaticAsset(pathname: string) {
       /\.(ico|png|jpg|jpeg|gif|webp|svg|css|js|txt|map|json|webmanifest|woff2?)$/
     )
   );
+}
+
+function startsWithAny(pathname: string, prefixes: string[]) {
+  return prefixes.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
 
 /**
@@ -53,6 +69,16 @@ function sanitizeNext(nextRaw: string | null | undefined) {
   if (next === "/login" || next === "/signup") return "/dashboard";
 
   return next;
+}
+
+function normalizeRole(role: string | undefined | null) {
+  const r = String(role ?? "").trim().toLowerCase();
+  return r || null;
+}
+
+function isManagerRole(role: string | null) {
+  if (!role) return false;
+  return role === "owner" || role === "admin" || role === "manager";
 }
 
 export async function middleware(req: NextRequest) {
@@ -113,6 +139,20 @@ export async function middleware(req: NextRequest) {
     url.pathname = parsed.pathname;
     url.search = parsed.search; // preserve ?a=b from next
     return NextResponse.redirect(url);
+  }
+
+  // ✅ NEW: Workstation operator gating (PIN users)
+  // If an operator role cookie exists, we treat that as the "effective role" for route access.
+  const operatorRole = normalizeRole(req.cookies.get(OPERATOR_ROLE_COOKIE)?.value ?? null);
+
+  // Only enforce gating when operator role is present (meaning PIN/operator mode is active)
+  if (operatorRole && startsWithAny(pathname, MANAGER_ONLY_PREFIXES)) {
+    if (!isManagerRole(operatorRole)) {
+      const url = req.nextUrl.clone();
+      url.pathname = "/dashboard";
+      url.searchParams.set("noaccess", "1");
+      return NextResponse.redirect(url);
+    }
   }
 
   return res;
