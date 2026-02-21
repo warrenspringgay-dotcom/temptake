@@ -1,9 +1,7 @@
-// src/app/api/workstation/unlock/route.ts
+// src/app/api/workstation/set-pin/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getServerSupabase } from "@/lib/supabaseServer";
-import { setOperatorCookie } from "@/lib/workstationServer";
-import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -12,19 +10,12 @@ function cleanPin(pin: unknown) {
   return digits.slice(0, 8);
 }
 
-function ttlSeconds() {
-  const hours = Number(process.env.WORKSTATION_SESSION_TTL_HOURS ?? "12");
-  const safe = Number.isFinite(hours) && hours > 0 ? hours : 12;
-  return Math.floor(safe * 60 * 60);
-}
-
 export async function POST(req: Request) {
+  // Must be authenticated (owner/admin in UI gates, but server should still validate auth exists)
   const supabase = await getServerSupabase();
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth?.user?.id ?? null;
-  if (!userId) {
-    return NextResponse.json({ ok: false, reason: "no-auth" }, { status: 401 });
-  }
+  if (!userId) return NextResponse.json({ ok: false, reason: "no-auth" }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
   const orgId = String(body.orgId ?? "").trim();
@@ -36,10 +27,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, reason: "missing" }, { status: 400 });
   }
 
-  // ✅ Target member must be active + pin_enabled (NOT login_enabled)
+  // Ensure member exists (and belongs to this org/location)
   const { data: member, error: mErr } = await supabaseAdmin
     .from("team_members")
-    .select("id, org_id, location_id, name, initials, role, active, pin_enabled")
+    .select("id, org_id, location_id, active")
     .eq("org_id", orgId)
     .eq("location_id", locationId)
     .eq("id", teamMemberId)
@@ -51,87 +42,50 @@ export async function POST(req: Request) {
   if (!(member as any).active) {
     return NextResponse.json({ ok: false, reason: "inactive" }, { status: 403 });
   }
-  if (!(member as any).pin_enabled) {
-    return NextResponse.json({ ok: false, reason: "pin-not-enabled" }, { status: 403 });
-  }
 
-  const { data: pinRow, error: pErr } = await supabaseAdmin
-    .from("team_member_pins")
-    .select("pin_hash, failed_attempts, locked_until")
-    .eq("org_id", orgId)
-    .eq("team_member_id", teamMemberId)
-    .maybeSingle();
-
-  if (pErr) {
-    return NextResponse.json({ ok: false, reason: "pin-fetch-failed" }, { status: 400 });
-  }
-  if (!pinRow?.pin_hash) {
-    return NextResponse.json({ ok: false, reason: "no-pin-set" }, { status: 400 });
-  }
-
-  const lockedUntil = pinRow.locked_until ? new Date(String(pinRow.locked_until)).getTime() : 0;
-  if (lockedUntil && lockedUntil > Date.now()) {
-    return NextResponse.json({ ok: false, reason: "locked" }, { status: 423 });
-  }
-
-  const { data: ok, error: vErr } = await supabaseAdmin.rpc("verify_pin_bcrypt", {
+  // Hash PIN using DB function (you already use verify_pin_bcrypt in unlock)
+  const { data: hash, error: hErr } = await supabaseAdmin.rpc("hash_pin_bcrypt", {
     p_pin: pin,
-    p_hash: String(pinRow.pin_hash),
   });
 
-  if (vErr) {
+  if (hErr || !hash) {
     return NextResponse.json(
-      { ok: false, reason: "verify-failed", detail: vErr.message },
+      { ok: false, reason: "hash-failed", detail: hErr?.message ?? "no-hash" },
       { status: 400 }
     );
   }
 
-  if (!ok) {
-    const attempts = Number(pinRow.failed_attempts ?? 0) + 1;
-    const lock = attempts >= 5 ? new Date(Date.now() + 5 * 60 * 1000).toISOString() : null;
+  // Upsert PIN row and reset lockouts
+  const nowIso = new Date().toISOString();
 
-    await supabaseAdmin
-      .from("team_member_pins")
-      .update({ failed_attempts: attempts, locked_until: lock })
-      .eq("org_id", orgId)
-      .eq("team_member_id", teamMemberId);
+  const { error: upErr } = await supabaseAdmin
+    .from("team_member_pins")
+    .upsert(
+      {
+        org_id: orgId,
+        team_member_id: teamMemberId,
+        pin_hash: String(hash),
+        failed_attempts: 0,
+        locked_until: null,
+        updated_at: nowIso,
+      },
+      { onConflict: "org_id,team_member_id" }
+    );
 
+  if (upErr) {
     return NextResponse.json(
-      { ok: false, reason: attempts >= 5 ? "locked" : "wrong-pin" },
-      { status: 401 }
+      { ok: false, reason: "pin-upsert-failed", detail: upErr.message },
+      { status: 400 }
     );
   }
 
+  // ✅ IMPORTANT: make them eligible for workstation PIN operator list
   await supabaseAdmin
-    .from("team_member_pins")
-    .update({ failed_attempts: 0, locked_until: null, updated_at: new Date().toISOString() })
+    .from("team_members")
+    .update({ pin_enabled: true })
     .eq("org_id", orgId)
-    .eq("team_member_id", teamMemberId);
+    .eq("location_id", locationId)
+    .eq("id", teamMemberId);
 
-  const token = crypto.randomBytes(32).toString("hex");
-  const maxAge = ttlSeconds();
-  const expiresAt = new Date(Date.now() + maxAge * 1000).toISOString();
-
-  await supabaseAdmin.from("workstation_operator_sessions").insert({
-    org_id: orgId,
-    location_id: locationId,
-    team_member_id: teamMemberId,
-    role: (member as any).role ?? "staff",
-    token,
-    expires_at: expiresAt,
-  });
-
-  setOperatorCookie(token, maxAge);
-
-  return NextResponse.json({
-    ok: true,
-    operator: {
-      teamMemberId: String((member as any).id),
-      orgId,
-      locationId,
-      name: (member as any).name ?? "—",
-      initials: (member as any).initials ?? null,
-      role: (member as any).role ?? "staff",
-    },
-  });
+  return NextResponse.json({ ok: true });
 }

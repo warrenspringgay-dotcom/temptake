@@ -51,9 +51,9 @@ export async function POST(req: Request) {
   if (!(member as any).active) {
     return NextResponse.json({ ok: false, reason: "inactive" }, { status: 403 });
   }
-  if (!(member as any).pin_enabled) {
-    return NextResponse.json({ ok: false, reason: "pin-not-enabled" }, { status: 403 });
-  }
+ if (!(member as any).pin_enabled) {
+  return NextResponse.json({ ok: false, reason: "pin-not-enabled" }, { status: 403 });
+}
 
   const { data: pinRow, error: pErr } = await supabaseAdmin
     .from("team_member_pins")
