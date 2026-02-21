@@ -91,103 +91,143 @@ export default function WorkstationLockScreen() {
   }, [locked]);
 
   // Load staff list (only when relevant)
-  useEffect(() => {
-    let alive = true;
+// Load staff list
+useEffect(() => {
+  let alive = true;
 
-    (async () => {
-      setLoading(true);
-      setMsg(null);
+  (async () => {
+    setLoading(true);
+    setMsg(null);
 
-      if (isPublicPath(pathname) || !hasSession) {
-        setStaff([]);
-        setOrgId(null);
-        setLocationId(null);
-        setLoading(false);
-        return;
-      }
-
-      const oid = await getActiveOrgIdClient();
-      const lid = await getActiveLocationIdClient();
-      if (!alive) return;
-
-      setOrgId(oid);
-      setLocationId(lid);
-
-      if (!oid || !lid) {
-        setStaff([]);
-        setLoading(false);
-        return;
-      }
-
-      const primary = await supabase
-        .from("v_location_team")
-        .select("team_member_id,name,initials,role")
-        .eq("org_id", oid)
-        .eq("location_id", lid)
-        .order("name", { ascending: true });
-
-      if (!alive) return;
-
-      if (primary.error) {
-        setMsg(primary.error.message);
-        setStaff([]);
-        setLoading(false);
-        return;
-      }
-
-      const rows = ((primary.data ?? []) as any) as StaffRow[];
-
-      // Fallback if view is empty
-      if (rows.length === 0) {
-        const fallback = await supabase
-  .from("team_members")
-  .select("id,name,initials,role")
-  .eq("org_id", oid)
-  .eq("location_id", lid)
-  .eq("active", true)
-  .eq("pin_enabled", true)
-  .order("name", { ascending: true });
-
-        if (!alive) return;
-
-        if (!fallback.error && Array.isArray(fallback.data) && fallback.data.length) {
-          setStaff(
-            fallback.data.map((r: any) => ({
-              team_member_id: String(r.id),
-              name: r.name ? String(r.name) : null,
-              initials: r.initials ? String(r.initials) : null,
-              role: r.role ? String(r.role) : null,
-            }))
-          );
-        } else {
-          setStaff([]);
-        }
-      } else {
-        setStaff(rows);
-      }
-
+    if (isPublicPath(pathname) || !hasSession) {
+      setStaff([]);
+      setOrgId(null);
+      setLocationId(null);
       setLoading(false);
-    })();
+      return;
+    }
 
-    return () => {
-      alive = false;
-    };
-  }, [pathname, hasSession]);
+    const oid = await getActiveOrgIdClient();
+    const lid = await getActiveLocationIdClient();
+    if (!alive) return;
 
-  const visible = useMemo(() => staff, [staff]);
+    setOrgId(oid);
+    setLocationId(lid);
 
-  // ✅ Preselect last active operator (if they exist in current location list)
-  useEffect(() => {
-    if (!locked) return;
-    if (!visible.length) return;
+    if (!oid || !lid) {
+      setStaff([]);
+      setLoading(false);
+      return;
+    }
 
-    if (selected) return; // don’t override if user already picked
-    const prevId = operator?.teamMemberId;
-    if (!prevId) return;
+    const res = await fetch(
+      `/api/workstation/operators?orgId=${oid}&locationId=${lid}`,
+      { cache: "no-store" }
+    );
 
-    const match = visible.find((s) => s.team_member_id === prevId);
-    if (match) setSelected(match);
-  }, [locked, visible, operator, selected]);
+    const json = await res.json().catch(() => ({}));
+    if (!alive) return;
+
+    if (!res.ok || !json?.ok) {
+      setMsg(json?.detail ?? "Failed to load operators.");
+      setStaff([]);
+      setLoading(false);
+      return;
+    }
+
+    setStaff(
+      (json.operators ?? []).map((o: any) => ({
+        team_member_id: String(o.id),
+        name: o.name ?? null,
+        initials: o.initials ?? null,
+        role: o.role ?? null,
+      }))
+    );
+
+    setLoading(false);
+  })();
+
+  return () => {
+    alive = false;
+  };
+}, [pathname, hasSession]);
+// Load staff list
+useEffect(() => {
+  let alive = true;
+
+  (async () => {
+    setLoading(true);
+    setMsg(null);
+
+    if (isPublicPath(pathname) || !hasSession) {
+      setStaff([]);
+      setOrgId(null);
+      setLocationId(null);
+      setLoading(false);
+      return;
+    }
+
+    const oid = await getActiveOrgIdClient();
+    const lid = await getActiveLocationIdClient();
+    if (!alive) return;
+
+    setOrgId(oid);
+    setLocationId(lid);
+
+    if (!oid || !lid) {
+      setStaff([]);
+      setLoading(false);
+      return;
+    }
+
+    const res = await fetch(
+      `/api/workstation/operators?orgId=${oid}&locationId=${lid}`,
+      { cache: "no-store" }
+    );
+
+    const json = await res.json().catch(() => ({}));
+    if (!alive) return;
+
+    if (!res.ok || !json?.ok) {
+      setMsg(json?.detail ?? "Failed to load operators.");
+      setStaff([]);
+      setLoading(false);
+      return;
+    }
+
+    setStaff(
+      (json.operators ?? []).map((o: any) => ({
+        team_member_id: String(o.id),
+        name: o.name ?? null,
+        initials: o.initials ?? null,
+        role: o.role ?? null,
+      }))
+    );
+
+    setLoading(false);
+  })();
+
+  return () => {
+    alive = false;
+  };
+}, [pathname, hasSession]);
+
+const visible = useMemo(() => {
+  return staff;
+}, [staff]);
+
+// Preselect last active operator
+useEffect(() => {
+  if (!locked) return;
+  if (!visible.length) return;
+  if (selected) return;
+
+  const prevId = operator?.teamMemberId;
+  if (!prevId) return;
+
+  const match = visible.find((s) => s.team_member_id === prevId);
+  if (match) setSelected(match);
+}, [locked, visible, operator, selected]);
 
   // ✅ Focus PIN when locked opens
   useEffect(() => {

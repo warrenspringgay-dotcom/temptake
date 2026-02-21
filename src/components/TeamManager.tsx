@@ -242,54 +242,55 @@ export default function TeamManager() {
   const [editCertSaving, setEditCertSaving] = useState(false);
 
   /* -------------------- Load PIN status for list -------------------- */
-  async function loadPinStatusForMembers(oid: string, memberIds: string[]) {
-    if (!oid || memberIds.length === 0) return new Set<string>();
+ async function loadPinStatusForMembers(oid: string, memberIds: string[]) {
+  if (!oid || memberIds.length === 0) return new Set<string>();
 
-    // Supabase in() is fine for typical team sizes
-    const { data, error } = await supabase
-      .from("team_member_pins")
-      .select("team_member_id")
-      .eq("org_id", oid)
-      .in("team_member_id", memberIds);
+  const res = await fetch("/api/workstation/pin-status", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ orgId: oid, memberIds }),
+    cache: "no-store",
+  });
 
-    if (error) {
-      console.warn("[team] pin status fetch failed:", error.message);
-      return new Set<string>();
-    }
-
-    const set = new Set<string>();
-    for (const r of (data ?? []) as any[]) {
-      if (r?.team_member_id) set.add(String(r.team_member_id));
-    }
-    return set;
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json?.ok) {
+    console.warn("[team] pin status api failed:", json?.detail ?? res.statusText);
+    return new Set<string>();
   }
 
-  /* -------------------- Load PIN status for edit modal -------------------- */
-  async function loadPinStatusForMember(oid: string, memberId: string) {
-    if (!oid || !memberId) {
+  return new Set<string>((json.pinSetIds ?? []).map(String));
+}
+
+ async function loadPinStatusForMember(oid: string, memberId: string) {
+  if (!oid || !memberId) {
+    setPinSet(false);
+    return;
+  }
+
+  setPinLoading(true);
+  setPinMsg(null);
+
+  try {
+    const res = await fetch("/api/workstation/pin-status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ orgId: oid, memberIds: [memberId] }),
+      cache: "no-store",
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json?.ok) {
+      console.warn("[team] pin status api failed:", json?.detail ?? res.statusText);
       setPinSet(false);
       return;
     }
-    setPinLoading(true);
-    setPinMsg(null);
-    try {
-      const { data, error } = await supabase
-        .from("team_member_pins")
-        .select("team_member_id")
-        .eq("org_id", oid)
-        .eq("team_member_id", memberId)
-        .maybeSingle();
 
-      if (error && (error as any).code !== "PGRST116") {
-        // PGRST116 is "Results contain 0 rows" sometimes, depends on config
-        console.warn("[team] load pin status error:", error.message);
-      }
-
-      setPinSet(!!data?.team_member_id);
-    } finally {
-      setPinLoading(false);
-    }
+    const setIds = new Set<string>((json.pinSetIds ?? []).map(String));
+    setPinSet(setIds.has(memberId));
+  } finally {
+    setPinLoading(false);
   }
+}
 
   async function setOrResetPin() {
     if (!editing) return;
