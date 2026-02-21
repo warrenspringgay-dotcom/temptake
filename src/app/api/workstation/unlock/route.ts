@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getServerSupabase } from "@/lib/supabaseServer";
-import { setOperatorCookie } from "@/lib/workstationServer";
+import { OP_COOKIE_NAME } from "@/lib/workstationServer";
 import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +19,6 @@ function ttlSeconds() {
 }
 
 export async function POST(req: Request) {
-  // Must be authenticated (manager session can exist, fine)
   const supabase = await getServerSupabase();
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth?.user?.id ?? null;
@@ -35,7 +34,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, reason: "missing" }, { status: 400 });
   }
 
-  // Ensure target member exists and is allowed for PIN (active + login_enabled)
   const { data: member, error: mErr } = await supabaseAdmin
     .from("team_members")
     .select("id, org_id, location_id, name, initials, role, active, login_enabled")
@@ -48,7 +46,6 @@ export async function POST(req: Request) {
   if (!(member as any).active) return NextResponse.json({ ok: false, reason: "inactive" }, { status: 403 });
   if (!(member as any).login_enabled) return NextResponse.json({ ok: false, reason: "pin-not-enabled" }, { status: 403 });
 
-  // Load PIN hash row
   const { data: pinRow, error: pErr } = await supabaseAdmin
     .from("team_member_pins")
     .select("pin_hash, failed_attempts, locked_until")
@@ -64,7 +61,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, reason: "locked" }, { status: 423 });
   }
 
-  // Verify PIN using bcrypt compare rpc
   const { data: ok, error: vErr } = await supabaseAdmin.rpc("verify_pin_bcrypt", {
     p_pin: pin,
     p_hash: String(pinRow.pin_hash),
@@ -74,7 +70,8 @@ export async function POST(req: Request) {
 
   if (!ok) {
     const attempts = Number(pinRow.failed_attempts ?? 0) + 1;
-    const lock = attempts >= 5 ? new Date(Date.now() + 5 * 60 * 1000).toISOString() : null; // 5 min lock
+    const lock = attempts >= 5 ? new Date(Date.now() + 5 * 60 * 1000).toISOString() : null;
+
     await supabaseAdmin
       .from("team_member_pins")
       .update({ failed_attempts: attempts, locked_until: lock })
@@ -84,14 +81,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, reason: attempts >= 5 ? "locked" : "wrong-pin" }, { status: 401 });
   }
 
-  // Success: reset attempts
   await supabaseAdmin
     .from("team_member_pins")
     .update({ failed_attempts: 0, locked_until: null, updated_at: new Date().toISOString() })
     .eq("org_id", orgId)
     .eq("team_member_id", teamMemberId);
 
-  // Create operator session token + cookie
   const token = crypto.randomBytes(32).toString("hex");
   const maxAge = ttlSeconds();
   const expiresAt = new Date(Date.now() + maxAge * 1000).toISOString();
@@ -105,9 +100,7 @@ export async function POST(req: Request) {
     expires_at: expiresAt,
   });
 
-  await setOperatorCookie(token, maxAge);
-
-  return NextResponse.json({
+  const res = NextResponse.json({
     ok: true,
     operator: {
       teamMemberId: String((member as any).id),
@@ -118,4 +111,15 @@ export async function POST(req: Request) {
       role: (member as any).role ?? "staff",
     },
   });
+
+  // ✅ Cookie set HERE (avoids cookies().set type errors)
+  res.cookies.set(OP_COOKIE_NAME, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge,
+  });
+
+  return res;
 }

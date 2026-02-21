@@ -10,7 +10,7 @@ export type OperatorSession = {
   role: string | null;
 };
 
-const COOKIE_NAME = "tt_op_sess";
+export const OP_COOKIE_NAME = "tt_op_sess";
 
 function roleRank(role: string | null) {
   const r = (role ?? "staff").toLowerCase();
@@ -18,12 +18,11 @@ function roleRank(role: string | null) {
   if (r === "admin") return 3;
   if (r === "manager") return 2;
   if (r === "supervisor") return 1;
-  return 0;
+  return 0; // staff
 }
 
 export async function getOperatorSessionOrNull(): Promise<OperatorSession | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(COOKIE_NAME)?.value ?? "";
+  const token = cookies().get(OP_COOKIE_NAME)?.value ?? "";
   if (!token) return null;
 
   const nowIso = new Date().toISOString();
@@ -54,29 +53,32 @@ export async function requireOperatorRole(
   if (!sess) return { ok: false as const, reason: "no-operator" };
 
   const ok = roleRank(sess.role) >= roleRank(minRole);
-  if (!ok) return { ok: false as const, reason: "insufficient-role", operatorRole: sess.role };
+  if (!ok) {
+    return { ok: false as const, reason: "insufficient-role", operatorRole: sess.role };
+  }
 
   return { ok: true as const, session: sess };
 }
 
-export async function clearOperatorCookie() {
-  const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 0,
-  });
+/**
+ * Use this for API routes where body includes orgId/locationId.
+ * Prevents a valid operator cookie for Location A being used to mutate Location B.
+ */
+export async function requireOperatorForOrgLocation(
+  orgId: string,
+  locationId: string,
+  minRole: "staff" | "supervisor" | "manager" | "admin" | "owner"
+) {
+  const base = await requireOperatorRole(minRole);
+  if (!base.ok) return base;
+
+  if (base.session.orgId !== orgId || base.session.locationId !== locationId) {
+    return { ok: false as const, reason: "operator-context-mismatch" };
+  }
+
+  return base;
 }
 
-export async function setOperatorCookie(token: string, maxAgeSeconds: number) {
-  const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: maxAgeSeconds,
-  });
+export function operatorRoleAtLeast(role: string | null, minRole: "staff" | "supervisor" | "manager" | "admin" | "owner") {
+  return roleRank(role) >= roleRank(minRole);
 }
