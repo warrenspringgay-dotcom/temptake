@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getServerSupabase } from "@/lib/supabaseServer";
+import { requireOperatorRole } from "@/lib/workstationServer";
 
 export const dynamic = "force-dynamic";
 
@@ -94,6 +95,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, reason: "target-not-found" }, { status: 404 });
   }
 
+
+  const gate = await requireOperatorRole("manager");
+if (!gate.ok) {
+  return NextResponse.json({ ok: false, reason: gate.reason }, { status: 403 });
+}
   // 3) Hash PIN using your RPC
   const { data: hashed, error: hErr } = await supabaseAdmin.rpc("hash_pin_bcrypt", {
     p_pin: pin,

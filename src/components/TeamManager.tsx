@@ -47,6 +47,9 @@ type Member = {
   active: boolean | null;
   notes?: string | null;
   training_areas?: TrainingArea[] | null;
+
+  // ✅ derived at runtime (not stored in team_members)
+  pin_set?: boolean;
 };
 
 type TrainingCert = {
@@ -132,7 +135,6 @@ function addYearsISO(isoDate: string, years: number) {
   return candidate.toISOString().slice(0, 10);
 }
 
-
 /** Global rule: render as DD/MM/YYYY */
 function formatDate(d: string | null | undefined) {
   if (!d) return "—";
@@ -175,6 +177,10 @@ function requireInitialsOrDerive(editing: Member) {
   return derived.trim().toUpperCase();
 }
 
+function onlyDigits(s: string) {
+  return s.replace(/\D+/g, "").slice(0, 8);
+}
+
 /* ================================================= */
 export default function TeamManager() {
   const searchParams = useSearchParams();
@@ -204,9 +210,16 @@ export default function TeamManager() {
 
   const [highlightId, setHighlightId] = useState<string | null>(null);
 
-  // Current signed-in auth user (so we can link + avoid inviting yourself)
+  // Current signed-in auth user
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState<string | null>(null);
+
+  /* ---------- PIN management state (EDIT modal) ---------- */
+  const [pinLoading, setPinLoading] = useState(false);
+  const [pinSet, setPinSet] = useState<boolean>(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinSaving, setPinSaving] = useState(false);
+  const [pinMsg, setPinMsg] = useState<string | null>(null);
 
   /* ---------- Certificates state (VIEW modal) ---------- */
   const [certsLoading, setCertsLoading] = useState(false);
@@ -215,19 +228,116 @@ export default function TeamManager() {
   /* ---------- Certificates state (EDIT modal) ---------- */
   const [editCertsLoading, setEditCertsLoading] = useState(false);
   const [editCerts, setEditCerts] = useState<TrainingCert[]>([]);
- const [editCertForm, setEditCertForm] = useState({
-  course: "Food Safety Level 2", // single source of truth
-  provider: "Highfield" as "Highfield" | "Other",
-  providerName: "",
-  awarded_on: "",
-  expires_on: "",
-  certificate_url: "",
-  notes: "",
-});
-
+  const [editCertForm, setEditCertForm] = useState({
+    course: "Food Safety Level 2",
+    provider: "Highfield" as "Highfield" | "Other",
+    providerName: "",
+    awarded_on: "",
+    expires_on: "",
+    certificate_url: "",
+    notes: "",
+  });
 
   const [editCertFile, setEditCertFile] = useState<File | null>(null);
   const [editCertSaving, setEditCertSaving] = useState(false);
+
+  /* -------------------- Load PIN status for list -------------------- */
+  async function loadPinStatusForMembers(oid: string, memberIds: string[]) {
+    if (!oid || memberIds.length === 0) return new Set<string>();
+
+    // Supabase in() is fine for typical team sizes
+    const { data, error } = await supabase
+      .from("team_member_pins")
+      .select("team_member_id")
+      .eq("org_id", oid)
+      .in("team_member_id", memberIds);
+
+    if (error) {
+      console.warn("[team] pin status fetch failed:", error.message);
+      return new Set<string>();
+    }
+
+    const set = new Set<string>();
+    for (const r of (data ?? []) as any[]) {
+      if (r?.team_member_id) set.add(String(r.team_member_id));
+    }
+    return set;
+  }
+
+  /* -------------------- Load PIN status for edit modal -------------------- */
+  async function loadPinStatusForMember(oid: string, memberId: string) {
+    if (!oid || !memberId) {
+      setPinSet(false);
+      return;
+    }
+    setPinLoading(true);
+    setPinMsg(null);
+    try {
+      const { data, error } = await supabase
+        .from("team_member_pins")
+        .select("team_member_id")
+        .eq("org_id", oid)
+        .eq("team_member_id", memberId)
+        .maybeSingle();
+
+      if (error && (error as any).code !== "PGRST116") {
+        // PGRST116 is "Results contain 0 rows" sometimes, depends on config
+        console.warn("[team] load pin status error:", error.message);
+      }
+
+      setPinSet(!!data?.team_member_id);
+    } finally {
+      setPinLoading(false);
+    }
+  }
+
+  async function setOrResetPin() {
+    if (!editing) return;
+    if (!orgId) return alert("No organisation found.");
+    if (!locationId) return alert("Pick a location first.");
+    if (!isOwner) return alert("Only owner/admin can set PINs.");
+    if (!editing.id) return;
+
+    const pin = onlyDigits(pinInput);
+    if (pin.length < 4) {
+      setPinMsg("Enter a 4+ digit PIN.");
+      return;
+    }
+
+    setPinSaving(true);
+    setPinMsg(null);
+    try {
+      const res = await fetch("/api/workstation/set-pin", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          orgId,
+          locationId,
+          teamMemberId: editing.id,
+          pin,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) {
+        const detail = json?.detail ? ` (${json.detail})` : "";
+        setPinMsg(`Failed to set PIN${detail}`);
+        return;
+      }
+
+      setPinSet(true);
+      setPinInput("");
+      setPinMsg("PIN saved.");
+
+      // Refresh list badge without full reload
+      setRows((prev) =>
+        prev.map((m) => (m.id === editing.id ? { ...m, pin_set: true } : m))
+      );
+    } finally {
+      setPinSaving(false);
+      window.setTimeout(() => setPinMsg(null), 2000);
+    }
+  }
 
   /* -------------------- Load team + determine owner -------------------- */
   async function load() {
@@ -260,8 +370,6 @@ export default function TeamManager() {
         return;
       }
 
-      // Location is now part of the model. If none selected, we still show org-wide list,
-      // but creation will require an active location.
       let qMembers = supabase
         .from("team_members")
         .select(
@@ -273,7 +381,6 @@ export default function TeamManager() {
       if (lid) qMembers = qMembers.eq("location_id", lid);
 
       const { data, error } = await qMembers;
-
       if (error) throw error;
 
       let members: Member[] =
@@ -355,7 +462,7 @@ export default function TeamManager() {
         }
       }
 
-      // ✅ Auto-link logged in user to their team_members row (prevents “No login” nonsense)
+      // ✅ Auto-link logged in user to their team_members row
       if (oid && lid && userEmail && userId) {
         const { data: myRow } = await supabase
           .from("team_members")
@@ -374,13 +481,18 @@ export default function TeamManager() {
         }
       }
 
-      // Determine owner/admin from the *current location list* (or best guess)
+      // Determine owner/admin from the current location list
       let ownerFlag = false;
       if (userEmail && members.length) {
         const me = members.find((m) => m.email && m.email.toLowerCase() === userEmail);
         const role = (me?.role ?? "").toLowerCase();
         ownerFlag = role === "owner" || role === "admin";
       }
+
+      // ✅ Load pin status for members and attach
+      const memberIds = members.map((m) => m.id);
+      const pinSetIds = await loadPinStatusForMembers(oid, memberIds);
+      members = members.map((m) => ({ ...m, pin_set: pinSetIds.has(m.id) }));
 
       setRows(members);
       setIsOwner(ownerFlag);
@@ -449,6 +561,7 @@ export default function TeamManager() {
       active: true,
       notes: "",
       training_areas: [],
+      pin_set: false,
     });
 
     setAllowLogin(false);
@@ -459,15 +572,22 @@ export default function TeamManager() {
     setEditCertsLoading(false);
     setEditCertSaving(false);
     setEditCertFile(null);
-   setEditCertForm({
-  course: "Food Safety Level 2",
-  provider: "Highfield",
-  providerName: "",
-  awarded_on: "",
-  expires_on: "",
-  certificate_url: "",
-  notes: "",
-});
+    setEditCertForm({
+      course: "Food Safety Level 2",
+      provider: "Highfield",
+      providerName: "",
+      awarded_on: "",
+      expires_on: "",
+      certificate_url: "",
+      notes: "",
+    });
+
+    // PIN state
+    setPinInput("");
+    setPinMsg(null);
+    setPinSet(false);
+    setPinLoading(false);
+    setPinSaving(false);
 
     setEditOpen(true);
   }
@@ -483,7 +603,17 @@ export default function TeamManager() {
     setSendingInviteOnSave(false);
     setSendingInviteFromEdit(false);
 
-    await loadEditCertsForMember(m);
+    // PIN state
+    setPinInput("");
+    setPinMsg(null);
+    setPinSet(!!m.pin_set);
+    setPinLoading(false);
+    setPinSaving(false);
+
+    await Promise.all([
+      loadEditCertsForMember(m),
+      orgId ? loadPinStatusForMember(orgId, m.id) : Promise.resolve(),
+    ]);
 
     setEditOpen(true);
   }
@@ -583,9 +713,7 @@ export default function TeamManager() {
     const emailNormalized = cleanEmail(editing.email);
     if (!emailNormalized) return alert("Add an email address first, then invite.");
 
-    // ✅ Don’t allow inviting yourself (you already exist in Auth)
     if (authEmail && emailNormalized === authEmail) {
-      // try to link instead
       if (authUserId) {
         await supabase
           .from("team_members")
@@ -617,7 +745,6 @@ export default function TeamManager() {
 
       await load();
     } catch (e: any) {
-      // Production hides server action errors, so give a sane hint
       alert(
         e?.message ??
           "Invite failed. If this email already exists in the system, you can’t invite it again."
@@ -675,7 +802,6 @@ export default function TeamManager() {
         return;
       }
 
-      // Adding a new member
       if (!isOwner) return alert("Only the owner can add team members.");
 
       if (allowLogin) {
@@ -812,78 +938,76 @@ export default function TeamManager() {
       setEditCertsLoading(false);
     }
   }
-async function addEditCertificate() {
-  if (!editing) return;
-  if (!orgId) return alert("No organisation found.");
 
-  const course = (editCertForm.course ?? "").trim();
-  if (!course) return alert("Course is required.");
+  async function addEditCertificate() {
+    if (!editing) return;
+    if (!orgId) return alert("No organisation found.");
 
-  const provider_name: "Highfield" | "Other" =
-    editCertForm.provider === "Other" ? "Other" : "Highfield";
+    const course = (editCertForm.course ?? "").trim();
+    if (!course) return alert("Course is required.");
 
-  // Highfield -> course_key is the chosen course
-  // Other -> course_key stores provider name (optional)
-  const course_key =
-    provider_name === "Highfield"
-      ? course
-      : ((editCertForm.providerName ?? "").trim() || null);
+    const provider_name: "Highfield" | "Other" =
+      editCertForm.provider === "Other" ? "Other" : "Highfield";
 
-  setEditCertSaving(true);
+    const course_key =
+      provider_name === "Highfield"
+        ? course
+        : ((editCertForm.providerName ?? "").trim() || null);
 
-  try {
-    let certificate_url: string | null =
-      (editCertForm.certificate_url ?? "").trim() || null;
+    setEditCertSaving(true);
 
-    if (editCertFile) {
-      const up = await uploadTrainingCertificateServer({ file: editCertFile });
-      if (!up?.url && !up?.path) {
-        throw new Error("Certificate upload failed (no URL/path returned).");
+    try {
+      let certificate_url: string | null =
+        (editCertForm.certificate_url ?? "").trim() || null;
+
+      if (editCertFile) {
+        const up = await uploadTrainingCertificateServer({ file: editCertFile });
+        if (!up?.url && !up?.path) {
+          throw new Error("Certificate upload failed (no URL/path returned).");
+        }
+        certificate_url = up.url || certificate_url;
       }
-      certificate_url = up.url || certificate_url;
+
+      const awarded_on =
+        (editCertForm.awarded_on ?? "").trim() || new Date().toISOString().slice(0, 10);
+
+      const expires_on_raw = (editCertForm.expires_on ?? "").trim();
+
+      const expires_on = expires_on_raw
+        ? expires_on_raw
+        : awarded_on
+        ? addYearsISO(awarded_on, 2)
+        : null;
+
+      await createTrainingServer({
+        teamMemberId: editing.id,
+        type: course,
+        course_key,
+        provider_name,
+        awarded_on,
+        expires_on,
+        certificate_url,
+        notes: (editCertForm.notes ?? "").trim() || null,
+      });
+
+      setEditCertForm({
+        course: "Food Safety Level 2",
+        provider: "Highfield",
+        providerName: "",
+        awarded_on: "",
+        expires_on: "",
+        certificate_url: "",
+        notes: "",
+      });
+      setEditCertFile(null);
+
+      await loadEditCertsForMember(editing);
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to add education/certificate.");
+    } finally {
+      setEditCertSaving(false);
     }
-
-    const awarded_on =
-      (editCertForm.awarded_on ?? "").trim() || new Date().toISOString().slice(0, 10);
-
-    const expires_on_raw = (editCertForm.expires_on ?? "").trim();
-
-    const expires_on = expires_on_raw
-      ? expires_on_raw
-      : awarded_on
-      ? addYearsISO(awarded_on, 2)
-      : null;
-
-    await createTrainingServer({
-      teamMemberId: editing.id,
-      type: course, // <- single field
-      course_key,
-      provider_name,
-      awarded_on,
-      expires_on,
-      certificate_url,
-      notes: (editCertForm.notes ?? "").trim() || null,
-    });
-
-    setEditCertForm({
-      course: "Food Safety Level 2",
-      provider: "Highfield",
-      providerName: "",
-      awarded_on: "",
-      expires_on: "",
-      certificate_url: "",
-      notes: "",
-    });
-    setEditCertFile(null);
-
-    await loadEditCertsForMember(editing);
-  } catch (e: any) {
-    alert(e?.message ?? "Failed to add education/certificate.");
-  } finally {
-    setEditCertSaving(false);
   }
-}
-
 
   async function openCard(m: Member) {
     setViewFor(m);
@@ -901,30 +1025,31 @@ async function addEditCertificate() {
   /* -------------------- Render -------------------- */
   return (
     <div className="mx-auto w-full max-w-6xl px-0 sm:px-4">
-    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-lg font-semibold text-slate-900">Team</h1>
+      <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-semibold text-slate-900">Team</h1>
 
-        <div className="ml-auto flex min-w-0 items-center gap-2">
-          <input
-            className="h-9 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900 placeholder:text-slate-400 md:w-64"
-            placeholder="Search…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
+          <div className="ml-auto flex min-w-0 items-center gap-2">
+            <input
+              className="h-9 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900 placeholder:text-slate-400 md:w-64"
+              placeholder="Search…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
 
-          {isOwner && (
-            <button
-              onClick={openAdd}
-              className="whitespace-nowrap rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-            >
-              + Add member
-            </button>
-          )}
+            {isOwner && (
+              <button
+                onClick={openAdd}
+                className="whitespace-nowrap rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                + Add member
+              </button>
+            )}
+          </div>
         </div>
       </div>
-</div>
+
       {/* Card grid */}
       {loading ? (
         <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
@@ -944,6 +1069,10 @@ async function addEditCertificate() {
               : m.login_enabled && cleanEmail(m.email)
               ? { text: "Invite pending", cls: "border-indigo-200 bg-indigo-50 text-indigo-800" }
               : { text: "No login", cls: "border-amber-200 bg-amber-50 text-amber-800" };
+
+            const pinLabel = m.pin_set
+              ? { text: "PIN set", cls: "border-emerald-200 bg-emerald-50 text-emerald-800" }
+              : { text: "No PIN", cls: "border-amber-200 bg-amber-50 text-amber-800" };
 
             return (
               <div
@@ -987,6 +1116,13 @@ async function addEditCertificate() {
                           title={loginLabel.text}
                         >
                           {loginLabel.text}
+                        </span>
+
+                        <span
+                          className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${pinLabel.cls}`}
+                          title={pinLabel.text}
+                        >
+                          {pinLabel.text}
                         </span>
                       </div>
                     </div>
@@ -1076,453 +1212,529 @@ async function addEditCertificate() {
           No team members yet.
         </div>
       )}
-{/* Edit / Add modal */}
-{editOpen && editing && (
-  <ModalPortal>
-    <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setEditOpen(false)}>
-      <div
-        className="
-          mx-auto mt-10 w-[min(1100px,calc(100vw-2rem))]
-          rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur
-          max-h-[calc(100dvh-5rem)] overflow-y-auto
-          lg:max-h-none lg:overflow-visible
-        "
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-base font-semibold">
-            {editing.id ? "Edit member" : "Add member"}
-          </div>
-          <button
-            onClick={() => setEditOpen(false)}
-            className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-          >
-            ✕
-          </button>
-        </div>
 
-        {!locationId ? (
-          <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            No active location selected. Pick a location at the top of the app first.
-          </div>
-        ) : null}
-
-        {/* TWO-COLUMN LAYOUT ON DESKTOP */}
-        <div className="grid gap-4 lg:grid-cols-2">
-          {/* LEFT COLUMN: MEMBER PROFILE */}
-          <div className="space-y-3">
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Initials</label>
-                <input
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                  value={editing.initials ?? ""}
-                  onChange={(e) => setEditing({ ...editing, initials: e.target.value })}
-                  placeholder="WS"
-                />
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Required (auto-derived from name if left blank).
-                </p>
+      {/* Edit / Add modal */}
+      {editOpen && editing && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setEditOpen(false)}>
+            <div
+              className="
+                mx-auto mt-10 w-[min(1100px,calc(100vw-2rem))]
+                rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur
+                max-h-[calc(100dvh-5rem)] overflow-y-auto
+                lg:max-h-none lg:overflow-visible
+              "
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-base font-semibold">
+                  {editing.id ? "Edit member" : "Add member"}
+                </div>
+                <button
+                  onClick={() => setEditOpen(false)}
+                  className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                >
+                  ✕
+                </button>
               </div>
 
-              <div className="col-span-2">
-                <label className="mb-1 block text-xs text-slate-500">Name *</label>
-                <input
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                  value={editing.name}
-                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                />
-              </div>
-            </div>
+              {!locationId ? (
+                <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  No active location selected. Pick a location at the top of the app first.
+                </div>
+              ) : null}
 
-            {/* Add-only: Allow login */}
-            {!editing.id && (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
-                <label className="flex items-start gap-3 text-sm text-slate-800">
-                  <input
-                    type="checkbox"
-                    className="mt-1 accent-emerald-600"
-                    checked={allowLogin}
-                    onChange={(e) => setAllowLogin(e.target.checked)}
-                  />
-                  <span>
-                    <span className="font-semibold">Allow user to log in</span>
-                    <div className="mt-0.5 text-[11px] text-slate-600">
-                      If enabled, we’ll send them an invite email on Save. If disabled, this is a
-                      staff record only (no login).
+              {/* TWO-COLUMN LAYOUT ON DESKTOP */}
+              <div className="grid gap-4 lg:grid-cols-2">
+                {/* LEFT COLUMN: MEMBER PROFILE */}
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">Initials</label>
+                      <input
+                        className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                        value={editing.initials ?? ""}
+                        onChange={(e) => setEditing({ ...editing, initials: e.target.value })}
+                        placeholder="WS"
+                      />
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Required (auto-derived from name if left blank).
+                      </p>
                     </div>
-                  </span>
-                </label>
-              </div>
-            )}
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Email{!editing.id && allowLogin ? " *" : ""}
-                </label>
-                <input
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                  value={editing.email ?? ""}
-                  onChange={(e) => setEditing({ ...editing, email: e.target.value })}
-                  placeholder="team@example.com"
-                />
-                {!editing.id && allowLogin && (
-                  <p className="mt-1 text-[11px] text-slate-600">Required to send invite.</p>
-                )}
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Phone</label>
-                <input
-                  className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                  value={editing.phone ?? ""}
-                  onChange={(e) => setEditing({ ...editing, phone: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Role</label>
-                {isOwner ? (
-                  <select
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                    value={(editing.role ?? "staff").toLowerCase()}
-                    onChange={(e) => setEditing({ ...editing, role: e.target.value })}
-                  >
-                    <option value="staff">Staff</option>
-                    <option value="manager">Manager</option>
-                    <option value="owner">Owner</option>
-                  </select>
-                ) : (
-                  <input
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm"
-                    value={prettyRole(editing.role ?? "staff")}
-                    disabled
-                  />
-                )}
-              </div>
-
-              <label className="mt-6 flex items-center gap-2 text-sm text-slate-800">
-                <input
-                  type="checkbox"
-                  className="accent-emerald-600"
-                  checked={!!editing.active}
-                  onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
-                />
-                Active
-              </label>
-            </div>
-
-            {/* Edit-only: enable login + invite button */}
-            {canInviteInEdit && (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
-                <div className="text-sm font-semibold text-slate-900">Login access</div>
-                <div className="mt-0.5 text-[11px] text-slate-700">
-                  This staff member doesn’t currently have a linked login. You can send an invite so
-                  they can create a password and sign in.
-                </div>
-
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-[11px] text-slate-700">
-                    Email:{" "}
-                    <span className="font-semibold">
-                      {cleanEmail(editing.email) ? cleanEmail(editing.email) : "Missing"}
-                    </span>
+                    <div className="col-span-2">
+                      <label className="mb-1 block text-xs text-slate-500">Name *</label>
+                      <input
+                        className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                        value={editing.name}
+                        onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                      />
+                    </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => void sendInviteForExistingMember()}
-                    disabled={sendingInviteFromEdit}
-                    className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
-                  >
-                    {sendingInviteFromEdit ? "Sending invite…" : "Send invite"}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Training areas selector */}
-            <div>
-              <label className="mb-1 block text-xs text-slate-500">Training areas</label>
-              <div className="flex flex-wrap gap-2">
-                {TRAINING_AREAS.map((a) => {
-                  const selected = normalizeAreas(editing.training_areas).includes(a.key);
-                  return (
-                    <button
-                      key={a.key}
-                      type="button"
-                      onClick={() => toggleArea(a.key)}
-                      className={[
-                        "rounded-full border px-3 py-1 text-xs font-medium transition",
-                        pillClassSelected(selected),
-                      ].join(" ")}
-                      title={a.label}
-                    >
-                      {a.short}
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="mt-1 text-[11px] text-slate-500">
-                Tap to toggle. Each selected area is recorded as trained today and given a due date
-                in 12 months.
-              </p>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-slate-500">Notes</label>
-              <textarea
-                className="min-h-[70px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
-                value={editing.notes ?? ""}
-                onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
-              />
-            </div>
-
-            {/* ACTION BUTTONS */}
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                onClick={() => setEditOpen(false)}
-                type="button"
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-                onClick={() => void saveMember()}
-                disabled={sendingInviteOnSave || !locationId}
-                type="button"
-              >
-                {sendingInviteOnSave ? "Sending invite…" : "Save"}
-              </button>
-            </div>
-          </div>
-
-          {/* RIGHT COLUMN: TRAINING */}
-          <div className="space-y-3">
-            {editing.id ? (
-              <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <div className="text-sm font-semibold text-slate-900">Training</div>
-                  <button
-                    onClick={() => void loadEditCertsForMember(editing)}
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-                    type="button"
-                  >
-                    Refresh
-                  </button>
-                </div>
-
-                {editCertsLoading ? (
-                  <div className="text-xs text-slate-500">Loading…</div>
-                ) : editCerts.length ? (
-                  <div className="space-y-2">
-                    {editCerts.map((c) => (
-                      <div
-                        key={c.id}
-                        className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="text-xs font-semibold text-slate-900">{certTitle(c)}</div>
-                          {c.certificate_url ? (
-                            <a
-                              href={c.certificate_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
-                            >
-                              View →
-                            </a>
-                          ) : null}
-                        </div>
-                        <div className="mt-1 text-[11px] text-slate-600">
-                          Passed: {formatDate(c.awarded_on)} · Expires: {formatDate(c.expires_on)}
-                        </div>
-                        {c.notes ? (
-                          <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-xs text-slate-500">No training recorded.</div>
-                )}
-
-                {/* Add course form */}
-                <div className="mt-3 grid gap-2 lg:grid-cols-2">
-                  {/* Provider + Course (single source of truth) */}
-                  <div className="lg:col-span-2 grid grid-cols-2 gap-2">
-                    <label className="block">
-                      <span className="mb-1 block text-[11px] font-medium text-slate-600">
-                        Provider
-                      </span>
-                      <select
-                        className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                        value={editCertForm.provider}
-                        onChange={(e) =>
-                          setEditCertForm((p) => ({
-                            ...p,
-                            provider: e.target.value as any,
-                            course: e.target.value === "Highfield" ? "Food Safety Level 2" : p.course,
-                            providerName: e.target.value === "Highfield" ? "" : p.providerName,
-                          }))
-                        }
-                      >
-                        <option value="Highfield">Highfield</option>
-                        <option value="Other">Other</option>
-                      </select>
-                    </label>
-
-                    {editCertForm.provider === "Highfield" ? (
-                      <label className="block">
-                        <span className="mb-1 block text-[11px] font-medium text-slate-600">
-                          Course
-                        </span>
-                        <select
-                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                          value={editCertForm.course}
-                          onChange={(e) =>
-                            setEditCertForm((p) => ({ ...p, course: e.target.value }))
-                          }
-                        >
-                          <option value="Food Safety Level 2">Food Safety Level 2</option>
-                          <option value="Food Safety Level 1">Food Safety Level 1</option>
-                          <option value="Introduction to Allergens">Introduction to Allergens</option>
-                          <option value="Food Hygiene Level 2">Food Hygiene Level 2</option>
-                        </select>
-                      </label>
-                    ) : (
-                      <label className="block">
-                        <span className="mb-1 block text-[11px] font-medium text-slate-600">
-                          Course name
-                        </span>
+                  {/* Add-only: Allow login */}
+                  {!editing.id && (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+                      <label className="flex items-start gap-3 text-sm text-slate-800">
                         <input
-                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                          value={editCertForm.course}
-                          onChange={(e) =>
-                            setEditCertForm((p) => ({ ...p, course: e.target.value }))
-                          }
-                          placeholder="e.g. CIEH Level 2 Food Safety"
+                          type="checkbox"
+                          className="mt-1 accent-emerald-600"
+                          checked={allowLogin}
+                          onChange={(e) => setAllowLogin(e.target.checked)}
                         />
+                        <span>
+                          <span className="font-semibold">Allow user to log in</span>
+                          <div className="mt-0.5 text-[11px] text-slate-600">
+                            If enabled, we’ll send them an invite email on Save. If disabled, this is a
+                            staff record only (no login).
+                          </div>
+                        </span>
                       </label>
-                    )}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">
+                        Email{!editing.id && allowLogin ? " *" : ""}
+                      </label>
+                      <input
+                        className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                        value={editing.email ?? ""}
+                        onChange={(e) => setEditing({ ...editing, email: e.target.value })}
+                        placeholder="team@example.com"
+                      />
+                      {!editing.id && allowLogin && (
+                        <p className="mt-1 text-[11px] text-slate-600">Required to send invite.</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">Phone</label>
+                      <input
+                        className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
+                        value={editing.phone ?? ""}
+                        onChange={(e) => setEditing({ ...editing, phone: e.target.value })}
+                      />
+                    </div>
                   </div>
 
-                  {editCertForm.provider === "Other" ? (
-                    <input
-                      className="lg:col-span-2 h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                      value={editCertForm.providerName}
-                      onChange={(e) =>
-                        setEditCertForm((p) => ({ ...p, providerName: e.target.value }))
-                      }
-                      placeholder="Provider name (e.g. CIEH)"
-                    />
-                  ) : null}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">Role</label>
+                      {isOwner ? (
+                        <select
+                          className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
+                          value={(editing.role ?? "staff").toLowerCase()}
+                          onChange={(e) => setEditing({ ...editing, role: e.target.value })}
+                        >
+                          <option value="staff">Staff</option>
+                          <option value="manager">Manager</option>
+                          <option value="owner">Owner</option>
+                        </select>
+                      ) : (
+                        <input
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm"
+                          value={prettyRole(editing.role ?? "staff")}
+                          disabled
+                        />
+                      )}
+                    </div>
 
-                  {/* Dates */}
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-medium text-slate-600">
-                      Date passed
+                    <label className="mt-6 flex items-center gap-2 text-sm text-slate-800">
+                      <input
+                        type="checkbox"
+                        className="accent-emerald-600"
+                        checked={!!editing.active}
+                        onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
+                      />
+                      Active
                     </label>
-                    <input
-                      type="date"
-                      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                      value={editCertForm.awarded_on}
-                      onChange={(e) => {
-                        const awarded = e.target.value;
-                        setEditCertForm((p) => ({
-                          ...p,
-                          awarded_on: awarded,
-                          expires_on: awarded ? addYearsISO(awarded, 2) : "",
-                        }));
-                      }}
-                      aria-label="Date passed"
-                    />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-medium text-slate-600">
-                      Expiry date
-                    </label>
-                    <input
-                      type="date"
-                      className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                      value={editCertForm.expires_on}
-                      readOnly
-                      aria-label="Expiry date"
-                    />
-                  </div>
+                  {/* ✅ Workstation PIN (edit only) */}
+                  {editing.id ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">Workstation PIN</div>
+                          <div className="mt-0.5 text-[11px] text-slate-600">
+                            Used on shared devices to select operator. Not the same as full login.
+                          </div>
+                        </div>
 
-                  {/* URL + file */}
-                  <input
-                    className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                    value={editCertForm.certificate_url}
-                    onChange={(e) =>
-                      setEditCertForm((p) => ({ ...p, certificate_url: e.target.value }))
-                    }
-                    placeholder="Certificate URL (optional)"
-                  />
+                        <span
+                          className={[
+                            "rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                            pinLoading
+                              ? "border-slate-200 bg-slate-50 text-slate-600"
+                              : pinSet
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                              : "border-amber-200 bg-amber-50 text-amber-800",
+                          ].join(" ")}
+                        >
+                          {pinLoading ? "Checking…" : pinSet ? "PIN set" : "No PIN"}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                            New PIN
+                          </label>
+                          <input
+                            inputMode="numeric"
+                            value={pinInput}
+                            onChange={(e) => {
+                              setPinMsg(null);
+                              setPinInput(onlyDigits(e.target.value));
+                            }}
+                            className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-lg tracking-widest"
+                            placeholder="••••"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void setOrResetPin();
+                            }}
+                          />
+                          {pinMsg ? (
+                            <div className="mt-1 text-[11px] text-rose-700">{pinMsg}</div>
+                          ) : (
+                            <div className="mt-1 text-[11px] text-slate-500">
+                              4–8 digits. Setting this resets lockouts.
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-end justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void loadPinStatusForMember(orgId ?? "", editing.id)}
+                            className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                            disabled={!orgId || pinLoading}
+                          >
+                            Refresh
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void setOrResetPin()}
+                            disabled={!isOwner || pinSaving || pinInput.replace(/\D+/g, "").length < 4}
+                            className="h-10 rounded-xl bg-emerald-600 px-4 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                          >
+                            {pinSaving ? "Saving…" : pinSet ? "Reset PIN" : "Set PIN"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-500">
+                      Save the member first to set a PIN.
+                    </div>
+                  )}
+
+                  {/* Edit-only: enable login + invite button */}
+                  {canInviteInEdit && (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
+                      <div className="text-sm font-semibold text-slate-900">Login access</div>
+                      <div className="mt-0.5 text-[11px] text-slate-700">
+                        This staff member doesn’t currently have a linked login. You can send an invite so
+                        they can create a password and sign in.
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-[11px] text-slate-700">
+                          Email:{" "}
+                          <span className="font-semibold">
+                            {cleanEmail(editing.email) ? cleanEmail(editing.email) : "Missing"}
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => void sendInviteForExistingMember()}
+                          disabled={sendingInviteFromEdit}
+                          className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+                        >
+                          {sendingInviteFromEdit ? "Sending invite…" : "Send invite"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Training areas selector */}
+                  <div>
+                    <label className="mb-1 block text-xs text-slate-500">Training areas</label>
+                    <div className="flex flex-wrap gap-2">
+                      {TRAINING_AREAS.map((a) => {
+                        const selected = normalizeAreas(editing.training_areas).includes(a.key);
+                        return (
+                          <button
+                            key={a.key}
+                            type="button"
+                            onClick={() => toggleArea(a.key)}
+                            className={[
+                              "rounded-full border px-3 py-1 text-xs font-medium transition",
+                              pillClassSelected(selected),
+                            ].join(" ")}
+                            title={a.label}
+                          >
+                            {a.short}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Tap to toggle. Each selected area is recorded as trained today and given a due date
+                      in 12 months.
+                    </p>
+                  </div>
 
                   <div>
-                    <label className="block">
-                      <span className="mb-1 block text-[11px] font-medium text-slate-600">
-                        Certificate file (PDF or photo)
-                      </span>
-                      <input
-                        type="file"
-                        accept=".pdf,image/*"
-                        className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs pt-1"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0] ?? null;
-                          setEditCertFile(f);
-                        }}
-                      />
-                      {editCertFile ? (
-                        <span className="mt-1 block text-[10px] text-slate-600">
-                          Selected: <span className="font-medium">{editCertFile.name}</span>
-                        </span>
-                      ) : (
-                        <span className="mt-1 block text-[10px] text-slate-500">
-                          PDF preferred. Stored for inspections.
-                        </span>
-                      )}
-                    </label>
+                    <label className="mb-1 block text-xs text-slate-500">Notes</label>
+                    <textarea
+                      className="min-h-[70px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
+                      value={editing.notes ?? ""}
+                      onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
+                    />
                   </div>
 
-                  {/* Notes + button */}
-                  <input
-                    className="lg:col-span-2 h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                    value={editCertForm.notes}
-                    onChange={(e) => setEditCertForm((p) => ({ ...p, notes: e.target.value }))}
-                    placeholder="Notes (optional)"
-                  />
-
-                  <div className="lg:col-span-2 flex justify-end">
+                  {/* ACTION BUTTONS */}
+                  <div className="flex justify-end gap-2 pt-1">
                     <button
-                      onClick={() => void addEditCertificate()}
-                      disabled={editCertSaving}
-                      className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                      onClick={() => setEditOpen(false)}
                       type="button"
                     >
-                      {editCertSaving ? "Saving…" : "Add training"}
+                      Cancel
+                    </button>
+                    <button
+                      className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                      onClick={() => void saveMember()}
+                      disabled={sendingInviteOnSave || !locationId}
+                      type="button"
+                    >
+                      {sendingInviteOnSave ? "Sending invite…" : "Save"}
                     </button>
                   </div>
                 </div>
+
+                {/* RIGHT COLUMN: TRAINING */}
+                <div className="space-y-3">
+                  {editing.id ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold text-slate-900">Training</div>
+                        <button
+                          onClick={() => void loadEditCertsForMember(editing)}
+                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                          type="button"
+                        >
+                          Refresh
+                        </button>
+                      </div>
+
+                      {editCertsLoading ? (
+                        <div className="text-xs text-slate-500">Loading…</div>
+                      ) : editCerts.length ? (
+                        <div className="space-y-2">
+                          {editCerts.map((c) => (
+                            <div
+                              key={c.id}
+                              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="text-xs font-semibold text-slate-900">{certTitle(c)}</div>
+                                {c.certificate_url ? (
+                                  <a
+                                    href={c.certificate_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                                  >
+                                    View →
+                                  </a>
+                                ) : null}
+                              </div>
+                              <div className="mt-1 text-[11px] text-slate-600">
+                                Passed: {formatDate(c.awarded_on)} · Expires: {formatDate(c.expires_on)}
+                              </div>
+                              {c.notes ? (
+                                <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-slate-500">No training recorded.</div>
+                      )}
+
+                      {/* Add course form */}
+                      <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                        <div className="lg:col-span-2 grid grid-cols-2 gap-2">
+                          <label className="block">
+                            <span className="mb-1 block text-[11px] font-medium text-slate-600">
+                              Provider
+                            </span>
+                            <select
+                              className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                              value={editCertForm.provider}
+                              onChange={(e) =>
+                                setEditCertForm((p) => ({
+                                  ...p,
+                                  provider: e.target.value as any,
+                                  course: e.target.value === "Highfield" ? "Food Safety Level 2" : p.course,
+                                  providerName: e.target.value === "Highfield" ? "" : p.providerName,
+                                }))
+                              }
+                            >
+                              <option value="Highfield">Highfield</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </label>
+
+                          {editCertForm.provider === "Highfield" ? (
+                            <label className="block">
+                              <span className="mb-1 block text-[11px] font-medium text-slate-600">
+                                Course
+                              </span>
+                              <select
+                                className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                                value={editCertForm.course}
+                                onChange={(e) =>
+                                  setEditCertForm((p) => ({ ...p, course: e.target.value }))
+                                }
+                              >
+                                <option value="Food Safety Level 2">Food Safety Level 2</option>
+                                <option value="Food Safety Level 1">Food Safety Level 1</option>
+                                <option value="Introduction to Allergens">Introduction to Allergens</option>
+                                <option value="Food Hygiene Level 2">Food Hygiene Level 2</option>
+                              </select>
+                            </label>
+                          ) : (
+                            <label className="block">
+                              <span className="mb-1 block text-[11px] font-medium text-slate-600">
+                                Course name
+                              </span>
+                              <input
+                                className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                                value={editCertForm.course}
+                                onChange={(e) =>
+                                  setEditCertForm((p) => ({ ...p, course: e.target.value }))
+                                }
+                                placeholder="e.g. CIEH Level 2 Food Safety"
+                              />
+                            </label>
+                          )}
+                        </div>
+
+                        {editCertForm.provider === "Other" ? (
+                          <input
+                            className="lg:col-span-2 h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                            value={editCertForm.providerName}
+                            onChange={(e) =>
+                              setEditCertForm((p) => ({ ...p, providerName: e.target.value }))
+                            }
+                            placeholder="Provider name (e.g. CIEH)"
+                          />
+                        ) : null}
+
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-medium text-slate-600">
+                            Date passed
+                          </label>
+                          <input
+                            type="date"
+                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                            value={editCertForm.awarded_on}
+                            onChange={(e) => {
+                              const awarded = e.target.value;
+                              setEditCertForm((p) => ({
+                                ...p,
+                                awarded_on: awarded,
+                                expires_on: awarded ? addYearsISO(awarded, 2) : "",
+                              }));
+                            }}
+                            aria-label="Date passed"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-medium text-slate-600">
+                            Expiry date
+                          </label>
+                          <input
+                            type="date"
+                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                            value={editCertForm.expires_on}
+                            readOnly
+                            aria-label="Expiry date"
+                          />
+                        </div>
+
+                        <input
+                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                          value={editCertForm.certificate_url}
+                          onChange={(e) =>
+                            setEditCertForm((p) => ({ ...p, certificate_url: e.target.value }))
+                          }
+                          placeholder="Certificate URL (optional)"
+                        />
+
+                        <div>
+                          <label className="block">
+                            <span className="mb-1 block text-[11px] font-medium text-slate-600">
+                              Certificate file (PDF or photo)
+                            </span>
+                            <input
+                              type="file"
+                              accept=".pdf,image/*"
+                              className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs pt-1"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0] ?? null;
+                                setEditCertFile(f);
+                              }}
+                            />
+                            {editCertFile ? (
+                              <span className="mt-1 block text-[10px] text-slate-600">
+                                Selected: <span className="font-medium">{editCertFile.name}</span>
+                              </span>
+                            ) : (
+                              <span className="mt-1 block text-[10px] text-slate-500">
+                                PDF preferred. Stored for inspections.
+                              </span>
+                            )}
+                          </label>
+                        </div>
+
+                        <input
+                          className="lg:col-span-2 h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                          value={editCertForm.notes}
+                          onChange={(e) => setEditCertForm((p) => ({ ...p, notes: e.target.value }))}
+                          placeholder="Notes (optional)"
+                        />
+
+                        <div className="lg:col-span-2 flex justify-end">
+                          <button
+                            onClick={() => void addEditCertificate()}
+                            disabled={editCertSaving}
+                            className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                            type="button"
+                          >
+                            {editCertSaving ? "Saving…" : "Add training"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-500">
+                      Save the member first to add training.
+                    </div>
+                  )}
+                </div>
               </div>
-            ) : (
-              <div className="rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-500">
-                Save the member first to add training.
-              </div>
-            )}
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
-  </ModalPortal>
-)}
+        </ModalPortal>
+      )}
 
       {/* View modal */}
       {viewOpen && viewFor && (
@@ -1557,6 +1769,10 @@ async function addEditCertificate() {
                   {viewFor.user_id ? "Enabled" : viewFor.login_enabled ? "Invite pending" : "Not enabled"}
                 </div>
                 <div>
+                  <span className="font-medium">Workstation PIN:</span>{" "}
+                  {viewFor.pin_set ? "Set" : "Not set"}
+                </div>
+                <div>
                   <span className="font-medium">Training areas:</span>{" "}
                   {normalizeAreas(viewFor.training_areas).length
                     ? normalizeAreas(viewFor.training_areas)
@@ -1568,7 +1784,6 @@ async function addEditCertificate() {
                   <span className="font-medium">Notes:</span> {viewFor.notes ?? "—"}
                 </div>
 
-                {/* Education / certificates (READ ONLY) */}
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="text-sm font-semibold text-slate-900">

@@ -1,14 +1,6 @@
 "use client";
 
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 type Operator = {
   teamMemberId: string;
@@ -25,7 +17,6 @@ type Ctx = {
   lockNow: () => void;
   clearOperator: () => void;
   setOperator: (op: Operator) => void;
-  bump: () => void;
   getActingContextClient: () => {
     acted_by_team_member_id: string | null;
     acted_by_initials: string | null;
@@ -35,7 +26,7 @@ type Ctx = {
 const WorkstationCtx = createContext<Ctx | null>(null);
 
 const LS_KEY = "tt_active_operator_v1";
-const IDLE_MS = 10 * 60 * 1000; // 10 minutes (change if you want)
+const IDLE_MS = 3 * 60 * 1000; // 3 minutes
 
 function safeJsonParse<T>(s: string | null): T | null {
   if (!s) return null;
@@ -47,7 +38,7 @@ function safeJsonParse<T>(s: string | null): T | null {
 }
 
 export function WorkstationLockProvider({ children }: { children: React.ReactNode }) {
-  const [locked, setLocked] = useState<boolean>(true);
+  const [locked, setLocked] = useState(false);
   const [operator, setOperatorState] = useState<Operator | null>(null);
 
   const idleTimer = useRef<number | null>(null);
@@ -59,38 +50,33 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
 
   const armIdle = useCallback(() => {
     clearIdle();
-    idleTimer.current = window.setTimeout(() => {
-      setLocked(true);
-    }, IDLE_MS);
+    idleTimer.current = window.setTimeout(() => setLocked(true), IDLE_MS);
   }, [clearIdle]);
 
   const bump = useCallback(() => {
-    if (!operator) return;
-    if (locked) return;
+    if (!operator) return; // nobody selected, stay locked
+    if (locked) return; // don't unlock by wiggling
     armIdle();
   }, [operator, locked, armIdle]);
 
   const lockNow = useCallback(() => {
     setLocked(true);
-    clearIdle();
-  }, [clearIdle]);
+  }, []);
 
   const clearOperator = useCallback(() => {
     setOperatorState(null);
     localStorage.removeItem(LS_KEY);
     setLocked(true);
-    clearIdle();
-  }, [clearIdle]);
 
-  const setOperator = useCallback(
-    (op: Operator) => {
-      setOperatorState(op);
-      localStorage.setItem(LS_KEY, JSON.stringify(op));
-      setLocked(false);
-      armIdle();
-    },
-    [armIdle]
-  );
+    // Clear server operator cookie/session
+    fetch("/api/workstation/clear", { method: "POST" }).catch(() => {});
+  }, []);
+
+  const setOperator = useCallback((op: Operator) => {
+    setOperatorState(op);
+    localStorage.setItem(LS_KEY, JSON.stringify(op));
+    setLocked(false);
+  }, []);
 
   const getActingContextClient = useCallback(() => {
     return {
@@ -99,7 +85,7 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     };
   }, [operator]);
 
-  // Load saved operator ONCE on mount
+  // Load from localStorage on mount
   useEffect(() => {
     const saved = safeJsonParse<Operator>(localStorage.getItem(LS_KEY));
     if (saved?.teamMemberId) {
@@ -108,21 +94,17 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     } else {
       setLocked(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Global activity listeners
+  // Global event listeners for idle tracking
   useEffect(() => {
-    const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
+    const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"] as const;
     const handler = () => bump();
-
     events.forEach((e) => window.addEventListener(e, handler, { passive: true }));
-    return () => {
-      events.forEach((e) => window.removeEventListener(e, handler as any));
-    };
+    return () => events.forEach((e) => window.removeEventListener(e, handler as any));
   }, [bump]);
 
-  // Arm timer when unlocked/operator exists
+  // Arm timer when operator set/unlocked
   useEffect(() => {
     clearIdle();
     if (!operator) {
@@ -134,16 +116,8 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
   }, [operator, locked, armIdle, clearIdle]);
 
   const value = useMemo<Ctx>(
-    () => ({
-      locked,
-      operator,
-      lockNow,
-      clearOperator,
-      setOperator,
-      bump,
-      getActingContextClient,
-    }),
-    [locked, operator, lockNow, clearOperator, setOperator, bump, getActingContextClient]
+    () => ({ locked, operator, lockNow, clearOperator, setOperator, getActingContextClient }),
+    [locked, operator, lockNow, clearOperator, setOperator, getActingContextClient]
   );
 
   return <WorkstationCtx.Provider value={value}>{children}</WorkstationCtx.Provider>;
