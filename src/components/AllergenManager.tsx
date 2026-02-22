@@ -65,7 +65,7 @@ type ReviewInfo = {
   lastReviewedBy?: string;
   intervalDays: number;
 };
-
+  const [authUserInitials, setAuthUserInitials] = useState<string>("");
 const LS_ROWS = "tt_allergens_rows_v3";
 const LS_REVIEW = "tt_allergens_review_v2";
 
@@ -248,7 +248,9 @@ export default function AllergenManager() {
         if (cancelled) return;
 
         setOrgId(org ?? null);
-
+        if (org) {
+          await loadAuthUserInitials(org);
+        }
         // ✅ Operator wins for permissions (PIN/operator mode)
         if (operator?.role) {
           setCanManage(isManagerRole(operator.role));
@@ -328,6 +330,48 @@ export default function AllergenManager() {
         setReview({ intervalDays: 30, ...parsed });
       }
     } catch {}
+  }
+
+  async function loadAuthUserInitials(org: string) {
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth.user?.id ?? null;
+      if (!userId) return;
+
+      // Prefer active location team member row first (if you use location scoping)
+      const lid = await getActiveLocationIdClient().catch(() => null);
+
+      let row: any = null;
+
+      if (lid) {
+        const byLoc = await supabase
+          .from("team_members")
+          .select("initials")
+          .eq("org_id", org)
+          .eq("user_id", userId)
+          .eq("location_id", lid)
+          .maybeSingle();
+
+        if (!byLoc.error && byLoc.data) row = byLoc.data;
+      }
+
+      if (!row) {
+        const byOrg = await supabase
+          .from("team_members")
+          .select("initials")
+          .eq("org_id", org)
+          .eq("user_id", userId)
+          .is("location_id", null)
+          .maybeSingle();
+
+        if (!byOrg.error && byOrg.data) row = byOrg.data;
+      }
+
+      const ini = String(row?.initials ?? "").trim().toUpperCase();
+      if (ini) setAuthUserInitials(ini);
+    } catch {
+      // ignore
+    }
   }
 
   /** Load items and flags from cloud */
@@ -615,7 +659,7 @@ export default function AllergenManager() {
     const id = orgId ?? (await getActiveOrgIdClient().catch(() => null));
     const today = todayISO();
 
-    const reviewer = reviewerLabel ?? "Manager";
+       const reviewer = reviewerLabel ?? "Manager";
     const newInterval = review.intervalDays || 30;
 
     setReview((r) => ({
