@@ -248,9 +248,7 @@ export default function AllergenManager() {
         if (cancelled) return;
 
         setOrgId(org ?? null);
-        if (org) {
-          await loadAuthUserInitials(org);
-        }
+
         // ✅ Operator wins for permissions (PIN/operator mode)
         if (operator?.role) {
           setCanManage(isManagerRole(operator.role));
