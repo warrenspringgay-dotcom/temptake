@@ -36,10 +36,6 @@ import { useWorkstation } from "@/components/workstation/WorkstationLockProvider
 
 const LS_LAST_LOCATION = "tt_last_location";
 
-// Fallback keys (only used if provider lacks methods / API is broken)
-const LS_WS_LOCKED = "tt_ws_locked";
-const LS_WS_OPERATOR = "tt_ws_operator";
-
 type FormState = {
   date: string;
   staff_initials: string; // now derived from workstation operator
@@ -584,9 +580,9 @@ export default function TempFab() {
   const router = useRouter();
 
   // ✅ Workstation operator (PIN user)
-  const ws = useWorkstation() as any;
-  const operator = ws?.operator as any;
-  const locked = !!ws?.locked;
+  const ws = useWorkstation();
+  const operator = ws.operator;
+  const locked = ws.locked;
 
   const operatorInitials = (operator?.initials ?? "")
     .toString()
@@ -607,15 +603,6 @@ export default function TempFab() {
     target_key: TARGET_PRESETS[0]?.key ?? "chill",
     temp_c: "",
   });
-
-  // Debug what workstation provider exposes (remove once confirmed)
-  useEffect(() => {
-    try {
-      // eslint-disable-next-line no-console
-      console.log("Workstation ctx keys:", ws ? Object.keys(ws) : ws);
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Keep form.staff_initials synced to operator
   useEffect(() => {
@@ -685,6 +672,14 @@ export default function TempFab() {
   const [incidentOpen, setIncidentOpen] = useState(false);
   const [incidentArea, setIncidentArea] = useState<string | null>(null);
 
+  function openWorkstationLock() {
+    ws.openLockModal();
+  }
+
+  function lockWorkstationNow() {
+    ws.lockNow();
+  }
+
   function requireOperator(): boolean {
     if (locked || !operatorInitials) {
       addToast({
@@ -692,6 +687,9 @@ export default function TempFab() {
         message: "Select a user and enter PIN to continue.",
         type: "error",
       });
+
+      // ✅ pop the PIN modal immediately
+      openWorkstationLock();
       return false;
     }
     return true;
@@ -756,7 +754,6 @@ export default function TempFab() {
         window.dispatchEvent(new Event("tt-temps-changed"));
       } catch {}
     } catch (e: any) {
-      // eslint-disable-next-line no-console
       console.error(e);
       addToast({
         title: "Could not save corrective action",
@@ -766,46 +763,6 @@ export default function TempFab() {
     } finally {
       setCorrectiveSaving(false);
     }
-  }
-
-  function openWorkstationLock() {
-    // Prefer provider function if you have it
-    if (typeof ws?.openLockModal === "function") return ws.openLockModal();
-    if (typeof ws?.open === "function") return ws.open(); // some people name it this
-
-    // Fallback: event your provider can listen for
-    try {
-      window.dispatchEvent(new Event("tt-open-workstation-lock"));
-    } catch {}
-  }
-
-  async function lockWorkstationNow() {
-    // Try provider methods first
-    try {
-      if (typeof ws?.lockWorkstation === "function") {
-        await ws.lockWorkstation();
-        return;
-      }
-      if (typeof ws?.lock === "function") {
-        await ws.lock();
-        return;
-      }
-    } catch {
-      // fall through to fallback lock
-    }
-
-    // Hard fallback: local lock + broadcast event
-    try {
-      localStorage.setItem(LS_WS_LOCKED, "1");
-      localStorage.removeItem(LS_WS_OPERATOR);
-    } catch {}
-
-    try {
-      window.dispatchEvent(new Event("tt-workstation-locked"));
-      window.dispatchEvent(new Event("storage")); // some providers listen to storage changes
-    } catch {}
-
-    addToast({ title: "Workstation locked", type: "success" });
   }
 
   // Voice hook (do NOT override operator initials)
@@ -1019,7 +976,6 @@ export default function TempFab() {
 
       posthog.capture("fab_choose_day_signoff");
     } catch (e: any) {
-      // eslint-disable-next-line no-console
       console.error(e);
       addToast({
         title: "Couldn’t open sign off",
@@ -1040,6 +996,7 @@ export default function TempFab() {
         message: "Select a user and enter PIN first.",
         type: "error",
       });
+      openWorkstationLock();
       return;
     }
 
@@ -1073,13 +1030,9 @@ export default function TempFab() {
         org_id: String((data as any).org_id),
         location_id: String((data as any).location_id),
         signoff_on: String((data as any).signoff_on),
-        signed_by: (data as any).signed_by
-          ? String((data as any).signed_by)
-          : null,
+        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
         notes: (data as any).notes ? String((data as any).notes) : null,
-        created_at: (data as any).created_at
-          ? String((data as any).created_at)
-          : null,
+        created_at: (data as any).created_at ? String((data as any).created_at) : null,
       });
 
       addToast({ title: "Day signed off", type: "success" });
@@ -1087,7 +1040,6 @@ export default function TempFab() {
 
       posthog.capture("day_signoff_saved", { source: "fab", date: todayISO });
     } catch (e: any) {
-      // eslint-disable-next-line no-console
       console.error(e);
       addToast({
         title: "Sign off failed",
@@ -1138,9 +1090,10 @@ export default function TempFab() {
 
           const { data: logsData } = await q;
 
-          const fromAreas: string[] = (logsData ?? [])
-            .map((r: LogRow) => (r.area ?? "").toString().trim())
-            .filter((s: string) => s.length > 0);
+          const fromAreas: string[] =
+            (logsData ?? [])
+              .map((r: LogRow) => (r.area ?? "").toString().trim())
+              .filter((s: string) => s.length > 0);
 
           const unique: string[] = Array.from(new Set<string>(fromAreas));
           const finalAreas: string[] = unique.length ? unique : ["Kitchen"];
@@ -1201,7 +1154,8 @@ export default function TempFab() {
       void refreshCleaningOpen(true);
     };
     window.addEventListener("tt-cleaning-changed", onCleaningChanged);
-    return () => window.removeEventListener("tt-cleaning-changed", onCleaningChanged);
+    return () =>
+      window.removeEventListener("tt-cleaning-changed", onCleaningChanged);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1312,6 +1266,7 @@ export default function TempFab() {
 
     // Optional: stamp operator ids if your schema has them
     const opAny = operator as any;
+    if (opAny?.teamMemberId) payload.acted_by_team_member_id = opAny.teamMemberId;
     if (opAny?.team_member_id) payload.done_by_team_member_id = opAny.team_member_id;
     if (opAny?.location_staff_id) payload.location_staff_id = opAny.location_staff_id;
 
@@ -1572,9 +1527,9 @@ export default function TempFab() {
                 ) : (
                   <button
                     type="button"
-                    onClick={async () => {
+                    onClick={() => {
                       setShowMenu(false);
-                      await lockWorkstationNow();
+                      lockWorkstationNow();
                       posthog.capture("fab_choose_workstation_lock");
                     }}
                     className="w-full rounded-xl bg-slate-700 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
@@ -1590,6 +1545,7 @@ export default function TempFab() {
                   type="button"
                   onClick={() => {
                     setShowMenu(false);
+                    if (!requireOperator()) return;
                     setOpen(true);
                     posthog.capture("fab_choose_quick_temp");
                   }}
@@ -1602,6 +1558,7 @@ export default function TempFab() {
                   type="button"
                   onClick={async () => {
                     setShowMenu(false);
+                    if (!requireOperator()) return;
                     await openRoutinePicker();
                     posthog.capture("fab_choose_routine");
                   }}
