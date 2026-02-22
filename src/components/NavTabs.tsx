@@ -24,22 +24,22 @@ type Tab = {
 
 const TABS: Tab[] = [
   { href: "/dashboard", label: "Dashboard" },
+
   { href: "/staff", label: "Staff", requiresStaffOnly: true, requiresPlan: true },
+
   { href: "/routines", label: "Routines", requiresPlan: true },
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning Rota", requiresPlan: true },
+
+  // ✅ MANAGER ONLY
   { href: "/manager", label: "Manager Dashboard", requiresManager: true, requiresPlan: true },
-  {
-    href: "/leaderboard",
-    label: "Leaderboard",
-    icon: <Trophy className="h-4 w-4 text-amber-500" />,
-    requiresPlan: true,
-  },
-  { href: "/team", label: "Team", requiresPlan: true },
-  { href: "/suppliers", label: "Suppliers", requiresPlan: true },
+  { href: "/team", label: "Team", requiresManager: true, requiresPlan: true },
+  { href: "/suppliers", label: "Suppliers", requiresManager: true, requiresPlan: true },
+  { href: "/billing", label: "Billing", requiresManager: true, requiresPlan: true },
+
+  { href: "/leaderboard", label: "Leaderboard", requiresPlan: true },
   { href: "/reports", label: "Reports", requiresPlan: true },
 ];
-
 function isFutureIso(iso: unknown) {
   if (typeof iso !== "string" || !iso) return false;
   const t = Date.parse(iso);

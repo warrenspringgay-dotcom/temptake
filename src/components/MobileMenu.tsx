@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { useAuth } from "@/components/AuthProvider";
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import LocationSwitcher from "@/components/LocationSwitcher";
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
@@ -17,26 +18,34 @@ type Tab = {
   href: string;
   label: string;
   requiresManager?: boolean;
+  requiresStaffOnly?: boolean;
   requiresPlan?: boolean;
 };
 
 const APP_NAV: Tab[] = [
   { href: "/dashboard", label: "Dashboard" },
+
+  // Staff-only (example)
+  { href: "/staff", label: "Staff", requiresStaffOnly: true, requiresPlan: true },
+
   { href: "/routines", label: "Routines", requiresPlan: true },
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning rota", requiresPlan: true },
   { href: "/food-hygiene", label: "Food hygiene", requiresPlan: true },
+
+  // ✅ Manager-only
   { href: "/manager", label: "Manager Dashboard", requiresManager: true, requiresPlan: true },
+  { href: "/team", label: "Team", requiresManager: true, requiresPlan: true },
+  { href: "/suppliers", label: "Suppliers", requiresManager: true, requiresPlan: true },
+  { href: "/billing", label: "Billing & subscription", requiresManager: true, requiresPlan: true },
+  { href: "/settings", label: "Settings", requiresManager: true, requiresPlan: true },
+
   { href: "/leaderboard", label: "Leaderboard", requiresPlan: true },
-  { href: "/team", label: "Team", requiresPlan: true },
-  { href: "/suppliers", label: "Suppliers", requiresPlan: true },
   { href: "/reports", label: "Reports", requiresPlan: true },
 ];
 
 const ACCOUNT_LINKS: { href: string; label: string }[] = [
-  { href: "/settings", label: "Settings" },
   { href: "/locations", label: "Locations" },
-  { href: "/billing", label: "Billing & subscription" },
   { href: "/guides", label: "Guides" },
   { href: "/help", label: "Help & support" },
 ];
@@ -64,20 +73,27 @@ function isStandalone() {
   return iosStandalone || displayModeStandalone;
 }
 
-// Type for the PWA install prompt event (not in TS lib by default)
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 };
 
+function isManagerRole(role: string | null | undefined) {
+  const r = String(role ?? "").toLowerCase();
+  return r === "owner" || r === "admin" || r === "manager";
+}
+
 export default function MobileMenu() {
   const router = useRouter();
   const pathname = usePathname() || "/";
   const { user, ready } = useAuth();
-  const { hasValid } = useSubscriptionStatus();
+  const sub = useSubscriptionStatus();
   const { operator } = useWorkstation();
 
+  const hasValid = !!(sub as any)?.hasValid;
+
   const [open, setOpen] = useState(false);
+  const [roleLoading, setRoleLoading] = useState(true);
   const [canSeeManager, setCanSeeManager] = useState(false);
 
   // PWA install support
@@ -87,10 +103,8 @@ export default function MobileMenu() {
   const [standalone, setStandalone] = useState(false);
   const [ios, setIos] = useState(false);
 
-  // close on route change
   useEffect(() => setOpen(false), [pathname]);
 
-  // Capture install prompt on supported browsers (mostly Android Chrome/Edge)
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -116,30 +130,43 @@ export default function MobileMenu() {
     };
   }, []);
 
-  // --- manager gating: workstation operator wins; otherwise auth-user lookup ---
+  // --- manager gating: workstation operator wins; otherwise auth-user lookup (org + location) ---
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
-      // ✅ If an operator is set, use that first.
-      // This prevents staff PIN sessions seeing manager navigation.
+      setRoleLoading(true);
+
+      // ✅ Workstation operator role overrides
       if (operator?.role) {
-        const r = String(operator.role).toLowerCase();
-        const ok = r === "owner" || r === "admin" || r === "manager";
-        if (!cancelled) setCanSeeManager(ok);
+        const ok = isManagerRole(operator.role);
+        if (!cancelled) {
+          setCanSeeManager(ok);
+          setRoleLoading(false);
+        }
         return;
       }
 
       // Fallback: normal auth gating
       if (!ready || !user) {
-        if (!cancelled) setCanSeeManager(false);
+        if (!cancelled) {
+          setCanSeeManager(false);
+          setRoleLoading(false);
+        }
         return;
       }
 
       try {
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) {
-          if (!cancelled) setCanSeeManager(false);
+        const [orgId, locationId] = await Promise.all([
+          getActiveOrgIdClient(),
+          getActiveLocationIdClient().catch(() => null),
+        ]);
+
+        if (!orgId || !locationId) {
+          if (!cancelled) {
+            setCanSeeManager(false);
+            setRoleLoading(false);
+          }
           return;
         }
 
@@ -148,38 +175,38 @@ export default function MobileMenu() {
 
         let role: string | null = null;
 
-        // Attempt 1: by user_id
-        try {
-          const { data, error } = await supabase
-            .from("team_members")
-            .select("role")
-            .eq("org_id", orgId)
-            .eq("user_id", userId)
-            .maybeSingle();
+        // Prefer user_id match (location-aware)
+        const byUser = await supabase
+          .from("team_members")
+          .select("role")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("user_id", userId)
+          .maybeSingle();
 
-          if (!error && data?.role) role = String(data.role);
-        } catch {
-          // ignore
-        }
-
-        // Attempt 2: by email
-        if (!role && email) {
-          const { data, error } = await supabase
+        if (!byUser.error && byUser.data?.role) {
+          role = String(byUser.data.role);
+        } else if (email) {
+          const byEmail = await supabase
             .from("team_members")
             .select("role,email")
             .eq("org_id", orgId)
+            .eq("location_id", locationId)
             .ilike("email", email)
             .maybeSingle();
 
-          if (!error && data?.role) role = String(data.role);
+          if (!byEmail.error && byEmail.data?.role) role = String(byEmail.data.role);
         }
 
         if (cancelled) return;
 
-        const r = (role ?? "").toLowerCase();
-        setCanSeeManager(r === "owner" || r === "manager" || r === "admin");
+        setCanSeeManager(isManagerRole(role));
+        setRoleLoading(false);
       } catch {
-        if (!cancelled) setCanSeeManager(false);
+        if (!cancelled) {
+          setCanSeeManager(false);
+          setRoleLoading(false);
+        }
       }
     })();
 
@@ -188,16 +215,28 @@ export default function MobileMenu() {
     };
   }, [ready, user, operator?.role]);
 
-  // ✅ NAV LINKS (this is what you were missing)
   const navLinks = useMemo(() => {
     if (!user) return [];
 
+    // While role is unknown, be conservative: hide manager/staff-only links to avoid flash
+    const roleKnown = !roleLoading;
+
     return APP_NAV.filter((l) => {
       if (l.requiresPlan && !hasValid) return false;
-      if (l.requiresManager && !canSeeManager) return false;
+
+      if (l.requiresManager) {
+        if (!roleKnown) return false;
+        return canSeeManager;
+      }
+
+      if (l.requiresStaffOnly) {
+        if (!roleKnown) return false;
+        return !canSeeManager;
+      }
+
       return true;
     });
-  }, [user, hasValid, canSeeManager]);
+  }, [user, hasValid, roleLoading, canSeeManager]);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -223,17 +262,13 @@ export default function MobileMenu() {
     if (deferredPrompt) {
       try {
         await deferredPrompt.prompt();
-        const choice = await deferredPrompt.userChoice;
-
+        await deferredPrompt.userChoice;
         setDeferredPrompt(null);
         setCanInstall(false);
-
-        if (choice.outcome !== "accepted") {
-          router.push("/dashboard");
-        }
       } catch {
-        router.push("/dashboard");
+        // ignore
       }
+      router.push("/dashboard");
       return;
     }
 
@@ -244,7 +279,6 @@ export default function MobileMenu() {
 
   return (
     <>
-      {/* Hamburger button with logo (mobile only) */}
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -256,7 +290,6 @@ export default function MobileMenu() {
 
       {open && (
         <div className="fixed inset-0 z-50">
-          {/* overlay */}
           <button
             type="button"
             className="absolute inset-0 bg-black/40"
@@ -264,9 +297,7 @@ export default function MobileMenu() {
             aria-label="Close menu"
           />
 
-          {/* sheet */}
           <div className="absolute right-2 top-2 w-[calc(100%-1rem)] max-w-sm overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl">
-            {/* header */}
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
               <div className="flex items-center gap-2">
                 <Image src="/logo.png" alt="" width={26} height={26} className="h-6 w-6" />
@@ -288,7 +319,6 @@ export default function MobileMenu() {
             </div>
 
             <div className="max-h-[75vh] overflow-y-auto p-2">
-              {/* Signed out */}
               {!user ? (
                 <div className="space-y-2 p-2">
                   <Link
@@ -308,7 +338,6 @@ export default function MobileMenu() {
                 </div>
               ) : (
                 <>
-                  {/* LOCATION (GLOBAL CONTEXT) */}
                   <div className="px-2 pt-2">
                     <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                       <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-emerald-700">
@@ -323,7 +352,6 @@ export default function MobileMenu() {
                     </div>
                   </div>
 
-                  {/* NAV */}
                   <div className="px-2 pt-3">
                     <div className="px-2 pb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
                       Navigation
@@ -350,7 +378,6 @@ export default function MobileMenu() {
 
                   <div className="my-3 border-t border-slate-200" />
 
-                  {/* ACCOUNT */}
                   <div className="px-2">
                     <div className="px-2 pb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
                       Account
@@ -373,7 +400,6 @@ export default function MobileMenu() {
                         </Link>
                       ))}
 
-                      {/* Install/Get app */}
                       <button
                         type="button"
                         onClick={handleInstallClick}
