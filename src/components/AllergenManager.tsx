@@ -105,7 +105,7 @@ async function fireConfetti() {
 }
 
 function isManagerRole(role: string | null | undefined) {
-  const r = String(role ?? "").toLowerCase();
+  const r = String(role ?? "").trim().toLowerCase();
   return r === "owner" || r === "admin" || r === "manager";
 }
 
@@ -195,13 +195,12 @@ async function resolveCanManage(params: {
     .limit(50);
 
   if (error || !Array.isArray(data)) return false;
-
   return data.some((r) => roleAllows((r as any).role));
 }
 
 /* ---------- Component ---------- */
 export default function AllergenManager() {
-  const { operator, getActingContextClient } = useWorkstation();
+  const { operator } = useWorkstation();
 
   const [hydrated, setHydrated] = useState(false);
 
@@ -224,14 +223,12 @@ export default function AllergenManager() {
   const [qCat, setQCat] = useState<"All" | Category>("All");
   const [qFlags, setQFlags] = useState<Flags>(emptyFlags());
 
-  const acting = getActingContextClient();
   const operatorInitials =
     (operator?.initials ?? "").trim().toUpperCase() ||
     initialsFromName(operator?.name) ||
     null;
 
-  const reviewerLabel =
-    operatorInitials || (operator?.name ?? "").trim() || null;
+  const reviewerLabel = operatorInitials || (operator?.name ?? "").trim() || null;
 
   /* ---------- boot ---------- */
   useEffect(() => {
@@ -241,7 +238,6 @@ export default function AllergenManager() {
 
     (async () => {
       try {
-        // Always prime local first so UI isn't dead while org resolves
         primeLocal();
 
         const [{ data: auth }, org] = await Promise.all([
@@ -253,7 +249,7 @@ export default function AllergenManager() {
 
         setOrgId(org ?? null);
 
-        // ✅ Operator wins for permissions too (PIN sessions)
+        // ✅ Operator wins for permissions (PIN/operator mode)
         if (operator?.role) {
           setCanManage(isManagerRole(operator.role));
         } else {
@@ -269,7 +265,6 @@ export default function AllergenManager() {
           if (!cancelled) setCanManage(allowed);
         }
 
-        // If we have an org, load cloud data (overwrites local shadow)
         if (org) {
           await Promise.all([loadFromSupabase(org), loadReviewFromSupabase(org)]);
         }
@@ -368,7 +363,7 @@ export default function AllergenManager() {
         return;
       }
 
-      for (const id of ids) flagsByItem[id] = emptyFlags();
+      for (const id2 of ids) flagsByItem[id2] = emptyFlags();
       for (const f of flags ?? []) {
         const k = (f.key as AllergenKey) ?? null;
         if (!k) continue;
@@ -407,7 +402,8 @@ export default function AllergenManager() {
 
     if (!settingsErr && settings) {
       if (settings.last_reviewed) nextState.lastReviewedOn = settings.last_reviewed;
-      if (typeof settings.interval_days === "number") nextState.intervalDays = settings.interval_days;
+      if (typeof settings.interval_days === "number")
+        nextState.intervalDays = settings.interval_days;
       if (settings.reviewer) nextState.lastReviewedBy = settings.reviewer;
     }
 
@@ -420,7 +416,8 @@ export default function AllergenManager() {
       .maybeSingle();
 
     if (!logErr && logRow) {
-      if (!nextState.lastReviewedOn && logRow.reviewed_on) nextState.lastReviewedOn = logRow.reviewed_on;
+      if (!nextState.lastReviewedOn && logRow.reviewed_on)
+        nextState.lastReviewedOn = logRow.reviewed_on;
       if (typeof logRow.interval_days === "number" && !settings?.interval_days)
         nextState.intervalDays = logRow.interval_days;
       if (logRow.reviewer) nextState.lastReviewedBy = logRow.reviewer;
@@ -533,7 +530,9 @@ export default function AllergenManager() {
           const { error: flagsErr } = await supabase
             .from("allergen_flags")
             .upsert(payload, { onConflict: "item_id,key" });
-          if (flagsErr) console.warn("Saving allergen flags failed (ignored):", flagsErr.message);
+
+          if (flagsErr)
+            console.warn("Saving allergen flags failed (ignored):", flagsErr.message);
         }
       }
 
@@ -547,7 +546,6 @@ export default function AllergenManager() {
           locked: true,
         };
 
-        // ✅ Operator initials for change log
         await logAllergenChange({
           orgId: currentOrgId,
           action: d.id ? "update" : "create",
@@ -617,7 +615,6 @@ export default function AllergenManager() {
     const id = orgId ?? (await getActiveOrgIdClient().catch(() => null));
     const today = todayISO();
 
-    // ✅ Operator-first reviewer label
     const reviewer = reviewerLabel ?? "Manager";
     const newInterval = review.intervalDays || 30;
 
@@ -775,6 +772,7 @@ export default function AllergenManager() {
               {review.intervalDays}
             </div>
           </div>
+
           <div className="flex w-full max-w-[360px] items-center gap-2 sm:w-auto sm:max-w-none">
             <input
               type="number"
@@ -826,10 +824,15 @@ export default function AllergenManager() {
           </div>
 
           <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
-            <div className="mb-2 text-sm font-medium text-slate-900">Select allergens to exclude</div>
+            <div className="mb-2 text-sm font-medium text-slate-900">
+              Select allergens to exclude
+            </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
               {ALLERGENS.map((a) => (
-                <label key={a.key} className="inline-flex items-center gap-2 text-sm text-slate-800">
+                <label
+                  key={a.key}
+                  className="inline-flex items-center gap-2 text-sm text-slate-800"
+                >
                   <input
                     type="checkbox"
                     checked={qFlags[a.key]}
@@ -837,7 +840,8 @@ export default function AllergenManager() {
                     className="accent-emerald-600"
                   />
                   <span title={a.label}>
-                    {a.icon} <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
+                    {a.icon}{" "}
+                    <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
                   </span>
                 </label>
               ))}
@@ -911,11 +915,9 @@ export default function AllergenManager() {
         </button>
       </div>
 
-      <div className="mb-2 hidden text-sm font-semibold text-slate-900 md:block">
-        Allergen matrix
-      </div>
+      <div className="mb-2 hidden text-sm font-semibold text-slate-900 md:block">Allergen matrix</div>
 
-      {/* Desktop: scrollable grid with sticky header */}
+      {/* Desktop */}
       <div className="hidden md:block">
         <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm">
           <div className="max-h-[70vh] overflow-auto rounded-2xl">
@@ -937,10 +939,7 @@ export default function AllergenManager() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td
-                      colSpan={2 + ALLERGENS.length + 1}
-                      className="px-3 py-6 text-center text-slate-500"
-                    >
+                    <td colSpan={2 + ALLERGENS.length + 1} className="px-3 py-6 text-center text-slate-500">
                       {loadErr ? `Error: ${loadErr}` : "No items."}
                     </td>
                   </tr>
@@ -968,11 +967,7 @@ export default function AllergenManager() {
                           <ActionMenu
                             items={[
                               { label: "Edit", onClick: () => openEdit(row) },
-                              {
-                                label: "Delete",
-                                onClick: () => void deleteItem(row.id),
-                                variant: "danger",
-                              },
+                              { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
                             ]}
                           />
                         )}
@@ -995,7 +990,10 @@ export default function AllergenManager() {
         ) : (
           <div className="space-y-3">
             {rows.map((row) => (
-              <div key={row.id} className="rounded-xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm">
+              <div
+                key={row.id}
+                className="rounded-xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm"
+              >
                 <div className="mb-2 flex items-start justify-between gap-2">
                   <div>
                     <div className="font-medium text-slate-900">{row.item}</div>
@@ -1078,12 +1076,15 @@ export default function AllergenManager() {
                     required
                   />
                 </label>
+
                 <label className="text-sm">
                   <div className="mb-1 text-slate-600">Category</div>
                   <select
                     className="w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5"
                     value={draft.category ?? "Starter"}
-                    onChange={(e) => setDraft((d) => ({ ...d!, category: e.target.value as Category }))}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d!, category: e.target.value as Category }))
+                    }
                   >
                     {CATEGORIES.map((c) => (
                       <option key={c} value={c}>
@@ -1112,7 +1113,9 @@ export default function AllergenManager() {
                           className={`px-2 py-1 text-xs ${
                             val ? "bg-red-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
                           }`}
-                          onClick={() => setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: true } }))}
+                          onClick={() =>
+                            setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: true } }))
+                          }
                         >
                           Yes
                         </button>
