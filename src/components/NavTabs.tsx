@@ -11,6 +11,7 @@ import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { useAuth } from "@/components/AuthProvider";
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
+import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
 type Tab = {
   href: string;
@@ -53,12 +54,20 @@ function roleScore(role: string) {
   return 1; // staff default
 }
 
+function isManagerLike(role: string | null | undefined) {
+  const r = (role ?? "").toLowerCase();
+  return r === "owner" || r === "admin" || r === "manager";
+}
+
 export default function NavTabs() {
   const pathname = usePathname();
   const { user, ready } = useAuth();
   const billing = useSubscriptionStatus();
 
-  // plan gating (your existing logic, kept)
+  // ✅ Workstation operator (PIN-based identity)
+  const { operator } = useWorkstation();
+
+  // plan gating
   const planOK = useMemo(() => {
     if ((billing as any)?.loading) return true;
 
@@ -83,11 +92,24 @@ export default function NavTabs() {
   const [isManager, setIsManager] = useState(false);
   const [roleLoading, setRoleLoading] = useState(true);
 
-  // Role lookup (org + location aware)
+  // ✅ Decide "effective role":
+  // If workstation operator exists, use THAT role for UI gating.
+  // Otherwise fall back to auth-user role from team_members.
   useEffect(() => {
     let alive = true;
 
     (async () => {
+      // If operator is set, it wins (this is the whole point).
+      if (operator?.role) {
+        if (!alive) return;
+        const r = String(operator.role).toLowerCase();
+        setRoleName(r);
+        setIsManager(isManagerLike(r));
+        setRoleLoading(false);
+        return;
+      }
+
+      // No operator: fall back to normal auth gating
       if (!ready || !user) {
         if (!alive) return;
         setRoleName(null);
@@ -166,9 +188,7 @@ export default function NavTabs() {
 
         const role = best || "staff";
         setRoleName(role);
-
-        const managerLike = role === "owner" || role === "admin" || role === "manager";
-        setIsManager(managerLike);
+        setIsManager(isManagerLike(role));
       } catch {
         if (!alive) return;
         setRoleName("staff");
@@ -182,14 +202,13 @@ export default function NavTabs() {
     return () => {
       alive = false;
     };
-  }, [ready, user]);
+  }, [ready, user, operator?.role]);
 
   const visibleTabs = useMemo(() => {
     const roleKnown = !roleLoading;
 
     return TABS.filter((t) => {
-      // Plan gated tabs: hide until plan status known? (keep simple: show, but route to /billing)
-      // Role gated tabs: HIDE until role known to prevent flash.
+      // Role gated tabs: hide until role known to prevent “flash”
       if (t.requiresManager) {
         if (!roleKnown) return false;
         return isManager;

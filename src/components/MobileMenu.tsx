@@ -10,8 +10,8 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { useAuth } from "@/components/AuthProvider";
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
 import LocationSwitcher from "@/components/LocationSwitcher";
+import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
 type Tab = {
   href: string;
@@ -75,12 +75,14 @@ export default function MobileMenu() {
   const pathname = usePathname() || "/";
   const { user, ready } = useAuth();
   const { hasValid } = useSubscriptionStatus();
+  const { operator } = useWorkstation();
 
   const [open, setOpen] = useState(false);
   const [canSeeManager, setCanSeeManager] = useState(false);
 
   // PWA install support
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [deferredPrompt, setDeferredPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
   const [canInstall, setCanInstall] = useState(false);
   const [standalone, setStandalone] = useState(false);
   const [ios, setIos] = useState(false);
@@ -114,23 +116,29 @@ export default function MobileMenu() {
     };
   }, []);
 
-  // --- manager gating: prefer user_id, fallback email; scope to org+location ---
+  // --- manager gating: workstation operator wins; otherwise auth-user lookup ---
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
+      // ✅ If an operator is set, use that first.
+      // This prevents staff PIN sessions seeing manager navigation.
+      if (operator?.role) {
+        const r = String(operator.role).toLowerCase();
+        const ok = r === "owner" || r === "admin" || r === "manager";
+        if (!cancelled) setCanSeeManager(ok);
+        return;
+      }
+
+      // Fallback: normal auth gating
       if (!ready || !user) {
         if (!cancelled) setCanSeeManager(false);
         return;
       }
 
       try {
-        const [orgId, locationId] = await Promise.all([
-          getActiveOrgIdClient(),
-          getActiveLocationIdClient(),
-        ]);
-
-        if (!orgId || !locationId) {
+        const orgId = await getActiveOrgIdClient();
+        if (!orgId) {
           if (!cancelled) setCanSeeManager(false);
           return;
         }
@@ -140,13 +148,12 @@ export default function MobileMenu() {
 
         let role: string | null = null;
 
-        // Attempt 1: user_id match
+        // Attempt 1: by user_id
         try {
           const { data, error } = await supabase
             .from("team_members")
             .select("role")
             .eq("org_id", orgId)
-            .eq("location_id", locationId)
             .eq("user_id", userId)
             .maybeSingle();
 
@@ -155,13 +162,12 @@ export default function MobileMenu() {
           // ignore
         }
 
-        // Attempt 2: email match (case-insensitive)
+        // Attempt 2: by email
         if (!role && email) {
           const { data, error } = await supabase
             .from("team_members")
             .select("role,email")
             .eq("org_id", orgId)
-            .eq("location_id", locationId)
             .ilike("email", email)
             .maybeSingle();
 
@@ -180,8 +186,9 @@ export default function MobileMenu() {
     return () => {
       cancelled = true;
     };
-  }, [ready, user]);
+  }, [ready, user, operator?.role]);
 
+  // ✅ NAV LINKS (this is what you were missing)
   const navLinks = useMemo(() => {
     if (!user) return [];
 
@@ -190,7 +197,7 @@ export default function MobileMenu() {
       if (l.requiresManager && !canSeeManager) return false;
       return true;
     });
-  }, [user, canSeeManager, hasValid]);
+  }, [user, hasValid, canSeeManager]);
 
   async function signOut() {
     await supabase.auth.signOut();
