@@ -1,11 +1,14 @@
 "use client";
 
 import posthog from "posthog-js";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { Pin, Send } from "lucide-react";
+
+// ✅ Workstation operator (PIN user)
+import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
 type Post = {
   id: string;
@@ -37,15 +40,53 @@ const COLORS = [
 ];
 
 export default function KitchenWall() {
+  // Workstation operator (PIN)
+  const ws = useWorkstation() as any;
+  const operator = ws?.operator as any;
+  const locked = !!ws?.locked;
+
+  const operatorInitials = (operator?.initials ?? "")
+    .toString()
+    .trim()
+    .toUpperCase()
+    .slice(0, 4);
+
+  const operatorName = (operator?.name ?? operator?.display_name ?? "")
+    .toString()
+    .trim();
+
+  function openWorkstationLock() {
+    if (typeof ws?.openLockModal === "function") return ws.openLockModal();
+    if (typeof ws?.open === "function") return ws.open();
+    try {
+      window.dispatchEvent(new Event("tt-open-workstation-lock"));
+    } catch {}
+  }
+
+  function requireOperator(actionLabel?: string) {
+    if (!locked && operatorInitials) return true;
+
+    // force PIN modal
+    openWorkstationLock();
+
+    posthog.capture("workstation_blocked_action", {
+      action: actionLabel ?? "unknown",
+      locked,
+      has_operator_initials: !!operatorInitials,
+    });
+
+    return false;
+  }
+
   const [posts, setPosts] = useState<Post[]>([]);
   const [message, setMessage] = useState("");
-  const [initials, setInitials] = useState("");
+  const [initials, setInitials] = useState(""); // will be operator-driven now
   const [orgId, setOrgId] = useState<string | null>(null);
 
   // Active location
   const [locationId, setLocationId] = useState<string | null>(null);
 
-  const [myInitials, setMyInitials] = useState("");
+  // Logged-in user (still used for manager/admin role + fallback name)
   const [myName, setMyName] = useState<string>("");
 
   // Manager / owner / admin flag (org-level)
@@ -63,6 +104,11 @@ export default function KitchenWall() {
     month: "long",
     year: "numeric",
   });
+
+  // ✅ Always drive wall initials from workstation operator
+  useEffect(() => {
+    setInitials(operatorInitials);
+  }, [operatorInitials]);
 
   // Keep org + location in sync (location switching)
   useEffect(() => {
@@ -101,14 +147,13 @@ export default function KitchenWall() {
     };
   }, []);
 
-  // Initial auth-derived initials/name + org-level role
+  // Auth-derived org-level role + fallback name
   useEffect(() => {
     if (!orgId) return;
 
     let alive = true;
 
     (async () => {
-      let detectedInitials = "";
       let detectedName = "";
       let managerFlag = false;
 
@@ -122,7 +167,7 @@ export default function KitchenWall() {
           return;
         }
 
-        // ✅ 1) ORG-LEVEL ROLE (authoritative)
+        // ✅ ORG-LEVEL ROLE (authoritative)
         const { data: roleRow, error: roleErr } = await supabase
           .from("team_members")
           .select("role")
@@ -136,27 +181,20 @@ export default function KitchenWall() {
           managerFlag = role === "owner" || role === "manager" || role === "admin";
         }
 
-        // ✅ 2) NAME/INITIALS: location row first, fallback to org-level row
+        // ✅ NAME fallback (location row then org row)
         const baseQuery = supabase
           .from("team_members")
           .select("name,initials,email")
           .eq("org_id", orgId)
           .eq("user_id", user.id);
 
-        // Try location-specific staff profile if a location is selected
-        let memberRow:
-          | { name: string | null; initials: string | null; email: string | null }
-          | null = null;
+        let memberRow: { name: string | null } | null = null;
 
         if (locationId) {
-          const { data: locRow } = await baseQuery
-            .eq("location_id", locationId)
-            .maybeSingle();
-
+          const { data: locRow } = await baseQuery.eq("location_id", locationId).maybeSingle();
           if (locRow) memberRow = locRow as any;
         }
 
-        // Fallback to org-level
         if (!memberRow) {
           const { data: orgRow } = await baseQuery.is("location_id", null).maybeSingle();
           if (orgRow) memberRow = orgRow as any;
@@ -164,35 +202,14 @@ export default function KitchenWall() {
 
         if (memberRow) {
           detectedName = (memberRow.name ?? "").toString().trim();
-
-          const email = (user.email ?? "").toString();
-          const base =
-            (memberRow.initials ?? "").toString().trim() ||
-            detectedName
-              .split(/\s+/)
-              .map((p: string) => p[0] ?? "")
-              .join("") ||
-            email[0] ||
-            "";
-
-          detectedInitials = base.toUpperCase().slice(0, 4);
         }
       } catch {
-        // ignore – fallback below
+        // ignore
       }
 
       if (!alive) return;
 
       setIsManager(managerFlag);
-
-      const saved =
-        (typeof window !== "undefined" && localStorage.getItem("kitchen_wall_initials")) || "";
-
-      const finalInitials =
-        detectedInitials || (saved ? saved.toUpperCase().slice(0, 4) : "");
-
-      setInitials(finalInitials);
-      setMyInitials(finalInitials);
       setMyName(detectedName);
     })();
 
@@ -201,9 +218,15 @@ export default function KitchenWall() {
     };
   }, [orgId, locationId]);
 
-  // Recompute "your rank" + badges whenever leaderboard or myName changes
+  // ✅ Use workstation operator name for "my rank" where possible
+  const leaderboardIdentityName = useMemo(() => {
+    // operatorName wins; fallback to logged-in profile name
+    return (operatorName || myName || "").toString().trim();
+  }, [operatorName, myName]);
+
+  // Recompute "your rank" + badges whenever leaderboard or identity changes
   useEffect(() => {
-    if (!lbRows.length || !myName) return;
+    if (!lbRows.length || !leaderboardIdentityName) return;
 
     let rank: number | null = null;
     let pts: number | null = null;
@@ -212,7 +235,7 @@ export default function KitchenWall() {
 
     lbRows.forEach((row, idx) => {
       const rowName = (row.display_name ?? "").toString().trim().toLowerCase();
-      const mine = myName.toString().trim().toLowerCase();
+      const mine = leaderboardIdentityName.toLowerCase();
       if (rowName && mine && rowName === mine) {
         rank = idx + 1;
         pts = Number(row.points ?? 0);
@@ -244,7 +267,7 @@ export default function KitchenWall() {
     if (rank && rank <= 3) badges.push("On a Hot Streak");
 
     setMyBadges(badges);
-  }, [lbRows, myName]);
+  }, [lbRows, leaderboardIdentityName]);
 
   async function loadPosts(orgId: string, locationId: string | null) {
     let q = supabase
@@ -290,10 +313,11 @@ export default function KitchenWall() {
   }
 
   async function sendPost() {
-    if (!message.trim() || !initials.trim() || !orgId) return;
+    if (!requireOperator("wall_send_post")) return;
+    if (!message.trim() || !operatorInitials.trim() || !orgId) return;
 
     const color = COLORS[Math.floor(Math.random() * COLORS.length)];
-    const normInitials = initials.toUpperCase().slice(0, 4);
+    const normInitials = operatorInitials.toUpperCase().slice(0, 4);
 
     const { error } = await supabase.from("kitchen_wall").insert({
       org_id: orgId,
@@ -310,8 +334,6 @@ export default function KitchenWall() {
       return;
     }
 
-    localStorage.setItem("kitchen_wall_initials", normInitials);
-
     posthog.capture("wall_post_created", {
       initials: normInitials,
       length: message.trim().length,
@@ -320,18 +342,21 @@ export default function KitchenWall() {
     });
 
     setMessage("");
-    setMyInitials(normInitials);
     await loadPosts(orgId, locationId);
   }
 
   async function toggleReaction(postId: string, emoji: string) {
-    if (!myInitials) return;
+    if (!requireOperator("wall_toggle_reaction")) return;
+    if (!operatorInitials) return;
+
     const post = posts.find((p) => p.id === postId);
     if (!post) return;
 
     const users = post.reactions[emoji] || [];
-    const hasReacted = users.includes(myInitials);
-    const newUsers = hasReacted ? users.filter((u) => u !== myInitials) : [...users, myInitials];
+    const hasReacted = users.includes(operatorInitials);
+    const newUsers = hasReacted
+      ? users.filter((u) => u !== operatorInitials)
+      : [...users, operatorInitials];
 
     const newReactions: Record<string, string[]> = {
       ...post.reactions,
@@ -358,6 +383,7 @@ export default function KitchenWall() {
       added: !hasReacted,
       org_id: orgId ?? null,
       location_id: locationId ?? null,
+      operator_initials: operatorInitials,
     });
 
     if (orgId) await loadPosts(orgId, locationId);
@@ -365,6 +391,7 @@ export default function KitchenWall() {
 
   async function deletePost(id: string) {
     if (!orgId) return;
+    // Managers can delete even when locked (your call). If you want it blocked too, add requireOperator here.
     if (!window.confirm("Remove this note from the wall?")) return;
 
     try {
@@ -424,6 +451,7 @@ export default function KitchenWall() {
                   Your rank: <span className="font-semibold">No points yet</span>
                 </div>
               )}
+
               {myBadges.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {myBadges.map((b) => (
@@ -436,6 +464,21 @@ export default function KitchenWall() {
                   ))}
                 </div>
               )}
+
+              {/* Workstation state indicator */}
+              <div className="mt-1 text-[11px] text-amber-800/80">
+                {locked || !operatorInitials ? (
+                  <span className="font-semibold">Workstation locked</span>
+                ) : (
+                  <>
+                    Operator:{" "}
+                    <span className="font-semibold">{operatorInitials}</span>
+                    {operatorName ? (
+                      <span className="ml-1 opacity-80">({operatorName})</span>
+                    ) : null}
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
@@ -467,27 +510,51 @@ export default function KitchenWall() {
         </div>
       )}
 
+      {/* Composer */}
       <div className="rounded-2xl bg-white p-6 shadow-lg border">
+        {(locked || !operatorInitials) && (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Workstation locked. Enter PIN to post or react.
+            <button
+              type="button"
+              onClick={() => openWorkstationLock()}
+              className="ml-3 inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
+            >
+              <Pin className="h-4 w-4" />
+              Enter PIN
+            </button>
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row gap-4">
           <input
-            placeholder="Your initials"
+            placeholder="Initials"
             value={initials}
-            onChange={(e) => setInitials(e.target.value)}
-            className="w-full sm:w-32 rounded-lg border-2 border-orange-400 px-4 py-3 text-center font-bold uppercase text-lg focus:outline-none focus:ring-4 focus:ring-orange-200"
+            readOnly
+            onClick={() => {
+              if (locked || !operatorInitials) openWorkstationLock();
+            }}
+            className="w-full sm:w-32 rounded-lg border-2 border-orange-400 px-4 py-3 text-center font-bold uppercase text-lg focus:outline-none focus:ring-4 focus:ring-orange-200 bg-slate-50"
             maxLength={4}
           />
           <input
             placeholder="Say something to the kitchen…"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
+            onFocus={() => {
+              if (locked || !operatorInitials) openWorkstationLock();
+            }}
             onKeyDown={(e) =>
-              e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendPost())
+              e.key === "Enter" &&
+              !e.shiftKey &&
+              (e.preventDefault(), sendPost())
             }
-            className="flex-1 rounded-lg border-2 border-orange-400 px-5 py-3 text-lg focus:outline-none focus:ring-4 focus:ring-orange-200"
+            disabled={locked || !operatorInitials}
+            className="flex-1 rounded-lg border-2 border-orange-400 px-5 py-3 text-lg focus:outline-none focus:ring-4 focus:ring-orange-200 disabled:opacity-60"
           />
           <button
             onClick={sendPost}
-            disabled={!message.trim() || !initials.trim()}
+            disabled={!message.trim() || !operatorInitials.trim() || locked}
             className="rounded-lg bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 shadow-md active:scale-95 transition-all disabled:opacity-50"
           >
             <Send className="h-6 w-6" />
@@ -495,6 +562,7 @@ export default function KitchenWall() {
         </div>
       </div>
 
+      {/* Posts */}
       <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
         {posts.length === 0 ? (
           <div className="col-span-full text-center py-32">
@@ -527,18 +595,26 @@ export default function KitchenWall() {
                 </button>
               )}
 
-              <div className="text-5xl font-black mb-6 opacity-90">{post.author_initials}</div>
-              <p className="text-2xl leading-relaxed whitespace-pre-wrap mb-8">{post.message}</p>
+              <div className="text-5xl font-black mb-6 opacity-90">
+                {post.author_initials}
+              </div>
+              <p className="text-2xl leading-relaxed whitespace-pre-wrap mb-8">
+                {post.message}
+              </p>
 
               <div className="flex flex-wrap gap-2 justify-end">
                 {EMOJIS.map((emoji) => {
                   const users = post.reactions[emoji] || [];
-                  const hasReacted = users.includes(myInitials);
+                  const hasReacted = operatorInitials
+                    ? users.includes(operatorInitials)
+                    : false;
+
                   return (
                     <button
                       key={emoji}
                       onClick={() => toggleReaction(post.id, emoji)}
-                      className={`text-xs px-2 py-1 rounded-full transition-all ${
+                      disabled={locked || !operatorInitials}
+                      className={`text-xs px-2 py-1 rounded-full transition-all disabled:opacity-60 ${
                         hasReacted
                           ? "bg-white/90 shadow-md ring-2 ring-orange-500 font-bold"
                           : "bg-white/70 hover:bg-white/90"
