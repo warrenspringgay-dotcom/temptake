@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { useAuth } from "@/components/AuthProvider";
 import { useSubscriptionStatus } from "@/hooks/useSubscriptionStatus";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import LocationSwitcher from "@/components/LocationSwitcher";
 
 type Tab = {
@@ -25,12 +26,7 @@ const APP_NAV: Tab[] = [
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning rota", requiresPlan: true },
   { href: "/food-hygiene", label: "Food hygiene", requiresPlan: true },
-  {
-    href: "/manager",
-    label: "Manager Dashboard",
-    requiresManager: true,
-    requiresPlan: true,
-  },
+  { href: "/manager", label: "Manager Dashboard", requiresManager: true, requiresPlan: true },
   { href: "/leaderboard", label: "Leaderboard", requiresPlan: true },
   { href: "/team", label: "Team", requiresPlan: true },
   { href: "/suppliers", label: "Suppliers", requiresPlan: true },
@@ -64,8 +60,7 @@ function isStandalone() {
   if (typeof window === "undefined") return false;
   const iosStandalone = (window.navigator as any).standalone === true;
   const displayModeStandalone =
-    window.matchMedia &&
-    window.matchMedia("(display-mode: standalone)").matches;
+    window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
   return iosStandalone || displayModeStandalone;
 }
 
@@ -85,8 +80,7 @@ export default function MobileMenu() {
   const [canSeeManager, setCanSeeManager] = useState(false);
 
   // PWA install support
-  const [deferredPrompt, setDeferredPrompt] =
-    useState<BeforeInstallPromptEvent | null>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [canInstall, setCanInstall] = useState(false);
   const [standalone, setStandalone] = useState(false);
   const [ios, setIos] = useState(false);
@@ -120,7 +114,7 @@ export default function MobileMenu() {
     };
   }, []);
 
-  // --- manager gating: be robust (user_id -> email ilike) ---
+  // --- manager gating: prefer user_id, fallback email; scope to org+location ---
   useEffect(() => {
     let cancelled = false;
 
@@ -131,8 +125,12 @@ export default function MobileMenu() {
       }
 
       try {
-        const orgId = await getActiveOrgIdClient();
-        if (!orgId) {
+        const [orgId, locationId] = await Promise.all([
+          getActiveOrgIdClient(),
+          getActiveLocationIdClient(),
+        ]);
+
+        if (!orgId || !locationId) {
           if (!cancelled) setCanSeeManager(false);
           return;
         }
@@ -140,15 +138,15 @@ export default function MobileMenu() {
         const userId = user.id;
         const email = (user.email ?? "").trim().toLowerCase();
 
-        // Attempt 1: by user_id (if column exists in your table)
         let role: string | null = null;
 
+        // Attempt 1: user_id match
         try {
           const { data, error } = await supabase
             .from("team_members")
             .select("role")
             .eq("org_id", orgId)
-            
+            .eq("location_id", locationId)
             .eq("user_id", userId)
             .maybeSingle();
 
@@ -157,12 +155,13 @@ export default function MobileMenu() {
           // ignore
         }
 
-        // Attempt 2: by email (case-insensitive)
+        // Attempt 2: email match (case-insensitive)
         if (!role && email) {
           const { data, error } = await supabase
             .from("team_members")
             .select("role,email")
             .eq("org_id", orgId)
+            .eq("location_id", locationId)
             .ilike("email", email)
             .maybeSingle();
 
@@ -186,12 +185,9 @@ export default function MobileMenu() {
   const navLinks = useMemo(() => {
     if (!user) return [];
 
-    // IMPORTANT: show the Manager Dashboard link even if canSeeManager is false.
-    // The /manager page should still enforce permissions.
     return APP_NAV.filter((l) => {
       if (l.requiresPlan && !hasValid) return false;
-      if (l.requiresManager && l.href !== "/manager" && !canSeeManager)
-        return false;
+      if (l.requiresManager && !canSeeManager) return false;
       return true;
     });
   }, [user, canSeeManager, hasValid]);
@@ -343,11 +339,6 @@ export default function MobileMenu() {
                         </Link>
                       ))}
                     </div>
-
-                    {/* helpful debug hint (hidden UI, but keeps you sane) */}
-                    {/* <div className="mt-2 text-[10px] text-slate-400">
-                      canSeeManager: {String(canSeeManager)}
-                    </div> */}
                   </div>
 
                   <div className="my-3 border-t border-slate-200" />
@@ -393,11 +384,7 @@ export default function MobileMenu() {
                             : "Get the app"
                         }
                       >
-                        {standalone
-                          ? "App installed"
-                          : canInstall
-                          ? "Install app"
-                          : "Get the app"}
+                        {standalone ? "App installed" : canInstall ? "Install app" : "Get the app"}
                       </button>
                     </div>
 

@@ -28,7 +28,12 @@ const TABS: Tab[] = [
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning Rota", requiresPlan: true },
   { href: "/manager", label: "Manager Dashboard", requiresManager: true, requiresPlan: true },
-  { href: "/leaderboard", label: "Leaderboard", icon: <Trophy className="h-4 w-4 text-amber-500" />, requiresPlan: true },
+  {
+    href: "/leaderboard",
+    label: "Leaderboard",
+    icon: <Trophy className="h-4 w-4 text-amber-500" />,
+    requiresPlan: true,
+  },
   { href: "/team", label: "Team", requiresPlan: true },
   { href: "/suppliers", label: "Suppliers", requiresPlan: true },
   { href: "/reports", label: "Reports", requiresPlan: true },
@@ -53,8 +58,9 @@ export default function NavTabs() {
   const { user, ready } = useAuth();
   const billing = useSubscriptionStatus();
 
+  // plan gating (your existing logic, kept)
   const planOK = useMemo(() => {
-    if (billing?.loading) return true;
+    if ((billing as any)?.loading) return true;
 
     const hasValid = !!(billing as any)?.hasValid;
     const active = !!(billing as any)?.active;
@@ -77,6 +83,7 @@ export default function NavTabs() {
   const [isManager, setIsManager] = useState(false);
   const [roleLoading, setRoleLoading] = useState(true);
 
+  // Role lookup (org + location aware)
   useEffect(() => {
     let alive = true;
 
@@ -109,7 +116,7 @@ export default function NavTabs() {
           return;
         }
 
-        // No active location = be conservative (no manager tabs)
+        // No active location = conservative
         if (!locationId) {
           setRoleName("staff");
           setIsManager(false);
@@ -117,7 +124,6 @@ export default function NavTabs() {
           return;
         }
 
-        // ✅ Location-aware role (your new data model)
         let rows: Array<{ role: string | null }> = [];
 
         // 1) Prefer user_id match
@@ -131,7 +137,7 @@ export default function NavTabs() {
         if (!byUser.error && Array.isArray(byUser.data) && byUser.data.length) {
           rows = byUser.data as any;
         } else if (email) {
-          // 2) Fallback email match (legacy rows)
+          // 2) Fallback email match
           const byEmail = await supabase
             .from("team_members")
             .select("role")
@@ -147,14 +153,13 @@ export default function NavTabs() {
         if (!alive) return;
 
         if (!rows.length) {
-          // Not found at this location = treat as staff
           setRoleName("staff");
           setIsManager(false);
           setRoleLoading(false);
           return;
         }
 
-        // ✅ Deterministic: pick highest privilege (in case duplicates exist)
+        // pick highest privilege
         const best = rows
           .map((r) => (r.role ?? "staff").toLowerCase())
           .sort((a, b) => roleScore(b) - roleScore(a))[0];
@@ -183,6 +188,8 @@ export default function NavTabs() {
     const roleKnown = !roleLoading;
 
     return TABS.filter((t) => {
+      // Plan gated tabs: hide until plan status known? (keep simple: show, but route to /billing)
+      // Role gated tabs: HIDE until role known to prevent flash.
       if (t.requiresManager) {
         if (!roleKnown) return false;
         return isManager;
@@ -198,21 +205,24 @@ export default function NavTabs() {
   if (!ready || !user) return null;
 
   return (
-    <ul className="flex flex-nowrap items-center gap-1 min-w-max px-2 overflow-x-auto">
+    <ul className="flex min-w-max flex-nowrap items-center gap-1 overflow-x-auto px-2">
       {visibleTabs.map((t) => {
         const active = pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
-        const locked = !!t.requiresPlan && !planOK;
-        const href = locked ? "/billing" : t.href;
+
+        const lockedByPlan = !!t.requiresPlan && !planOK;
+        const href = lockedByPlan ? "/billing" : t.href;
 
         return (
           <li key={t.href} className="shrink-0">
             <Link
               href={href}
-              title={locked ? "Requires an active plan" : undefined}
+              title={lockedByPlan ? "Requires an active plan" : undefined}
               className={[
-                "inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors whitespace-nowrap",
-                active && !locked ? "bg-black text-white" : "text-slate-700 hover:bg-gray-100 hover:text-black",
-                locked ? "opacity-60" : "",
+                "inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium transition-colors",
+                active && !lockedByPlan
+                  ? "bg-black text-white"
+                  : "text-slate-700 hover:bg-gray-100 hover:text-black",
+                lockedByPlan ? "opacity-60" : "",
               ].join(" ")}
             >
               {t.icon && <span>{t.icon}</span>}
