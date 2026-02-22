@@ -19,6 +19,8 @@ import IncidentModal from "@/components/IncidentModal";
 
 import {
   Thermometer,
+  Lock,
+  Unlock,
   Brush,
   Mic,
   MicOff,
@@ -577,10 +579,12 @@ export default function TempFab() {
   const { addToast } = useToast();
   const router = useRouter();
 
-  // ✅ Workstation operator (PIN user)
-  const { operator, locked } = useWorkstation();
-  const operatorInitials = (operator?.initials ?? "").toString().trim().toUpperCase();
+ // ✅ Workstation operator (PIN user)
+const ws = useWorkstation() as any;
+const operator = ws.operator as any;
+const locked = !!ws.locked;
 
+const operatorInitials = (operator?.initials ?? "").toString().trim().toUpperCase();
   const [open, setOpen] = useState(false);
   const [entriesToday, setEntriesToday] = useState<number | null>(null);
   const [openCleaning, setOpenCleaning] = useState<number | null>(null);
@@ -745,6 +749,25 @@ export default function TempFab() {
       setCorrectiveSaving(false);
     }
   }
+
+function openWorkstationLock() {
+  // Prefer provider function if you have it
+  if (typeof ws.openLockModal === "function") return ws.openLockModal();
+  if (typeof ws.open === "function") return ws.open(); // some people name it this
+
+  // Fallback: event your provider can listen for
+  try {
+    window.dispatchEvent(new Event("tt-open-workstation-lock"));
+  } catch {}
+}
+
+function lockWorkstationNow() {
+  if (typeof ws.lockWorkstation === "function") return ws.lockWorkstation();
+  if (typeof ws.lock === "function") return ws.lock();
+
+  // If no method, worst case: open the lock modal (user can lock from there)
+  openWorkstationLock();
+}
 
   // Voice hook (do NOT override operator initials)
   const { supported: voiceSupported, listening, start, stop } = useVoiceTempEntry(
@@ -1705,7 +1728,38 @@ export default function TempFab() {
           </div>
         </div>
       )}
-
+{/* Workstation control */}
+{locked || !operatorInitials ? (
+  <button
+    type="button"
+    onClick={() => {
+      setShowMenu(false);
+      openWorkstationLock();
+      posthog.capture("fab_choose_workstation_unlock");
+    }}
+    className="w-full rounded-xl bg-amber-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700"
+  >
+    <span className="inline-flex items-center justify-center gap-2">
+      <Unlock className="h-4 w-4" />
+      Unlock workstation / Choose operator
+    </span>
+  </button>
+) : (
+  <button
+    type="button"
+    onClick={() => {
+      setShowMenu(false);
+      lockWorkstationNow();
+      posthog.capture("fab_choose_workstation_lock");
+    }}
+    className="w-full rounded-xl bg-slate-700 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+  >
+    <span className="inline-flex items-center justify-center gap-2">
+      <Lock className="h-4 w-4" />
+      Lock workstation
+    </span>
+  </button>
+)}
       {/* Quick entry modal */}
       {open && (
         <div

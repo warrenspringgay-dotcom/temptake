@@ -7,6 +7,9 @@ import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { logIncident } from "@/app/actions/incidents";
 
+// ✅ Workstation operator (PIN user)
+import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
+
 type TeamMember = {
   id: string;
   org_id: string;
@@ -97,6 +100,23 @@ export default function StaffDashboardPage() {
     return isoDate(d);
   }, []);
 
+  // ✅ Workstation operator (PIN user)
+  const ws = useWorkstation() as any;
+  const operator = ws.operator as any;
+  const locked = !!ws.locked;
+  const operatorInitials = (operator?.initials ?? "")
+    .toString()
+    .trim()
+    .toUpperCase();
+
+  function requireOperator(): boolean {
+    if (locked || !operatorInitials) {
+      setErr("Workstation locked. Select an operator and enter PIN.");
+      return false;
+    }
+    return true;
+  }
+
   useEffect(() => {
     (async () => {
       const o = await getActiveOrgIdClient();
@@ -108,51 +128,50 @@ export default function StaffDashboardPage() {
 
   useEffect(() => {
     if (!orgId) return;
+    if (!operatorInitials || locked) return;
     void loadEverything();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, locationId]);
+  }, [orgId, locationId, operatorInitials, locked]);
 
-  // Auto-fill initials when opening incident modal
+  // Auto-fill initials when opening incident modal (from operator)
   useEffect(() => {
     if (!incidentOpen) return;
     if (incidentInitials.trim()) return;
-    const ini = me?.initials?.trim().toUpperCase() ?? "";
-    if (ini) setIncidentInitials(ini);
-  }, [incidentOpen, incidentInitials, me]);
+    if (operatorInitials) setIncidentInitials(operatorInitials);
+  }, [incidentOpen, incidentInitials, operatorInitials]);
 
   async function loadEverything() {
     setLoading(true);
     setErr(null);
 
     try {
+      // still ensure auth exists (session), but do NOT use it as identity source
       const {
         data: { user },
         error: userErr,
       } = await supabase.auth.getUser();
       if (userErr || !user) throw new Error("Not logged in.");
 
+      if (!requireOperator()) throw new Error("Workstation locked.");
+
       // Helper: apply location filter ONLY when we actually have one
       const applyLoc = (q: any, loc: string | null) =>
         loc ? q.eq("location_id", loc) : q;
 
-      // 1) Find current team member record by user_id
-      //    ✅ FIX: If manager has multiple team_member rows (multi-location),
-      //    we must filter by selected locationId when present, otherwise maybeSingle will throw.
+      // 1) Find current team member record by operator initials (NOT auth user)
       let tmQuery = supabase
         .from("team_members")
         .select(
           "id,org_id,user_id,location_id,name,role,initials,streak_days,last_activity_on,training_areas,created_at"
         )
         .eq("org_id", orgId)
-        .eq("user_id", user.id);
+        .eq("initials", operatorInitials);
 
       tmQuery = applyLoc(tmQuery, locationId);
 
-      // If locationId provided, maybeSingle should be safe.
-      // If no locationId, we intentionally pick the most recent row.
       const { data: tmRows, error: tmErr } = await tmQuery
         .order("created_at", { ascending: false })
-        .limit(locationId ? 2 : 1);
+        .limit(5);
 
       if (tmErr) throw tmErr;
 
@@ -169,17 +188,17 @@ export default function StaffDashboardPage() {
         }));
         setCorrectivesTodayRows([]);
         throw new Error(
-          "Your login is not linked to a team member yet (team_members.user_id is empty), or no matching row for this location."
+          `No team member found for operator initials "${operatorInitials}"${locationId ? " at this location" : ""
+          }.`
         );
       }
 
       const meRow = tm as TeamMember;
       setMe(meRow);
 
-      const effectiveLocationId =
-        locationId ?? meRow.location_id ?? null;
+      const effectiveLocationId = locationId ?? meRow.location_id ?? null;
 
-      // 2) Temps stats
+      // 2) Temps stats (by staff_initials, not created_by user id)
       const startToday = new Date();
       startToday.setHours(0, 0, 0, 0);
       const endToday = new Date(startToday);
@@ -188,42 +207,45 @@ export default function StaffDashboardPage() {
       const start7d = new Date();
       start7d.setDate(start7d.getDate() - 7);
 
-      const [tempsTodayRes, temps7dRes] = await Promise.all([
-        supabase
-          .from("food_temp_logs")
-          .select("id", { count: "exact", head: true })
-          .eq("org_id", orgId)
-          .eq("created_by", user.id)
-          .eq("voided", false)
-          .gte("at", startToday.toISOString())
-          .lt("at", endToday.toISOString()),
-        supabase
-          .from("food_temp_logs")
-          .select("id", { count: "exact", head: true })
-          .eq("org_id", orgId)
-          .eq("created_by", user.id)
-          .eq("voided", false)
-          .gte("at", start7d.toISOString()),
-      ]);
+      let tempsTodayQ = supabase
+        .from("food_temp_logs")
+        .select("id", { count: "exact", head: true })
+        .eq("org_id", orgId)
+        .eq("staff_initials", operatorInitials)
+        .eq("voided", false)
+        .gte("at", startToday.toISOString())
+        .lt("at", endToday.toISOString());
+
+      let temps7dQ = supabase
+        .from("food_temp_logs")
+        .select("id", { count: "exact", head: true })
+        .eq("org_id", orgId)
+        .eq("staff_initials", operatorInitials)
+        .eq("voided", false)
+        .gte("at", start7d.toISOString());
+
+      tempsTodayQ = applyLoc(tempsTodayQ, effectiveLocationId);
+      temps7dQ = applyLoc(temps7dQ, effectiveLocationId);
+
+      const [tempsTodayRes, temps7dRes] = await Promise.all([tempsTodayQ, temps7dQ]);
 
       if (tempsTodayRes.error) throw tempsTodayRes.error;
       if (temps7dRes.error) throw temps7dRes.error;
 
-      // 3) Cleaning runs today (TEMP HACK: match done_by text to initials)
+      // 3) Cleaning runs today (match done_by to operator initials)
       let cleaningQ = supabase
         .from("cleaning_task_runs")
         .select("id", { count: "exact", head: true })
         .eq("org_id", orgId)
         .eq("run_on", todayISO)
-        .eq("done_by", meRow.initials);
+        .eq("done_by", operatorInitials);
 
       cleaningQ = applyLoc(cleaningQ, effectiveLocationId);
 
       const cleaningTodayRes = await cleaningQ;
-
       if (cleaningTodayRes.error) throw cleaningTodayRes.error;
 
-      // 4) Temperature corrective actions (today + last 7d)
+      // 4) Temperature corrective actions (today + last 7d), filtered to operator initials
       let corrTodayQ = supabase
         .from("food_temp_corrective_actions")
         .select(
@@ -252,8 +274,6 @@ export default function StaffDashboardPage() {
         .order("created_at", { ascending: false })
         .limit(500);
 
-      corrTodayQ = applyLoc(corrTodayQ, effectiveLocationId);
-
       let corr7dQ = supabase
         .from("food_temp_corrective_actions")
         .select(
@@ -271,6 +291,7 @@ export default function StaffDashboardPage() {
         .order("created_at", { ascending: false })
         .limit(2000);
 
+      corrTodayQ = applyLoc(corrTodayQ, effectiveLocationId);
       corr7dQ = applyLoc(corr7dQ, effectiveLocationId);
 
       const [corrTodayRes, corr7dRes] = await Promise.all([corrTodayQ, corr7dQ]);
@@ -278,7 +299,7 @@ export default function StaffDashboardPage() {
       if (corrTodayRes.error) throw corrTodayRes.error;
       if (corr7dRes.error) throw corr7dRes.error;
 
-      const myIni = meRow.initials?.trim().toUpperCase();
+      const myIni = operatorInitials;
 
       const corrTodayRaw: any[] = (corrTodayRes.data as any[]) ?? [];
       const corrTodayMine = corrTodayRaw.filter((r) => {
@@ -346,7 +367,9 @@ export default function StaffDashboardPage() {
   async function submitIncident() {
     if (!orgId) return;
 
-    const initials = incidentInitials.trim().toUpperCase();
+    if (!requireOperator()) return;
+
+    const initials = (incidentInitials || operatorInitials).trim().toUpperCase();
     if (!initials) return alert("Enter initials.");
     if (!incidentType.trim()) return alert("Select a type.");
     if (!incidentDetails.trim()) return alert("Details are required.");
@@ -393,7 +416,7 @@ export default function StaffDashboardPage() {
           Staff dashboard
         </div>
         <h1 className="mt-1 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-          {me?.name ?? "Your stats"}
+          {me?.name ?? (operatorInitials ? `Operator ${operatorInitials}` : "Your stats")}
         </h1>
       </div>
 
@@ -430,8 +453,8 @@ export default function StaffDashboardPage() {
 
             <div className="mt-1 text-[11px] font-medium text-slate-600">
               Correctives today:{" "}
-              <span className="font-semibold">{kpis.correctivesToday}</span> ·
-              7d: <span className="font-semibold">{kpis.correctives7d}</span>
+              <span className="font-semibold">{kpis.correctivesToday}</span> · 7d:{" "}
+              <span className="font-semibold">{kpis.correctives7d}</span>
             </div>
           </div>
 
@@ -443,7 +466,7 @@ export default function StaffDashboardPage() {
               {kpis.cleaningToday}
             </div>
             <div className="mt-2 text-[11px] font-medium text-slate-600">
-              Based on initials match
+              Based on operator initials
             </div>
           </div>
 
@@ -513,28 +536,20 @@ export default function StaffDashboardPage() {
             <tbody>
               {correctivesToRender.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={7}
-                    className="px-3 py-4 text-center text-slate-500"
-                  >
+                  <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
                     No temperature corrective actions logged today.
                   </td>
                 </tr>
               ) : (
                 correctivesToRender.map((r) => (
-                  <tr
-                    key={r.id}
-                    className="border-t border-slate-100 text-slate-800"
-                  >
+                  <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                     <td className="px-3 py-2 whitespace-nowrap">{r.time}</td>
                     <td className="px-3 py-2">{r.area}</td>
                     <td className="px-3 py-2">{r.item}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {r.fail_temp_c != null ? `${r.fail_temp_c}°C` : "—"}
                     </td>
-                    <td className="px-3 py-2 max-w-[22rem] truncate">
-                      {r.action}
-                    </td>
+                    <td className="px-3 py-2 max-w-[22rem] truncate">{r.action}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {r.recheck_temp_c != null ? `${r.recheck_temp_c}°C` : "—"}
                       {r.recheck_time ? ` (${r.recheck_time})` : ""}
@@ -566,9 +581,7 @@ export default function StaffDashboardPage() {
           <div className="mt-2 flex items-center justify-between text-xs">
             <div className="text-slate-500">
               Showing {showAllCorrectives ? correctivesTodayRows.length : 10} of{" "}
-              <span className="font-semibold">
-                {correctivesTodayRows.length}
-              </span>
+              <span className="font-semibold">{correctivesTodayRows.length}</span>
             </div>
             <button
               type="button"
@@ -590,12 +603,13 @@ export default function StaffDashboardPage() {
             setIncidentDetails("");
             setIncidentCorrective("");
             setIncidentPreventive("");
+            setIncidentInitials(operatorInitials);
             setIncidentOpen(true);
           }}
-          disabled={loading || !orgId}
+          disabled={loading || !orgId || locked || !operatorInitials}
           className={cls(
             "rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50",
-            (loading || !orgId) && "opacity-60"
+            (loading || !orgId || locked || !operatorInitials) && "opacity-60"
           )}
         >
           Log incident
@@ -604,10 +618,10 @@ export default function StaffDashboardPage() {
         <button
           type="button"
           onClick={loadEverything}
-          disabled={loading || !orgId}
+          disabled={loading || !orgId || locked || !operatorInitials}
           className={cls(
             "rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700",
-            (loading || !orgId) && "opacity-60"
+            (loading || !orgId || locked || !operatorInitials) && "opacity-60"
           )}
         >
           {loading ? "Refreshing…" : "Refresh"}
@@ -662,7 +676,7 @@ export default function StaffDashboardPage() {
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                     setIncidentInitials(e.target.value.toUpperCase())
                   }
-                  placeholder="WS"
+                  placeholder={operatorInitials || "WS"}
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                 />
               </div>
