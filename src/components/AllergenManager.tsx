@@ -9,9 +9,6 @@ import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import AllergenChangeTimeline from "@/components/AllergenChangeTimeline";
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
-import { useActingClient } from "@/lib/useActingClient";
-
-
 
 /* ---------- Types & Constants ---------- */
 type AllergenKey =
@@ -31,7 +28,7 @@ type AllergenKey =
   | "molluscs";
 
 type Allergen = { key: AllergenKey; icon: string; label: string; short: string };
-const { acted_by_initials, operator } = useActingClient();
+
 const ALLERGENS: Allergen[] = [
   { key: "gluten", icon: "🌾", label: "Gluten", short: "GLU" },
   { key: "crustaceans", icon: "🦐", label: "Crustaceans", short: "CRU" },

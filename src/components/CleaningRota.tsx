@@ -9,6 +9,7 @@ import { getActiveLocationIdClient } from "@/lib/locationClient";
 import ManageCleaningTasksModal, {
   CLEANING_CATEGORIES,
 } from "@/components/ManageCleaningTasksModal";
+import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
 const PAGE = "w-full px-3 sm:px-4 md:mx-auto max-w-screen-2xl";
 const CARD =
@@ -92,9 +93,20 @@ function isDueOn(task: Task, date: Date) {
   return false;
 }
 
-/** Pick the most reliable initials value (userInitials wins). */
-function bestInitials(userInitials: string, initials: string) {
-  return (userInitials || initials).trim().toUpperCase();
+/** Best effort initials from a name (first letters of up to 2 words). */
+function initialsFromName(name?: string | null) {
+  const s = String(name ?? "").trim();
+  if (!s) return "";
+  const parts = s.split(/\s+/).filter(Boolean);
+  return parts
+    .slice(0, 2)
+    .map((p) => (p[0] ? p[0].toUpperCase() : ""))
+    .join("");
+}
+
+/** Use operator initials first, then typed initials. */
+function bestInitials(operatorInitials: string, typedInitials: string) {
+  return (operatorInitials || typedInitials).trim().toUpperCase();
 }
 
 /** Classic confetti overlay (no emojis) using framer-motion only. */
@@ -152,6 +164,8 @@ function ClassicConfetti({ show }: { show: boolean }) {
 }
 
 export default function CleaningRotaPage() {
+  const { operator } = useWorkstation();
+
   const today = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -175,10 +189,17 @@ export default function CleaningRotaPage() {
 
   // Header initials box (staff can still override)
   const [initials, setInitials] = useState<string>("");
+  const [initialsDirty, setInitialsDirty] = useState(false);
 
-  // ✅ Logged-in user's initials + team member id (authoritative default)
-  const [userInitials, setUserInitials] = useState<string>("");
-  const [userTeamMemberId, setUserTeamMemberId] = useState<string | null>(null);
+  // Acting context from workstation operator
+  const operatorInitials = useMemo(() => {
+    const ini = String(operator?.initials ?? "").trim().toUpperCase();
+    return ini || initialsFromName(operator?.name) || "";
+  }, [operator?.initials, operator?.name]);
+
+  const operatorTeamMemberId = operator?.teamMemberId ?? null;
+
+  // (Optional) Auth user id for auditing only
   const [authUserId, setAuthUserId] = useState<string | null>(null);
 
   const [showConfetti, setShowConfetti] = useState(false);
@@ -195,6 +216,7 @@ export default function CleaningRotaPage() {
   const [signoff, setSignoff] = useState<DaySignoff | null>(null);
   const [signoffOpen, setSignoffOpen] = useState(false);
   const [signoffInitials, setSignoffInitials] = useState("");
+  const [signoffInitialsDirty, setSignoffInitialsDirty] = useState(false);
   const [signoffNotes, setSignoffNotes] = useState("");
   const [signoffSaving, setSignoffSaving] = useState(false);
 
@@ -232,6 +254,13 @@ export default function CleaningRotaPage() {
     for (const r of runs) m.set(r.task_id, r);
     return m;
   }, [runs]);
+
+  // Default header initials from operator (but do not overwrite manual typing)
+  useEffect(() => {
+    if (initialsDirty) return;
+    if (!operatorInitials) return;
+    setInitials(operatorInitials);
+  }, [operatorInitials, initialsDirty]);
 
   async function loadSignoff(oid: string, lid: string) {
     const { data, error } = await supabase
@@ -272,52 +301,12 @@ export default function CleaningRotaPage() {
     });
   }
 
-  async function loadCurrentUserDefaults(oid: string, lid: string) {
+  async function loadAuthUserIdOnly() {
     try {
       const { data: userRes } = await supabase.auth.getUser();
-      const userId = userRes.user?.id ?? null;
-      setAuthUserId(userId);
-
-      if (!userId) return;
-
-      // Prefer location-specific team_members row; fallback to org-wide row (location_id is null)
-      const byLoc = await supabase
-        .from("team_members")
-        .select("id, initials")
-        .eq("org_id", oid)
-        .eq("user_id", userId)
-        .eq("location_id", lid)
-        .maybeSingle();
-
-      let row: any = null;
-
-      if (!byLoc.error && byLoc.data) {
-        row = byLoc.data;
-      } else {
-        const byOrgWide = await supabase
-          .from("team_members")
-          .select("id, initials")
-          .eq("org_id", oid)
-          .eq("user_id", userId)
-          .is("location_id", null)
-          .maybeSingle();
-
-        if (!byOrgWide.error && byOrgWide.data) row = byOrgWide.data;
-      }
-
-      if (row?.initials) {
-        const ini = String(row.initials).trim().toUpperCase();
-        if (ini) {
-          setUserInitials(ini);
-          setInitials((prev) => (prev.trim() ? prev : ini));
-        }
-      }
-
-      if (row?.id) {
-        setUserTeamMemberId(String(row.id));
-      }
-    } catch (e) {
-      console.warn("[cleaning] unable to auto-load user defaults", e);
+      setAuthUserId(userRes.user?.id ?? null);
+    } catch {
+      setAuthUserId(null);
     }
   }
 
@@ -329,9 +318,9 @@ export default function CleaningRotaPage() {
     const clean = (ini ?? "").trim().toUpperCase();
     if (!clean) return null;
 
-    // If they used their own initials and we know their tm id, use it.
-    if (userInitials && clean === userInitials && userTeamMemberId) {
-      return userTeamMemberId;
+    // If operator exists and initials match operator initials, trust operator teamMemberId.
+    if (operatorTeamMemberId && operatorInitials && clean === operatorInitials) {
+      return operatorTeamMemberId;
     }
 
     // Otherwise try to find someone at this location with those initials.
@@ -371,6 +360,8 @@ export default function CleaningRotaPage() {
       setOrgId(oid);
       setLocationId(lid);
 
+      await loadAuthUserIdOnly();
+
       if (!oid || !lid) {
         setTasks([]);
         setRuns([]);
@@ -379,9 +370,6 @@ export default function CleaningRotaPage() {
         setLoading(false);
         return;
       }
-
-      // ✅ Load current user's initials + team member id
-      await loadCurrentUserDefaults(oid, lid);
 
       const { data: tData, error: tErr } = await supabase
         .from("cleaning_tasks")
@@ -432,13 +420,6 @@ export default function CleaningRotaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ If we later discover userInitials, ensure header initials is defaulted (unless user already typed)
-  useEffect(() => {
-    const ini = userInitials.trim().toUpperCase();
-    if (!ini) return;
-    setInitials((prev) => (prev.trim() ? prev : ini));
-  }, [userInitials]);
-
   const dueToday = useMemo(() => {
     return tasks.filter((t) => isDueEffective(t, today));
   }, [tasks, today, deferralsFromMap, deferralsToMap]);
@@ -469,8 +450,10 @@ export default function CleaningRotaPage() {
       window.setTimeout(() => setShowConfetti(false), 1600);
 
       if (!signoff) {
-        const best = bestInitials(userInitials, initials);
-        setSignoffInitials((prev) => (prev.trim() ? prev : best));
+        const best = bestInitials(operatorInitials, initials);
+        if (!signoffInitialsDirty) {
+          setSignoffInitials((prev) => (prev.trim() ? prev : best));
+        }
         setSignoffNotes("");
         setSignoffOpen(true);
       }
@@ -479,7 +462,7 @@ export default function CleaningRotaPage() {
     }
 
     prevAllDoneRef.current = allDone;
-  }, [allDone, initials, userInitials, signoff]);
+  }, [allDone, initials, operatorInitials, signoff, signoffInitialsDirty]);
 
   const groupedByCategory = useMemo(() => {
     const m = new Map<string, Task[]>();
@@ -513,52 +496,55 @@ export default function CleaningRotaPage() {
   }
 
   async function tickTask(taskId: string) {
-  if (!orgId || !locationId) return;
+    if (!orgId || !locationId) return;
 
-  userActionRef.current = true;
+    userActionRef.current = true;
 
-  const doneBy = bestInitials(userInitials, initials) || null;
+    const doneBy = bestInitials(operatorInitials, initials) || null;
 
-  // If the doer is the logged-in user, we can link the team_member id
-  const doneByTeamMemberId =
-    doneBy && userInitials && doneBy === userInitials && userTeamMemberId
-      ? userTeamMemberId
-      : null;
+    // Use operator team_member_id when possible; else resolve by initials if user overwrote.
+    const doneByTeamMemberId =
+      doneBy && operatorTeamMemberId && operatorInitials && doneBy === operatorInitials
+        ? operatorTeamMemberId
+        : doneBy
+        ? await resolveSignerTeamMemberId(orgId, locationId, doneBy)
+        : null;
 
-  const payload = {
-    org_id: orgId,
-    location_id: locationId,
-    task_id: taskId,
-    run_on: todayIso,
-    done_by: doneBy,
-    done_by_team_member_id: doneByTeamMemberId,
-    done_at: new Date().toISOString(), // ensures update gets a fresh timestamp on re-tick
-  };
+    const payload = {
+      org_id: orgId,
+      location_id: locationId,
+      task_id: taskId,
+      run_on: todayIso,
+      done_by: doneBy,
+      done_by_team_member_id: doneByTeamMemberId,
+      done_at: new Date().toISOString(),
+    };
 
-  const { data, error } = await supabase
-    .from("cleaning_task_runs")
-    .upsert(payload, { onConflict: "org_id,location_id,task_id,run_on" })
-    .select("task_id,run_on,done_by,done_at")
-    .maybeSingle();
+    const { data, error } = await supabase
+      .from("cleaning_task_runs")
+      .upsert(payload, { onConflict: "org_id,location_id,task_id,run_on" })
+      .select("task_id,run_on,done_by,done_at")
+      .maybeSingle();
 
-  if (error) {
-    alert(error.message);
-    return;
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    const row: Run = (data as any) ?? {
+      task_id: taskId,
+      run_on: todayIso,
+      done_by: payload.done_by,
+      done_at: payload.done_at,
+    };
+
+    setRuns((prev) => {
+      const next = prev.filter((r) => r.task_id !== taskId);
+      next.push(row);
+      return next;
+    });
   }
 
-  const row: Run = (data as any) ?? {
-    task_id: taskId,
-    run_on: todayIso,
-    done_by: payload.done_by,
-    done_at: payload.done_at,
-  };
-
-  setRuns((prev) => {
-    const next = prev.filter((r) => r.task_id !== taskId);
-    next.push(row);
-    return next;
-  });
-}
   async function undoTask(taskId: string) {
     if (!orgId || !locationId) return;
 
@@ -612,62 +598,65 @@ export default function CleaningRotaPage() {
   }
 
   async function completeAllInCategory(taskIds: string[]) {
-  if (!orgId || !locationId) return;
+    if (!orgId || !locationId) return;
 
-  const idsToDo = taskIds.filter((id) => !runsByTask.has(id));
-  if (idsToDo.length === 0) return;
+    const idsToDo = taskIds.filter((id) => !runsByTask.has(id));
+    if (idsToDo.length === 0) return;
 
-  userActionRef.current = true;
+    userActionRef.current = true;
 
-  const nowIso = new Date().toISOString();
-  const doneBy = bestInitials(userInitials, initials) || null;
+    const nowIso = new Date().toISOString();
+    const doneBy = bestInitials(operatorInitials, initials) || null;
 
-  const doneByTeamMemberId =
-    doneBy && userInitials && doneBy === userInitials && userTeamMemberId
-      ? userTeamMemberId
-      : null;
+    const doneByTeamMemberId =
+      doneBy && operatorTeamMemberId && operatorInitials && doneBy === operatorInitials
+        ? operatorTeamMemberId
+        : doneBy
+        ? await resolveSignerTeamMemberId(orgId, locationId, doneBy)
+        : null;
 
-  const payloads = idsToDo.map((task_id) => ({
-    org_id: orgId,
-    location_id: locationId,
-    task_id,
-    run_on: todayIso,
-    done_by: doneBy,
-    done_by_team_member_id: doneByTeamMemberId,
-    done_at: nowIso,
-  }));
+    const payloads = idsToDo.map((task_id) => ({
+      org_id: orgId,
+      location_id: locationId,
+      task_id,
+      run_on: todayIso,
+      done_by: doneBy,
+      done_by_team_member_id: doneByTeamMemberId,
+      done_at: nowIso,
+    }));
 
-  const { data, error } = await supabase
-    .from("cleaning_task_runs")
-    .upsert(payloads, { onConflict: "org_id,location_id,task_id,run_on" })
-    .select("task_id,run_on,done_by,done_at");
+    const { data, error } = await supabase
+      .from("cleaning_task_runs")
+      .upsert(payloads, { onConflict: "org_id,location_id,task_id,run_on" })
+      .select("task_id,run_on,done_by,done_at");
 
-  if (error) {
-    alert(error.message);
-    return;
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    const returned = (data ?? []) as any[];
+    const returnedRuns: Run[] =
+      returned.length > 0
+        ? returned.map((r) => ({
+            task_id: r.task_id,
+            run_on: r.run_on,
+            done_by: r.done_by,
+            done_at: r.done_at,
+          }))
+        : payloads.map((p) => ({
+            task_id: p.task_id,
+            run_on: p.run_on,
+            done_by: p.done_by,
+            done_at: p.done_at,
+          }));
+
+    setRuns((prev) => {
+      const keep = prev.filter((r) => !idsToDo.includes(r.task_id));
+      return [...keep, ...returnedRuns];
+    });
   }
 
-  const returned = (data ?? []) as any[];
-  const returnedRuns: Run[] =
-    returned.length > 0
-      ? returned.map((r) => ({
-          task_id: r.task_id,
-          run_on: r.run_on,
-          done_by: r.done_by,
-          done_at: r.done_at,
-        }))
-      : payloads.map((p) => ({
-          task_id: p.task_id,
-          run_on: p.run_on,
-          done_by: p.done_by,
-          done_at: p.done_at,
-        }));
-
-  setRuns((prev) => {
-    const keep = prev.filter((r) => !idsToDo.includes(r.task_id));
-    return [...keep, ...returnedRuns];
-  });
-}
   async function createSignoff() {
     if (!orgId || !locationId) return;
 
@@ -693,6 +682,7 @@ export default function CleaningRotaPage() {
         signoff_on: todayIso,
         signed_by: ini,
         signed_by_team_member_id: signerTeamMemberId,
+        // auth user is just an audit trail, not the acting operator identity
         signed_by_user_id: authUserId,
         notes: signoffNotes.trim() || null,
       };
@@ -723,6 +713,7 @@ export default function CleaningRotaPage() {
 
       setSignoffOpen(false);
       setSignoffNotes("");
+      setSignoffInitialsDirty(false);
     } catch (e: any) {
       console.error(e);
       alert(e?.message ?? "Failed to sign off the day.");
@@ -731,15 +722,16 @@ export default function CleaningRotaPage() {
     }
   }
 
+  // Default signoff initials from operator when modal opens (unless user typed)
   useEffect(() => {
     if (!signoffOpen) return;
-    if (signoffInitials.trim()) return;
+    if (signoffInitialsDirty) return;
 
-    const best = bestInitials(userInitials, initials);
+    const best = bestInitials(operatorInitials, initials);
     if (!best) return;
 
-    setSignoffInitials(best);
-  }, [signoffOpen, signoffInitials, userInitials, initials]);
+    setSignoffInitials((prev) => (prev.trim() ? prev : best));
+  }, [signoffOpen, signoffInitialsDirty, operatorInitials, initials]);
 
   if (loading) {
     return (
@@ -780,8 +772,10 @@ export default function CleaningRotaPage() {
 
             <button
               onClick={() => {
-                const best = bestInitials(userInitials, initials);
-                setSignoffInitials((prev) => (prev.trim() ? prev : best));
+                const best = bestInitials(operatorInitials, initials);
+                if (!signoffInitialsDirty) {
+                  setSignoffInitials((prev) => (prev.trim() ? prev : best));
+                }
                 setSignoffNotes("");
                 setSignoffOpen(true);
               }}
@@ -805,8 +799,11 @@ export default function CleaningRotaPage() {
               <span className="text-xs text-slate-500">Initials</span>
               <input
                 value={initials}
-                onChange={(e) => setInitials(e.target.value.toUpperCase())}
-                placeholder="WS"
+                onChange={(e) => {
+                  setInitialsDirty(true);
+                  setInitials(e.target.value.toUpperCase());
+                }}
+                placeholder="ED"
                 className="h-9 w-20 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none"
               />
             </div>
@@ -993,8 +990,11 @@ export default function CleaningRotaPage() {
                 <label className="mb-1 block text-xs text-slate-500">Initials</label>
                 <input
                   value={signoffInitials}
-                  onChange={(e) => setSignoffInitials(e.target.value.toUpperCase())}
-                  placeholder="WS"
+                  onChange={(e) => {
+                    setSignoffInitialsDirty(true);
+                    setSignoffInitials(e.target.value.toUpperCase());
+                  }}
+                  placeholder="ED"
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                 />
                 <p className="mt-1 text-[11px] text-slate-500">
