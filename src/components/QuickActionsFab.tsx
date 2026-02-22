@@ -1508,7 +1508,42 @@ function lockWorkstationNow() {
                 </div>
               )}
 
-              <div className="space-y-2">
+              
+<div className="space-y-2">
+  {/* Workstation control (MOVE HERE) */}
+  {locked || !operatorInitials ? (
+    <button
+      type="button"
+      onClick={() => {
+        setShowMenu(false);
+        openWorkstationLock();
+        posthog.capture("fab_choose_workstation_unlock");
+      }}
+      className="w-full rounded-xl bg-amber-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700"
+    >
+      <span className="inline-flex items-center justify-center gap-2">
+        <Unlock className="h-4 w-4" />
+        Unlock workstation / Choose operator
+      </span>
+    </button>
+  ) : (
+    <button
+      type="button"
+      onClick={() => {
+        setShowMenu(false);
+        lockWorkstationNow();
+        posthog.capture("fab_choose_workstation_lock");
+      }}
+      className="w-full rounded-xl bg-slate-700 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+    >
+      <span className="inline-flex items-center justify-center gap-2">
+        <Lock className="h-4 w-4" />
+        Lock workstation
+      </span>
+    </button>
+  )}
+
+  
                 <button
                   type="button"
                   onClick={() => {
@@ -1710,6 +1745,7 @@ function lockWorkstationNow() {
               ) : (
                 <div className="space-y-2">
                   {pickerList.map((r) => (
+                    
                     <button
                       key={r.id ?? r.name}
                       type="button"
@@ -1728,38 +1764,7 @@ function lockWorkstationNow() {
           </div>
         </div>
       )}
-{/* Workstation control */}
-{locked || !operatorInitials ? (
-  <button
-    type="button"
-    onClick={() => {
-      setShowMenu(false);
-      openWorkstationLock();
-      posthog.capture("fab_choose_workstation_unlock");
-    }}
-    className="w-full rounded-xl bg-amber-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700"
-  >
-    <span className="inline-flex items-center justify-center gap-2">
-      <Unlock className="h-4 w-4" />
-      Unlock workstation / Choose operator
-    </span>
-  </button>
-) : (
-  <button
-    type="button"
-    onClick={() => {
-      setShowMenu(false);
-      lockWorkstationNow();
-      posthog.capture("fab_choose_workstation_lock");
-    }}
-    className="w-full rounded-xl bg-slate-700 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
-  >
-    <span className="inline-flex items-center justify-center gap-2">
-      <Lock className="h-4 w-4" />
-      Lock workstation
-    </span>
-  </button>
-)}
+
       {/* Quick entry modal */}
       {open && (
         <div
