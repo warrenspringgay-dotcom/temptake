@@ -662,7 +662,7 @@ export default function RoutineManager() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-3 flex items-center justify-between">
-                <div className="text-base font-semibold">{editing.id ? "Edit routine" : "New routine"}</div>
+                <div className="text-base font-semibold">{editing.id ? "Edit routine" : "New routine name"}</div>
                 <button
                   onClick={() => setEditOpen(false)}
                   className="rounded-xl p-2 text-slate-500 hover:bg-slate-100"
@@ -760,7 +760,7 @@ export default function RoutineManager() {
 
                   {!editing.items.length ? (
                     <div className="rounded-2xl border border-slate-200 bg-white/70 p-4 text-sm text-slate-600">
-                      No steps yet. Add one.
+                      Add multiple daily measured items
                     </div>
                   ) : null}
                 </div>
