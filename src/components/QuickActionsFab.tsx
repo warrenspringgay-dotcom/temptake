@@ -36,6 +36,10 @@ import { useWorkstation } from "@/components/workstation/WorkstationLockProvider
 
 const LS_LAST_LOCATION = "tt_last_location";
 
+// Fallback keys (only used if provider lacks methods / API is broken)
+const LS_WS_LOCKED = "tt_ws_locked";
+const LS_WS_OPERATOR = "tt_ws_operator";
+
 type FormState = {
   date: string;
   staff_initials: string; // now derived from workstation operator
@@ -579,12 +583,16 @@ export default function TempFab() {
   const { addToast } = useToast();
   const router = useRouter();
 
- // ✅ Workstation operator (PIN user)
-const ws = useWorkstation() as any;
-const operator = ws.operator as any;
-const locked = !!ws.locked;
+  // ✅ Workstation operator (PIN user)
+  const ws = useWorkstation() as any;
+  const operator = ws?.operator as any;
+  const locked = !!ws?.locked;
 
-const operatorInitials = (operator?.initials ?? "").toString().trim().toUpperCase();
+  const operatorInitials = (operator?.initials ?? "")
+    .toString()
+    .trim()
+    .toUpperCase();
+
   const [open, setOpen] = useState(false);
   const [entriesToday, setEntriesToday] = useState<number | null>(null);
   const [openCleaning, setOpenCleaning] = useState<number | null>(null);
@@ -599,6 +607,15 @@ const operatorInitials = (operator?.initials ?? "").toString().trim().toUpperCas
     target_key: TARGET_PRESETS[0]?.key ?? "chill",
     temp_c: "",
   });
+
+  // Debug what workstation provider exposes (remove once confirmed)
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line no-console
+      console.log("Workstation ctx keys:", ws ? Object.keys(ws) : ws);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Keep form.staff_initials synced to operator
   useEffect(() => {
@@ -739,6 +756,7 @@ const operatorInitials = (operator?.initials ?? "").toString().trim().toUpperCas
         window.dispatchEvent(new Event("tt-temps-changed"));
       } catch {}
     } catch (e: any) {
+      // eslint-disable-next-line no-console
       console.error(e);
       addToast({
         title: "Could not save corrective action",
@@ -750,24 +768,45 @@ const operatorInitials = (operator?.initials ?? "").toString().trim().toUpperCas
     }
   }
 
-function openWorkstationLock() {
-  // Prefer provider function if you have it
-  if (typeof ws.openLockModal === "function") return ws.openLockModal();
-  if (typeof ws.open === "function") return ws.open(); // some people name it this
+  function openWorkstationLock() {
+    // Prefer provider function if you have it
+    if (typeof ws?.openLockModal === "function") return ws.openLockModal();
+    if (typeof ws?.open === "function") return ws.open(); // some people name it this
 
-  // Fallback: event your provider can listen for
-  try {
-    window.dispatchEvent(new Event("tt-open-workstation-lock"));
-  } catch {}
-}
+    // Fallback: event your provider can listen for
+    try {
+      window.dispatchEvent(new Event("tt-open-workstation-lock"));
+    } catch {}
+  }
 
-function lockWorkstationNow() {
-  if (typeof ws.lockWorkstation === "function") return ws.lockWorkstation();
-  if (typeof ws.lock === "function") return ws.lock();
+  async function lockWorkstationNow() {
+    // Try provider methods first
+    try {
+      if (typeof ws?.lockWorkstation === "function") {
+        await ws.lockWorkstation();
+        return;
+      }
+      if (typeof ws?.lock === "function") {
+        await ws.lock();
+        return;
+      }
+    } catch {
+      // fall through to fallback lock
+    }
 
-  // If no method, worst case: open the lock modal (user can lock from there)
-  openWorkstationLock();
-}
+    // Hard fallback: local lock + broadcast event
+    try {
+      localStorage.setItem(LS_WS_LOCKED, "1");
+      localStorage.removeItem(LS_WS_OPERATOR);
+    } catch {}
+
+    try {
+      window.dispatchEvent(new Event("tt-workstation-locked"));
+      window.dispatchEvent(new Event("storage")); // some providers listen to storage changes
+    } catch {}
+
+    addToast({ title: "Workstation locked", type: "success" });
+  }
 
   // Voice hook (do NOT override operator initials)
   const { supported: voiceSupported, listening, start, stop } = useVoiceTempEntry(
@@ -980,6 +1019,7 @@ function lockWorkstationNow() {
 
       posthog.capture("fab_choose_day_signoff");
     } catch (e: any) {
+      // eslint-disable-next-line no-console
       console.error(e);
       addToast({
         title: "Couldn’t open sign off",
@@ -1033,9 +1073,13 @@ function lockWorkstationNow() {
         org_id: String((data as any).org_id),
         location_id: String((data as any).location_id),
         signoff_on: String((data as any).signoff_on),
-        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+        signed_by: (data as any).signed_by
+          ? String((data as any).signed_by)
+          : null,
         notes: (data as any).notes ? String((data as any).notes) : null,
-        created_at: (data as any).created_at ? String((data as any).created_at) : null,
+        created_at: (data as any).created_at
+          ? String((data as any).created_at)
+          : null,
       });
 
       addToast({ title: "Day signed off", type: "success" });
@@ -1043,6 +1087,7 @@ function lockWorkstationNow() {
 
       posthog.capture("day_signoff_saved", { source: "fab", date: todayISO });
     } catch (e: any) {
+      // eslint-disable-next-line no-console
       console.error(e);
       addToast({
         title: "Sign off failed",
@@ -1093,10 +1138,9 @@ function lockWorkstationNow() {
 
           const { data: logsData } = await q;
 
-          const fromAreas: string[] =
-            (logsData ?? [])
-              .map((r: LogRow) => (r.area ?? "").toString().trim())
-              .filter((s: string) => s.length > 0);
+          const fromAreas: string[] = (logsData ?? [])
+            .map((r: LogRow) => (r.area ?? "").toString().trim())
+            .filter((s: string) => s.length > 0);
 
           const unique: string[] = Array.from(new Set<string>(fromAreas));
           const finalAreas: string[] = unique.length ? unique : ["Kitchen"];
@@ -1157,8 +1201,7 @@ function lockWorkstationNow() {
       void refreshCleaningOpen(true);
     };
     window.addEventListener("tt-cleaning-changed", onCleaningChanged);
-    return () =>
-      window.removeEventListener("tt-cleaning-changed", onCleaningChanged);
+    return () => window.removeEventListener("tt-cleaning-changed", onCleaningChanged);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1504,46 +1547,45 @@ function lockWorkstationNow() {
                 </div>
               ) : (
                 <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                  Operator: <span className="font-semibold">{operatorInitials}</span>
+                  Operator:{" "}
+                  <span className="font-semibold">{operatorInitials}</span>
                 </div>
               )}
 
-              
-<div className="space-y-2">
-  {/* Workstation control (MOVE HERE) */}
-  {locked || !operatorInitials ? (
-    <button
-      type="button"
-      onClick={() => {
-        setShowMenu(false);
-        openWorkstationLock();
-        posthog.capture("fab_choose_workstation_unlock");
-      }}
-      className="w-full rounded-xl bg-amber-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700"
-    >
-      <span className="inline-flex items-center justify-center gap-2">
-        <Unlock className="h-4 w-4" />
-        Unlock workstation / Choose operator
-      </span>
-    </button>
-  ) : (
-    <button
-      type="button"
-      onClick={() => {
-        setShowMenu(false);
-        lockWorkstationNow();
-        posthog.capture("fab_choose_workstation_lock");
-      }}
-      className="w-full rounded-xl bg-slate-700 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
-    >
-      <span className="inline-flex items-center justify-center gap-2">
-        <Lock className="h-4 w-4" />
-        Lock workstation
-      </span>
-    </button>
-  )}
+              <div className="space-y-2">
+                {/* Workstation control */}
+                {locked || !operatorInitials ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false);
+                      openWorkstationLock();
+                      posthog.capture("fab_choose_workstation_unlock");
+                    }}
+                    className="w-full rounded-xl bg-amber-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700"
+                  >
+                    <span className="inline-flex items-center justify-center gap-2">
+                      <Unlock className="h-4 w-4" />
+                      Unlock workstation / Choose operator
+                    </span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setShowMenu(false);
+                      await lockWorkstationNow();
+                      posthog.capture("fab_choose_workstation_lock");
+                    }}
+                    className="w-full rounded-xl bg-slate-700 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+                  >
+                    <span className="inline-flex items-center justify-center gap-2">
+                      <Lock className="h-4 w-4" />
+                      Lock workstation
+                    </span>
+                  </button>
+                )}
 
-  
                 <button
                   type="button"
                   onClick={() => {
@@ -1745,7 +1787,6 @@ function lockWorkstationNow() {
               ) : (
                 <div className="space-y-2">
                   {pickerList.map((r) => (
-                    
                     <button
                       key={r.id ?? r.name}
                       type="button"
@@ -1903,7 +1944,9 @@ function lockWorkstationNow() {
                 </label>
                 <input
                   value={form.item}
-                  onChange={(e) => setForm((f) => ({ ...f, item: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, item: e.target.value }))
+                  }
                   className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                   placeholder="e.g. Chicken curry hot hold"
                 />
