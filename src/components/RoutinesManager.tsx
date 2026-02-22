@@ -662,7 +662,7 @@ export default function RoutineManager() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-3 flex items-center justify-between">
-                <div className="text-base font-semibold">{editing.id ? "Edit routine" : "New routine name"}</div>
+                <div className="text-base font-semibold">{editing.id ? "Edit routine" : "New routine"}</div>
                 <button
                   onClick={() => setEditOpen(false)}
                   className="rounded-xl p-2 text-slate-500 hover:bg-slate-100"
