@@ -330,48 +330,8 @@ export default function AllergenManager() {
     } catch {}
   }
 
-  async function loadAuthUserInitials(org: string) {
-    try {
-      const { data: auth } = await supabase.auth.getUser();
-      const userId = auth.user?.id ?? null;
-      if (!userId) return;
 
-      // Prefer active location team member row first (if you use location scoping)
-      const lid = await getActiveLocationIdClient().catch(() => null);
-
-      let row: any = null;
-
-      if (lid) {
-        const byLoc = await supabase
-          .from("team_members")
-          .select("initials")
-          .eq("org_id", org)
-          .eq("user_id", userId)
-          .eq("location_id", lid)
-          .maybeSingle();
-
-        if (!byLoc.error && byLoc.data) row = byLoc.data;
-      }
-
-      if (!row) {
-        const byOrg = await supabase
-          .from("team_members")
-          .select("initials")
-          .eq("org_id", org)
-          .eq("user_id", userId)
-          .is("location_id", null)
-          .maybeSingle();
-
-        if (!byOrg.error && byOrg.data) row = byOrg.data;
-      }
-
-      const ini = String(row?.initials ?? "").trim().toUpperCase();
-      if (ini) setAuthUserInitials(ini);
-    } catch {
-      // ignore
-    }
-  }
-
+  
   /** Load items and flags from cloud */
   async function loadFromSupabase(id = orgId) {
     if (!id) return;

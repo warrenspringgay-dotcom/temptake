@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 
-// Minimal endpoint to satisfy the WorkstationLockProvider.
-// If you later want server-side persistence (db), this is where it goes.
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
