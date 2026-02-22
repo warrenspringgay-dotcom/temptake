@@ -1,6 +1,14 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 type Operator = {
   teamMemberId: string;
@@ -76,6 +84,20 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     setOperatorState(op);
     localStorage.setItem(LS_KEY, JSON.stringify(op));
     setLocked(false);
+
+    // ✅ Ensure middleware + nav gating can read the operator role via cookie
+    fetch("/api/workstation/set", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        teamMemberId: op.teamMemberId,
+        orgId: op.orgId,
+        locationId: op.locationId,
+        role: op.role,
+        initials: op.initials,
+        name: op.name,
+      }),
+    }).catch(() => {});
   }, []);
 
   const getActingContextClient = useCallback(() => {

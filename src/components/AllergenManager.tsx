@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import AllergenChangeTimeline from "@/components/AllergenChangeTimeline";
+import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
 /* ---------- Types & Constants ---------- */
 type AllergenKey =
@@ -69,7 +70,8 @@ const LS_ROWS = "tt_allergens_rows_v3";
 const LS_REVIEW = "tt_allergens_review_v2";
 
 /* ---------- Helpers ---------- */
-const emptyFlags = (): Flags => Object.fromEntries(ALLERGENS.map((a) => [a.key, false])) as Flags;
+const emptyFlags = (): Flags =>
+  Object.fromEntries(ALLERGENS.map((a) => [a.key, false])) as Flags;
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -102,6 +104,22 @@ async function fireConfetti() {
   }
 }
 
+function isManagerRole(role: string | null | undefined) {
+  const r = String(role ?? "").toLowerCase();
+  return r === "owner" || r === "admin" || r === "manager";
+}
+
+function initialsFromName(name: string | null | undefined) {
+  const s = String(name ?? "").trim();
+  if (!s) return null;
+  const parts = s.split(/\s+/).filter(Boolean);
+  const out = parts
+    .slice(0, 2)
+    .map((p) => (p[0] ? p[0].toUpperCase() : ""))
+    .join("");
+  return out || null;
+}
+
 /** Write an audit row when allergen items change */
 async function logAllergenChange(params: {
   orgId: string;
@@ -109,53 +127,10 @@ async function logAllergenChange(params: {
   itemId: string;
   before?: MatrixRow | null;
   after?: MatrixRow | null;
+  staffInitials: string | null;
 }) {
   try {
     const locationId = await getActiveLocationIdClient().catch(() => null);
-
-    let staffInitials: string | null = null;
-
-    try {
-      const { data: userData, error: userErr } = await supabase.auth.getUser();
-      if (!userErr && userData?.user?.email) {
-        const email = userData.user.email.toLowerCase().trim();
-
-        const { data: tms, error: tmErr } = await supabase
-          .from("team_members")
-          .select("name, initials, role")
-          .eq("org_id", params.orgId)
-          .ilike("email", email)
-          .limit(50);
-
-        if (!tmErr && Array.isArray(tms) && tms.length) {
-          // Prefer a manager/owner/admin row, then any with initials, then first.
-          const pick = [...tms].sort((a: any, b: any) => {
-            const ra = String(a?.role ?? "").toLowerCase();
-            const rb = String(b?.role ?? "").toLowerCase();
-            const prio = (r: string) => (r === "owner" ? 0 : r === "manager" ? 1 : r === "admin" ? 2 : 3);
-            const pa = prio(ra);
-            const pb = prio(rb);
-            if (pa !== pb) return pa - pb;
-            const ia = (a?.initials ?? "").trim() ? 0 : 1;
-            const ib = (b?.initials ?? "").trim() ? 0 : 1;
-            return ia - ib;
-          })[0] as any;
-
-          const ini = (pick?.initials ?? "").trim().toUpperCase();
-          if (ini) {
-            staffInitials = ini;
-          } else if (pick?.name && String(pick.name).trim()) {
-            const parts: string[] = String(pick.name).trim().split(/\s+/);
-            staffInitials = parts
-              .slice(0, 2)
-              .map((p: string) => p[0]?.toUpperCase() ?? "")
-              .join("");
-          }
-        }
-
-        if (!staffInitials && email) staffInitials = email[0].toUpperCase();
-      }
-    } catch {}
 
     const { error } = await supabase.from("allergen_change_logs").insert({
       org_id: params.orgId,
@@ -169,7 +144,7 @@ async function logAllergenChange(params: {
       flags_after: params.after?.flags ?? null,
       notes_before: params.before?.notes ?? null,
       notes_after: params.after?.notes ?? null,
-      staff_initials: staffInitials,
+      staff_initials: params.staffInitials,
     });
 
     if (error) console.error("Failed to log allergen change:", error.message);
@@ -178,8 +153,11 @@ async function logAllergenChange(params: {
   }
 }
 
-async function resolveCanManage(params: { orgId: string | null; userId: string | null; email: string | null }): Promise<boolean> {
-  // If orgId is missing, we allow local editing when signed in.
+async function resolveCanManage(params: {
+  orgId: string | null;
+  userId: string | null;
+  email: string | null;
+}): Promise<boolean> {
   if (!params.orgId) return !!(params.userId || params.email);
 
   const orgId = params.orgId;
@@ -191,7 +169,6 @@ async function resolveCanManage(params: { orgId: string | null; userId: string |
     return r === "owner" || r === "manager" || r === "admin";
   };
 
-  // Prefer user_id match (multi-location accounts may have >1 row).
   if (userId) {
     try {
       const { data, error } = await supabase
@@ -201,13 +178,13 @@ async function resolveCanManage(params: { orgId: string | null; userId: string |
         .eq("user_id", userId)
         .limit(50);
 
-      if (!error && Array.isArray(data) && data.some((r) => roleAllows((r as any).role))) return true;
+      if (!error && Array.isArray(data) && data.some((r) => roleAllows((r as any).role)))
+        return true;
     } catch {
       // ignore
     }
   }
 
-  // Fallback: email match (case-insensitive). Also allow multiple rows.
   if (!email) return false;
 
   const { data, error } = await supabase
@@ -224,6 +201,8 @@ async function resolveCanManage(params: { orgId: string | null; userId: string |
 
 /* ---------- Component ---------- */
 export default function AllergenManager() {
+  const { operator, getActingContextClient } = useWorkstation();
+
   const [hydrated, setHydrated] = useState(false);
 
   // Cloud context
@@ -245,6 +224,15 @@ export default function AllergenManager() {
   const [qCat, setQCat] = useState<"All" | Category>("All");
   const [qFlags, setQFlags] = useState<Flags>(emptyFlags());
 
+  const acting = getActingContextClient();
+  const operatorInitials =
+    (operator?.initials ?? "").trim().toUpperCase() ||
+    initialsFromName(operator?.name) ||
+    null;
+
+  const reviewerLabel =
+    operatorInitials || (operator?.name ?? "").trim() || null;
+
   /* ---------- boot ---------- */
   useEffect(() => {
     let cancelled = false;
@@ -256,22 +244,30 @@ export default function AllergenManager() {
         // Always prime local first so UI isn't dead while org resolves
         primeLocal();
 
-        const [{ data: auth }, org] = await Promise.all([supabase.auth.getUser(), getActiveOrgIdClient().catch(() => null)]);
+        const [{ data: auth }, org] = await Promise.all([
+          supabase.auth.getUser(),
+          getActiveOrgIdClient().catch(() => null),
+        ]);
 
         if (cancelled) return;
 
-        const userId = auth?.user?.id ?? null;
-        const email = auth?.user?.email?.toLowerCase().trim() ?? null;
-
         setOrgId(org ?? null);
 
-        const allowed = await resolveCanManage({
-          orgId: org ?? null,
-          userId,
-          email,
-        });
+        // ✅ Operator wins for permissions too (PIN sessions)
+        if (operator?.role) {
+          setCanManage(isManagerRole(operator.role));
+        } else {
+          const userId = auth?.user?.id ?? null;
+          const email = auth?.user?.email?.toLowerCase().trim() ?? null;
 
-        if (!cancelled) setCanManage(allowed);
+          const allowed = await resolveCanManage({
+            orgId: org ?? null,
+            userId,
+            email,
+          });
+
+          if (!cancelled) setCanManage(allowed);
+        }
 
         // If we have an org, load cloud data (overwrites local shadow)
         if (org) {
@@ -286,7 +282,7 @@ export default function AllergenManager() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [operator?.role]);
 
   function primeLocal() {
     try {
@@ -302,9 +298,30 @@ export default function AllergenManager() {
         );
       } else {
         setRows([
-          { id: uid(), item: "White Bread", category: "Side", flags: { ...emptyFlags(), gluten: true }, notes: "", locked: true },
-          { id: uid(), item: "Prawn Cocktail", category: "Starter", flags: { ...emptyFlags(), crustaceans: true }, notes: "", locked: true },
-          { id: uid(), item: "Fruit Salad", category: "Dessert", flags: { ...emptyFlags() }, notes: "", locked: true },
+          {
+            id: uid(),
+            item: "White Bread",
+            category: "Side",
+            flags: { ...emptyFlags(), gluten: true },
+            notes: "",
+            locked: true,
+          },
+          {
+            id: uid(),
+            item: "Prawn Cocktail",
+            category: "Starter",
+            flags: { ...emptyFlags(), crustaceans: true },
+            notes: "",
+            locked: true,
+          },
+          {
+            id: uid(),
+            item: "Fruit Salad",
+            category: "Dessert",
+            flags: { ...emptyFlags() },
+            notes: "",
+            locked: true,
+          },
         ]);
       }
     } catch {}
@@ -340,7 +357,10 @@ export default function AllergenManager() {
     let flagsByItem: Record<string, Flags> = {};
 
     if (ids.length) {
-      const { data: flags, error: flagsErr } = await supabase.from("allergen_flags").select("item_id,key,value").in("item_id", ids);
+      const { data: flags, error: flagsErr } = await supabase
+        .from("allergen_flags")
+        .select("item_id,key,value")
+        .in("item_id", ids);
 
       if (flagsErr) {
         setCloudBusy(false);
@@ -401,7 +421,8 @@ export default function AllergenManager() {
 
     if (!logErr && logRow) {
       if (!nextState.lastReviewedOn && logRow.reviewed_on) nextState.lastReviewedOn = logRow.reviewed_on;
-      if (typeof logRow.interval_days === "number" && !settings?.interval_days) nextState.intervalDays = logRow.interval_days;
+      if (typeof logRow.interval_days === "number" && !settings?.interval_days)
+        nextState.intervalDays = logRow.interval_days;
       if (logRow.reviewer) nextState.lastReviewedBy = logRow.reviewer;
     }
 
@@ -427,14 +448,19 @@ export default function AllergenManager() {
   }, [review, hydrated]);
 
   /* ---------- CRUD ---------- */
-  async function upsertItem(d: { id?: string; item: string; category?: Category; notes?: string; flags: Flags }) {
+  async function upsertItem(d: {
+    id?: string;
+    item: string;
+    category?: Category;
+    notes?: string;
+    flags: Flags;
+  }) {
     if (!canManage) {
       alert("Only managers / owners can edit the allergen matrix.");
       return;
     }
 
     const currentOrgId = orgId ?? (await getActiveOrgIdClient().catch(() => null));
-
     const beforeRow = d.id ? rows.find((r) => r.id === d.id) ?? null : null;
 
     const applyLocal = (forcedId?: string) => {
@@ -449,7 +475,9 @@ export default function AllergenManager() {
           locked: true,
         };
         const exists = rs.some((r) => r.id === idToUse);
-        return exists ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r)) : [...rs, patch];
+        return exists
+          ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r))
+          : [...rs, patch];
       });
     };
 
@@ -502,7 +530,9 @@ export default function AllergenManager() {
         }));
 
         if (payload.length) {
-          const { error: flagsErr } = await supabase.from("allergen_flags").upsert(payload, { onConflict: "item_id,key" });
+          const { error: flagsErr } = await supabase
+            .from("allergen_flags")
+            .upsert(payload, { onConflict: "item_id,key" });
           if (flagsErr) console.warn("Saving allergen flags failed (ignored):", flagsErr.message);
         }
       }
@@ -517,12 +547,14 @@ export default function AllergenManager() {
           locked: true,
         };
 
+        // ✅ Operator initials for change log
         await logAllergenChange({
           orgId: currentOrgId,
           action: d.id ? "update" : "create",
           itemId: rowId,
           before: beforeRow,
           after: afterRow,
+          staffInitials: operatorInitials,
         });
 
         setChangeLogRefreshKey((n) => n + 1);
@@ -565,6 +597,7 @@ export default function AllergenManager() {
           itemId: idToDelete,
           before: beforeRow,
           after: null,
+          staffInitials: operatorInitials,
         });
         setChangeLogRefreshKey((n) => n + 1);
       }
@@ -584,44 +617,8 @@ export default function AllergenManager() {
     const id = orgId ?? (await getActiveOrgIdClient().catch(() => null));
     const today = todayISO();
 
-    // reviewer: initials > name > email
-    let reviewer = "Manager";
-    try {
-      const userRes = await supabase.auth.getUser();
-      const email = userRes.data.user?.email?.toLowerCase().trim() ?? null;
-
-      if (email && id) {
-        const { data: tms } = await supabase
-          .from("team_members")
-          .select("name, initials, role")
-          .eq("org_id", id)
-          .ilike("email", email)
-          .limit(50);
-
-        if (Array.isArray(tms) && tms.length) {
-          const pick = [...tms].sort((a: any, b: any) => {
-            const ra = String(a?.role ?? "").toLowerCase();
-            const rb = String(b?.role ?? "").toLowerCase();
-            const prio = (r: string) => (r === "owner" ? 0 : r === "manager" ? 1 : r === "admin" ? 2 : 3);
-            const pa = prio(ra);
-            const pb = prio(rb);
-            if (pa !== pb) return pa - pb;
-            const ia = (a?.initials ?? "").trim() ? 0 : 1;
-            const ib = (b?.initials ?? "").trim() ? 0 : 1;
-            return ia - ib;
-          })[0] as any;
-
-          const ini = (pick?.initials ?? "").trim().toUpperCase();
-          const name = (pick?.name ?? "").trim();
-          reviewer = ini || name || email || reviewer;
-        } else {
-          reviewer = email || reviewer;
-        }
-      } else if (email) {
-        reviewer = email;
-      }
-    } catch {}
-
+    // ✅ Operator-first reviewer label
+    const reviewer = reviewerLabel ?? "Manager";
     const newInterval = review.intervalDays || 30;
 
     setReview((r) => ({
@@ -637,7 +634,11 @@ export default function AllergenManager() {
       return;
     }
 
-    const { data: existing, error: existingErr } = await supabase.from("allergen_review").select("org_id").eq("org_id", id).maybeSingle();
+    const { data: existing, error: existingErr } = await supabase
+      .from("allergen_review")
+      .select("org_id")
+      .eq("org_id", id)
+      .maybeSingle();
 
     if (existingErr) {
       alert(`Failed to save review: ${existingErr.message}`);
@@ -755,7 +756,6 @@ export default function AllergenManager() {
 
   return (
     <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur md:px-8">
-
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold text-slate-900">Allergens</h1>
       </div>
@@ -766,8 +766,13 @@ export default function AllergenManager() {
             <div className="font-medium text-slate-900">Allergen register review</div>
             <div className="text-xs text-slate-600">
               Last reviewed:{" "}
-              {review.lastReviewedOn ? <span className="font-medium">{formatDateUK(review.lastReviewedOn)}</span> : <span className="italic">never</span>}
-              {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} · Interval (days): {review.intervalDays}
+              {review.lastReviewedOn ? (
+                <span className="font-medium">{formatDateUK(review.lastReviewedOn)}</span>
+              ) : (
+                <span className="italic">never</span>
+              )}
+              {review.lastReviewedBy ? ` by ${review.lastReviewedBy}` : ""} · Interval (days):{" "}
+              {review.intervalDays}
             </div>
           </div>
           <div className="flex w-full max-w-[360px] items-center gap-2 sm:w-auto sm:max-w-none">
@@ -796,7 +801,9 @@ export default function AllergenManager() {
       </div>
 
       <details className="mb-4 rounded-2xl border border-slate-200 bg-white/70 p-3 backdrop-blur-sm">
-        <summary className="cursor-pointer select-none text-sm font-medium text-slate-900">Allergen Query (safe foods)</summary>
+        <summary className="cursor-pointer select-none text-sm font-medium text-slate-900">
+          Allergen Query (safe foods)
+        </summary>
 
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
@@ -836,17 +843,24 @@ export default function AllergenManager() {
               ))}
             </div>
             <div className="mt-3 flex items-center gap-2">
-              <button className="rounded border border-slate-200 bg-white px-2 py-1 text-xs hover:bg-slate-50" onClick={() => setQFlags(emptyFlags())}>
+              <button
+                className="rounded border border-slate-200 bg-white px-2 py-1 text-xs hover:bg-slate-50"
+                onClick={() => setQFlags(emptyFlags())}
+              >
                 Clear selection
               </button>
-              <span className="text-xs text-slate-600">Selected: {Object.values(qFlags).filter(Boolean).length}</span>
+              <span className="text-xs text-slate-600">
+                Selected: {Object.values(qFlags).filter(Boolean).length}
+              </span>
             </div>
           </div>
         </div>
 
         {hydrated && selectedAllergenKeys.length > 0 && (
           <div className="mt-4">
-            <div className="mb-2 text-sm font-semibold text-slate-900">Safe foods ({safeFoods.length})</div>
+            <div className="mb-2 text-sm font-semibold text-slate-900">
+              Safe foods ({safeFoods.length})
+            </div>
             <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white/80 backdrop-blur-sm">
               <table className="w-full min-w-[640px] text-sm">
                 <thead className="bg-slate-50/80">
@@ -897,74 +911,82 @@ export default function AllergenManager() {
         </button>
       </div>
 
-      <div className="mb-2 hidden text-sm font-semibold text-slate-900 md:block">Allergen matrix</div>
-     <div className="mb-2 hidden text-sm font-semibold text-slate-900 md:block">Allergen matrix</div>
+      <div className="mb-2 hidden text-sm font-semibold text-slate-900 md:block">
+        Allergen matrix
+      </div>
 
-{/* Desktop: scrollable grid with sticky header */}
-<div className="hidden md:block">
-  <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm">
-    {/* This is the scroll container (vertical + horizontal) */}
-    <div className="max-h-[70vh] overflow-auto rounded-2xl">
-      <table className="w-full min-w-[900px] text-sm">
-        <thead className="sticky top-0 z-20 bg-slate-50/95 backdrop-blur">
-          <tr className="text-left text-slate-500">
-            <th className="px-2 py-2 font-medium">Item</th>
-            <th className="px-2 py-2 font-medium">Category</th>
-            {ALLERGENS.map((a) => (
-              <th key={a.key} className="whitespace-nowrap px-2 py-2 text-center font-medium">
-                {a.icon} <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
-              </th>
-            ))}
-            <th className="px-3 py-2 text-right font-medium">Actions</th>
-          </tr>
-        </thead>
+      {/* Desktop: scrollable grid with sticky header */}
+      <div className="hidden md:block">
+        <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm">
+          <div className="max-h-[70vh] overflow-auto rounded-2xl">
+            <table className="w-full min-w-[900px] text-sm">
+              <thead className="sticky top-0 z-20 bg-slate-50/95 backdrop-blur">
+                <tr className="text-left text-slate-500">
+                  <th className="px-2 py-2 font-medium">Item</th>
+                  <th className="px-2 py-2 font-medium">Category</th>
+                  {ALLERGENS.map((a) => (
+                    <th key={a.key} className="whitespace-nowrap px-2 py-2 text-center font-medium">
+                      {a.icon}{" "}
+                      <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
+                    </th>
+                  ))}
+                  <th className="px-3 py-2 text-right font-medium">Actions</th>
+                </tr>
+              </thead>
 
-        <tbody>
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={2 + ALLERGENS.length + 1} className="px-3 py-6 text-center text-slate-500">
-                {loadErr ? `Error: ${loadErr}` : "No items."}
-              </td>
-            </tr>
-          ) : (
-            rows.map((row) => (
-              <tr key={row.id} className="border-t border-slate-100 align-top">
-                <td className="px-3 py-2 text-slate-900">{row.item}</td>
-                <td className="px-3 py-2 text-slate-900">{row.category ?? ""}</td>
-                {ALLERGENS.map((a) => {
-                  const yes = row.flags[a.key];
-                  return (
-                    <td key={a.key} className="px-2 py-2 text-center">
-                      <span
-                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                          yes ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"
-                        }`}
-                      >
-                        {yes ? "Yes" : "No"}
-                      </span>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={2 + ALLERGENS.length + 1}
+                      className="px-3 py-6 text-center text-slate-500"
+                    >
+                      {loadErr ? `Error: ${loadErr}` : "No items."}
                     </td>
-                  );
-                })}
-                <td className="px-3 py-2 text-right">
-                  {canManage && (
-                    <ActionMenu
-                      items={[
-                        { label: "Edit", onClick: () => openEdit(row) },
-                        { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
-                      ]}
-                    />
-                  )}
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
+                  </tr>
+                ) : (
+                  rows.map((row) => (
+                    <tr key={row.id} className="border-t border-slate-100 align-top">
+                      <td className="px-3 py-2 text-slate-900">{row.item}</td>
+                      <td className="px-3 py-2 text-slate-900">{row.category ?? ""}</td>
+                      {ALLERGENS.map((a) => {
+                        const yes = row.flags[a.key];
+                        return (
+                          <td key={a.key} className="px-2 py-2 text-center">
+                            <span
+                              className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                                yes ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"
+                              }`}
+                            >
+                              {yes ? "Yes" : "No"}
+                            </span>
+                          </td>
+                        );
+                      })}
+                      <td className="px-3 py-2 text-right">
+                        {canManage && (
+                          <ActionMenu
+                            items={[
+                              { label: "Edit", onClick: () => openEdit(row) },
+                              {
+                                label: "Delete",
+                                onClick: () => void deleteItem(row.id),
+                                variant: "danger",
+                              },
+                            ]}
+                          />
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
 
-
+      {/* Mobile cards */}
       <div className="md:hidden">
         {rows.length === 0 ? (
           <div className="rounded-xl border border-slate-200 bg-white/80 p-4 text-center text-slate-500">
@@ -1023,7 +1045,8 @@ export default function AllergenManager() {
             <div key={a.key} className="flex items-center gap-2 text-sm">
               <span>{a.icon}</span>
               <span className="truncate text-slate-800">
-                {a.label} <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
+                {a.label}{" "}
+                <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
               </span>
             </div>
           ))}
@@ -1075,14 +1098,20 @@ export default function AllergenManager() {
                 {ALLERGENS.map((a) => {
                   const val = draft.flags[a.key];
                   return (
-                    <div key={a.key} className="flex items-center justify-between rounded border border-slate-200 bg-white/80 p-2">
+                    <div
+                      key={a.key}
+                      className="flex items-center justify-between rounded border border-slate-200 bg-white/80 p-2"
+                    >
                       <span title={a.label} className="text-sm text-slate-800">
-                        {a.icon} <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
+                        {a.icon}{" "}
+                        <span className="font-mono text-[11px] text-slate-500">{a.short}</span>
                       </span>
                       <div className="inline-flex overflow-hidden rounded border border-slate-200 bg-white/80">
                         <button
                           type="button"
-                          className={`px-2 py-1 text-xs ${val ? "bg-red-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"}`}
+                          className={`px-2 py-1 text-xs ${
+                            val ? "bg-red-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
+                          }`}
                           onClick={() => setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: true } }))}
                         >
                           Yes
@@ -1090,9 +1119,13 @@ export default function AllergenManager() {
                         <button
                           type="button"
                           className={`px-2 py-1 text-xs ${
-                            !val ? "bg-emerald-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
+                            !val
+                              ? "bg-emerald-600 text-white"
+                              : "bg-white text-slate-700 hover:bg-slate-50"
                           }`}
-                          onClick={() => setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: false } }))}
+                          onClick={() =>
+                            setDraft((d) => ({ ...d!, flags: { ...d!.flags, [a.key]: false } }))
+                          }
                         >
                           No
                         </button>
@@ -1118,7 +1151,11 @@ export default function AllergenManager() {
             </div>
 
             <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t border-slate-200 bg-white/90 px-4 py-3 backdrop-blur">
-              <button type="button" className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50" onClick={closeModal}>
+              <button
+                type="button"
+                className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                onClick={closeModal}
+              >
                 Cancel
               </button>
               <button className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
