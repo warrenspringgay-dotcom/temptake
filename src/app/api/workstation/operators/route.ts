@@ -1,8 +1,14 @@
+// src/app/api/workstation/operators/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getServerSupabase } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
+
+function escOrValue(v: string) {
+  // basic escape for Supabase .or string: commas and parentheses are the main offenders
+  return v.replaceAll(",", "%2C").replaceAll("(", "%28").replaceAll(")", "%29");
+}
 
 export async function GET(req: Request) {
   // Require normal app auth (manager session etc.)
@@ -19,17 +25,23 @@ export async function GET(req: Request) {
   }
 
   // Operators = active + pin_enabled + pin_set (exists in team_member_pins)
+  // IMPORTANT: include org-level rows (location_id IS NULL) as fallback.
+  const loc = escOrValue(locationId);
+
   const { data, error } = await supabaseAdmin
     .from("team_members")
-    .select("id, name, initials, role, active, pin_enabled")
+    .select("id, name, initials, role, active, pin_enabled, location_id")
     .eq("org_id", orgId)
-    .eq("location_id", locationId)
     .eq("active", true)
     .eq("pin_enabled", true)
+    .or(`location_id.eq.${loc},location_id.is.null`)
     .order("name", { ascending: true });
 
   if (error) {
-    return NextResponse.json({ ok: false, reason: "fetch-failed", detail: error.message }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, reason: "fetch-failed", detail: error.message },
+      { status: 400 }
+    );
   }
 
   const memberIds = (data ?? []).map((m: any) => String(m.id));
@@ -44,7 +56,10 @@ export async function GET(req: Request) {
     .in("team_member_id", memberIds);
 
   if (pErr) {
-    return NextResponse.json({ ok: false, reason: "pins-fetch-failed", detail: pErr.message }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, reason: "pins-fetch-failed", detail: pErr.message },
+      { status: 400 }
+    );
   }
 
   const pinSet = new Set((pins ?? []).map((r: any) => String(r.team_member_id)));

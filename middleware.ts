@@ -166,10 +166,11 @@ export async function middleware(req: NextRequest) {
       .from("team_members")
       .select("role")
       .eq("org_id", orgId)
-      .eq("location_id", locationId)
       .eq("user_id", userId)
+      .or(`location_id.eq.${locationId},location_id.is.null`)
+      .order("location_id", { ascending: false }) // prefers location row over null if both exist
+      .limit(1)
       .maybeSingle();
-
     const role = !error ? normalizeRole(data?.role ?? null) : null;
 
     if (!isManagerRole(role)) {

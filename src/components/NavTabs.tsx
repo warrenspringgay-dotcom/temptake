@@ -40,6 +40,7 @@ const TABS: Tab[] = [
   { href: "/leaderboard", label: "Leaderboard", requiresPlan: true },
   { href: "/reports", label: "Reports", requiresPlan: true },
 ];
+
 function isFutureIso(iso: unknown) {
   if (typeof iso !== "string" || !iso) return false;
   const t = Date.parse(iso);
@@ -92,14 +93,11 @@ export default function NavTabs() {
   const [isManager, setIsManager] = useState(false);
   const [roleLoading, setRoleLoading] = useState(true);
 
-  // ✅ Decide "effective role":
-  // If workstation operator exists, use THAT role for UI gating.
-  // Otherwise fall back to auth-user role from team_members.
   useEffect(() => {
     let alive = true;
 
     (async () => {
-      // If operator is set, it wins (this is the whole point).
+      // Operator wins for UI gating
       if (operator?.role) {
         if (!alive) return;
         const r = String(operator.role).toLowerCase();
@@ -109,7 +107,6 @@ export default function NavTabs() {
         return;
       }
 
-      // No operator: fall back to normal auth gating
       if (!ready || !user) {
         if (!alive) return;
         setRoleName(null);
@@ -138,39 +135,39 @@ export default function NavTabs() {
           return;
         }
 
-        // No active location = conservative
-        if (!locationId) {
-          setRoleName("staff");
-          setIsManager(false);
-          setRoleLoading(false);
-          return;
-        }
+        // Helper: fetch roles with user_id/email, with optional location or org-level fallback
+        async function fetchRoles(scope: "location" | "org"): Promise<Array<{ role: string | null }>> {
+          let q = supabase.from("team_members").select("role").eq("org_id", orgId);
 
-        let rows: Array<{ role: string | null }> = [];
-
-        // 1) Prefer user_id match
-        const byUser = await supabase
-          .from("team_members")
-          .select("role")
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .eq("user_id", userId);
-
-        if (!byUser.error && Array.isArray(byUser.data) && byUser.data.length) {
-          rows = byUser.data as any;
-        } else if (email) {
-          // 2) Fallback email match
-          const byEmail = await supabase
-            .from("team_members")
-            .select("role")
-            .eq("org_id", orgId)
-            .eq("location_id", locationId)
-            .ilike("email", email);
-
-          if (!byEmail.error && Array.isArray(byEmail.data) && byEmail.data.length) {
-            rows = byEmail.data as any;
+          if (scope === "location") {
+            if (!locationId) return [];
+            q = q.eq("location_id", locationId);
+          } else {
+            q = q.is("location_id", null);
           }
+
+          // Prefer user_id match
+          const byUser = await q.eq("user_id", userId);
+          if (!byUser.error && Array.isArray(byUser.data) && byUser.data.length) {
+            return byUser.data as any;
+          }
+
+          // Fallback email match
+          if (email) {
+            const byEmail = await q.ilike("email", email);
+            if (!byEmail.error && Array.isArray(byEmail.data) && byEmail.data.length) {
+              return byEmail.data as any;
+            }
+          }
+
+          return [];
         }
+
+        // 1) Try location role first
+        let rows: Array<{ role: string | null }> = await fetchRoles("location");
+
+        // 2) Fallback to org-level role
+        if (!rows.length) rows = await fetchRoles("org");
 
         if (!alive) return;
 
@@ -181,7 +178,6 @@ export default function NavTabs() {
           return;
         }
 
-        // pick highest privilege
         const best = rows
           .map((r) => (r.role ?? "staff").toLowerCase())
           .sort((a, b) => roleScore(b) - roleScore(a))[0];
@@ -208,7 +204,6 @@ export default function NavTabs() {
     const roleKnown = !roleLoading;
 
     return TABS.filter((t) => {
-      // Role gated tabs: hide until role known to prevent “flash”
       if (t.requiresManager) {
         if (!roleKnown) return false;
         return isManager;
