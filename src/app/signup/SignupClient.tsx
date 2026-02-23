@@ -113,7 +113,7 @@ export default function SignupClient() {
         return;
       }
 
-      // ✅ only capture signup after sign-in succeeds
+      // ✅ capture signup after sign-in succeeds
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -131,53 +131,68 @@ export default function SignupClient() {
         email: user?.email ?? cleanEmail,
       });
 
-      // ✅ BOOTSTRAP: create org + first location + owner team_member with location_id + trial
-      // ✅ AND write localStorage context so role gating + workstation queries work immediately
-      try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+      // ✅ IMPORTANT: server routes can't read supabase-js localStorage session,
+      // so we must pass the access_token as Bearer. Otherwise you get 400/401
+      // and then you’re “staff” forever. Fun.
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
+      const accessToken = session?.access_token ?? null;
+
+      if (!accessToken) {
+        setError("Account created, but session token missing. Please log in.");
+        return;
+      }
+
+      // ✅ call the onboarding bootstrap that creates org/location + owner + trial
+      let orgId: string | null = null;
+      let locationId: string | null = null;
+
+      try {
         const bootstrapRes = await fetch("/api/onboarding/bootstrap", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(session?.access_token
-              ? { Authorization: `Bearer ${session.access_token}` }
-              : {}),
+            Authorization: `Bearer ${accessToken}`,
           },
           body: JSON.stringify({
             ownerName: ownerName.trim(),
             businessName: businessName.trim(),
             locationName: businessName.trim(),
           }),
-          credentials: "include",
         });
 
-        const json = (await bootstrapRes.json().catch(() => null)) as any;
+        const json = await bootstrapRes.json().catch(() => null);
 
         if (!bootstrapRes.ok || !json || json.ok === false) {
+          const detail =
+            (json && (json.detail || json.details || json.reason)) || null;
           setError(
-            "Account created, but setup did not finish. Please contact support."
+            `Account created, but setup did not finish.${
+              detail ? ` (${String(detail)})` : ""
+            }`
           );
           return;
         }
 
-        const orgId = String(json.orgId ?? json.org_id ?? "");
-        const locationId = String(json.locationId ?? json.location_id ?? "");
+        orgId = String(json.orgId ?? "");
+        locationId = String(json.locationId ?? "");
 
-        if (orgId) {
-          localStorage.setItem(
-            "tt_active_org",
-            JSON.stringify({ user_id: user?.id ?? null, org_id: orgId })
-          );
+        if (!orgId || !locationId) {
+          setError("Account created, but setup returned missing org/location.");
+          return;
         }
-        if (locationId) {
-          localStorage.setItem("tt_active_location", locationId);
-        }
-      } catch {
+
+        // ✅ your app is reading these (you showed console: tt_active_org / tt_active_location)
+        localStorage.setItem("tt_active_location", locationId);
+        localStorage.setItem(
+          "tt_active_org",
+          JSON.stringify({ user_id: user?.id ?? null, org_id: orgId })
+        );
+      } catch (err: any) {
         setError(
-          "Account created, but setup did not finish. Please contact support."
+          `Account created, but setup did not finish. (${err?.message ?? "bootstrap failed"})`
         );
         return;
       }
@@ -311,4 +326,3 @@ export default function SignupClient() {
     </form>
   );
 }
-
