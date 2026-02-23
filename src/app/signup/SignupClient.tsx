@@ -13,6 +13,18 @@ function withWelcomeParam(next: string) {
   return url.pathname + url.search;
 }
 
+function formatBootstrapError(json: any) {
+  // Try to show something actionable, not “db-error” vibes.
+  const reason = json?.reason ? String(json.reason) : "";
+  const msg = json?.error?.message ? String(json.error.message) : "";
+  const details = json?.error?.details ? String(json.error.details) : "";
+  const hint = json?.error?.hint ? String(json.error.hint) : "";
+  const code = json?.error?.code ? String(json.error.code) : "";
+
+  const bits = [reason, msg, details, hint, code].filter(Boolean);
+  return bits.length ? bits.join(" | ") : "Setup failed (unknown error).";
+}
+
 export default function SignupClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -84,6 +96,7 @@ export default function SignupClient() {
         return;
       }
 
+      // 1) Create auth user
       const { error: signUpErr } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
@@ -100,13 +113,17 @@ export default function SignupClient() {
         return;
       }
 
+      // 2) Sign in immediately so we have a session/token
       const { error: signInErr } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
 
       if (signInErr) {
-        setError(signInErr.message || "Account created but sign-in failed. Please log in.");
+        setError(
+          signInErr.message ||
+            "Account created but sign-in failed. Please log in."
+        );
         return;
       }
 
@@ -116,6 +133,7 @@ export default function SignupClient() {
 
       const distinctId = user?.id || cleanEmail;
 
+      // ✅ only capture signup after sign-in succeeds
       posthog.identify(distinctId, {
         email: user?.email ?? cleanEmail,
         full_name: ownerName.trim(),
@@ -127,36 +145,58 @@ export default function SignupClient() {
         email: user?.email ?? cleanEmail,
       });
 
-      // ✅ IMPORTANT: send Bearer token so the server route can identify the user
+      // 3) Bootstrap org/location/team/profile using onboarding bootstrap
+      // IMPORTANT: pass Bearer token (server route may not see cookie session instantly)
       const {
         data: { session },
+        error: sessErr,
       } = await supabase.auth.getSession();
 
-      try {
-        const bootstrapRes = await fetch("/api/onboarding/bootstrap", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-          },
-          body: JSON.stringify({
-            ownerName: ownerName.trim(),
-            businessName: businessName.trim(),
-            locationName: businessName.trim(),
-          }),
-        });
-
-        const json = await bootstrapRes.json().catch(() => null);
-
-        if (!bootstrapRes.ok || !json || json.ok === false) {
-          setError("Account created, but setup did not finish. (db-error)");
-          return;
-        }
-      } catch {
-        setError("Account created, but setup did not finish. (db-error)");
+      if (sessErr || !session?.access_token) {
+        setError("Signed in, but session token missing. Try again.");
         return;
       }
 
+      const bootstrapRes = await fetch("/api/onboarding/bootstrap", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          ownerName: ownerName.trim(),
+          businessName: businessName.trim(),
+          locationName: businessName.trim(),
+        }),
+      });
+
+      const json = await bootstrapRes.json().catch(() => null);
+
+      if (!bootstrapRes.ok || !json || json.ok === false) {
+        // Show the REAL payload. No more “db-error” mystery theater.
+        const msg = json ? formatBootstrapError(json) : "Setup failed (no response body).";
+        setError(`Account created, but setup did not finish. ${msg}`);
+        return;
+      }
+
+      // 4) Persist active org/location for client-side context (workstation lock depends on it)
+      try {
+        const orgId = String(json.orgId ?? json.org_id ?? "");
+        const locationId = String(json.locationId ?? json.location_id ?? "");
+        if (orgId) {
+          localStorage.setItem(
+            "tt_active_org",
+            JSON.stringify({ user_id: user?.id ?? null, org_id: orgId })
+          );
+        }
+        if (locationId) {
+          localStorage.setItem("tt_active_location", locationId);
+        }
+      } catch {
+        // ignore
+      }
+
+      // 5) Redirect
       const nextParam = searchParams.get("next");
       const safeNext =
         nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//")
@@ -222,7 +262,11 @@ export default function SignupClient() {
       />
 
       <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={agreed}
+          onChange={(e) => setAgreed(e.target.checked)}
+        />
         <span>
           I agree to the{" "}
           <Link href="/terms" className="underline underline-offset-2">
@@ -255,7 +299,11 @@ export default function SignupClient() {
         onClick={signUpWithGoogle}
         className="flex w-full items-center justify-center gap-2 rounded-xl border bg-white py-3 text-sm font-medium hover:bg-gray-50"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="h-4 w-4">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 48 48"
+          className="h-4 w-4"
+        >
           <path
             fill="#FFC107"
             d="M43.6 20.5H42V20H24v8h11.3C33.7 32.6 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8.1 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.1-.1-2.1-.4-3.5z"

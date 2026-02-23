@@ -25,9 +25,22 @@ function deriveInitials(nameOrEmail: string) {
   return (parts[0][0] + (parts[1]?.[0] ?? "")).toUpperCase().slice(0, 4);
 }
 
+function slugify(input: string) {
+  const base = (input ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+
+  const rand = Math.random().toString(36).slice(2, 8);
+  return (base || "org") + "-" + rand;
+}
+
 /**
 * Read auth from either:
-* - Cookie session (SSR auth)
+* - Cookie session
 * - Authorization Bearer token (client localStorage session)
 */
 async function getUserFromRequest(req: NextRequest) {
@@ -51,7 +64,6 @@ async function getUserFromRequest(req: NextRequest) {
 async function ensureLocation(orgId: string, locationName?: string) {
   const name = (locationName ?? "").trim() || "Main Location";
 
-  // try existing first (avoid duplicates if user double-clicks)
   const { data: existing, error: selErr } = await supabaseAdmin
     .from("locations")
     .select("id")
@@ -72,7 +84,7 @@ async function ensureLocation(orgId: string, locationName?: string) {
 
   if (insErr) {
     // race-safe retry
-    const { data: existing2, error: selErr2 } = await supabaseAdmin
+    const { data: existing2 } = await supabaseAdmin
       .from("locations")
       .select("id")
       .eq("org_id", orgId)
@@ -81,12 +93,20 @@ async function ensureLocation(orgId: string, locationName?: string) {
       .limit(1)
       .maybeSingle();
 
-    if (selErr2) throw insErr;
     if (existing2?.id) return String(existing2.id);
     throw insErr;
   }
 
   return String(created.id);
+}
+
+function errPayload(e: any) {
+  return {
+    message: e?.message ?? null,
+    details: e?.details ?? null,
+    hint: e?.hint ?? null,
+    code: e?.code ?? null,
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -107,10 +127,20 @@ export async function POST(req: NextRequest) {
     const initials = deriveInitials(displayName || email || "Owner");
 
     // 1) Create org (ADMIN)
-    // NOTE: keep this minimal to avoid schema mismatch.
+    // Provide common required fields to satisfy NOT NULL / triggers.
+    const slug = slugify(businessName || displayName || "org");
+
+    // We don't know your exact orgs schema, so we include the usual suspects.
+    // If a column doesn't exist, Postgres will error and we will RETURN that exact error.
     const orgInsert: any = {
       name: businessName || "My Business",
+      slug,
       active: true,
+
+      // common patterns:
+      owner_user_id: user.id,
+      created_by: user.id,
+      user_id: user.id,
     };
 
     const { data: orgRow, error: orgErr } = await supabaseAdmin
@@ -121,15 +151,19 @@ export async function POST(req: NextRequest) {
 
     if (orgErr) {
       return NextResponse.json(
-        { ok: false, reason: "org-create-failed", detail: orgErr.message },
+        {
+          ok: false,
+          reason: "org-create-failed",
+          attempted: Object.keys(orgInsert),
+          error: errPayload(orgErr),
+        },
         { status: 400 }
       );
     }
 
     const orgId = String(orgRow.id);
 
-    // 2) Link user to org in user_orgs (ADMIN)  ✅ this is what was failing
-    // Ensure you have a UNIQUE constraint on (user_id, org_id) for onConflict to work.
+    // 2) Link user to org in user_orgs (ADMIN)
     const { error: uoErr } = await supabaseAdmin
       .from("user_orgs")
       .upsert(
@@ -144,7 +178,7 @@ export async function POST(req: NextRequest) {
 
     if (uoErr) {
       return NextResponse.json(
-        { ok: false, reason: "user-org-link-failed", detail: uoErr.message },
+        { ok: false, reason: "user-org-link-failed", error: errPayload(uoErr) },
         { status: 400 }
       );
     }
@@ -155,13 +189,12 @@ export async function POST(req: NextRequest) {
       locationId = await ensureLocation(orgId, locationName || businessName);
     } catch (e: any) {
       return NextResponse.json(
-        { ok: false, reason: "location-create-failed", detail: e?.message ?? String(e) },
+        { ok: false, reason: "location-create-failed", error: errPayload(e) },
         { status: 400 }
       );
     }
 
     // 4) Ensure OWNER team member for that location (ADMIN)
-    // Your UI gates role by org_id + location_id, so location_id must NOT be null.
     const { error: tmErr } = await supabaseAdmin.from("team_members").upsert(
       {
         org_id: orgId,
@@ -178,7 +211,6 @@ export async function POST(req: NextRequest) {
     );
 
     if (tmErr) {
-      // fallback if your unique is email-based
       const { error: tmErr2 } = await supabaseAdmin.from("team_members").upsert(
         {
           org_id: orgId,
@@ -196,7 +228,7 @@ export async function POST(req: NextRequest) {
 
       if (tmErr2) {
         return NextResponse.json(
-          { ok: false, reason: "team-upsert-failed", detail: tmErr2.message },
+          { ok: false, reason: "team-upsert-failed", error: errPayload(tmErr2) },
           { status: 400 }
         );
       }
@@ -215,7 +247,7 @@ export async function POST(req: NextRequest) {
 
     if (profErr) {
       return NextResponse.json(
-        { ok: false, reason: "profile-upsert-failed", detail: profErr.message },
+        { ok: false, reason: "profile-upsert-failed", error: errPayload(profErr) },
         { status: 400 }
       );
     }
@@ -229,7 +261,7 @@ export async function POST(req: NextRequest) {
 
     if (subSelErr) {
       return NextResponse.json(
-        { ok: false, reason: "billing-subscriptions-lookup-failed", detail: subSelErr.message },
+        { ok: false, reason: "billing-subscriptions-lookup-failed", error: errPayload(subSelErr) },
         { status: 400 }
       );
     }
@@ -248,7 +280,7 @@ export async function POST(req: NextRequest) {
 
       if (subInsErr) {
         return NextResponse.json(
-          { ok: false, reason: "billing-subscriptions-insert-failed", detail: subInsErr.message },
+          { ok: false, reason: "billing-subscriptions-insert-failed", error: errPayload(subInsErr) },
           { status: 400 }
         );
       }
@@ -257,7 +289,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, orgId, locationId }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json(
-      { ok: false, reason: "exception", detail: err?.message ?? String(err) },
+      { ok: false, reason: "exception", error: errPayload(err) },
       { status: 500 }
     );
   }
