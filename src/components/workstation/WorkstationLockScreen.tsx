@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useWorkstation } from "@/components/WorkstationLockProvider";
+import { useWorkstation } from "./WorkstationLockProvider";
 
 type TeamMember = {
   team_member_id: string;
@@ -18,15 +18,16 @@ export default function WorkstationLockScreen() {
     locked,
     operator,
     setOperator,
-    orgId,
-    locationId,
   } = useWorkstation();
+
+  // 👇 derive org/location from operator (correct architecture)
+  const orgId = operator?.orgId ?? null;
+  const locationId = operator?.locationId ?? null;
 
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [selected, setSelected] = useState<TeamMember | null>(null);
 
   const [mode, setMode] = useState<"enter" | "setup">("enter");
-
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [busy, setBusy] = useState(false);
@@ -131,9 +132,7 @@ export default function WorkstationLockScreen() {
         return;
       }
 
-      // Immediately unlock after setting PIN
       setOperator(json.operator);
-
       setMode("enter");
       setPin("");
       setConfirmPin("");
