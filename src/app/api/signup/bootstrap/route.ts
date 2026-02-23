@@ -10,9 +10,45 @@ function addDays(date: Date, days: number) {
   d.setDate(d.getDate() + days);
   return d;
 }
+type UserVia = "cookie" | "bearer" | null;
+
+async function getUserFromRequest(
+  req: NextRequest
+): Promise<{ user: any | null; via: UserVia }> {
+  const supabase = await getServerSupabase();
+
+  // 1) Cookie session
+  const { data: cookieAuth, error: cookieErr } = await supabase.auth.getUser();
+  if (!cookieErr && cookieAuth?.user) {
+    return { user: cookieAuth.user, via: "cookie" };
+  }
+
+  // 2) Bearer token fallback
+  const auth = req.headers.get("authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
+
+  if (token) {
+    const { data: tokenAuth, error: tokenErr } = await supabase.auth.getUser(token);
+    if (!tokenErr && tokenAuth?.user) {
+      return { user: tokenAuth.user, via: "bearer" };
+    }
+  }
+
+  return { user: null, via: null };
+}
 
 export async function POST(req: NextRequest) {
   try {
+    // ✅ DO NOT create orgs/billing rows unless we know who the user is.
+    const { user } = await getUserFromRequest(req);
+
+    if (!user) {
+      return NextResponse.json(
+        { ok: false as const, reason: "no-auth-session-for-billing" },
+        { status: 401 }
+      );
+    }
+
     const body = (await req.json().catch(() => null)) as
       | { ownerName?: string; businessName?: string }
       | null;
@@ -26,22 +62,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result, { status: 500 });
     }
 
-    // Must have a logged-in user (cookie session) for userId
-    const supabase = await getServerSupabase();
-    const {
-      data: { user },
-      error: userErr,
-    } = await supabase.auth.getUser();
-
-    if (userErr || !user) {
-      return NextResponse.json(
-        { ok: false as const, reason: "no-auth-session-for-billing" },
-        { status: 401 }
-      );
-    }
-
-    const orgId: string | undefined =
-      (result as any).orgId ?? (result as any).org_id;
+    const orgId: string | undefined = (result as any).orgId ?? (result as any).org_id;
 
     if (!orgId) {
       return NextResponse.json(
@@ -50,48 +71,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2) Ensure trial subscription row exists for this org
-    const { data: existingSub, error: existingErr } = await supabaseAdmin
+    // 2) Ensure trial subscription row exists for this org (idempotent)
+    //    NOTE: Requires a UNIQUE constraint on billing_subscriptions.org_id to be perfect.
+    //    If you don't have one, add it. Otherwise, race conditions can double insert.
+    const trialEndsAt = addDays(new Date(), 14).toISOString();
+
+    const { error: upsertErr } = await supabaseAdmin
       .from("billing_subscriptions")
-      .select("id,status,trial_ends_at,current_period_end")
-      .eq("org_id", orgId)
-      .maybeSingle();
-
-    if (existingErr) {
-      return NextResponse.json(
+      .upsert(
         {
-          ok: false as const,
-          reason: "billing-subscriptions-lookup-failed",
-          detail: existingErr.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    if (!existingSub) {
-      const trialEndsAt = addDays(new Date(), 14);
-
-      const { error: insertErr } = await supabaseAdmin
-        .from("billing_subscriptions")
-        .insert({
           org_id: orgId,
           user_id: user.id,
           status: "trialing",
-          trial_ends_at: trialEndsAt.toISOString(),
-          current_period_end: trialEndsAt.toISOString(),
+          trial_ends_at: trialEndsAt,
+          current_period_end: trialEndsAt,
           cancel_at_period_end: false,
-        });
+        },
+        { onConflict: "org_id" }
+      );
 
-      if (insertErr) {
-        return NextResponse.json(
-          {
-            ok: false as const,
-            reason: "billing-subscriptions-insert-failed",
-            detail: insertErr.message,
-          },
-          { status: 500 }
-        );
-      }
+    if (upsertErr) {
+      return NextResponse.json(
+        {
+          ok: false as const,
+          reason: "billing-subscriptions-upsert-failed",
+          detail: upsertErr.message,
+        },
+        { status: 500 }
+      );
     }
 
     // 3) Send welcome email (do not block signup if email fails)
@@ -119,12 +126,7 @@ export async function POST(req: NextRequest) {
       }
     } catch (emailErr) {
       console.error("[signup/bootstrap] welcome email failed", emailErr);
-      // Intentionally NOT failing signup for email issues.
     }
-
-    // NOTE: We are NOT inserting billing_customers here because
-    // stripe_customer_id is NOT NULL in your schema.
-    // Create billing_customers ONLY when you have a real Stripe customer id.
 
     return NextResponse.json({ ...result, billingOk: true });
   } catch (err: any) {
