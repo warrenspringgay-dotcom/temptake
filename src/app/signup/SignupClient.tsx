@@ -106,14 +106,10 @@ export default function SignupClient() {
       });
 
       if (signInErr) {
-        setError(
-          signInErr.message ||
-            "Account created but sign-in failed. Please log in."
-        );
+        setError(signInErr.message || "Account created but sign-in failed. Please log in.");
         return;
       }
 
-      // ✅ capture signup after sign-in succeeds
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -131,30 +127,17 @@ export default function SignupClient() {
         email: user?.email ?? cleanEmail,
       });
 
-      // ✅ IMPORTANT: server routes can't read supabase-js localStorage session,
-      // so we must pass the access_token as Bearer. Otherwise you get 400/401
-      // and then you’re “staff” forever. Fun.
+      // ✅ IMPORTANT: send Bearer token so the server route can identify the user
       const {
         data: { session },
       } = await supabase.auth.getSession();
-
-      const accessToken = session?.access_token ?? null;
-
-      if (!accessToken) {
-        setError("Account created, but session token missing. Please log in.");
-        return;
-      }
-
-      // ✅ call the onboarding bootstrap that creates org/location + owner + trial
-      let orgId: string | null = null;
-      let locationId: string | null = null;
 
       try {
         const bootstrapRes = await fetch("/api/onboarding/bootstrap", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${accessToken}`,
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
           },
           body: JSON.stringify({
             ownerName: ownerName.trim(),
@@ -166,34 +149,11 @@ export default function SignupClient() {
         const json = await bootstrapRes.json().catch(() => null);
 
         if (!bootstrapRes.ok || !json || json.ok === false) {
-          const detail =
-            (json && (json.detail || json.details || json.reason)) || null;
-          setError(
-            `Account created, but setup did not finish.${
-              detail ? ` (${String(detail)})` : ""
-            }`
-          );
+          setError("Account created, but setup did not finish. (db-error)");
           return;
         }
-
-        orgId = String(json.orgId ?? "");
-        locationId = String(json.locationId ?? "");
-
-        if (!orgId || !locationId) {
-          setError("Account created, but setup returned missing org/location.");
-          return;
-        }
-
-        // ✅ your app is reading these (you showed console: tt_active_org / tt_active_location)
-        localStorage.setItem("tt_active_location", locationId);
-        localStorage.setItem(
-          "tt_active_org",
-          JSON.stringify({ user_id: user?.id ?? null, org_id: orgId })
-        );
-      } catch (err: any) {
-        setError(
-          `Account created, but setup did not finish. (${err?.message ?? "bootstrap failed"})`
-        );
+      } catch {
+        setError("Account created, but setup did not finish. (db-error)");
         return;
       }
 
@@ -262,11 +222,7 @@ export default function SignupClient() {
       />
 
       <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={agreed}
-          onChange={(e) => setAgreed(e.target.checked)}
-        />
+        <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
         <span>
           I agree to the{" "}
           <Link href="/terms" className="underline underline-offset-2">
@@ -299,11 +255,7 @@ export default function SignupClient() {
         onClick={signUpWithGoogle}
         className="flex w-full items-center justify-center gap-2 rounded-xl border bg-white py-3 text-sm font-medium hover:bg-gray-50"
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 48 48"
-          className="h-4 w-4"
-        >
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="h-4 w-4">
           <path
             fill="#FFC107"
             d="M43.6 20.5H42V20H24v8h11.3C33.7 32.6 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8.1 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.1-.1-2.1-.4-3.5z"
