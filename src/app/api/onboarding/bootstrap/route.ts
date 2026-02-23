@@ -217,6 +217,8 @@ export async function POST(req: NextRequest) {
       select: "user_id",
     });
 
+
+    
     // ========== 5) Update profile context (optional) ==========
     // If profiles table has these columns, great; if not, tolerantUpsert strips.
     try {
