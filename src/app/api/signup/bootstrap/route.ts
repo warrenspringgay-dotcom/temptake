@@ -166,26 +166,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
- const { error: ownerErr } = await supabaseAdmin.from("team_members").upsert(
-  {
-    org_id: orgId,
-    location_id: locationId, // ✅ NOT NULL
-    user_id: user.id,
-    email: email || null,
-    name: displayName,
-    initials,
-    role: "owner",
-    active: true,
-  },
-  { onConflict: "org_id,location_id,user_id" }
-);
 
-if (ownerErr) {
-  return NextResponse.json(
-    { ok: false as const, reason: "team-member-upsert-failed", detail: ownerErr.message },
-    { status: 500 }
-  );
-}
 
     // 3) Ensure trial subscription row exists for this org (idempotent)
     const { data: existingSub, error: existingErr } = await supabaseAdmin
