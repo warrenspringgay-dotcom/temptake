@@ -19,17 +19,22 @@ export async function POST() {
     }
 
     // -------------------------------------------------
-    // 1️⃣ Check if org already exists for this user
+    // 1️⃣ Prevent duplicate bootstrap
     // -------------------------------------------------
 
     const { data: existingMember } = await supabaseAdmin
       .from("team_members")
-      .select("org_id")
+      .select("org_id, location_id")
       .eq("user_id", user.id)
       .maybeSingle();
 
-    if (existingMember?.org_id) {
-      return NextResponse.json({ ok: true, alreadyBootstrapped: true });
+    if (existingMember?.org_id && existingMember?.location_id) {
+      return NextResponse.json({
+        ok: true,
+        orgId: existingMember.org_id,
+        locationId: existingMember.location_id,
+        alreadyBootstrapped: true,
+      });
     }
 
     // -------------------------------------------------
@@ -39,7 +44,7 @@ export async function POST() {
     const { data: org, error: orgError } = await supabaseAdmin
       .from("organisations")
       .insert({
-        name: user.user_metadata?.company_name ?? "My Organisation",
+        name: user.user_metadata?.business_name ?? "My Organisation",
         created_by: user.id,
       })
       .select()
@@ -78,12 +83,11 @@ export async function POST() {
     }
 
     // -------------------------------------------------
-    // 4️⃣ 🔒 ENSURE OWNER TEAM MEMBER EXISTS
+    // 4️⃣ Create Owner Team Member (MANDATORY)
     // -------------------------------------------------
 
     const displayName =
       user.user_metadata?.full_name ??
-      user.user_metadata?.name ??
       user.email ??
       "Owner";
 
@@ -98,7 +102,7 @@ export async function POST() {
       .from("team_members")
       .insert({
         org_id: org.id,
-        location_id: location.id, // CRITICAL
+        location_id: location.id,
         user_id: user.id,
         name: displayName,
         initials,
@@ -119,17 +123,12 @@ export async function POST() {
       );
     }
 
-    // -------------------------------------------------
-    // 5️⃣ Create Trial Subscription Row (if applicable)
-    // -------------------------------------------------
-
-    await supabaseAdmin.from("billing_subscriptions").insert({
-      org_id: org.id,
-      status: "trialing",
-      current_period_start: new Date(),
+    return NextResponse.json({
+      ok: true,
+      orgId: org.id,
+      locationId: location.id,
     });
 
-    return NextResponse.json({ ok: true });
   } catch (err: any) {
     return NextResponse.json(
       { ok: false, reason: "unexpected-error", detail: err?.message },
