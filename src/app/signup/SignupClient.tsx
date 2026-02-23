@@ -1,247 +1,314 @@
 // src/app/signup/SignupClient.tsx
 "use client";
 
-import React, { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
+import posthog from "posthog-js";
 
-type BootstrapOk = {
-  ok: true;
-  orgId: string;
-  locationId: string;
-};
-
-function setCookie(name: string, value: string, days = 365) {
-  const maxAge = days * 24 * 60 * 60;
-  document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(
-    value
-  )}; Path=/; Max-Age=${maxAge}; SameSite=Lax; Secure`;
+function withWelcomeParam(next: string) {
+  const url = new URL(next, "http://local");
+  url.searchParams.set("welcome", "1");
+  return url.pathname + url.search;
 }
 
 export default function SignupClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [ownerName, setOwnerName] = useState("");
   const [businessName, setBusinessName] = useState("");
-  const [locationName, setLocationName] = useState("");
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [agreed, setAgreed] = useState(false);
 
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const isSubmitting = useRef(false);
 
-  const canSubmit = useMemo(() => {
-    return (
-      email.trim().length > 3 &&
-      password.length >= 6 &&
-      businessName.trim().length > 1
-    );
-  }, [email, password, businessName]);
+  async function signUpWithGoogle() {
+    setError(null);
 
-  async function ensureSessionAfterSignup(): Promise<{
-    accessToken: string;
-    userId: string;
-    userEmail: string | null;
-  }> {
-    // 1) Try signUp
-    const signUpRes = await supabase.auth.signUp({
-      email: email.trim(),
-      password,
-      options: {
-        data: {
-          full_name: ownerName.trim() || null,
-        },
-      },
+    if (!agreed) {
+      setError("Please accept the Terms of Use and Privacy Policy.");
+      return;
+    }
+
+    const nextParam = searchParams.get("next");
+    const safeNext =
+      nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//")
+        ? nextParam
+        : "/dashboard";
+
+    const redirectTo = `${window.location.origin}/auth/callback?next=/setup&after=${encodeURIComponent(
+      withWelcomeParam(safeNext)
+    )}`;
+
+    const { error: oauthErr } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
     });
 
-    if (signUpRes.error) throw signUpRes.error;
-
-    // 2) If session is returned, great. If not, try immediate sign-in.
-    let session = signUpRes.data.session;
-
-    if (!session) {
-      const signInRes = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (signInRes.error) {
-        // If email confirmation is enabled, this is expected.
-        throw new Error(
-          "Account created. Check your email to confirm your address, then log in."
-        );
-      }
-      session = signInRes.data.session;
-    }
-
-    if (!session?.access_token || !session.user?.id) {
-      throw new Error("No auth session available after signup.");
-    }
-
-    return {
-      accessToken: session.access_token,
-      userId: session.user.id,
-      userEmail: session.user.email ?? null,
-    };
-  }
-
-  async function bootstrapOrg(accessToken: string): Promise<BootstrapOk> {
-    const res = await fetch("/api/onboarding/bootstrap", {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        ownerName: ownerName.trim() || undefined,
-        businessName: businessName.trim() || undefined,
-        locationName: locationName.trim() || undefined,
-      }),
-    });
-
-    const data = await res.json().catch(() => null);
-
-    if (!res.ok || !data?.ok) {
-      const reason = data?.reason ?? "bootstrap-failed";
-      const details = data?.details ?? data?.detail ?? "";
-      throw new Error(
-        details ? `${reason}: ${String(details)}` : String(reason)
-      );
-    }
-
-    const orgId = String(data.orgId ?? "");
-    const locationId = String(data.locationId ?? "");
-    if (!orgId || !locationId) {
-      throw new Error("Bootstrap succeeded but missing orgId/locationId.");
-    }
-
-    return { ok: true, orgId, locationId };
+    if (oauthErr) setError(oauthErr.message);
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!canSubmit || loading) return;
+    setError(null);
 
-    setLoading(true);
-    setErr(null);
+    if (isSubmitting.current) return;
+    isSubmitting.current = true;
+
+    const cleanEmail = email.trim();
 
     try {
-      const auth = await ensureSessionAfterSignup();
-      const boot = await bootstrapOrg(auth.accessToken);
+      if (!agreed) {
+        setError("Please accept the Terms of Use and Privacy Policy.");
+        return;
+      }
+      if (!ownerName.trim()) {
+        setError("Your name is required.");
+        return;
+      }
+      if (!businessName.trim()) {
+        setError("Business name is required.");
+        return;
+      }
+      if (!cleanEmail || !password) {
+        setError("Email and password are required.");
+        return;
+      }
+      if (password !== confirm) {
+        setError("Passwords do not match.");
+        return;
+      }
 
-      // ✅ Browser context for your existing client helpers
-      localStorage.setItem("tt_active_location", boot.locationId);
-      localStorage.setItem(
-        "tt_active_org",
-        JSON.stringify({ user_id: auth.userId, org_id: boot.orgId })
-      );
+      const { error: signUpErr } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password,
+        options: {
+          data: {
+            full_name: ownerName.trim(),
+            business_name: businessName.trim(),
+          },
+        },
+      });
 
-      // ✅ Middleware context (server-side route gating)
-      setCookie("tt_active_org", boot.orgId);
-      setCookie("tt_active_location", boot.locationId);
+      if (signUpErr) {
+        setError(signUpErr.message);
+        return;
+      }
 
-      router.push("/dashboard?welcome=1");
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
+      const { error: signInErr } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password,
+      });
+
+      if (signInErr) {
+        setError(
+          signInErr.message ||
+            "Account created but sign-in failed. Please log in."
+        );
+        return;
+      }
+
+      // ✅ only capture signup after sign-in succeeds
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const distinctId = user?.id || cleanEmail;
+
+      posthog.identify(distinctId, {
+        email: user?.email ?? cleanEmail,
+        full_name: ownerName.trim(),
+        business_name: businessName.trim(),
+      });
+
+      posthog.capture("user_signed_up", {
+        method: "email",
+        email: user?.email ?? cleanEmail,
+      });
+
+      // ✅ BOOTSTRAP: create org + first location + owner team_member with location_id + trial
+      // ✅ AND write localStorage context so role gating + workstation queries work immediately
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        const bootstrapRes = await fetch("/api/onboarding/bootstrap", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(session?.access_token
+              ? { Authorization: `Bearer ${session.access_token}` }
+              : {}),
+          },
+          body: JSON.stringify({
+            ownerName: ownerName.trim(),
+            businessName: businessName.trim(),
+            locationName: businessName.trim(),
+          }),
+          credentials: "include",
+        });
+
+        const json = (await bootstrapRes.json().catch(() => null)) as any;
+
+        if (!bootstrapRes.ok || !json || json.ok === false) {
+          setError(
+            "Account created, but setup did not finish. Please contact support."
+          );
+          return;
+        }
+
+        const orgId = String(json.orgId ?? json.org_id ?? "");
+        const locationId = String(json.locationId ?? json.location_id ?? "");
+
+        if (orgId) {
+          localStorage.setItem(
+            "tt_active_org",
+            JSON.stringify({ user_id: user?.id ?? null, org_id: orgId })
+          );
+        }
+        if (locationId) {
+          localStorage.setItem("tt_active_location", locationId);
+        }
+      } catch {
+        setError(
+          "Account created, but setup did not finish. Please contact support."
+        );
+        return;
+      }
+
+      const nextParam = searchParams.get("next");
+      const safeNext =
+        nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//")
+          ? nextParam
+          : "/dashboard";
+
+      const redirect = withWelcomeParam(safeNext);
+      router.replace(redirect);
+      router.refresh();
+    } catch (err: any) {
+      setError(err?.message ?? "Something went wrong.");
     } finally {
-      setLoading(false);
+      isSubmitting.current = false;
     }
   }
 
   return (
-    <div className="mx-auto w-full max-w-md px-4 py-10">
-      <h1 className="text-2xl font-semibold">Create your TempTake account</h1>
-      <p className="mt-1 text-sm text-slate-600">
-        You’re here because you enjoy pain. Let’s get you set up.
-      </p>
-
-      <form onSubmit={onSubmit} className="mt-6 space-y-4">
-        <div>
-          <label className="text-sm font-medium">Owner name</label>
-          <input
-            className="mt-1 w-full rounded-md border px-3 py-2"
-            value={ownerName}
-            onChange={(e) => setOwnerName(e.target.value)}
-            placeholder="Warren Springay"
-            autoComplete="name"
-          />
+    <form onSubmit={onSubmit} className="space-y-4">
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
         </div>
+      )}
 
-        <div>
-          <label className="text-sm font-medium">Business name *</label>
-          <input
-            className="mt-1 w-full rounded-md border px-3 py-2"
-            value={businessName}
-            onChange={(e) => setBusinessName(e.target.value)}
-            placeholder="Pier Vista"
-            required
-          />
-        </div>
+      <input
+        className="w-full rounded-xl border p-3"
+        type="text"
+        value={ownerName}
+        placeholder="Your name"
+        onChange={(e) => setOwnerName(e.target.value)}
+      />
 
-        <div>
-          <label className="text-sm font-medium">Location name</label>
-          <input
-            className="mt-1 w-full rounded-md border px-3 py-2"
-            value={locationName}
-            onChange={(e) => setLocationName(e.target.value)}
-            placeholder="Main Location"
-          />
-          <p className="mt-1 text-xs text-slate-500">
-            Optional. If blank, we’ll create/use the first location.
-          </p>
-        </div>
+      <input
+        className="w-full rounded-xl border p-3"
+        type="text"
+        value={businessName}
+        placeholder="Business name"
+        onChange={(e) => setBusinessName(e.target.value)}
+      />
 
-        <hr className="my-2 border-slate-200" />
+      <input
+        className="w-full rounded-xl border p-3"
+        type="email"
+        value={email}
+        placeholder="Email"
+        onChange={(e) => setEmail(e.target.value)}
+      />
 
-        <div>
-          <label className="text-sm font-medium">Email *</label>
-          <input
-            className="mt-1 w-full rounded-md border px-3 py-2"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@company.com"
-            autoComplete="email"
-            required
-          />
-        </div>
+      <input
+        className="w-full rounded-xl border p-3"
+        type="password"
+        value={password}
+        placeholder="Password"
+        onChange={(e) => setPassword(e.target.value)}
+      />
 
-        <div>
-          <label className="text-sm font-medium">Password *</label>
-          <input
-            type="password"
-            className="mt-1 w-full rounded-md border px-3 py-2"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="At least 6 characters"
-            autoComplete="new-password"
-            required
-          />
-        </div>
+      <input
+        className="w-full rounded-xl border p-3"
+        type="password"
+        value={confirm}
+        placeholder="Confirm password"
+        onChange={(e) => setConfirm(e.target.value)}
+      />
 
-        {err ? (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-            {err}
-          </div>
-        ) : null}
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={agreed}
+          onChange={(e) => setAgreed(e.target.checked)}
+        />
+        <span>
+          I agree to the{" "}
+          <Link href="/terms" className="underline underline-offset-2">
+            Terms of Use
+          </Link>{" "}
+          and{" "}
+          <Link href="/privacy" className="underline underline-offset-2">
+            Privacy Policy
+          </Link>
+          .
+        </span>
+      </label>
 
-        <button
-          type="submit"
-          disabled={!canSubmit || loading}
-          className={[
-            "w-full rounded-md px-4 py-2 text-sm font-medium",
-            loading || !canSubmit
-              ? "cursor-not-allowed bg-slate-200 text-slate-500"
-              : "bg-black text-white hover:bg-slate-900",
-          ].join(" ")}
+      <button
+        type="submit"
+        disabled={isSubmitting.current}
+        className="w-full rounded-xl bg-black py-3 text-white disabled:opacity-50"
+      >
+        {isSubmitting.current ? "Creating account..." : "Create account"}
+      </button>
+
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1 bg-gray-200" />
+        <div className="text-xs text-gray-500">or</div>
+        <div className="h-px flex-1 bg-gray-200" />
+      </div>
+
+      <button
+        type="button"
+        onClick={signUpWithGoogle}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border bg-white py-3 text-sm font-medium hover:bg-gray-50"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 48 48"
+          className="h-4 w-4"
         >
-          {loading ? "Creating account..." : "Create account"}
-        </button>
-
-        <p className="text-xs text-slate-500">
-          By continuing you agree to the Terms and Privacy Policy.
-        </p>
-      </form>
-    </div>
+          <path
+            fill="#FFC107"
+            d="M43.6 20.5H42V20H24v8h11.3C33.7 32.6 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8.1 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.1-.1-2.1-.4-3.5z"
+          />
+          <path
+            fill="#FF3D00"
+            d="M6.3 14.7l6.6 4.8C14.7 16 19 12 24 12c3.1 0 5.9 1.2 8.1 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4c-7.7 0-14.4 4.3-17.7 10.7z"
+          />
+          <path
+            fill="#4CAF50"
+            d="M24 44c5.1 0 9.8-2 13.4-5.2l-6.2-5.2C29.1 35.1 26.6 36 24 36c-5.2 0-9.6-3.3-11.2-7.9l-6.5 5C9.5 39.7 16.2 44 24 44z"
+          />
+          <path
+            fill="#1976D2"
+            d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.1 5.6l6.2 5.2C36.8 40.4 44 36 44 24c0-1.1-.1-2.1-.4-3.5z"
+          />
+        </svg>
+        Continue with Google
+      </button>
+    </form>
   );
 }
+
