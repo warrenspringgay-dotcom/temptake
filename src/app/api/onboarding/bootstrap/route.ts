@@ -1,5 +1,5 @@
 // src/app/api/onboarding/bootstrap/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { ensureOrgForCurrentUser } from "@/lib/ensureOrg";
 import { getServerSupabase } from "@/lib/supabaseServer";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -26,19 +26,24 @@ function deriveInitials(nameOrEmail: string) {
   return (parts[0][0] + (parts[1]?.[0] ?? "")).toUpperCase().slice(0, 4);
 }
 
-async function getUserFromRequest(req: Request) {
+/**
+* Your client is using supabase-js (localStorage session) and calling a Next.js route.
+* Server routes cannot magically read your browser localStorage.
+* So we accept either:
+*  - Cookie session (normal)
+*  - Authorization: Bearer <access_token> (critical right after signup)
+*/
+async function getUserFromRequest(req: NextRequest) {
   // 1) Cookie session
   const supabase = await getServerSupabase();
   const { data: cookieAuth, error: cookieErr } = await supabase.auth.getUser();
-
   if (!cookieErr && cookieAuth?.user) {
     return { user: cookieAuth.user, via: "cookie" as const };
   }
 
-  // 2) Bearer token (useful right after sign-up)
+  // 2) Bearer token
   const auth = req.headers.get("authorization") || "";
   const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
-
   if (token) {
     const { data: tokenAuth, error: tokenErr } = await supabase.auth.getUser(token);
     if (!tokenErr && tokenAuth?.user) {
@@ -50,36 +55,14 @@ async function getUserFromRequest(req: Request) {
 }
 
 async function ensureFirstLocation(orgId: string, locationName?: string) {
-  const desiredName = (locationName ?? "").trim();
+  const name = (locationName ?? "").trim() || "Main Location";
 
-  // If a name is provided, try to find it first (idempotent, because humans double-click everything)
-  if (desiredName) {
-    const { data: existingByName, error: findErr } = await supabaseAdmin
-      .from("locations")
-      .select("id")
-      .eq("org_id", orgId)
-      .ilike("name", desiredName)
-      .limit(1)
-      .maybeSingle();
-
-    if (findErr) throw findErr;
-    if (existingByName?.id) return String(existingByName.id);
-
-    const { data: locRow, error: locErr } = await supabaseAdmin
-      .from("locations")
-      .insert({ org_id: orgId, name: desiredName, active: true })
-      .select("id")
-      .single();
-
-    if (locErr) throw locErr;
-    return String(locRow.id);
-  }
-
-  // Otherwise: find an existing location
+  // 1) Try to find existing by (org_id, name)
   const { data: existing, error: selErr } = await supabaseAdmin
     .from("locations")
     .select("id")
     .eq("org_id", orgId)
+    .ilike("name", name)
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
@@ -87,18 +70,32 @@ async function ensureFirstLocation(orgId: string, locationName?: string) {
   if (selErr) throw selErr;
   if (existing?.id) return String(existing.id);
 
-  // None exists, create a default
+  // 2) Create it
   const { data: created, error: insErr } = await supabaseAdmin
     .from("locations")
-    .insert({ org_id: orgId, name: "Main Location", active: true })
+    .insert({ org_id: orgId, name, active: true })
     .select("id")
     .single();
 
-  if (insErr) throw insErr;
-  return String(created.id);
+  if (!insErr && created?.id) return String(created.id);
+
+  // 3) If insert failed (duplicate, race), re-select and return
+  const { data: existing2, error: selErr2 } = await supabaseAdmin
+    .from("locations")
+    .select("id")
+    .eq("org_id", orgId)
+    .ilike("name", name)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (selErr2) throw insErr || selErr2;
+  if (existing2?.id) return String(existing2.id);
+
+  throw insErr || new Error("location-create-failed");
 }
 
-async function ensureOwnerTeamMember(params: {
+async function upsertOwnerTeamMember(args: {
   orgId: string;
   locationId: string;
   userId: string;
@@ -106,210 +103,167 @@ async function ensureOwnerTeamMember(params: {
   name: string;
   initials: string;
 }) {
-  const { orgId, locationId, userId, email, name, initials } = params;
+  const row = {
+    org_id: args.orgId,
+    location_id: args.locationId,
+    user_id: args.userId,
+    email: args.email,
+    name: args.name,
+    initials: args.initials,
+    role: "owner",
+    active: true,
+    login_enabled: true,
+  };
 
-  // IMPORTANT:
-  // Do NOT use upsert with onConflict unless you 100% have the matching unique constraint.
-  // We'll do: find -> update else insert.
-  const { data: existing, error: findErr } = await supabaseAdmin
-    .from("team_members")
-    .select("id, role")
-    .eq("org_id", orgId)
-    .eq("location_id", locationId)
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
+  // First attempt: by user_id (best)
+  const { error: e1 } = await supabaseAdmin.from("team_members").upsert(row, {
+    onConflict: "org_id,location_id,user_id",
+  });
 
-  if (findErr) throw findErr;
+  if (!e1) return;
 
-  if (existing?.id) {
-    const { error: updErr } = await supabaseAdmin
-      .from("team_members")
-      .update({
-        email,
-        name,
-        initials,
-        role: "owner",
-        active: true,
-        login_enabled: true,
-      })
-      .eq("id", existing.id);
+  // Second attempt: some schemas unique on email instead
+  const { error: e2 } = await supabaseAdmin.from("team_members").upsert(row, {
+    onConflict: "org_id,location_id,email",
+  });
 
-    if (updErr) throw updErr;
-    return String(existing.id);
-  }
+  if (!e2) return;
 
-  // Secondary fallback: sometimes older rows are keyed by email, not user_id
-  if (email) {
-    const { data: existingByEmail, error: emailFindErr } = await supabaseAdmin
-      .from("team_members")
-      .select("id, user_id")
-      .eq("org_id", orgId)
-      .eq("location_id", locationId)
-      .ilike("email", email)
-      .limit(1)
-      .maybeSingle();
-
-    if (emailFindErr) throw emailFindErr;
-
-    if (existingByEmail?.id) {
-      const { error: updErr2 } = await supabaseAdmin
-        .from("team_members")
-        .update({
-          user_id: userId, // backfill
-          name,
-          initials,
-          role: "owner",
-          active: true,
-          login_enabled: true,
-        })
-        .eq("id", existingByEmail.id);
-
-      if (updErr2) throw updErr2;
-      return String(existingByEmail.id);
-    }
-  }
-
-  const { data: created, error: insErr } = await supabaseAdmin
-    .from("team_members")
-    .insert({
-      org_id: orgId,
-      location_id: locationId,
-      user_id: userId,
-      email,
-      name,
-      initials,
-      role: "owner",
-      active: true,
-      login_enabled: true,
-      pin_enabled: false,
-    })
-    .select("id")
-    .single();
-
-  if (insErr) throw insErr;
-  return String(created.id);
+  // If both fail, bubble the second error (usually more relevant)
+  throw e2;
 }
 
-async function ensureTrialSubscription(orgId: string, userId: string) {
-  const { data: existing, error: selErr } = await supabaseAdmin
-    .from("billing_subscriptions")
-    .select("id")
-    .eq("org_id", orgId)
-    .maybeSingle();
-
-  if (selErr) throw selErr;
-
-  if (!existing) {
-    const trialEndsAt = addDays(new Date(), 14);
-
-    const { error: insErr } = await supabaseAdmin.from("billing_subscriptions").insert({
-      org_id: orgId,
-      user_id: userId,
-      status: "trialing",
-      trial_ends_at: trialEndsAt.toISOString(),
-      current_period_end: trialEndsAt.toISOString(),
-      cancel_at_period_end: false,
-    });
-
-    if (insErr) throw insErr;
-  }
-}
-
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const { user } = await getUserFromRequest(req);
 
     if (!user) {
-      return NextResponse.json({ ok: false, reason: "no-auth" }, { status: 401 });
+      return NextResponse.json(
+        { ok: false as const, reason: "no-auth", detail: "No cookie session or bearer token" },
+        { status: 401 }
+      );
     }
 
-    const body = await req.json().catch(() => ({} as any));
+    const body = (await req.json().catch(() => ({}))) as any;
+
     const ownerName = String(body.ownerName ?? "").trim();
     const businessName = String(body.businessName ?? "").trim();
     const locationName = String(body.locationName ?? "").trim();
 
-    // 1) Ensure org
+    // 1) ensure org
     const ensured = await ensureOrgForCurrentUser({
       ownerName: ownerName || undefined,
       businessName: businessName || undefined,
     });
 
-    if (!ensured || (ensured as any).ok === false) {
+    if (!ensured?.ok) {
       return NextResponse.json(
-        { ok: false, reason: "ensure-org-failed", detail: (ensured as any)?.reason ?? null },
+        {
+          ok: false as const,
+          reason: "ensure-org-failed",
+          detail: (ensured as any)?.reason ?? (ensured as any)?.detail ?? "unknown",
+        },
         { status: 400 }
       );
     }
 
-    const orgId =
-      String((ensured as any).orgId ?? (ensured as any).org_id ?? "").trim();
-
+    const orgId: string = String((ensured as any).orgId ?? (ensured as any).org_id ?? "");
     if (!orgId) {
-      return NextResponse.json({ ok: false, reason: "missing-org-id" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false as const, reason: "missing-org-id" },
+        { status: 500 }
+      );
     }
 
-    const email = (user.email ?? "").trim().toLowerCase();
-    const displayName = ownerName || (email ? email.split("@")[0] : "Owner");
-    const initials = deriveInitials(displayName || email);
+    const email = (user.email ?? "").trim().toLowerCase() || null;
+    const displayName =
+      ownerName || (email ? email.split("@")[0] : "") || businessName || "Owner";
+    const initials = deriveInitials(displayName || email || "Owner");
 
-    // 2) Ensure location
+    // 2) ensure at least one location
     let locationId: string;
     try {
-      locationId = await ensureFirstLocation(orgId, locationName || businessName || undefined);
+      locationId = await ensureFirstLocation(orgId, locationName || businessName);
     } catch (e: any) {
       return NextResponse.json(
-        { ok: false, reason: "location-create-failed", detail: e?.message ?? String(e) },
+        { ok: false as const, reason: "location-create-failed", detail: e?.message ?? String(e) },
         { status: 400 }
       );
     }
 
-    // 3) Ensure owner team member exists FOR THIS LOCATION
+    // 3) upsert owner team member in that location
     try {
-      await ensureOwnerTeamMember({
+      await upsertOwnerTeamMember({
         orgId,
         locationId,
         userId: user.id,
-        email: email || null,
-        name: displayName || "Owner",
+        email,
+        name: displayName,
         initials,
       });
     } catch (e: any) {
       return NextResponse.json(
-        { ok: false, reason: "team-member-ensure-failed", detail: e?.message ?? String(e) },
+        { ok: false as const, reason: "team-upsert-failed", detail: e?.message ?? String(e) },
         { status: 400 }
       );
     }
 
-    // 4) Ensure trial exists (don’t brick onboarding if your billing table has opinions)
-    try {
-      await ensureTrialSubscription(orgId, user.id);
-    } catch (e: any) {
-      // We still return ok:true because role/location is the real blocker for UX.
-      console.error("[onboarding/bootstrap] trial ensure failed", e);
-    }
+    // 4) profile: set org + active location
+    const { error: profErr } = await supabaseAdmin.from("profiles").upsert(
+      {
+        id: user.id,
+        org_id: orgId,
+        full_name: ownerName || null,
+        active_location_id: locationId,
+      },
+      { onConflict: "id" }
+    );
 
-    // 5) Best-effort: keep profile aligned (don’t fail if schema differs)
-    try {
-      await supabaseAdmin.from("profiles").upsert(
-        {
-          id: user.id,
-          org_id: orgId,
-          full_name: ownerName || null,
-          active_location_id: locationId,
-        },
-        { onConflict: "id" }
+    if (profErr) {
+      return NextResponse.json(
+        { ok: false as const, reason: "profile-upsert-failed", detail: profErr.message },
+        { status: 400 }
       );
-    } catch (e) {
-      console.error("[onboarding/bootstrap] profile upsert failed", e);
     }
 
-    // 6) Return ids for client localStorage + immediate gating context
+    // 5) trial subscription (idempotent)
+    const { data: existingSub, error: existingErr } = await supabaseAdmin
+      .from("billing_subscriptions")
+      .select("id")
+      .eq("org_id", orgId)
+      .maybeSingle();
+
+    if (existingErr) {
+      return NextResponse.json(
+        { ok: false as const, reason: "billing-subscriptions-lookup-failed", detail: existingErr.message },
+        { status: 400 }
+      );
+    }
+
+    if (!existingSub) {
+      const trialEndsAt = addDays(new Date(), 14);
+
+      const { error: insErr } = await supabaseAdmin.from("billing_subscriptions").insert({
+        org_id: orgId,
+        user_id: user.id,
+        status: "trialing",
+        trial_ends_at: trialEndsAt.toISOString(),
+        current_period_end: trialEndsAt.toISOString(),
+        cancel_at_period_end: false,
+      });
+
+      if (insErr) {
+        return NextResponse.json(
+          { ok: false as const, reason: "billing-subscriptions-insert-failed", detail: insErr.message },
+          { status: 400 }
+        );
+      }
+    }
+
     return NextResponse.json({ ok: true, orgId, locationId }, { status: 200 });
-  } catch (e: any) {
-    console.error("[onboarding/bootstrap] unexpected error", e);
+  } catch (err: any) {
     return NextResponse.json(
-      { ok: false, reason: "exception", detail: e?.message ?? String(e) },
+      { ok: false as const, reason: "exception", detail: err?.message ?? String(err) },
       { status: 500 }
     );
   }
