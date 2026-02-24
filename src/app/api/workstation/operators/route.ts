@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
       .select("id,name,initials,role,active,login_enabled,location_id")
       .eq("org_id", orgId)
       .eq("active", true)
-      .eq("login_enabled", true)
+      .eq("pin_enabled", true)
       .or(`location_id.eq.${locationId},location_id.is.null`)
       .order("name", { ascending: true });
 
