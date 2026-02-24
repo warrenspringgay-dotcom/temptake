@@ -6,237 +6,203 @@ import React, {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 
-type Operator = {
+import { usePathname } from "next/navigation";
+
+import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
+
+/** Keep this shape consistent across the app */
+export type Operator = {
   teamMemberId: string;
   orgId: string;
   locationId: string;
-  name: string;
-  initials: string | null;
-  role: string | null;
+  name?: string | null;
+  initials?: string | null;
+  role?: string | null;
+};
+
+type ActingContext = {
+  orgId: string | null;
+  locationId: string | null;
+  acted_by_team_member_id: string | null;
+  acted_by_name: string | null;
+  acted_by_initials: string | null;
+  acted_by_role: string | null;
 };
 
 type Ctx = {
   locked: boolean;
   operator: Operator | null;
-
-  // UI helpers
-  openLockModal: () => void;
-
-  // State transitions
-  lockNow: () => void;
+  setOperator: (op: Operator | null) => void;
   clearOperator: () => void;
-  setOperator: (op: Operator) => void;
 
-  // For inserts/updates
-  getActingContextClient: () => {
-    acted_by_team_member_id: string | null;
-    acted_by_initials: string | null;
-  };
+  /** Used by FAB */
+  openLockModal: () => void;
+  lockNow: () => void;
+
+  /** Used in other parts of app (e.g. useActingClient) */
+  getActingContextClient: () => ActingContext;
 };
 
-const WorkstationCtx = createContext<Ctx | null>(null);
+const WorkstationLockContext = createContext<Ctx | null>(null);
 
-const LS_OPERATOR = "tt_active_operator_v1";
-const LS_LOCKED = "tt_ws_locked_v1";
-const IDLE_MS = 3 * 60 * 1000; // 3 minutes
+const LS_OPERATOR = "tt_workstation_operator";
+const LS_FORCE_LOCK = "tt_force_workstation_lock";
 
-function safeJsonParse<T>(s: string | null): T | null {
-  if (!s) return null;
+/** small helpers */
+function readJson<T>(key: string): T | null {
   try {
-    return JSON.parse(s) as T;
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as T;
   } catch {
     return null;
   }
 }
+function writeJson(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
+function removeKey(key: string) {
+  try {
+    localStorage.removeItem(key);
+  } catch {}
+}
 
+/**
+* Provider owns:
+* - persisted operator
+* - "force lock" (manual lock)
+* - active org/location lookup (async helpers)
+* - exposing openLockModal/lockNow for FAB
+*
+* It does NOT change your LockScreen UI. It just supports it properly.
+*/
 export function WorkstationLockProvider({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [locked, setLocked] = useState(false);
+  const pathname = usePathname();
+
   const [operator, setOperatorState] = useState<Operator | null>(null);
+  const [forceLocked, setForceLocked] = useState<boolean>(false);
 
-  const idleTimer = useRef<number | null>(null);
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [locationId, setLocationId] = useState<string | null>(null);
 
-  const clearIdle = useCallback(() => {
-    if (idleTimer.current) window.clearTimeout(idleTimer.current);
-    idleTimer.current = null;
+  // Hydrate operator + force lock from localStorage (client-only)
+  useEffect(() => {
+    const op = readJson<Operator>(LS_OPERATOR);
+    if (op?.teamMemberId && op?.orgId && op?.locationId) setOperatorState(op);
+
+    const fl = readJson<boolean>(LS_FORCE_LOCK);
+    if (typeof fl === "boolean") setForceLocked(fl);
   }, []);
 
-  const armIdle = useCallback(() => {
-    clearIdle();
-    idleTimer.current = window.setTimeout(() => {
-      // idle lock should behave like manual lock (persist + cookie clear)
-      setLocked(true);
-      try {
-        localStorage.setItem(LS_LOCKED, "1");
-        window.dispatchEvent(new Event("tt-workstation-changed"));
-      } catch {}
-      fetch("/api/workstation/clear", { method: "POST" }).catch(() => {});
-    }, IDLE_MS);
-  }, [clearIdle]);
-
-  const bump = useCallback(() => {
-    // No operator means locked by definition
-    if (!operator) return;
-    // Don't unlock by wiggling
-    if (locked) return;
-    armIdle();
-  }, [operator, locked, armIdle]);
-
-  const openLockModal = useCallback(() => {
+  // Refresh active context (async helpers) on mount + route changes
+  const refreshActiveContext = useCallback(async () => {
     try {
-      window.dispatchEvent(new Event("tt-open-workstation-lock"));
-    } catch {}
+      const o = await getActiveOrgIdClient();
+      const l = await getActiveLocationIdClient();
+      setOrgId(o ?? null);
+      setLocationId(l ?? null);
+      return { orgId: o ?? null, locationId: l ?? null };
+    } catch {
+      setOrgId(null);
+      setLocationId(null);
+      return { orgId: null, locationId: null };
+    }
   }, []);
 
-  const lockNow = useCallback(() => {
-    setLocked(true);
-    try {
-      localStorage.setItem(LS_LOCKED, "1");
-      window.dispatchEvent(new Event("tt-workstation-changed"));
-    } catch {}
+  useEffect(() => {
+    void refreshActiveContext();
+  }, [refreshActiveContext, pathname]);
 
-    // Clear server operator cookie/session so middleware/gating can react
-    fetch("/api/workstation/clear", { method: "POST" }).catch(() => {});
+  // Persist operator changes
+  const setOperator = useCallback((op: Operator | null) => {
+    setOperatorState(op);
+    if (op) writeJson(LS_OPERATOR, op);
+    else removeKey(LS_OPERATOR);
   }, []);
 
   const clearOperator = useCallback(() => {
-    setOperatorState(null);
-    setLocked(true);
+    setOperator(null);
+  }, [setOperator]);
 
-    try {
-      localStorage.removeItem(LS_OPERATOR);
-      localStorage.setItem(LS_LOCKED, "1");
-      window.dispatchEvent(new Event("tt-workstation-changed"));
-    } catch {}
+  // Manual lock, used by FAB or inactivity timers
+  const lockNow = useCallback(() => {
+    setForceLocked(true);
+    writeJson(LS_FORCE_LOCK, true);
 
-    fetch("/api/workstation/clear", { method: "POST" }).catch(() => {});
+    // Tell the lock screen (which listens globally) to open itself
+    window.dispatchEvent(new CustomEvent("tt-open-workstation-lock"));
   }, []);
 
-  const setOperator = useCallback((op: Operator) => {
-    setOperatorState(op);
-    setLocked(false);
-
-    try {
-      localStorage.setItem(LS_OPERATOR, JSON.stringify(op));
-      localStorage.removeItem(LS_LOCKED);
-      window.dispatchEvent(new Event("tt-workstation-changed"));
-    } catch {}
-
-    // Ensure middleware + nav gating can read the operator role via cookie
-    fetch("/api/workstation/set", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        teamMemberId: op.teamMemberId,
-        orgId: op.orgId,
-        locationId: op.locationId,
-        role: op.role,
-        initials: op.initials,
-        name: op.name,
-      }),
-    }).catch(() => {});
+  // Open modal without forcing locked state (FAB "unlock workstation" button)
+  const openLockModal = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("tt-open-workstation-lock"));
   }, []);
 
-  const getActingContextClient = useCallback(() => {
+  // When should we consider workstation locked?
+  // - if forced locked OR no operator selected
+  // - but only when active org+location exist (otherwise onboarding gets bricked)
+  const locked = useMemo(() => {
+    if (!orgId || !locationId) return false;
+    if (forceLocked) return true;
+    return operator == null;
+  }, [forceLocked, operator, orgId, locationId]);
+
+  // Clear "force lock" as soon as we have a valid operator in the current context
+  useEffect(() => {
+    if (!forceLocked) return;
+    if (!operator) return;
+    if (!orgId || !locationId) return;
+
+    // If operator belongs to current org/location, consider workstation unlocked
+    if (operator.orgId === orgId && operator.locationId === locationId) {
+      setForceLocked(false);
+      writeJson(LS_FORCE_LOCK, false);
+    }
+  }, [forceLocked, operator, orgId, locationId]);
+
+  const getActingContextClient = useCallback((): ActingContext => {
     return {
+      orgId,
+      locationId,
       acted_by_team_member_id: operator?.teamMemberId ?? null,
-      acted_by_initials:
-        (operator?.initials ?? "").trim().toUpperCase() || null,
+      acted_by_name: operator?.name ?? null,
+      acted_by_initials: operator?.initials ?? null,
+      acted_by_role: operator?.role ?? null,
     };
-  }, [operator]);
+  }, [operator, orgId, locationId]);
 
-  // Load from localStorage on mount (operator + locked flag)
-  useEffect(() => {
-    const savedOp = safeJsonParse<Operator>(localStorage.getItem(LS_OPERATOR));
-    const savedLocked = localStorage.getItem(LS_LOCKED) === "1";
-
-    if (savedOp?.teamMemberId) {
-      setOperatorState(savedOp);
-      setLocked(savedLocked ? true : false);
-
-      // If locked, ensure server cookie is cleared so middleware agrees
-      if (savedLocked) {
-        fetch("/api/workstation/clear", { method: "POST" }).catch(() => {});
-      }
-    } else {
-      setOperatorState(null);
-      setLocked(true);
-      try {
-        localStorage.setItem(LS_LOCKED, "1");
-      } catch {}
-    }
-  }, []);
-
-  // Global event listeners for idle tracking
-  useEffect(() => {
-    const events = [
-      "mousemove",
-      "mousedown",
-      "keydown",
-      "touchstart",
-      "scroll",
-    ] as const;
-    const handler = () => bump();
-    events.forEach((e) =>
-      window.addEventListener(e, handler, { passive: true })
-    );
-    return () =>
-      events.forEach((e) => window.removeEventListener(e, handler as any));
-  }, [bump]);
-
-  // Arm timer when operator set/unlocked
-  useEffect(() => {
-    clearIdle();
-
-    if (!operator) {
-      setLocked(true);
-      try {
-        localStorage.setItem(LS_LOCKED, "1");
-      } catch {}
-      return;
-    }
-
-    if (!locked) armIdle();
-
-    return () => clearIdle();
-  }, [operator, locked, armIdle, clearIdle]);
-
-  const value = useMemo<Ctx>(
+  const value: Ctx = useMemo(
     () => ({
       locked,
       operator,
+      setOperator,
+      clearOperator,
       openLockModal,
       lockNow,
-      clearOperator,
-      setOperator,
       getActingContextClient,
     }),
-    [
-      locked,
-      operator,
-      openLockModal,
-      lockNow,
-      clearOperator,
-      setOperator,
-      getActingContextClient,
-    ]
+    [locked, operator, setOperator, clearOperator, openLockModal, lockNow, getActingContextClient]
   );
 
   return (
-    <WorkstationCtx.Provider value={value}>{children}</WorkstationCtx.Provider>
+    <WorkstationLockContext.Provider value={value}>
+      {children}
+    </WorkstationLockContext.Provider>
   );
 }
 
 export function useWorkstation() {
-  const ctx = useContext(WorkstationCtx);
-  if (!ctx)
-    throw new Error("useWorkstation must be used inside WorkstationLockProvider");
+  const ctx = useContext(WorkstationLockContext);
+  if (!ctx) throw new Error("useWorkstation must be used within WorkstationLockProvider");
   return ctx;
 }

@@ -1,74 +1,77 @@
+// app/api/workstation/operators/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
 export async function GET(req: NextRequest) {
-  try {
-    const url = new URL(req.url);
-    const orgId = url.searchParams.get("orgId");
-    const locationId = url.searchParams.get("locationId");
+  const supabase = await getServerSupabase();
 
-    if (!orgId || !locationId) {
-      return NextResponse.json(
-        { ok: false, reason: "missing_params" },
-        { status: 400 }
-      );
-    }
+  const { data: auth, error: authErr } = await supabase.auth.getUser();
+  if (authErr || !auth?.user) {
+    return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
+  }
 
-    // IMPORTANT:
-    // We must return operators EVEN IF they have no PIN row yet.
-    // So: left join team_member_pins, don't inner join / pin_hash filter.
-    const { data, error } = await supabaseAdmin
-      .from("team_members")
-      .select(
-        `
-        id,
-        name,
-        initials,
-        role,
-        active,
-        login_enabled,
-        pin_enabled,
-        location_id,
-        team_member_pins!left (
-          pin_hash
-        )
-      `
-      )
+  const { searchParams } = new URL(req.url);
+  const orgId = searchParams.get("orgId");
+  const locationId = searchParams.get("locationId");
+
+  if (!orgId || !locationId) {
+    return NextResponse.json(
+      { ok: false, reason: "missing_org_or_location" },
+      { status: 400 }
+    );
+  }
+
+  // 1) Load all active, login-enabled team members for this org + location
+  // IMPORTANT: We do NOT require a pin row to exist.
+  const { data: members, error: membersErr } = await supabase
+    .from("team_members")
+    .select("id, name, initials, role, pin_enabled, login_enabled, active")
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .eq("active", true)
+    .eq("login_enabled", true)
+    .order("name", { ascending: true });
+
+  if (membersErr) {
+    return NextResponse.json(
+      { ok: false, reason: "members_query_failed", details: membersErr.message },
+      { status: 500 }
+    );
+  }
+
+  const memberList = members ?? [];
+  const memberIds = memberList.map((m) => m.id);
+
+  // 2) Load pins (if any exist) for those members (separate table)
+  let pinsByMemberId = new Set<string>();
+  if (memberIds.length > 0) {
+    const { data: pins, error: pinsErr } = await supabase
+      .from("team_member_pins")
+      .select("team_member_id")
       .eq("org_id", orgId)
-      .eq("location_id", locationId)
-      .eq("active", true)
-      .eq("login_enabled", true)
-      .eq("pin_enabled", true)
-      .order("name", { ascending: true });
+      .in("team_member_id", memberIds);
 
-    if (error) {
+    if (pinsErr) {
       return NextResponse.json(
-        { ok: false, reason: "query_failed", error: error.message },
+        { ok: false, reason: "pins_query_failed", details: pinsErr.message },
         { status: 500 }
       );
     }
 
-    const operators =
-      (data ?? []).map((m: any) => ({
-        id: m.id,
-        name: m.name ?? null,
-        initials: m.initials ?? null,
-        role: m.role ?? null,
-        // Optional: useful for debugging/UI later, harmless if ignored
-        has_pin: Array.isArray(m.team_member_pins)
-          ? Boolean(m.team_member_pins[0]?.pin_hash)
-          : Boolean(m.team_member_pins?.pin_hash),
-      })) ?? [];
-
-    return NextResponse.json({
-      ok: true,
-      lockRequired: operators.length > 0,
-      operators,
-    });
-  } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, reason: "server_error", error: e?.message ?? String(e) },
-      { status: 500 }
-    );
+    for (const p of pins ?? []) {
+      if (p?.team_member_id) pinsByMemberId.add(p.team_member_id);
+    }
   }
+
+  // 3) Shape for UI
+  const operators = memberList.map((m) => ({
+    id: m.id,
+    name: m.name ?? null,
+    initials: m.initials ?? null,
+    role: m.role ?? null,
+    pin_enabled: !!m.pin_enabled,
+    has_pin: pinsByMemberId.has(m.id),
+  }));
+
+  return NextResponse.json({ ok: true, operators });
 }
