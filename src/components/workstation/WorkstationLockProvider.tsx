@@ -11,46 +11,55 @@ import React, {
   useState,
 } from "react";
 import { usePathname } from "next/navigation";
-import type { Session } from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
+
 import WorkstationLockScreen from "@/components/workstation/WorkstationLockScreen";
 
-const LS_FORCE = "tt_workstation_forced";
-const LS_OPERATOR = "tt_workstation_operator";
+/** LocalStorage keys (do not rename) */
+const LS_FORCE_LOCKED = "tt_workstation_force_locked"; // "true" | "false"
+const LS_OPERATOR = "tt_workstation_operator"; // JSON Operator
 
 export type Operator = {
   teamMemberId: string;
   orgId: string;
-  // location can be null in your data model
-  locationId: string | null;
+  locationId: string;
   name: string | null;
   initials: string | null;
   role: string | null;
+};
+
+export type ActingContext = {
+  acted_by_team_member_id: string | null;
+  acted_by_initials: string | null;
 };
 
 type Ctx = {
   operator: Operator | null;
   locked: boolean;
 
-  // modal control
+  /** show the PIN modal */
   openLockModal: () => void;
   closeLockModal: () => void;
 
-  // lock/unlock
+  /** hard lock right now */
   lockNow: () => void;
+
+  /** unlock the workstation (operator must already be set) */
   unlockWorkstation: () => void;
 
-  // operator management
+  /** set/clear operator */
   setOperator: (op: Operator | null) => void;
+  clearOperator: () => void;
 
-  // org/location context (async)
-  getActiveContext: () => Promise<{ orgId: string | null; locationId: string | null }>;
+  /** used by other UI that needs “acting by” metadata */
+  getActingContextClient: () => ActingContext;
 };
 
-const C = createContext<Ctx | null>(null);
+const Ctx = createContext<Ctx | null>(null);
 
 function safeJsonParse<T>(s: string | null): T | null {
   if (!s) return null;
@@ -61,202 +70,266 @@ function safeJsonParse<T>(s: string | null): T | null {
   }
 }
 
-function readBoolLS(key: string, fallback = false) {
-  if (typeof window === "undefined") return fallback;
-  const v = window.localStorage.getItem(key);
-  if (v === null) return fallback;
-  return v === "true";
+function readLockedFromLS(): boolean {
+  try {
+    return localStorage.getItem(LS_FORCE_LOCKED) === "true";
+  } catch {
+    return false;
+  }
 }
 
-function writeBoolLS(key: string, v: boolean) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(key, v ? "true" : "false");
+function writeLockedToLS(v: boolean) {
+  try {
+    localStorage.setItem(LS_FORCE_LOCKED, v ? "true" : "false");
+  } catch {}
 }
 
-function readOperatorLS(): Operator | null {
+function readOperatorFromLS(): Operator | null {
   if (typeof window === "undefined") return null;
-  return safeJsonParse<Operator>(window.localStorage.getItem(LS_OPERATOR));
+  return safeJsonParse<Operator>(localStorage.getItem(LS_OPERATOR));
 }
 
-function writeOperatorLS(op: Operator | null) {
-  if (typeof window === "undefined") return;
-  if (!op) window.localStorage.removeItem(LS_OPERATOR);
-  else window.localStorage.setItem(LS_OPERATOR, JSON.stringify(op));
+function writeOperatorToLS(op: Operator | null) {
+  try {
+    if (!op) localStorage.removeItem(LS_OPERATOR);
+    else localStorage.setItem(LS_OPERATOR, JSON.stringify(op));
+  } catch {}
+}
+
+async function readOrgAndLocation(): Promise<{ orgId: string | null; locationId: string | null }> {
+  try {
+    // These are async in your branch, so we await them.
+    const [orgId, locationId] = await Promise.all([
+      getActiveOrgIdClient(),
+      getActiveLocationIdClient(),
+    ]);
+    return { orgId, locationId };
+  } catch {
+    return { orgId: null, locationId: null };
+  }
 }
 
 export function WorkstationLockProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  // Never render the lock overlay on auth routes.
-  const isAuthRoute =
-    pathname === "/login" ||
-    pathname.startsWith("/login/") ||
-    pathname === "/signup" ||
-    pathname.startsWith("/signup/") ||
-    pathname === "/forgot-password" ||
-    pathname.startsWith("/forgot-password/");
-
-  const [operator, _setOperator] = useState<Operator | null>(() => readOperatorLS());
-  const [forcedLocked, setForcedLocked] = useState<boolean>(() => readBoolLS(LS_FORCE, false));
-  const [showLockModal, setShowLockModal] = useState(false);
   const [hasSession, setHasSession] = useState<boolean>(false);
+
+  const [locked, setLocked] = useState<boolean>(false);
+  const [operator, setOperatorState] = useState<Operator | null>(null);
+
+  const [showLockModal, setShowLockModal] = useState<boolean>(false);
+
+  // ✅ org/location are async → keep in state
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [locationId, setLocationId] = useState<string | null>(null);
 
   const bootedRef = useRef(false);
 
+  const isAuthPage =
+    pathname === "/login" ||
+    pathname?.startsWith("/login") ||
+    pathname === "/signup" ||
+    pathname?.startsWith("/signup");
+
   const setOperator = useCallback((op: Operator | null) => {
-    _setOperator(op);
-    writeOperatorLS(op);
+    setOperatorState(op);
+    writeOperatorToLS(op);
   }, []);
 
-  const getActiveContext = useCallback(async () => {
-    const orgId = await getActiveOrgIdClient();
-    const locationId = await getActiveLocationIdClient();
-    return { orgId, locationId };
-  }, []);
-
-  // Locked definition: either explicitly forced, or no operator set.
-  // But do NOT treat as locked on auth routes or when no session exists.
-  const locked = useMemo(() => {
-    if (isAuthRoute) return false;
-    if (!hasSession) return false;
-    return forcedLocked || !operator;
-  }, [forcedLocked, operator, hasSession, isAuthRoute]);
-
-  const openLockModal = useCallback(() => {
-    if (isAuthRoute) return;
-    setShowLockModal(true);
-  }, [isAuthRoute]);
+  const clearOperator = useCallback(() => {
+    setOperator(null);
+  }, [setOperator]);
 
   const closeLockModal = useCallback(() => {
     setShowLockModal(false);
   }, []);
 
-  const lockNow = useCallback(() => {
-    if (isAuthRoute) return;
-    setForcedLocked(true);
-    writeBoolLS(LS_FORCE, true);
+  // ✅ Refresh org/location when route changes (or after login redirect)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { orgId: o, locationId: l } = await readOrgAndLocation();
+      if (!alive) return;
+      setOrgId(o);
+      setLocationId(l);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [pathname]);
+
+  const openLockModal = useCallback(() => {
+    if (isAuthPage) return;
+    if (!hasSession) return;
+    if (!orgId || !locationId) return;
     setShowLockModal(true);
-  }, [isAuthRoute]);
+  }, [hasSession, isAuthPage, orgId, locationId]);
+
+  const lockNow = useCallback(() => {
+    if (isAuthPage) return;
+    if (!hasSession) return;
+    if (!orgId || !locationId) return;
+
+    writeLockedToLS(true);
+    setLocked(true);
+    setShowLockModal(true);
+  }, [hasSession, isAuthPage, orgId, locationId]);
 
   const unlockWorkstation = useCallback(() => {
-    setForcedLocked(false);
-    writeBoolLS(LS_FORCE, false);
+    writeLockedToLS(false);
+    setLocked(false);
     setShowLockModal(false);
   }, []);
 
-  // --- Session tracking (fixes split-brain between pages/FAB) ---
+  const getActingContextClient = useCallback((): ActingContext => {
+    const op = operator;
+    return {
+      acted_by_team_member_id: op?.teamMemberId ?? null,
+      acted_by_initials: op?.initials ? String(op.initials).trim().toUpperCase() : null,
+    };
+  }, [operator]);
+
+  /**
+   * Session tracking
+   */
   useEffect(() => {
-    let mounted = true;
+    let unsub: { unsubscribe: () => void } | null = null;
 
-    async function initSession() {
+    (async () => {
       const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
       setHasSession(!!data.session);
-    }
 
-    initSession();
+      const { data: sub } = supabase.auth.onAuthStateChange(
+        (_event: AuthChangeEvent, session: Session | null) => {
+          setHasSession(!!session);
 
-    const { data: sub } = supabase.auth.onAuthStateChange(
-      (_event: string, session: Session | null) => {
-        setHasSession(!!session);
-
-        // If user logs out, nuke operator/lock so we don't block login UI.
-        if (!session) {
-          setOperator(null);
-          setForcedLocked(false);
-          writeBoolLS(LS_FORCE, false);
-          setShowLockModal(false);
+          if (!session) {
+            // signing out: clear operator + unlock + close modal
+            writeLockedToLS(false);
+            setLocked(false);
+            setShowLockModal(false);
+            setOperator(null);
+          } else {
+            // signing in: refresh org/location after redirect settles
+            setTimeout(async () => {
+              const { orgId: o, locationId: l } = await readOrgAndLocation();
+              setOrgId(o);
+              setLocationId(l);
+            }, 0);
+          }
         }
-      }
-    );
+      );
+
+      unsub = sub.subscription;
+    })();
 
     return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
+      try {
+        unsub?.unsubscribe();
+      } catch {}
     };
   }, [setOperator]);
 
-  // --- Auto-set operator from auth user ---
-  // If user is logged in and org is selected, auto assign operator to matching team_member.user_id.
+  /**
+   * Boot: load persisted state (but never show modal on /login).
+   */
   useEffect(() => {
-    if (isAuthRoute) return;
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+
+    const lsLocked = readLockedFromLS();
+    const lsOp = readOperatorFromLS();
+
+    setLocked(lsLocked);
+    setOperatorState(lsOp);
+  }, []);
+
+  /**
+   * Auto-assign operator from auth user (kills split-lock).
+   */
+  useEffect(() => {
+    if (isAuthPage) return;
     if (!hasSession) return;
+    if (!orgId || !locationId) return;
 
-    // Run once on boot, and also when org/location changes via storage.
-    if (!bootedRef.current) bootedRef.current = true;
+    let alive = true;
 
-    let cancelled = false;
+    (async () => {
+      const { data: sess } = await supabase.auth.getSession();
+      const userId = sess.session?.user?.id;
+      if (!userId || !alive) return;
 
-    async function autoAssignOperatorIfPossible() {
-      // if already have operator and not forced locked, don't fight the user
-      if (operator && !forcedLocked) return;
-
-      const { data: s } = await supabase.auth.getSession();
-      const userId = s.session?.user?.id;
-      if (!userId) return;
-
-      const { orgId, locationId } = await getActiveContext();
-      if (!orgId) return; // can’t assign without org
-
-      // match user -> team_member in this org, optionally for location if set
-      let q = supabase
+      const { data, error } = await supabase
         .from("team_members")
-        .select("id, name, initials, role, org_id, location_id")
+        .select("id,name,initials,role,org_id,location_id,active")
         .eq("org_id", orgId)
-        .eq("user_id", userId)
         .eq("active", true)
+        .eq("user_id", userId)
+        .or(`location_id.eq.${locationId},location_id.is.null`)
+        .order("location_id", { ascending: false })
         .limit(1);
 
-      if (locationId) q = q.eq("location_id", locationId);
-
-      const { data, error } = await q;
-
-      if (cancelled) return;
+      if (!alive) return;
       if (error) return;
+
       const row = data?.[0];
       if (!row?.id) return;
 
       setOperator({
         teamMemberId: row.id,
         orgId,
-        locationId: (row.location_id ?? locationId ?? null) as string | null,
+        locationId,
         name: row.name ?? null,
-        initials: (row.initials ?? null) as string | null,
-        role: (row.role ?? null) as string | null,
+        initials: row.initials ?? null,
+        role: row.role ?? null,
       });
 
-      // Auth login should feel "unlocked" unless user explicitly forced lock.
-      setForcedLocked(false);
-      writeBoolLS(LS_FORCE, false);
-      setShowLockModal(false);
-    }
-
-    autoAssignOperatorIfPossible();
-
-    // React to org/location changes from other tabs or your UI
-    const onStorage = (e: StorageEvent) => {
-      if (!e.key) return;
-      if (e.key.includes("tt_active_org") || e.key.includes("tt_active_location")) {
-        autoAssignOperatorIfPossible();
-      }
-    };
-    window.addEventListener("storage", onStorage);
+      unlockWorkstation();
+    })();
 
     return () => {
-      cancelled = true;
-      window.removeEventListener("storage", onStorage);
+      alive = false;
     };
-  }, [hasSession, isAuthRoute, operator, forcedLocked, getActiveContext, setOperator]);
+  }, [hasSession, isAuthPage, orgId, locationId, setOperator, unlockWorkstation]);
 
-  // If locked becomes true, ensure lock modal is visible (prevents “FAB locked but no screen”)
+  /**
+   * Modal visibility rules:
+   * - Never on /login
+   * - Only when locked + authed + org/location chosen
+   */
   useEffect(() => {
-    if (isAuthRoute) return;
-    if (!hasSession) return;
-    if (locked) setShowLockModal(true);
-  }, [locked, isAuthRoute, hasSession]);
+    if (isAuthPage) {
+      setShowLockModal(false);
+      return;
+    }
+    if (!hasSession) {
+      setShowLockModal(false);
+      return;
+    }
+    if (!locked || !orgId || !locationId) {
+      setShowLockModal(false);
+      return;
+    }
+    setShowLockModal(true);
+  }, [locked, hasSession, isAuthPage, orgId, locationId]);
 
   const value: Ctx = useMemo(
     () => ({
+      operator,
+      locked,
+
+      openLockModal,
+      closeLockModal,
+
+      lockNow,
+      unlockWorkstation,
+
+      setOperator,
+      clearOperator,
+
+      getActingContextClient,
+    }),
+    [
       operator,
       locked,
       openLockModal,
@@ -264,25 +337,21 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
       lockNow,
       unlockWorkstation,
       setOperator,
-      getActiveContext,
-    }),
-    [operator, locked, openLockModal, closeLockModal, lockNow, unlockWorkstation, setOperator, getActiveContext]
+      clearOperator,
+      getActingContextClient,
+    ]
   );
 
   return (
-    <C.Provider value={value}>
+    <Ctx.Provider value={value}>
       {children}
-
-      {/* Overlay lives here so it always exists when FAB triggers lock */}
-      {!isAuthRoute && hasSession && showLockModal ? (
-        <WorkstationLockScreen onClose={closeLockModal} />
-      ) : null}
-    </C.Provider>
+      {showLockModal ? <WorkstationLockScreen onClose={closeLockModal} /> : null}
+    </Ctx.Provider>
   );
 }
 
-export function useWorkstation() {
-  const ctx = useContext(C);
+export function useWorkstation(): Ctx {
+  const ctx = useContext(Ctx);
   if (!ctx) throw new Error("useWorkstation must be used within <WorkstationLockProvider>");
   return ctx;
 }

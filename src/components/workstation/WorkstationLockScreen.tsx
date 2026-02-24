@@ -2,8 +2,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
-
+import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
 type OperatorRow = {
@@ -11,8 +11,6 @@ type OperatorRow = {
   name: string | null;
   initials: string | null;
   role: string | null;
-  pin_enabled?: boolean;
-  has_pin?: boolean;
 };
 
 function initialsFromName(name?: string | null) {
@@ -26,24 +24,41 @@ function initialsFromName(name?: string | null) {
   return out || null;
 }
 
-async function fetchOperators(orgId: string, locationId: string | null) {
-  const url = new URL("/api/workstation/operators", window.location.origin);
-  url.searchParams.set("orgId", orgId);
-  if (locationId) url.searchParams.set("locationId", locationId);
-
-  const res = await fetch(url.toString(), { method: "GET" });
-  const json = await res.json().catch(() => ({} as any));
-  return { res, json };
+async function fetchOperators(orgId: string, locationId: string): Promise<OperatorRow[]> {
+  const url = `/api/workstation/operators?orgId=${encodeURIComponent(orgId)}&locationId=${encodeURIComponent(
+    locationId
+  )}`;
+  const res = await fetch(url, { method: "GET" });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json?.ok) return [];
+  return (json.operators ?? []) as OperatorRow[];
 }
 
-async function attemptUnlockWithPin(orgId: string, locationId: string | null, teamMemberId: string, pin: string) {
+async function attemptUnlockWithPin(params: {
+  orgId: string;
+  locationId: string;
+  teamMemberId: string;
+  pin: string;
+}) {
   const res = await fetch("/api/workstation/unlock", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ orgId, locationId, teamMemberId, pin }),
+    body: JSON.stringify(params),
   });
-  const json = await res.json().catch(() => ({} as any));
+  const json = await res.json().catch(() => ({}));
   return { res, json };
+}
+
+async function readOrgAndLocation(): Promise<{ orgId: string | null; locationId: string | null }> {
+  try {
+    const [orgId, locationId] = await Promise.all([
+      getActiveOrgIdClient(),
+      getActiveLocationIdClient(),
+    ]);
+    return { orgId, locationId };
+  } catch {
+    return { orgId: null, locationId: null };
+  }
 }
 
 export default function WorkstationLockScreen({ onClose }: { onClose: () => void }) {
@@ -51,93 +66,103 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
 
   const [operators, setOperators] = useState<OperatorRow[]>([]);
   const [selected, setSelected] = useState<OperatorRow | null>(null);
+
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // ✅ org/location are async → state
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [locationId, setLocationId] = useState<string | null>(null);
+
   const lastAttemptRef = useRef<string>("");
 
-  const selectedId = selected?.id ?? null;
-
-  // Auto-select previous operator if present
+  // Load org/location
   useEffect(() => {
-    if (!ws.operator?.teamMemberId) return;
-    const id = ws.operator.teamMemberId;
-    const found = operators.find((o) => o.id === id);
-    if (found) setSelected(found);
-  }, [operators, ws.operator?.teamMemberId]);
+    let alive = true;
+    (async () => {
+      const { orgId: o, locationId: l } = await readOrgAndLocation();
+      if (!alive) return;
+      setOrgId(o);
+      setLocationId(l);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
-  // Load operators when modal mounts or org/location changes
+  // Load operators once we have org/location
   useEffect(() => {
-    let cancelled = false;
+    let alive = true;
 
-    async function load() {
+    (async () => {
       setMsg(null);
-      setOperators([]);
-      setSelected(null);
 
-      const { orgId, locationId } = await ws.getActiveContext();
-
-      if (!orgId) {
-        setMsg("No active organisation selected.");
+      if (!orgId || !locationId) {
+        setOperators([]);
+        setSelected(null);
+        setMsg("No active organisation/location selected.");
         return;
       }
 
-      const { res, json } = await fetchOperators(orgId, locationId);
-      if (cancelled) return;
+      const list = await fetchOperators(orgId, locationId);
+      if (!alive) return;
 
-      if (!res.ok || !json?.ok) {
-        setMsg(json?.reason || "Failed to load operators.");
-        return;
-      }
-
-      const list = (json.operators ?? []) as OperatorRow[];
       setOperators(list);
 
-      // keep selection if possible
-      const prevId = ws.operator?.teamMemberId;
-      if (prevId) {
-        const found = list.find((o) => o.id === prevId);
-        if (found) setSelected(found);
-      }
-    }
+      // Auto-select previous operator if present
+      const lastId = ws.operator?.teamMemberId ?? null;
+      const found = lastId ? list.find((o) => o.id === lastId) : null;
+      setSelected(found ?? list[0] ?? null);
+    })();
 
-    load();
     return () => {
-      cancelled = true;
+      alive = false;
     };
-    // ws.getActiveContext is stable (memoized in provider)
-  }, [ws]);
+  }, [orgId, locationId, ws.operator?.teamMemberId]);
 
-  const canUnlock = useMemo(() => {
-    if (busy) return false;
-    if (!selectedId) return false;
-    if (pin.trim().length !== 4) return false;
-    return true;
-  }, [busy, selectedId, pin]);
+  // Clear pin when changing operator
+  useEffect(() => {
+    setPin("");
+    setMsg(null);
+  }, [selected?.id]);
+
+  const selectedLabel = useMemo(() => {
+    if (!selected) return "No operators available.";
+    return `${selected.name ?? "Unnamed"}${selected.role ? ` (${selected.role})` : ""}`;
+  }, [selected]);
 
   async function handleUnlock() {
-    if (!canUnlock || !selected) return;
+    if (busy) return;
 
-    setMsg(null);
+    if (!orgId || !locationId) {
+      setMsg("No active organisation/location selected.");
+      return;
+    }
+    if (!selected?.id) {
+      setMsg("Select an operator.");
+      return;
+    }
+    const p = pin.trim();
+    if (p.length !== 4) {
+      setMsg("Enter 4 digits.");
+      return;
+    }
 
-    const pin4 = pin.trim();
-    const attemptKey = `${selected.id}:${pin4}`;
-
-    // Prevent “stuck loop” by avoiding repeated identical attempts while still busy
-    if (lastAttemptRef.current === attemptKey && busy) return;
+    const attemptKey = `${selected.id}:${p}`;
+    if (lastAttemptRef.current === attemptKey) return;
     lastAttemptRef.current = attemptKey;
 
     setBusy(true);
+    setMsg(null);
 
     try {
-      const { orgId, locationId } = await ws.getActiveContext();
-      if (!orgId) {
-        setMsg("No active organisation selected.");
-        return;
-      }
-
-      const { res, json } = await attemptUnlockWithPin(orgId, locationId, selected.id, pin4);
+      const { res, json } = await attemptUnlockWithPin({
+        orgId,
+        locationId,
+        teamMemberId: selected.id,
+        pin: p,
+      });
 
       if (res.ok && json?.ok) {
         ws.setOperator({
@@ -162,138 +187,136 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
       const reason =
         json?.reason ||
         json?.message ||
-        (res.status === 401 ? "Incorrect PIN." : null);
-
-      setMsg(reason || "Incorrect PIN.");
+        (res.status === 401 ? "Incorrect PIN." : null) ||
+        "Unlock failed.";
+      setMsg(String(reason));
       setPin("");
-    } catch (e) {
+    } catch {
       setMsg("Unlock failed.");
+      setPin("");
     } finally {
       setBusy(false);
+      lastAttemptRef.current = "";
     }
   }
 
   // Auto-submit on 4 digits
   useEffect(() => {
-    if (pin.trim().length === 4 && selectedId && !busy) {
+    if (!selected?.id) return;
+    if (pin.trim().length === 4 && !busy) {
       handleUnlock();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin, selectedId]);
+  }, [pin]);
 
   function clearOperator() {
-    ws.setOperator(null);
-    ws.lockNow();
+    ws.clearOperator();
     setSelected(null);
     setPin("");
     setMsg(null);
   }
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/30 p-3">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.98, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="w-full max-w-[920px] rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md"
-      >
-        <div className="flex items-start justify-between px-6 pt-5">
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/30 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div className="w-[92vw] max-w-[860px] rounded-3xl border border-white/30 bg-white/70 shadow-2xl backdrop-blur-md">
+        <div className="flex items-center justify-between px-6 pt-5">
           <div>
-            <div className="text-lg font-semibold text-zinc-900">Workstation locked</div>
-            <div className="text-sm text-zinc-600">
-              Select a user and enter a PIN to continue.
-            </div>
+            <div className="text-lg font-semibold text-slate-900">Workstation locked</div>
+            <div className="text-sm text-slate-600">Select a user and enter a PIN to continue.</div>
           </div>
 
           <button
-            className="text-sm text-zinc-600 hover:text-zinc-900"
-            onClick={clearOperator}
             type="button"
+            onClick={clearOperator}
+            className="text-sm text-slate-600 hover:text-slate-900"
           >
             Clear operator
           </button>
         </div>
 
         <div className="grid grid-cols-1 gap-4 px-6 pb-6 pt-4 md:grid-cols-2">
-          {/* Operators */}
-          <div className="rounded-2xl border border-white/50 bg-white/60 p-4">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+          {/* Operator list */}
+          <div className="rounded-2xl border border-white/40 bg-white/60 p-4">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-600">
               Operator
             </div>
 
-            {msg && operators.length === 0 ? (
-              <div className="text-sm text-zinc-700">{msg}</div>
-            ) : operators.length === 0 ? (
-              <div className="text-sm text-zinc-700">No operators available.</div>
-            ) : (
-              <div className="max-h-[260px] space-y-2 overflow-auto pr-1">
-                {operators.map((o) => {
-                  const active = selected?.id === o.id;
+            <div className="space-y-2">
+              {operators.length === 0 ? (
+                <div className="text-sm text-slate-600">{msg ?? "No operators available."}</div>
+              ) : (
+                operators.map((op) => {
+                  const active = selected?.id === op.id;
                   return (
                     <button
-                      key={o.id}
+                      key={op.id}
                       type="button"
-                      onClick={() => setSelected(o)}
+                      onClick={() => setSelected(op)}
                       className={[
-                        "flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition",
+                        "w-full rounded-xl border px-3 py-2 text-left transition",
                         active
-                          ? "border-zinc-900/20 bg-white/80 shadow-sm"
-                          : "border-white/50 bg-white/50 hover:bg-white/70",
+                          ? "border-slate-900/30 bg-white/80 shadow-sm"
+                          : "border-white/40 bg-white/50 hover:bg-white/70",
                       ].join(" ")}
                     >
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-900 text-white text-sm font-semibold">
-                        {(o.initials ?? initialsFromName(o.name) ?? "??").slice(0, 2)}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-zinc-900">
-                          {o.name ?? "Unnamed"}
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-white">
+                          {(op.initials ?? initialsFromName(op.name) ?? "?").slice(0, 2)}
                         </div>
-                        <div className="text-xs text-zinc-500">{o.role ?? ""}</div>
-                      </div>
-
-                      {active ? (
-                        <div className="ml-auto rounded-full bg-emerald-600/10 px-2 py-1 text-xs font-medium text-emerald-700">
-                          Selected
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium text-slate-900">
+                            {op.name ?? "Unnamed"}
+                          </div>
+                          <div className="text-xs text-slate-600">{op.role ?? ""}</div>
                         </div>
-                      ) : null}
+                      </div>
                     </button>
                   );
-                })}
-              </div>
-            )}
+                })
+              )}
+            </div>
           </div>
 
-          {/* PIN */}
-          <div className="rounded-2xl border border-white/50 bg-white/60 p-4">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-              PIN
-            </div>
+          {/* PIN entry */}
+          <div className="rounded-2xl border border-white/40 bg-white/60 p-4">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-600">PIN</div>
+
+            <div className="mb-2 text-sm text-slate-700">{selectedLabel}</div>
 
             <input
               inputMode="numeric"
-              autoComplete="one-time-code"
               pattern="[0-9]*"
+              maxLength={4}
               value={pin}
               onChange={(e) => {
                 const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                 setPin(v);
                 setMsg(null);
               }}
-              placeholder="Enter 4 digits."
-              className="w-full rounded-2xl border border-white/60 bg-white/70 px-4 py-3 text-lg tracking-widest outline-none focus:border-zinc-900/20"
+              className="w-full rounded-xl border border-white/60 bg-white/70 px-4 py-3 text-lg tracking-[0.4em] outline-none focus:ring-2 focus:ring-slate-900/20"
+              placeholder="••••"
+              disabled={busy || !selected}
+              autoFocus
             />
 
-            <div className="mt-2 text-xs text-zinc-500">Enter 4 digits.</div>
+            <div className="mt-2 text-xs text-slate-600">Enter 4 digits.</div>
 
             {msg ? <div className="mt-2 text-sm text-red-600">{msg}</div> : null}
 
-            <div className="mt-4 flex items-center justify-end">
+            <div className="mt-4 flex justify-end">
               <button
                 type="button"
                 onClick={handleUnlock}
-                disabled={!canUnlock}
+                disabled={busy || !selected || pin.trim().length !== 4}
                 className={[
-                  "rounded-2xl px-5 py-2 text-sm font-semibold text-white transition",
-                  canUnlock ? "bg-emerald-600 hover:bg-emerald-700" : "bg-emerald-600/40 cursor-not-allowed",
+                  "rounded-xl px-5 py-2.5 text-sm font-semibold text-white",
+                  busy || !selected || pin.trim().length !== 4
+                    ? "bg-emerald-600/50"
+                    : "bg-emerald-600 hover:bg-emerald-700",
                 ].join(" ")}
               >
                 {busy ? "Unlocking..." : "Unlock"}
@@ -301,7 +324,7 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
             </div>
           </div>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }
