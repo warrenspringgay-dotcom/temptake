@@ -1,3 +1,4 @@
+// src/lib/useActingClient.ts
 "use client";
 
 import { useMemo } from "react";
@@ -14,22 +15,24 @@ function initialsFromName(name?: string | null) {
   return out || null;
 }
 
+/**
+* Acting context for audit fields.
+* We no longer depend on a separate "acting context" getter.
+* The workstation operator is the acting user.
+*/
 export function useActingClient() {
-  const { operator, getActiveContext } = useWorkstation();
+  const { operator } = useWorkstation();
 
   return useMemo(() => {
-    const acting = getActiveContext() as any;
-
     const operatorInitials =
-      acting?.acted_by_initials ||
       (operator?.initials ?? "").trim().toUpperCase() ||
       initialsFromName(operator?.name) ||
       null;
 
     return {
       operator,
-      acted_by_team_member_id: acting?.acted_by_team_member_id ?? null,
+      acted_by_team_member_id: operator?.teamMemberId ?? null,
       acted_by_initials: operatorInitials,
     };
-  }, [operator, getActiveContext]);
+  }, [operator]);
 }
