@@ -25,6 +25,7 @@ type Operator = {
 };
 
 type ActingContext = {
+  // Keep this minimal and stable.
   acted_by_initials?: string | null;
   acted_by_team_member_id?: string | null;
 };
@@ -36,9 +37,11 @@ type Ctx = {
   setOperator: (op: Operator | null) => void;
   clearOperator: () => void;
 
+  // Expected by QuickActionsFab / other callers:
   openLockModal: () => void;
   lockNow: () => void;
 
+  // Used by useActingClient
   getActingContextClient: () => ActingContext;
 };
 
@@ -57,8 +60,7 @@ function safeReadJson<T>(key: string): T | null {
 
 function safeWriteJson(key: string, val: any) {
   try {
-    if (val === null) localStorage.removeItem(key);
-    else localStorage.setItem(key, JSON.stringify(val));
+    localStorage.setItem(key, JSON.stringify(val));
   } catch {}
 }
 
@@ -78,6 +80,7 @@ function safeWriteBool(key: string, val: boolean) {
   } catch {}
 }
 
+// Helpers might return string|null OR Promise<string|null>. Handle both.
 async function maybeAwaitString(v: any): Promise<string | null> {
   try {
     const out = await Promise.resolve(v);
@@ -92,16 +95,20 @@ const WorkstationLockContext = createContext<Ctx | null>(null);
 export function WorkstationLockProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
+  // Persisted operator (so refresh keeps workstation “unlocked” once chosen)
   const [operator, _setOperator] = useState<Operator | null>(() =>
     typeof window === "undefined" ? null : safeReadJson<Operator>(LS_OPERATOR)
   );
 
+  // "Force locked" is the only persisted lock flag we need.
+  // Final `locked` is derived from forceLocked + operator presence.
   const [forceLocked, setForceLocked] = useState<boolean>(() =>
     typeof window === "undefined" ? true : safeReadBool(LS_FORCE_LOCKED, true)
   );
 
   const [showLockModal, setShowLockModal] = useState(false);
 
+  // Active context (org/location)
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
@@ -127,7 +134,6 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
       safeWriteJson(LS_OPERATOR, null);
       setForceLocked(true);
       safeWriteBool(LS_FORCE_LOCKED, true);
-      setShowLockModal(true);
     }
   }, [operator, orgId, locationId]);
 
@@ -136,13 +142,14 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     safeWriteJson(LS_OPERATOR, op);
 
     if (op) {
+      // choosing an operator unlocks workstation
       setForceLocked(false);
       safeWriteBool(LS_FORCE_LOCKED, false);
       setShowLockModal(false);
     } else {
+      // no operator => workstation locked
       setForceLocked(true);
       safeWriteBool(LS_FORCE_LOCKED, true);
-      setShowLockModal(true);
     }
   }, []);
 
@@ -159,6 +166,7 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
   }, []);
 
   const lockNow = useCallback(() => {
+    // This is “lock workstation now”: clear operator and force lock.
     _setOperator(null);
     safeWriteJson(LS_OPERATOR, null);
     setForceLocked(true);
@@ -166,18 +174,16 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     setShowLockModal(true);
   }, []);
 
-  // ✅ IMPORTANT: one rule, everywhere.
-  // Workstation lock is OPERATOR lock, not auth and not “do we have org/location”.
+  // ✅ Single source of truth:
+  // - If there is no org/location yet, don’t block the whole app with a lock.
+  // - If there IS context, lock depends on (forceLocked OR no operator).
   const locked = useMemo(() => {
+    if (!orgId || !locationId) return false;
     return forceLocked || !operator;
-  }, [forceLocked, operator]);
-
-  // If we’re locked, ensure modal is shown (unless you explicitly hide it).
-  useEffect(() => {
-    if (locked) setShowLockModal(true);
-  }, [locked]);
+  }, [forceLocked, operator, orgId, locationId]);
 
   const getActingContextClient = useCallback((): ActingContext => {
+    // Keep this stable for useActingClient: if operator exists, provide ids.
     if (!operator) return {};
     return {
       acted_by_team_member_id: operator.teamMemberId,
@@ -201,6 +207,8 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
   return (
     <WorkstationLockContext.Provider value={value}>
       {children}
+
+      {/* UI stays as-is: the existing glass modal is still WorkstationLockScreen */}
       {showLockModal ? <WorkstationLockScreen /> : null}
     </WorkstationLockContext.Provider>
   );
