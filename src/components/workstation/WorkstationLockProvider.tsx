@@ -6,89 +6,91 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { usePathname } from "next/navigation";
 
-import WorkstationLockScreen from "./WorkstationLockScreen";
+import WorkstationLockScreen from "@/components/workstation/WorkstationLockScreen";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 
-/**
-* IMPORTANT:
-* - These keys MUST match what the rest of the app (FAB etc.) expects.
-* - Your console screenshot shows: tt_workstation_force, tt_workstation_operator
-*/
-const LS_FORCE_LOCK = "tt_workstation_force";
-const LS_OPERATOR = "tt_workstation_operator";
+/* ===================== Types ===================== */
 
-/**
-* Backward compat (in case you've already written these somewhere).
-* If you don't have these in your project anymore, leaving them doesn't hurt.
-*/
-const LS_FORCE_LOCK_OLD = "tt_ws_force_lock";
-const LS_OPERATOR_OLD = "tt_ws_operator";
-
-type Operator = {
+export type Operator = {
   teamMemberId: string;
-  orgId?: string | null;
-  locationId?: string | null;
   name?: string | null;
   initials?: string | null;
   role?: string | null;
 };
 
 export type ActingContext = {
-  acted_by_team_member_id: string | null;
-  acted_by_initials: string | null;
+  acted_by_team_member_id?: string | null;
+  acted_by_initials?: string | null;
 };
 
 type Ctx = {
-  // state
-  lockRequired: boolean;
+  // Derived lock state: single source of truth
   locked: boolean;
+  lockRequired: boolean;
 
+  // Operator session (PIN)
   operator: Operator | null;
-
-  // actions
   setOperator: (op: Operator | null) => void;
   clearOperator: () => void;
 
+  // Modal controls
   openLockModal: () => void;
   closeLockModal: () => void;
 
+  // Force lock right now (clears operator so FAB + app agree)
   lockNow: () => void;
-  unlockNow: () => void;
+  unlockWorkstation: () => void;
 
-  // acting
+  // Helper for other client hooks
   getActingContextClient: () => ActingContext;
 };
 
 const WorkstationLockContext = createContext<Ctx | null>(null);
 
-function safeParse<T>(s: string | null): T | null {
-  if (!s) return null;
+/* ===================== LocalStorage Keys ===================== */
+
+const LS_OPERATOR = "tt_workstation_operator";
+const LS_FORCE = "tt_workstation_force";
+
+/* ===================== Small helpers ===================== */
+
+async function resolveMaybePromise<T>(v: T | Promise<T>): Promise<T> {
+  return await Promise.resolve(v);
+}
+
+function readJson<T>(key: string): T | null {
   try {
-    return JSON.parse(s) as T;
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as T;
   } catch {
     return null;
   }
 }
 
-function readBoolLS(key: string): boolean | null {
-  const v = localStorage.getItem(key);
-  if (v == null) return null;
-  if (v === "true") return true;
-  if (v === "false") return false;
-  // tolerate JSON booleans
-  if (v === "1") return true;
-  if (v === "0") return false;
-  return null;
+function writeJson(key: string, value: any) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
 }
 
-function writeBoolLS(key: string, value: boolean) {
-  localStorage.setItem(key, value ? "true" : "false");
+function removeKey(key: string) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
 }
+
+/* ===================== Provider ===================== */
 
 export function WorkstationLockProvider({
   children,
@@ -97,160 +99,163 @@ export function WorkstationLockProvider({
 }) {
   const pathname = usePathname();
 
-  // persisted operator + force lock
-  const [operator, _setOperator] = useState<Operator | null>(null);
-  const [forceLock, setForceLock] = useState<boolean>(false);
-
-  // ui
+  const [operator, setOperatorState] = useState<Operator | null>(null);
   const [showLockModal, setShowLockModal] = useState(false);
 
-  // context
+  // Active context
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
-  // do we require workstation lock at all?
-  const [lockRequired, setLockRequired] = useState<boolean>(false);
+  // Whether this org/location wants lock enforcement
+  const [lockRequired, setLockRequired] = useState(false);
 
-  // ---------- init from storage ----------
-  useEffect(() => {
-    // operator (new key first)
-    const opNew = safeParse<Operator>(localStorage.getItem(LS_OPERATOR));
-    const opOld = safeParse<Operator>(localStorage.getItem(LS_OPERATOR_OLD));
-    _setOperator(opNew ?? opOld ?? null);
+  const bootedRef = useRef(false);
 
-    // force lock (new key first)
-    const fNew = readBoolLS(LS_FORCE_LOCK);
-    const fOld = readBoolLS(LS_FORCE_LOCK_OLD);
-    setForceLock((fNew ?? fOld) ?? false);
-  }, []);
+  const isAuthRoute = useMemo(() => {
+    const p = pathname || "";
+    // Don’t PIN-lock login/signup/reset flows
+    return (
+      p.startsWith("/login") ||
+      p.startsWith("/signup") ||
+      p.startsWith("/auth") ||
+      p.startsWith("/reset") ||
+      p.startsWith("/forgot")
+    );
+  }, [pathname]);
 
-  // keep storage in sync when operator changes
+  const hasActiveContext = !!orgId && !!locationId;
+
+  // ✅ Single source of truth for lock:
+  // - if lock not required OR no active context OR on auth routes => not locked
+  // - else locked if operator missing
+  const locked = useMemo(() => {
+    if (isAuthRoute) return false;
+    if (!hasActiveContext) return false;
+    if (!lockRequired) return false;
+    return !operator;
+  }, [isAuthRoute, hasActiveContext, lockRequired, operator]);
+
   const setOperator = useCallback((op: Operator | null) => {
-    _setOperator(op);
-    if (op) localStorage.setItem(LS_OPERATOR, JSON.stringify(op));
-    else localStorage.removeItem(LS_OPERATOR);
+    setOperatorState(op);
 
-    // also write old key to avoid “half the app is reading the other key”
-    if (op) localStorage.setItem(LS_OPERATOR_OLD, JSON.stringify(op));
-    else localStorage.removeItem(LS_OPERATOR_OLD);
-
-    // broadcast to other tabs/components that only listen to storage events
-    window.dispatchEvent(new StorageEvent("storage", { key: LS_OPERATOR }));
+    if (op) {
+      writeJson(LS_OPERATOR, op);
+      // once operator set, hide modal
+      setShowLockModal(false);
+    } else {
+      removeKey(LS_OPERATOR);
+    }
   }, []);
 
   const clearOperator = useCallback(() => {
     setOperator(null);
+    // clearing operator means we should show modal again if lock is enforced
+    setShowLockModal(true);
   }, [setOperator]);
 
-  // keep storage in sync when forceLock changes
-  useEffect(() => {
-    writeBoolLS(LS_FORCE_LOCK, forceLock);
-    writeBoolLS(LS_FORCE_LOCK_OLD, forceLock);
-    window.dispatchEvent(new StorageEvent("storage", { key: LS_FORCE_LOCK }));
-  }, [forceLock]);
-
-  // ---------- active org/location ----------
-  const refreshActiveContext = useCallback(async () => {
-    /**
-     * These helpers should be synchronous (cookie/local storage read).
-     * If you made them async, that explains earlier Promise<...> TS errors.
-     */
-    const o = getActiveOrgIdClient?.() as unknown as string | null | undefined;
-    const l = getActiveLocationIdClient?.() as unknown as
-      | string
-      | null
-      | undefined;
-
-    setOrgId(o ?? null);
-    setLocationId(l ?? null);
-
-    // If we don't have an active context yet, we can't enforce the lock.
-    if (!o || !l) {
-      setLockRequired(false);
-      return { orgId: o ?? null, locationId: l ?? null };
-    }
-
-    // Decide if lock is required. In your build, you were calling a fetch.
-    // Keep it simple and robust:
-    // - If force lock is on -> required
-    // - Otherwise let it be required by whatever your app wants (default true)
-    //
-    // If you already have an API to decide this, wire it here.
-    setLockRequired(true);
-
-    return { orgId: o, locationId: l };
-  }, []);
-
-  // refresh on mount + when route changes (common cause of drift)
-  useEffect(() => {
-    refreshActiveContext();
-  }, [refreshActiveContext, pathname]);
-
-  // ---------- derived lock ----------
-  const locked = useMemo(() => {
-    if (!lockRequired) return false;
-    if (forceLock) return true;
-    return !operator;
-  }, [lockRequired, forceLock, operator]);
-
-  // if locked, ensure modal is open (but don't be obnoxious in routes like /auth)
-  useEffect(() => {
-    // avoid locking on auth pages if you want (optional)
-    if (pathname?.startsWith("/auth")) return;
-
-    if (locked) setShowLockModal(true);
-  }, [locked, pathname]);
-
-  // ---------- actions exposed ----------
   const openLockModal = useCallback(() => setShowLockModal(true), []);
   const closeLockModal = useCallback(() => setShowLockModal(false), []);
 
+  // ✅ Force lock now = clear operator (no separate "locked" flag)
   const lockNow = useCallback(() => {
-    // “lock now” means: enforce lock and clear operator so the app + FAB agree.
-    setForceLock(true);
     clearOperator();
-    setShowLockModal(true);
   }, [clearOperator]);
 
-  const unlockNow = useCallback(() => {
-    // unlockNow just removes the forced lock. Actual unlock requires an operator.
-    setForceLock(false);
+  const unlockWorkstation = useCallback(() => {
+    // Unlock = close modal; actual lock state becomes false when operator is set
+    setShowLockModal(false);
   }, []);
 
   const getActingContextClient = useCallback((): ActingContext => {
     return {
       acted_by_team_member_id: operator?.teamMemberId ?? null,
-      acted_by_initials: (operator?.initials ?? null) || null,
+      acted_by_initials: operator?.initials ?? null,
     };
   }, [operator]);
 
-  const value: Ctx = useMemo(
-    () => ({
-      lockRequired,
-      locked,
+  const refreshActiveContext = useCallback(async () => {
+    const o = await resolveMaybePromise(getActiveOrgIdClient());
+    const l = await resolveMaybePromise(getActiveLocationIdClient());
 
+    setOrgId(o || null);
+    setLocationId(l || null);
+
+    // If we don't have active context yet, do NOT enforce lock and don't show modal.
+    if (!o || !l) {
+      setLockRequired(false);
+      setShowLockModal(false);
+      return { orgId: o || null, locationId: l || null };
+    }
+
+    // Load lockRequired from persisted toggle, default true if previously enforced.
+    // You can still override this via your API fetch if you want later.
+    const force = localStorage.getItem(LS_FORCE);
+    setLockRequired(force === "true");
+
+    return { orgId: o || null, locationId: l || null };
+  }, []);
+
+  // Boot: load operator + initial context
+  useEffect(() => {
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+
+    const savedOp = readJson<Operator>(LS_OPERATOR);
+    if (savedOp?.teamMemberId) {
+      setOperatorState(savedOp);
+    }
+
+    refreshActiveContext();
+  }, [refreshActiveContext]);
+
+  // Whenever route changes: avoid auth-route lockouts
+  useEffect(() => {
+    if (isAuthRoute) {
+      setShowLockModal(false);
+      return;
+    }
+    // If app is locked, ensure modal is visible
+    if (locked) setShowLockModal(true);
+  }, [isAuthRoute, locked]);
+
+  // When active context appears later (post-login), re-check context + enforce
+  useEffect(() => {
+    refreshActiveContext();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  // If lock is enforced and operator missing, show modal
+  useEffect(() => {
+    if (isAuthRoute) return;
+    if (!hasActiveContext) return;
+    if (!lockRequired) return;
+
+    if (!operator) setShowLockModal(true);
+  }, [isAuthRoute, hasActiveContext, lockRequired, operator]);
+
+  const value = useMemo<Ctx>(
+    () => ({
+      locked,
+      lockRequired,
       operator,
       setOperator,
       clearOperator,
-
       openLockModal,
       closeLockModal,
-
       lockNow,
-      unlockNow,
-
+      unlockWorkstation,
       getActingContextClient,
     }),
     [
-      lockRequired,
       locked,
+      lockRequired,
       operator,
       setOperator,
       clearOperator,
       openLockModal,
       closeLockModal,
       lockNow,
-      unlockNow,
+      unlockWorkstation,
       getActingContextClient,
     ]
   );
@@ -259,13 +264,13 @@ export function WorkstationLockProvider({
     <WorkstationLockContext.Provider value={value}>
       {children}
 
-      {/* UI stays as-is: you asked, the universe tried to argue, and lost. */}
-      {showLockModal ? (
-        <WorkstationLockScreen onClose={() => setShowLockModal(false)} />
-      ) : null}
+      {/* Keep UI as-is (your glass modal lives inside the screen component) */}
+      {showLockModal ? <WorkstationLockScreen /> : null}
     </WorkstationLockContext.Provider>
   );
 }
+
+/* ===================== Hook ===================== */
 
 export function useWorkstation() {
   const ctx = useContext(WorkstationLockContext);

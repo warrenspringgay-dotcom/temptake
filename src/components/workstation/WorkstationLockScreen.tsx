@@ -1,10 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { motion } from "framer-motion";
-
-import { useWorkstation } from "./WorkstationLockProvider";
+import React, { useEffect, useRef, useState } from "react";
+import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 
@@ -14,21 +11,6 @@ type OperatorRow = {
   initials: string | null;
   role: string | null;
 };
-
-type Props = {
-  onClose?: () => void;
-};
-
-const LS_OPERATOR = "tt_workstation_operator";
-
-function safeParse<T>(s: string | null): T | null {
-  if (!s) return null;
-  try {
-    return JSON.parse(s) as T;
-  } catch {
-    return null;
-  }
-}
 
 function initialsFromName(name?: string | null) {
   const s = String(name ?? "").trim();
@@ -41,10 +23,12 @@ function initialsFromName(name?: string | null) {
   return out || null;
 }
 
-export default function WorkstationLockScreen({ onClose }: Props) {
-  const ws = useWorkstation();
+async function resolveMaybePromise<T>(v: T | Promise<T>): Promise<T> {
+  return await Promise.resolve(v);
+}
 
-  const [mounted, setMounted] = useState(false);
+export default function WorkstationLockScreen() {
+  const ws = useWorkstation();
 
   const [operators, setOperators] = useState<OperatorRow[]>([]);
   const [selected, setSelected] = useState<OperatorRow | null>(null);
@@ -53,214 +37,231 @@ export default function WorkstationLockScreen({ onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // prevent infinite auto-submit loops on failed attempts
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [locationId, setLocationId] = useState<string | null>(null);
+
   const lastAttemptRef = useRef<string>("");
+  const loadedRef = useRef(false);
 
-  useEffect(() => setMounted(true), []);
+  async function loadOperators(oId: string, lId: string) {
+    const res = await fetch(
+      `/api/workstation/operators?orgId=${encodeURIComponent(oId)}&locationId=${encodeURIComponent(
+        lId
+      )}`,
+      { cache: "no-store" }
+    );
 
-  // load operators for current org/location
+    const json = await res.json().catch(() => ({} as any));
+    if (!res.ok || !json?.ok) {
+      setOperators([]);
+      return;
+    }
+
+    const list: OperatorRow[] = Array.isArray(json.operators) ? json.operators : [];
+    setOperators(list);
+  }
+
+  // ✅ Resolve active org/location (async-safe)
   useEffect(() => {
-    let cancelled = false;
+    let alive = true;
 
-    async function run() {
-      setMsg(null);
+    (async () => {
+      const o = await resolveMaybePromise(getActiveOrgIdClient());
+      const l = await resolveMaybePromise(getActiveLocationIdClient());
 
-      const orgId = getActiveOrgIdClient?.() as unknown as string | null | undefined;
-      const locationId =
-        getActiveLocationIdClient?.() as unknown as string | null | undefined;
+      if (!alive) return;
 
-      if (!orgId || !locationId) {
+      setOrgId(o || null);
+      setLocationId(l || null);
+
+      if (!o || !l) {
         setOperators([]);
         setSelected(null);
         setMsg("No active organisation/location selected.");
         return;
       }
 
-      const res = await fetch(
-        `/api/workstation/operators?orgId=${encodeURIComponent(
-          orgId
-        )}&locationId=${encodeURIComponent(locationId)}`,
-        { cache: "no-store" }
-      );
+      setMsg(null);
+      await loadOperators(o, l);
+      loadedRef.current = true;
+    })();
 
-      const json = await res.json().catch(() => ({}));
-      if (cancelled) return;
-
-      const list: OperatorRow[] = Array.isArray(json?.operators)
-        ? json.operators
-        : [];
-
-      setOperators(list);
-
-      // auto-select previous operator if present
-      const stored = safeParse<{ teamMemberId?: string }>(
-        localStorage.getItem(LS_OPERATOR)
-      );
-      const previousId = stored?.teamMemberId ?? null;
-      const found =
-        (previousId && list.find((o) => o.id === previousId)) || null;
-
-      setSelected(found ?? list[0] ?? null);
-    }
-
-    run();
     return () => {
-      cancelled = true;
+      alive = false;
     };
   }, []);
 
-  // when operator changes, clear pin + message
+  // If org/location can change while mounted, refresh operators when they do
   useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      if (!orgId || !locationId) return;
+      if (!loadedRef.current) return;
+
+      if (!alive) return;
+      setMsg(null);
+      await loadOperators(orgId, locationId);
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [orgId, locationId]);
+
+  // ✅ Auto-select last operator (from workstation context if available)
+  useEffect(() => {
+    if (!operators.length) return;
+
+    const lastId = ws.operator?.teamMemberId || null;
+    if (!lastId) return;
+
+    const match = operators.find((o) => o.id === lastId);
+    if (match) setSelected(match);
+  }, [operators, ws.operator?.teamMemberId]);
+
+  function clearAll() {
     setPin("");
     setMsg(null);
+    setBusy(false);
     lastAttemptRef.current = "";
-  }, [selected?.id]);
+    ws.clearOperator();
+  }
 
-  async function attemptUnlock() {
-    const cleaned = String(pin ?? "").trim().replace(/\D+/g, "");
+  async function attemptUnlockWithPin(
+    oId: string,
+    lId: string,
+    teamMemberId: string,
+    enteredPin: string
+  ) {
+    return fetch("/api/workstation/unlock", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        orgId: oId,
+        locationId: lId,
+        teamMemberId,
+        pin: enteredPin,
+      }),
+    });
+  }
 
+  async function handleUnlock() {
+    const oId = orgId;
+    const lId = locationId;
+
+    if (!oId || !lId) {
+      setMsg("No active organisation/location selected.");
+      return;
+    }
     if (!selected) {
       setMsg("Select an operator.");
       return;
     }
-    if (cleaned.length < 4) {
+
+    const cleaned = String(pin ?? "").trim();
+    const digitsOnly = cleaned.replace(/\D+/g, "");
+
+    if (digitsOnly.length < 4) {
       setMsg("Enter a 4+ digit PIN.");
       return;
     }
 
-    const orgId = getActiveOrgIdClient?.() as unknown as string | null | undefined;
-    const locationId =
-      getActiveLocationIdClient?.() as unknown as string | null | undefined;
+    const attemptKey = `${selected.id}:${digitsOnly}`;
+    if (busy) return;
+    if (lastAttemptRef.current === attemptKey) return;
 
-    if (!orgId || !locationId) {
-      setMsg("No active organisation/location selected.");
-      return;
-    }
-
+    lastAttemptRef.current = attemptKey;
     setBusy(true);
     setMsg(null);
 
     try {
-      const res = await fetch("/api/workstation/unlock", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          orgId,
-          locationId,
+      const res = await attemptUnlockWithPin(oId, lId, selected.id, digitsOnly);
+      const json = await res.json().catch(() => ({} as any));
+
+      if (res.ok && json?.ok) {
+        ws.setOperator({
           teamMemberId: selected.id,
-          pin: cleaned,
-        }),
-      });
+          name: selected.name ?? null,
+          initials:
+            (selected.initials ?? "").trim().toUpperCase() ||
+            initialsFromName(selected.name) ||
+            null,
+          role: selected.role ?? null,
+        });
 
-      const json = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        // stop auto-resubmitting the same 4 digits in a loop
-        lastAttemptRef.current = `${selected.id}:${cleaned}`;
-
-        // show a real error instead of hammering /unlock forever
-        setMsg(json?.reason || "Incorrect PIN.");
-        setPin(""); // let user re-enter
+        ws.unlockWorkstation();
+        setPin("");
+        setMsg(null);
         return;
       }
 
-      // success: set operator (this is what makes FAB + app agree)
-      ws.setOperator({
-        teamMemberId: selected.id,
-        orgId,
-        locationId,
-        name: selected.name ?? null,
-        initials:
-          (selected.initials ?? "").trim().toUpperCase() ||
-          initialsFromName(selected.name) ||
-          null,
-        role: selected.role ?? null,
-      });
+      const reason =
+        json?.reason ||
+        json?.message ||
+        (res.status === 401 ? "Incorrect PIN." : null);
 
-      // remove force lock if any
-      ws.unlockNow();
-
-      // close
-      onClose?.();
-      ws.closeLockModal();
+      setMsg(reason || "Incorrect PIN.");
+      setPin("");
+      lastAttemptRef.current = "";
+    } catch {
+      setMsg("Unlock failed. Try again.");
+      setPin("");
+      lastAttemptRef.current = "";
     } finally {
       setBusy(false);
     }
   }
 
-  // auto-submit on 4 digits (but only once per pin/operator combo)
+  // ✅ Auto-unlock when exactly 4 digits entered
   useEffect(() => {
-    const cleaned = String(pin ?? "").trim().replace(/\D+/g, "");
+    const digits = String(pin ?? "").replace(/\D+/g, "");
     if (!selected) return;
-    if (cleaned.length !== 4) return;
+    if (busy) return;
+    if (digits.length !== 4) return;
 
-    const key = `${selected.id}:${cleaned}`;
-    if (lastAttemptRef.current === key) return;
-
-    lastAttemptRef.current = key;
-    attemptUnlock();
+    handleUnlock();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin, selected?.id]);
+  }, [pin, selected, busy]);
 
-  const selectedId = selected?.id ?? null;
-
-  const overlay = (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
-
-      <motion.div
-        initial={{ opacity: 0, y: 14, scale: 0.985 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 14, scale: 0.985 }}
-        transition={{ duration: 0.18 }}
-        className="relative w-[92vw] max-w-[720px] rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md"
-      >
-        <div className="flex items-start justify-between gap-4 p-5">
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20 backdrop-blur-sm">
+      <div className="w-[92%] max-w-[920px] rounded-3xl border border-white/40 bg-white/70 shadow-2xl backdrop-blur-md">
+        <div className="flex items-center justify-between px-6 py-4">
           <div>
-            <div className="text-lg font-semibold">Workstation locked</div>
-            <div className="text-sm text-muted-foreground">
+            <div className="text-lg font-semibold text-slate-900">
+              Workstation locked
+            </div>
+            <div className="text-sm text-slate-600">
               Select a user and enter a PIN to continue.
             </div>
           </div>
 
           <button
+            className="rounded-xl px-3 py-2 text-sm text-slate-700 hover:bg-white/60"
+            onClick={clearAll}
             type="button"
-            className="rounded-2xl border border-white/50 bg-white/70 px-3 py-2 text-sm shadow-sm hover:bg-white"
-            onClick={() => {
-              ws.clearOperator();
-              ws.lockNow();
-              setMsg(null);
-              setPin("");
-            }}
           >
             Clear operator
           </button>
         </div>
 
-        {msg ? (
-          <div className="px-5 pb-3">
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              {msg}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="grid grid-cols-1 gap-4 px-5 pb-5 md:grid-cols-2">
-          {/* Operator list */}
-          <div className="rounded-2xl border border-white/40 bg-white/60 p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <div className="grid grid-cols-1 gap-4 px-6 pb-6 md:grid-cols-2">
+          {/* Operators list */}
+          <div className="rounded-2xl border border-white/40 bg-white/60 p-4">
+            <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
               Operator
             </div>
 
-            <div className="space-y-2">
-              {operators.length === 0 ? (
-                <div className="text-sm text-muted-foreground">
-                  No operators available.
-                </div>
-              ) : (
-                operators.map((op) => {
-                  const isSelected = op.id === selectedId;
-                  const badge =
+            {!operators.length ? (
+              <div className="text-sm text-slate-600">
+                {msg ?? "No operators available."}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {operators.map((op) => {
+                  const isSelected = selected?.id === op.id;
+                  const initials =
                     (op.initials ?? "").trim().toUpperCase() ||
                     initialsFromName(op.name) ||
                     "??";
@@ -269,78 +270,78 @@ export default function WorkstationLockScreen({ onClose }: Props) {
                     <button
                       key={op.id}
                       type="button"
-                      onClick={() => setSelected(op)}
+                      onClick={() => {
+                        setSelected(op);
+                        setMsg(null);
+                        setPin("");
+                        lastAttemptRef.current = "";
+                      }}
                       className={[
-                        "w-full rounded-2xl border px-3 py-3 text-left shadow-sm transition",
+                        "w-full rounded-2xl border p-3 text-left transition",
                         isSelected
-                          ? "border-black/10 bg-white"
-                          : "border-white/50 bg-white/60 hover:bg-white/80",
+                          ? "border-slate-900/20 bg-white shadow"
+                          : "border-white/40 bg-white/40 hover:bg-white/60",
                       ].join(" ")}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-black/80 text-sm font-semibold text-white">
-                          {badge}
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-white">
+                          {initials}
                         </div>
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-medium">
+                          <div className="truncate text-sm font-semibold text-slate-900">
                             {op.name ?? "Unnamed"}
                           </div>
-                          <div className="truncate text-xs text-muted-foreground">
-                            {op.role ?? ""}
+                          <div className="text-xs text-slate-600">
+                            {op.role ?? "staff"}
+                            {isSelected ? " • selected" : ""}
                           </div>
                         </div>
                       </div>
                     </button>
                   );
-                })
-              )}
-            </div>
+                })}
+              </div>
+            )}
           </div>
 
-          {/* PIN entry */}
-          <div className="rounded-2xl border border-white/40 bg-white/60 p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {/* PIN */}
+          <div className="rounded-2xl border border-white/40 bg-white/60 p-4">
+            <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
               PIN
             </div>
 
             <input
               value={pin}
               onChange={(e) => {
-                const v = e.target.value.replace(/\D+/g, "");
-                setPin(v);
+                const next = e.target.value.replace(/[^\d]/g, "").slice(0, 8);
+                setPin(next);
                 setMsg(null);
               }}
               inputMode="numeric"
-              autoComplete="one-time-code"
-              className="w-full rounded-2xl border border-white/50 bg-white/80 px-4 py-3 text-lg tracking-widest shadow-sm outline-none focus:ring-2 focus:ring-black/10"
               placeholder="••••"
+              className="w-full rounded-2xl border border-white/50 bg-white/70 px-4 py-3 text-lg tracking-widest outline-none focus:border-slate-900/20"
               disabled={!selected || busy}
             />
 
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <div className="text-xs text-muted-foreground">
-                {busy
-                  ? "Auto-unlocking…"
-                  : pin.replace(/\D+/g, "").length === 4
-                  ? "Auto-unlock will trigger."
-                  : "Enter 4 digits."}
-              </div>
+            <div className="mt-2 text-xs text-slate-600">
+              {busy ? "Auto-unlocking..." : "Enter 4 digits."}
+            </div>
 
+            {msg ? <div className="mt-2 text-sm text-red-600">{msg}</div> : null}
+
+            <div className="mt-4 flex items-center justify-end">
               <button
                 type="button"
-                className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-                disabled={!selected || busy}
-                onClick={attemptUnlock}
+                className="rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-emerald-700 disabled:opacity-50"
+                onClick={handleUnlock}
+                disabled={!selected || busy || String(pin).replace(/\D+/g, "").length < 4}
               >
-                {busy ? "Unlocking…" : "Unlock"}
+                {busy ? "Unlocking..." : "Unlock"}
               </button>
             </div>
           </div>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
-
-  if (!mounted) return null;
-  return createPortal(overlay, document.body);
 }
