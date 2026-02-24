@@ -9,59 +9,48 @@ import React, {
   useState,
 } from "react";
 import { usePathname } from "next/navigation";
-import { supabase } from "@/lib/supabaseBrowser";
+
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
+
 import WorkstationLockScreen from "@/components/workstation/WorkstationLockScreen";
 
-/**
-* NOTE:
-* - Do NOT rename exports/imports: other files depend on these names.
-* - Operator MUST NOT include orgId/locationId (that broke your builds).
-*   Org/location comes from your active context helpers.
-*/
-
-export type Operator = {
+type Operator = {
   teamMemberId: string;
+  orgId: string;
+  locationId: string;
   name?: string | null;
   initials?: string | null;
   role?: string | null;
 };
 
-export type ActingContext = {
-  acted_by_team_member_id?: string | null;
+type ActingContext = {
+  // Keep this minimal and stable.
   acted_by_initials?: string | null;
+  acted_by_team_member_id?: string | null;
 };
-
-type LockRequiredResp = { ok: boolean; lockRequired?: boolean };
 
 type Ctx = {
   locked: boolean;
-
   operator: Operator | null;
+
   setOperator: (op: Operator | null) => void;
   clearOperator: () => void;
 
+  // Expected by QuickActionsFab / other callers:
   openLockModal: () => void;
-  closeLockModal: () => void;
-
-  /** Used by QuickActionsFab */
   lockNow: () => void;
 
-  /** Backwards-compat alias (if anything still calls it) */
-  lockWorkstationNow?: () => void;
-
+  // Used by useActingClient
   getActingContextClient: () => ActingContext;
 };
 
-const WorkstationLockContext = createContext<Ctx | null>(null);
+const LS_OPERATOR = "tt_workstation_operator";
+const LS_FORCE_LOCKED = "tt_workstation_force_locked";
 
-const LS_OPERATOR = "tt_operator";
-
-function readJson<T>(key: string): T | null {
-  if (typeof window === "undefined") return null;
+function safeReadJson<T>(key: string): T | null {
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     return JSON.parse(raw) as T;
   } catch {
@@ -69,117 +58,136 @@ function readJson<T>(key: string): T | null {
   }
 }
 
-function writeJson(key: string, value: any) {
-  if (typeof window === "undefined") return;
+function safeWriteJson(key: string, val: any) {
   try {
-    if (value === null || value === undefined) {
-      window.localStorage.removeItem(key);
-      return;
-    }
-    window.localStorage.setItem(key, JSON.stringify(value));
+    localStorage.setItem(key, JSON.stringify(val));
+  } catch {}
+}
+
+function safeReadBool(key: string, fallback = false) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw == null) return fallback;
+    return raw === "true";
   } catch {
-    // ignore
+    return fallback;
   }
 }
 
-async function fetchLockRequired(orgId: string, locationId: string) {
-  const res = await fetch(
-    `/api/workstation/lock-required?orgId=${encodeURIComponent(
-      orgId
-    )}&locationId=${encodeURIComponent(locationId)}`,
-    { cache: "no-store" }
-  );
-  const json = (await res.json().catch(() => ({}))) as LockRequiredResp;
-  return { ok: !!json.ok, lockRequired: !!json.lockRequired };
+function safeWriteBool(key: string, val: boolean) {
+  try {
+    localStorage.setItem(key, val ? "true" : "false");
+  } catch {}
 }
 
-export function WorkstationLockProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+// Helpers might return string|null OR Promise<string|null>. Handle both.
+async function maybeAwaitString(v: any): Promise<string | null> {
+  try {
+    const out = await Promise.resolve(v);
+    return out ? String(out) : null;
+  } catch {
+    return null;
+  }
+}
+
+const WorkstationLockContext = createContext<Ctx | null>(null);
+
+export function WorkstationLockProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  const [operator, setOperatorState] = useState<Operator | null>(() =>
-    readJson<Operator>(LS_OPERATOR)
+  // Persisted operator (so refresh keeps workstation “unlocked” once chosen)
+  const [operator, _setOperator] = useState<Operator | null>(() =>
+    typeof window === "undefined" ? null : safeReadJson<Operator>(LS_OPERATOR)
+  );
+
+  // "Force locked" is the only persisted lock flag we need.
+  // Final `locked` is derived from forceLocked + operator presence.
+  const [forceLocked, setForceLocked] = useState<boolean>(() =>
+    typeof window === "undefined" ? true : safeReadBool(LS_FORCE_LOCKED, true)
   );
 
   const [showLockModal, setShowLockModal] = useState(false);
 
-  // Active context (from your cookie helpers). We store these only for convenience.
+  // Active context (org/location)
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
-  // Whether we should enforce lock at this org/location.
-  const [lockRequired, setLockRequired] = useState(false);
+  const refreshActiveContext = useCallback(async () => {
+    const o = await maybeAwaitString(getActiveOrgIdClient());
+    const l = await maybeAwaitString(getActiveLocationIdClient());
+    setOrgId(o);
+    setLocationId(l);
+    return { orgId: o, locationId: l };
+  }, []);
+
+  useEffect(() => {
+    refreshActiveContext();
+  }, [refreshActiveContext, pathname]);
+
+  // If context changes and the operator belongs to a different org/location, clear it.
+  useEffect(() => {
+    if (!operator) return;
+    if (!orgId || !locationId) return;
+
+    if (operator.orgId !== orgId || operator.locationId !== locationId) {
+      _setOperator(null);
+      safeWriteJson(LS_OPERATOR, null);
+      setForceLocked(true);
+      safeWriteBool(LS_FORCE_LOCKED, true);
+    }
+  }, [operator, orgId, locationId]);
 
   const setOperator = useCallback((op: Operator | null) => {
-    setOperatorState(op);
-    writeJson(LS_OPERATOR, op);
+    _setOperator(op);
+    safeWriteJson(LS_OPERATOR, op);
+
+    if (op) {
+      // choosing an operator unlocks workstation
+      setForceLocked(false);
+      safeWriteBool(LS_FORCE_LOCKED, false);
+      setShowLockModal(false);
+    } else {
+      // no operator => workstation locked
+      setForceLocked(true);
+      safeWriteBool(LS_FORCE_LOCKED, true);
+    }
   }, []);
 
   const clearOperator = useCallback(() => {
-    setOperator(null);
-  }, [setOperator]);
+    _setOperator(null);
+    safeWriteJson(LS_OPERATOR, null);
+    setForceLocked(true);
+    safeWriteBool(LS_FORCE_LOCKED, true);
+    setShowLockModal(true);
+  }, []);
 
-  const openLockModal = useCallback(() => setShowLockModal(true), []);
-  const closeLockModal = useCallback(() => setShowLockModal(false), []);
+  const openLockModal = useCallback(() => {
+    setShowLockModal(true);
+  }, []);
 
   const lockNow = useCallback(() => {
-    clearOperator();
+    // This is “lock workstation now”: clear operator and force lock.
+    _setOperator(null);
+    safeWriteJson(LS_OPERATOR, null);
+    setForceLocked(true);
+    safeWriteBool(LS_FORCE_LOCKED, true);
     setShowLockModal(true);
-  }, [clearOperator]);
+  }, []);
 
-  const lockWorkstationNow = lockNow;
-
-  const refreshActiveContext = useCallback(async () => {
-    // Support helpers being sync OR async (this is why you got Promise<string|null> build errors)
-    const o = await Promise.resolve(getActiveOrgIdClient() as any);
-    const l = await Promise.resolve(getActiveLocationIdClient() as any);
-
-    const oStr = typeof o === "string" && o ? o : null;
-    const lStr = typeof l === "string" && l ? l : null;
-
-    setOrgId(oStr);
-    setLocationId(lStr);
-
-    // If we don't have active context yet, do NOT lock the app.
-    if (!oStr || !lStr) {
-      setLockRequired(false);
-      return;
-    }
-
-    const lr = await fetchLockRequired(oStr, lStr);
-    setLockRequired(!!lr.lockRequired);
-
-    if (lr.lockRequired && !operator) {
-      setShowLockModal(true);
-    }
-  }, [operator]);
-
-  // Refresh on route changes
-  useEffect(() => {
-    refreshActiveContext();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
-
-  // Refresh on auth changes
-  useEffect(() => {
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
-      refreshActiveContext();
-    });
-    return () => subscription.unsubscribe();
-  }, [refreshActiveContext]);
-
-  // Single source of truth for "locked"
-  const locked = !!lockRequired && !operator;
+  // ✅ Single source of truth:
+  // - If there is no org/location yet, don’t block the whole app with a lock.
+  // - If there IS context, lock depends on (forceLocked OR no operator).
+  const locked = useMemo(() => {
+    if (!orgId || !locationId) return false;
+    return forceLocked || !operator;
+  }, [forceLocked, operator, orgId, locationId]);
 
   const getActingContextClient = useCallback((): ActingContext => {
+    // Keep this stable for useActingClient: if operator exists, provide ids.
+    if (!operator) return {};
     return {
-      acted_by_team_member_id: operator?.teamMemberId ?? null,
-      acted_by_initials: operator?.initials ?? null,
+      acted_by_team_member_id: operator.teamMemberId,
+      acted_by_initials: operator.initials ?? null,
     };
   }, [operator]);
 
@@ -190,27 +198,17 @@ export function WorkstationLockProvider({
       setOperator,
       clearOperator,
       openLockModal,
-      closeLockModal,
       lockNow,
-      lockWorkstationNow,
       getActingContextClient,
     }),
-    [
-      locked,
-      operator,
-      setOperator,
-      clearOperator,
-      openLockModal,
-      closeLockModal,
-      lockNow,
-      lockWorkstationNow,
-      getActingContextClient,
-    ]
+    [locked, operator, setOperator, clearOperator, openLockModal, lockNow, getActingContextClient]
   );
 
   return (
     <WorkstationLockContext.Provider value={value}>
       {children}
+
+      {/* UI stays as-is: the existing glass modal is still WorkstationLockScreen */}
       {showLockModal ? <WorkstationLockScreen /> : null}
     </WorkstationLockContext.Provider>
   );
@@ -218,9 +216,6 @@ export function WorkstationLockProvider({
 
 export function useWorkstation() {
   const ctx = useContext(WorkstationLockContext);
-  if (!ctx)
-    throw new Error(
-      "useWorkstation must be used within <WorkstationLockProvider>"
-    );
+  if (!ctx) throw new Error("useWorkstation must be used within <WorkstationLockProvider>");
   return ctx;
 }
