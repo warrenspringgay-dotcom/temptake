@@ -21,15 +21,18 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // 1) Load all active, login-enabled team members for this org + location
+  // 1) Load all active, login-enabled team members for this org.
+  // Include both:
+  // - members assigned to this location
+  // - members with location_id NULL (treat as "all locations")
   // IMPORTANT: We do NOT require a pin row to exist.
   const { data: members, error: membersErr } = await supabase
     .from("team_members")
-    .select("id, name, initials, role, pin_enabled, login_enabled, active")
+    .select("id, name, initials, role, pin_enabled, login_enabled, active, location_id")
     .eq("org_id", orgId)
-    .eq("location_id", locationId)
     .eq("active", true)
     .eq("login_enabled", true)
+    .or(`location_id.eq.${locationId},location_id.is.null`)
     .order("name", { ascending: true });
 
   if (membersErr) {
@@ -43,7 +46,8 @@ export async function GET(req: NextRequest) {
   const memberIds = memberList.map((m) => m.id);
 
   // 2) Load pins (if any exist) for those members (separate table)
-  let pinsByMemberId = new Set<string>();
+  const pinsByMemberId = new Set<string>();
+
   if (memberIds.length > 0) {
     const { data: pins, error: pinsErr } = await supabase
       .from("team_member_pins")
