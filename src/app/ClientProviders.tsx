@@ -4,14 +4,10 @@ import React from "react";
 
 import { GlobalLoadingProvider } from "@/components/GlobalLoadingProvider";
 import { AuthProvider } from "@/components/AuthProvider";
-
-// ✅ This is the missing piece
 import { ToastProvider } from "@/components/ui/use-toast";
-// If your project’s ToastProvider actually lives somewhere else,
-// change ONLY this import path to match your repo.
 
 import { WorkstationLockProvider } from "@/components/workstation/WorkstationLockProvider";
-
+import WorkstationLockScreen from "@/components/workstation/WorkstationLockScreen";
 
 export default function ClientProviders({
   children,
@@ -24,7 +20,9 @@ export default function ClientProviders({
         <AuthProvider>
           <WorkstationLockProvider>
             {children}
-            
+
+            {/* SINGLE global lock screen instance */}
+            <WorkstationLockScreen />
           </WorkstationLockProvider>
         </AuthProvider>
       </GlobalLoadingProvider>
