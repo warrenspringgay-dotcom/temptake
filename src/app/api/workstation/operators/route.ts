@@ -1,81 +1,82 @@
-// app/api/workstation/operators/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabaseServer";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function GET(req: NextRequest) {
-  const supabase = await getServerSupabase();
+  try {
+    const { searchParams } = new URL(req.url);
+    const orgId = searchParams.get("orgId");
+    const locationId = searchParams.get("locationId");
 
-  const { data: auth, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !auth?.user) {
-    return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
-  }
-
-  const { searchParams } = new URL(req.url);
-  const orgId = searchParams.get("orgId");
-  const locationId = searchParams.get("locationId");
-
-  if (!orgId || !locationId) {
-    return NextResponse.json(
-      { ok: false, reason: "missing_org_or_location" },
-      { status: 400 }
-    );
-  }
-
-  // 1) Load all active, login-enabled team members for this org.
-  // Include both:
-  // - members assigned to this location
-  // - members with location_id NULL (treat as "all locations")
-  // IMPORTANT: We do NOT require a pin row to exist.
-  const { data: members, error: membersErr } = await supabase
-    .from("team_members")
-    .select("id, name, initials, role, pin_enabled, login_enabled, active, location_id")
-    .eq("org_id", orgId)
-    .eq("active", true)
-    .eq("login_enabled", true)
-    .or(`location_id.eq.${locationId},location_id.is.null`)
-    .order("name", { ascending: true });
-
-  if (membersErr) {
-    return NextResponse.json(
-      { ok: false, reason: "members_query_failed", details: membersErr.message },
-      { status: 500 }
-    );
-  }
-
-  const memberList = members ?? [];
-  const memberIds = memberList.map((m) => m.id);
-
-  // 2) Load pins (if any exist) for those members (separate table)
-  const pinsByMemberId = new Set<string>();
-
-  if (memberIds.length > 0) {
-    const { data: pins, error: pinsErr } = await supabase
-      .from("team_member_pins")
-      .select("team_member_id")
-      .eq("org_id", orgId)
-      .in("team_member_id", memberIds);
-
-    if (pinsErr) {
+    if (!orgId || !locationId) {
       return NextResponse.json(
-        { ok: false, reason: "pins_query_failed", details: pinsErr.message },
+        { ok: false, message: "Missing orgId/locationId", operators: [] },
+        { status: 400 }
+      );
+    }
+
+    // Authenticated requester (normal cookie auth)
+    const sb = await getServerSupabase();
+    const { data: auth, error: authErr } = await sb.auth.getUser();
+    if (authErr || !auth?.user) {
+      return NextResponse.json(
+        { ok: false, message: "Unauthenticated", operators: [] },
+        { status: 401 }
+      );
+    }
+
+    const userId = auth.user.id;
+
+    // Authorize: requester must be manager/owner in this org
+    const { data: me, error: meErr } = await supabaseAdmin
+      .from("team_members")
+      .select("id, role, active")
+      .eq("org_id", orgId)
+      .eq("user_id", userId)
+      .eq("active", true)
+      .maybeSingle();
+
+    const role = (me?.role ?? "").toLowerCase();
+    const allowed = role === "owner" || role === "manager";
+
+    if (meErr || !me || !allowed) {
+      return NextResponse.json(
+        { ok: false, message: "Forbidden", operators: [] },
+        { status: 403 }
+      );
+    }
+
+    // Fetch operators for that location (service role = no RLS surprises)
+    const { data: rows, error } = await supabaseAdmin
+      .from("team_members")
+      .select("id, name, initials, role")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .eq("active", true)
+      .eq("login_enabled", true)
+      .order("role", { ascending: false }) // managers first (usually)
+      .order("name", { ascending: true });
+
+    if (error) {
+      return NextResponse.json(
+        { ok: false, message: error.message, operators: [] },
         { status: 500 }
       );
     }
 
-    for (const p of pins ?? []) {
-      if (p?.team_member_id) pinsByMemberId.add(p.team_member_id);
-    }
+    return NextResponse.json({
+      ok: true,
+      operators: (rows ?? []).map((r) => ({
+        id: r.id,
+        name: r.name ?? null,
+        initials: r.initials ?? null,
+        role: r.role ?? null,
+      })),
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { ok: false, message: e?.message ?? "Server error", operators: [] },
+      { status: 500 }
+    );
   }
-
-  // 3) Shape for UI
-  const operators = memberList.map((m) => ({
-    id: m.id,
-    name: m.name ?? null,
-    initials: m.initials ?? null,
-    role: m.role ?? null,
-    pin_enabled: !!m.pin_enabled,
-    has_pin: pinsByMemberId.has(m.id),
-  }));
-
-  return NextResponse.json({ ok: true, operators });
 }

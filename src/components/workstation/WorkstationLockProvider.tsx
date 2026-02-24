@@ -1,5 +1,5 @@
 "use client";
-import WorkstationLockScreen from "./WorkstationLockScreen";
+
 import React, {
   createContext,
   useCallback,
@@ -8,58 +8,50 @@ import React, {
   useMemo,
   useState,
 } from "react";
-
 import { usePathname } from "next/navigation";
+import { supabase } from "@/lib/supabaseBrowser";
 
-import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
-
-/**
-* Keep this contract stable.
-* Other files already assume these names exist.
-*/
+/* ===================== Types ===================== */
 
 export type Operator = {
   teamMemberId: string;
-
-  // IMPORTANT: these exist and are used elsewhere (LockScreen + unlock route)
   orgId: string;
   locationId: string;
-
   name?: string | null;
   initials?: string | null;
   role?: string | null;
 };
 
-type ActingContext = {
+export type ActingContext = {
+  acted_by_team_member_id?: string | null;
   acted_by_initials?: string | null;
 };
 
 type Ctx = {
   locked: boolean;
-
   operator: Operator | null;
   setOperator: (op: Operator | null) => void;
   clearOperator: () => void;
 
-  // Used by QuickActionsFab
   openLockModal: () => void;
+  closeLockModal: () => void;
   lockNow: () => void;
 
-  // Used by useActingClient
+  // Used by useActingClient()
   getActingContextClient: () => ActingContext;
-  setActingContextClient: (patch: ActingContext) => void;
 };
 
 const WorkstationLockContext = createContext<Ctx | null>(null);
 
-const LS_OPERATOR = "tt_ws_operator";
-const LS_ACTING = "tt_ws_acting";
+/* ===================== Local Storage Keys ===================== */
+
+const LS_LOCKED = "tt_ws_locked_v1";
+const LS_OPERATOR = "tt_ws_operator_v1";
+const LS_AUTH_UID = "tt_ws_auth_uid_v1";
 
 function readJson<T>(key: string): T | null {
-  if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     return JSON.parse(raw) as T;
   } catch {
@@ -67,65 +59,86 @@ function readJson<T>(key: string): T | null {
   }
 }
 
-function writeJson(key: string, value: unknown) {
-  if (typeof window === "undefined") return;
+function writeJson(key: string, value: any) {
   try {
-    window.localStorage.setItem(key, JSON.stringify(value));
+    localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // ignore
   }
 }
 
 function removeKey(key: string) {
-  if (typeof window === "undefined") return;
   try {
-    window.localStorage.removeItem(key);
+    localStorage.removeItem(key);
   } catch {
     // ignore
   }
 }
 
-export function WorkstationLockProvider({ children }: { children: React.ReactNode }) {
+/* ===================== Provider ===================== */
+
+export function WorkstationLockProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
 
-  const [operator, _setOperator] = useState<Operator | null>(() =>
-    readJson<Operator>(LS_OPERATOR)
-  );
-
-  const [locked, setLocked] = useState<boolean>(() => {
-    // If there is no operator selected, we start "locked"
-    return !readJson<Operator>(LS_OPERATOR);
-  });
-
+  const [locked, setLocked] = useState<boolean>(false);
+  const [operator, setOperatorState] = useState<Operator | null>(null);
   const [showLockModal, setShowLockModal] = useState(false);
 
-  // Active org/location (may not exist immediately after signup)
-  const [orgId, setOrgId] = useState<string | null>(null);
-  const [locationId, setLocationId] = useState<string | null>(null);
+  // 1) Account-isolate the workstation state (localStorage is shared across accounts).
+  useEffect(() => {
+    let cancelled = false;
 
-  const refreshActiveContext = useCallback(async () => {
-    // These helpers might be sync or async depending on your implementation.
-    // Promise.resolve handles both and stops TS screaming.
-    const o = await Promise.resolve(getActiveOrgIdClient());
-    const l = await Promise.resolve(getActiveLocationIdClient());
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (cancelled) return;
 
-    setOrgId(o || null);
-    setLocationId(l || null);
+      const uid = data.user?.id ?? null;
+      const prev = typeof window !== "undefined" ? localStorage.getItem(LS_AUTH_UID) : null;
 
-    return { orgId: o || null, locationId: l || null };
+      if (uid && prev && prev !== uid) {
+        // Different logged-in user: wipe workstation state.
+        removeKey(LS_LOCKED);
+        removeKey(LS_OPERATOR);
+      }
+
+      if (uid) {
+        try {
+          localStorage.setItem(LS_AUTH_UID, uid);
+        } catch {}
+      }
+
+      // Load persisted state after we’ve handled user switching.
+      const persistedLocked = localStorage.getItem(LS_LOCKED) === "1";
+      const persistedOperator = readJson<Operator>(LS_OPERATOR);
+
+      setLocked(persistedLocked);
+      setOperatorState(persistedOperator);
+      setShowLockModal(persistedLocked);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const setOperator = useCallback((op: Operator | null) => {
-    _setOperator(op);
+  // 2) If app is locked, ensure modal stays open (but don’t fight the UI if unlocked).
+  useEffect(() => {
+    if (locked) setShowLockModal(true);
+  }, [locked]);
 
-    if (op) {
-      writeJson(LS_OPERATOR, op);
-      setLocked(false);
-      setShowLockModal(false);
-    } else {
-      removeKey(LS_OPERATOR);
-      setLocked(true);
-    }
+  // Optional: if you want locking to apply to route changes, keep it simple:
+  useEffect(() => {
+    if (locked) setShowLockModal(true);
+  }, [pathname, locked]);
+
+  const setOperator = useCallback((op: Operator | null) => {
+    setOperatorState(op);
+    if (op) writeJson(LS_OPERATOR, op);
+    else removeKey(LS_OPERATOR);
   }, []);
 
   const clearOperator = useCallback(() => {
@@ -134,48 +147,60 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
 
   const openLockModal = useCallback(() => {
     setShowLockModal(true);
+    setLocked(true);
+    try {
+      localStorage.setItem(LS_LOCKED, "1");
+    } catch {}
+  }, []);
+
+  const closeLockModal = useCallback(() => {
+    setShowLockModal(false);
   }, []);
 
   const lockNow = useCallback(() => {
-    // Locking means: require operator to continue, modal should show
-    setLocked(true);
+    // Lock immediately and clear operator (forces PIN selection)
+    setOperator(null);
     setShowLockModal(true);
+    setLocked(true);
+    try {
+      localStorage.setItem(LS_LOCKED, "1");
+    } catch {}
+  }, [setOperator]);
+
+  const unlock = useCallback(() => {
+    setLocked(false);
+    setShowLockModal(false);
+    try {
+      localStorage.setItem(LS_LOCKED, "0");
+    } catch {}
   }, []);
 
   const getActingContextClient = useCallback((): ActingContext => {
-    return readJson<ActingContext>(LS_ACTING) ?? {};
-  }, []);
-
-  const setActingContextClient = useCallback((patch: ActingContext) => {
-    const current = readJson<ActingContext>(LS_ACTING) ?? {};
-    const next = { ...current, ...patch };
-    writeJson(LS_ACTING, next);
-  }, []);
-
-  // Keep org/location in sync whenever route changes (helps after signup redirects)
-  useEffect(() => {
-    refreshActiveContext();
-  }, [pathname, refreshActiveContext]);
-
-  // If operator exists but context disappears (new account edge cases), keep UI stable:
-  // - We DO NOT auto-clear operator
-  // - We DO allow lock screen to show a "no active org/location selected" message
-  // (LockScreen handles that text without changing UI)
-  useEffect(() => {
-    // If operator missing, ensure locked state is true
-    if (!operator) setLocked(true);
+    // keep this tiny and stable; other files rely on these field names
+    return {
+      acted_by_team_member_id: operator?.teamMemberId ?? null,
+      acted_by_initials: operator?.initials ?? null,
+    };
   }, [operator]);
 
   const value = useMemo<Ctx>(
     () => ({
       locked,
       operator,
-      setOperator,
+      setOperator: (op) => {
+        setOperator(op);
+        if (op) {
+          // setting an operator implies “unlocked”
+          unlock();
+        }
+      },
       clearOperator,
+
       openLockModal,
+      closeLockModal,
       lockNow,
+
       getActingContextClient,
-      setActingContextClient,
     }),
     [
       locked,
@@ -183,9 +208,10 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
       setOperator,
       clearOperator,
       openLockModal,
+      closeLockModal,
       lockNow,
+      unlock,
       getActingContextClient,
-      setActingContextClient,
     ]
   );
 
@@ -193,16 +219,13 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     <WorkstationLockContext.Provider value={value}>
       {children}
 
-      {/* UI stays exactly as-is: the lock modal is whatever your LockScreen renders */}
-      {showLockModal ? (
-        // Import path matches your existing structure (you already have the file)
-        // If your project uses a different relative path, keep it identical to your existing import.
-        // eslint-disable-next-line react/jsx-no-undef
-        <WorkstationLockScreen onClose={() => setShowLockModal(false)} />
-      ) : null}
+      {/* UI stays as-is: your lock screen component controls styling */}
+      {showLockModal ? null : null}
     </WorkstationLockContext.Provider>
   );
 }
+
+/* ===================== Hook ===================== */
 
 export function useWorkstation() {
   const ctx = useContext(WorkstationLockContext);

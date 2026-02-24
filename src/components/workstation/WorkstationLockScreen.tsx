@@ -1,101 +1,87 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
-type MemberOption = {
+type StaffRow = {
   id: string;
   name: string | null;
   initials: string | null;
   role: string | null;
-  hasPin: boolean;
 };
 
-function isNoPinReason(reason: unknown) {
-  const r = String(reason ?? "").toLowerCase();
-  return r.includes("no_pin") || r.includes("no pin") || r.includes("pin_not_set");
+type Props = {
+  onClose?: () => void; // ✅ optional now
+};
+
+function initialsFromName(name?: string | null) {
+  const s = String(name ?? "").trim();
+  if (!s) return "";
+  const parts = s.split(/\s+/).filter(Boolean);
+  return parts
+    .slice(0, 2)
+    .map((p) => (p[0] ? p[0].toUpperCase() : ""))
+    .join("");
 }
 
-export default function WorkstationLockScreen({ onClose }: { onClose: () => void }) {
+export default function WorkstationLockScreen({ onClose }: Props) {
   const ws = useWorkstation();
-
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
 
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
-  const [operators, setOperators] = useState<MemberOption[]>([]);
-  const [selected, setSelected] = useState<MemberOption | null>(null);
+  const [staff, setStaff] = useState<StaffRow[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
   const [pin, setPin] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const canLoad = useMemo(() => !!orgId && !!locationId, [orgId, locationId]);
+  const selected = useMemo(
+    () => staff.find((s) => s.id === selectedId) ?? null,
+    [staff, selectedId]
+  );
 
+  async function refreshContext() {
+    // These may be async in your project, so always await.
+    const o = await getActiveOrgIdClient();
+    const l = await getActiveLocationIdClient();
+    setOrgId(o ?? null);
+    setLocationId(l ?? null);
+    return { orgId: o ?? null, locationId: l ?? null };
+  }
+
+  async function loadOperators(oId: string, lId: string) {
+    const res = await fetch(
+      `/api/workstation/operators?orgId=${encodeURIComponent(oId)}&locationId=${encodeURIComponent(lId)}`,
+      { cache: "no-store" }
+    );
+    const json = await res.json().catch(() => ({}));
+
+    const ops: StaffRow[] = Array.isArray(json.operators) ? json.operators : [];
+    setStaff(ops);
+
+    // keep selection stable if possible
+    if (ops.length && !ops.some((x) => x.id === selectedId)) {
+      setSelectedId(ops[0].id);
+    }
+  }
+
+  // Mount: load context, then operators.
   useEffect(() => {
     let cancelled = false;
 
-    async function loadContextAndOperators() {
-      setMsg(null);
-
-      const oid = await Promise.resolve(getActiveOrgIdClient());
-      const lid = await Promise.resolve(getActiveLocationIdClient());
-
+    (async () => {
+      const ctx = await refreshContext();
       if (cancelled) return;
 
-      setOrgId(oid || null);
-      setLocationId(lid || null);
-
-      if (!oid || !lid) {
-        setOperators([]);
-        setSelected(null);
-        setMsg("No active organisation/location selected.");
-        return;
+      if (ctx.orgId && ctx.locationId) {
+        await loadOperators(ctx.orgId, ctx.locationId);
       }
-
-      try {
-        const res = await fetch(
-          `/api/workstation/operators?orgId=${encodeURIComponent(oid)}&locationId=${encodeURIComponent(
-            lid
-          )}`,
-          { cache: "no-store" }
-        );
-
-        const json = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          setOperators([]);
-          setSelected(null);
-          setMsg(json?.detail ?? "Failed to load operators.");
-          return;
-        }
-
-        const list: MemberOption[] = (json.operators ?? []).map((o: any) => ({
-          id: String(o.id),
-          name: o.name ?? null,
-          initials: o.initials ?? null,
-          role: o.role ?? null,
-          hasPin: !!o.has_pin,
-        }));
-
-        setOperators(list);
-
-        // Keep selection stable if possible
-        if (!selected && list.length > 0) setSelected(list[0]);
-        if (selected && !list.some((x) => x.id === selected.id)) setSelected(list[0] ?? null);
-
-        if (list.length === 0) setMsg("No staff found for this location.");
-      } catch {
-        setOperators([]);
-        setSelected(null);
-        setMsg("Failed to load operators.");
-      }
-    }
-
-    loadContextAndOperators();
+    })();
 
     return () => {
       cancelled = true;
@@ -103,16 +89,23 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function attemptUnlockWithPin(oid: string, lid: string, memberId: string, enteredPin: string) {
-    const res = await fetch("/api/workstation/unlock", {
+  // If context appears later (new signup flow), try again.
+  useEffect(() => {
+    if (orgId && locationId) {
+      loadOperators(orgId, locationId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, locationId]);
+
+  async function attemptUnlockWithPin(oId: string, lId: string, teamMemberId: string, pinValue: string) {
+    const res = await fetch(`/api/workstation/unlock`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        orgId: oid,
-        locationId: lid,
-        teamMemberId: memberId,
-        pin: enteredPin,
+        orgId: oId,
+        locationId: lId,
+        teamMemberId,
+        pin: pinValue,
       }),
     });
 
@@ -120,39 +113,12 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
     return { ok: res.ok, json };
   }
 
-  async function setPinForMember(oid: string, memberId: string, enteredPin: string) {
-    // You said you already have a set pin route. Keep this path EXACTLY as your project uses.
-    // If your actual route differs, change ONLY the URL, nothing else.
-    const res = await fetch("/api/workstation/set-pin", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({
-        orgId: oid,
-        teamMemberId: memberId,
-        pin: enteredPin,
-      }),
-    });
-
-    const json = await res.json().catch(() => ({}));
-    return { ok: res.ok, json };
+  function isNoPinReason(reason: any) {
+    return reason === "no_pin" || reason === "pin_not_set" || reason === "NO_PIN";
   }
 
-  async function onUnlock() {
+  async function handleUnlock() {
     setMsg(null);
-
-    const oid = orgId;
-    const lid = locationId;
-
-    if (!oid || !lid) {
-      setMsg("No active organisation/location selected.");
-      return;
-    }
-
-    if (!selected) {
-      setMsg("Select a user to continue.");
-      return;
-    }
 
     const cleaned = String(pin ?? "").trim();
     if (cleaned.replace(/\D+/g, "").length < 4) {
@@ -162,125 +128,154 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
 
     setBusy(true);
     try {
+      const ctx = { orgId, locationId };
+      // If missing, re-check once (new signup timing)
+      if (!ctx.orgId || !ctx.locationId) {
+        const fresh = await refreshContext();
+        ctx.orgId = fresh.orgId;
+        ctx.locationId = fresh.locationId;
+      }
+
+      if (!ctx.orgId || !ctx.locationId) {
+        setMsg("No active organisation/location selected.");
+        return;
+      }
+
+      if (!selected) {
+        setMsg("Select a user.");
+        return;
+      }
+
       // 1) Try unlock normally
-      const first = await attemptUnlockWithPin(oid, lid, selected.id, cleaned);
+      const first = await attemptUnlockWithPin(ctx.orgId, ctx.locationId, selected.id, cleaned);
 
       if (first.ok) {
-        // Expecting { operator: { teamMemberId, orgId, locationId, name, initials, role } }
-        const op = first.json?.operator;
-        if (!op?.teamMemberId || !op?.orgId || !op?.locationId) {
-          setMsg("Unlock succeeded but operator payload was missing.");
-          return;
-        }
+        const op = first.json?.operator ?? null;
 
-        ws.setOperator(op);
-        setPin("");
-        onClose();
+        // Be defensive: build Operator from what we already have
+        ws.setOperator({
+          teamMemberId: selected.id,
+          orgId: ctx.orgId,
+          locationId: ctx.locationId,
+          name: selected.name ?? null,
+          initials: selected.initials ?? initialsFromName(selected.name),
+          role: selected.role ?? null,
+        });
+
+        onClose?.();
         return;
       }
 
-      // 2) If no PIN exists yet, treat entered PIN as setup PIN, then retry unlock
-      const reason = first.json?.reason ?? first.json?.detail ?? "";
+      // 2) If no PIN exists yet, treat entered PIN as "set it now"
+      const reason = first.json?.reason ?? first.json?.error ?? null;
       if (isNoPinReason(reason)) {
-        const created = await setPinForMember(oid, selected.id, cleaned);
-        if (!created.ok) {
-          setMsg(created.json?.detail ?? "Failed to set PIN.");
+        const res2 = await fetch(`/api/workstation/set-pin`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            orgId: ctx.orgId,
+            teamMemberId: selected.id,
+            pin: cleaned,
+          }),
+        });
+        const j2 = await res2.json().catch(() => ({}));
+
+        if (!res2.ok) {
+          setMsg(j2?.message ?? "Could not set PIN.");
           return;
         }
 
-        // refresh auth state in case RLS depends on it
-        await supabase.auth.getSession();
+        // After setting PIN, unlock again
+        const second = await attemptUnlockWithPin(ctx.orgId, ctx.locationId, selected.id, cleaned);
+        if (second.ok) {
+          ws.setOperator({
+            teamMemberId: selected.id,
+            orgId: ctx.orgId,
+            locationId: ctx.locationId,
+            name: selected.name ?? null,
+            initials: selected.initials ?? initialsFromName(selected.name),
+            role: selected.role ?? null,
+          });
 
-        const second = await attemptUnlockWithPin(oid, lid, selected.id, cleaned);
-        if (!second.ok) {
-          setMsg(second.json?.detail ?? "PIN set but unlock failed.");
+          onClose?.();
           return;
         }
 
-        const op2 = second.json?.operator;
-        if (!op2?.teamMemberId || !op2?.orgId || !op2?.locationId) {
-          setMsg("Unlock succeeded but operator payload was missing.");
-          return;
-        }
-
-        ws.setOperator(op2);
-        setPin("");
-        onClose();
+        setMsg("Incorrect PIN.");
         return;
       }
 
-      // 3) Normal failure
-      setMsg(first.json?.detail ?? "Incorrect PIN.");
+      setMsg(first.json?.message ?? "Incorrect PIN.");
     } finally {
       setBusy(false);
     }
   }
 
-  function onClearOperator() {
-    ws.clearOperator();
-    setMsg(null);
-    setPin("");
-  }
-
-  // =========================
-  // UI: keep it as you have it
-  // =========================
+  // ========== UI (UNCHANGED STYLING INTENT) ==========
   return (
-    <div className="fixed inset-0 z-[200] flex items-start justify-center bg-black/40 pt-10">
-      <div className="w-[min(980px,92vw)] rounded-3xl border border-white/40 bg-white/90 p-6 shadow-2xl backdrop-blur-md">
-        <div className="flex items-start justify-between gap-4">
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/30 backdrop-blur-sm">
+      <div className="w-[680px] max-w-[92vw] rounded-3xl border border-white/40 bg-white/70 shadow-lg backdrop-blur-md">
+        <div className="flex items-start justify-between px-6 pt-5">
           <div>
-            <div className="text-lg font-semibold">Workstation locked</div>
-            <div className="text-sm text-muted-foreground">
+            <div className="text-lg font-semibold text-slate-900">
+              Workstation locked
+            </div>
+            <div className="text-sm text-slate-700">
               Select a user and enter a PIN to continue.
             </div>
           </div>
 
           <button
             type="button"
-            onClick={onClearOperator}
-            className="rounded-2xl bg-white/70 px-4 py-2 text-sm shadow"
+            onClick={() => ws.clearOperator()}
+            className="rounded-xl bg-white/60 px-3 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-white/80"
           >
             Clear operator
           </button>
         </div>
 
-        <div className="mt-5">
-          {!canLoad ? (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              {msg ?? "No active organisation/location selected."}
+        <div className="px-6 pb-6 pt-4">
+          {!orgId || !locationId ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              No active organisation/location selected.
             </div>
-          ) : operators.length === 0 ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
-              {msg ?? "No staff found for this location."}
+          ) : staff.length === 0 ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              No staff found for this location.
             </div>
           ) : (
             <>
               <div className="flex flex-wrap gap-3">
-                {operators.map((m) => {
-                  const active = selected?.id === m.id;
-                  const initials = (m.initials ?? "?").toUpperCase();
+                {staff.map((s) => {
+                  const initials = (s.initials ?? initialsFromName(s.name)).slice(0, 2);
+                  const selected = s.id === selectedId;
 
                   return (
                     <button
-                      key={m.id}
+                      key={s.id}
                       type="button"
                       onClick={() => {
-                        setSelected(m);
+                        setSelectedId(s.id);
                         setMsg(null);
                         setPin("");
                       }}
                       className={[
-                        "flex items-center gap-3 rounded-2xl border px-4 py-3 text-left shadow-sm",
-                        active ? "border-black/20 bg-white" : "border-white/40 bg-white/60",
+                        "flex items-center gap-3 rounded-2xl border px-4 py-3 text-left transition",
+                        selected
+                          ? "border-slate-300 bg-white/70"
+                          : "border-white/30 bg-white/40 hover:bg-white/60",
                       ].join(" ")}
                     >
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-black text-white">
-                        {initials}
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                        {initials || "??"}
                       </div>
-                      <div className="min-w-[180px]">
-                        <div className="text-sm font-semibold">{m.name ?? "Unnamed"}</div>
-                        <div className="text-xs text-muted-foreground">{m.role ?? ""}</div>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-slate-900">
+                          {s.name ?? "Unnamed"}
+                        </div>
+                        <div className="text-xs text-slate-600">
+                          {(s.role ?? "staff").toLowerCase()}
+                        </div>
                       </div>
                     </button>
                   );
@@ -288,23 +283,26 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
               </div>
 
               <div className="mt-4">
-                <div className="text-xs font-semibold text-muted-foreground">PIN</div>
+                <div className="text-xs font-medium text-slate-700">PIN</div>
                 <input
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
                   inputMode="numeric"
-                  className="mt-2 w-full rounded-2xl border border-white/40 bg-white/70 px-4 py-3 text-sm shadow-sm outline-none"
+                  className="mt-1 w-full rounded-2xl border border-white/40 bg-white/60 px-4 py-3 text-sm outline-none focus:border-slate-300"
                   placeholder="••••"
+                  autoFocus
                 />
-                {msg ? <div className="mt-2 text-sm text-rose-600">{msg}</div> : null}
+                {msg ? (
+                  <div className="mt-2 text-sm text-rose-700">{msg}</div>
+                ) : null}
               </div>
 
-              <div className="mt-4 flex items-center justify-end">
+              <div className="mt-5 flex justify-end">
                 <button
                   type="button"
-                  disabled={busy || !selected}
-                  onClick={onUnlock}
-                  className="rounded-2xl bg-emerald-500 px-6 py-3 text-sm font-semibold text-white shadow disabled:opacity-50"
+                  disabled={busy || !selectedId}
+                  onClick={handleUnlock}
+                  className="rounded-2xl bg-emerald-500 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-600 disabled:opacity-60"
                 >
                   Unlock
                 </button>
