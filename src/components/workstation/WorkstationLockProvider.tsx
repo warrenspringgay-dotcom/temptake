@@ -1,5 +1,5 @@
 "use client";
-
+import WorkstationLockScreen from "./WorkstationLockScreen";
 import React, {
   createContext,
   useCallback,
@@ -14,174 +14,159 @@ import { usePathname } from "next/navigation";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 
-/** Keep this shape consistent across the app */
+/**
+* Keep this contract stable.
+* Other files already assume these names exist.
+*/
+
 export type Operator = {
   teamMemberId: string;
+
+  // IMPORTANT: these exist and are used elsewhere (LockScreen + unlock route)
   orgId: string;
   locationId: string;
+
   name?: string | null;
   initials?: string | null;
   role?: string | null;
 };
 
 type ActingContext = {
-  orgId: string | null;
-  locationId: string | null;
-  acted_by_team_member_id: string | null;
-  acted_by_name: string | null;
-  acted_by_initials: string | null;
-  acted_by_role: string | null;
+  acted_by_initials?: string | null;
 };
 
 type Ctx = {
   locked: boolean;
+
   operator: Operator | null;
   setOperator: (op: Operator | null) => void;
   clearOperator: () => void;
 
-  /** Used by FAB */
+  // Used by QuickActionsFab
   openLockModal: () => void;
   lockNow: () => void;
 
-  /** Used in other parts of app (e.g. useActingClient) */
+  // Used by useActingClient
   getActingContextClient: () => ActingContext;
+  setActingContextClient: (patch: ActingContext) => void;
 };
 
 const WorkstationLockContext = createContext<Ctx | null>(null);
 
-const LS_OPERATOR = "tt_workstation_operator";
-const LS_FORCE_LOCK = "tt_force_workstation_lock";
+const LS_OPERATOR = "tt_ws_operator";
+const LS_ACTING = "tt_ws_acting";
 
-/** small helpers */
 function readJson<T>(key: string): T | null {
+  if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(key);
+    const raw = window.localStorage.getItem(key);
     if (!raw) return null;
     return JSON.parse(raw) as T;
   } catch {
     return null;
   }
 }
+
 function writeJson(key: string, value: unknown) {
+  if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {}
-}
-function removeKey(key: string) {
-  try {
-    localStorage.removeItem(key);
-  } catch {}
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
 }
 
-/**
-* Provider owns:
-* - persisted operator
-* - "force lock" (manual lock)
-* - active org/location lookup (async helpers)
-* - exposing openLockModal/lockNow for FAB
-*
-* It does NOT change your LockScreen UI. It just supports it properly.
-*/
-export function WorkstationLockProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+function removeKey(key: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
+export function WorkstationLockProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  const [operator, setOperatorState] = useState<Operator | null>(null);
-  const [forceLocked, setForceLocked] = useState<boolean>(false);
+  const [operator, _setOperator] = useState<Operator | null>(() =>
+    readJson<Operator>(LS_OPERATOR)
+  );
 
+  const [locked, setLocked] = useState<boolean>(() => {
+    // If there is no operator selected, we start "locked"
+    return !readJson<Operator>(LS_OPERATOR);
+  });
+
+  const [showLockModal, setShowLockModal] = useState(false);
+
+  // Active org/location (may not exist immediately after signup)
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
-  // Hydrate operator + force lock from localStorage (client-only)
-  useEffect(() => {
-    const op = readJson<Operator>(LS_OPERATOR);
-    if (op?.teamMemberId && op?.orgId && op?.locationId) setOperatorState(op);
-
-    const fl = readJson<boolean>(LS_FORCE_LOCK);
-    if (typeof fl === "boolean") setForceLocked(fl);
-  }, []);
-
-  // Refresh active context (async helpers) on mount + route changes
   const refreshActiveContext = useCallback(async () => {
-    try {
-      const o = await getActiveOrgIdClient();
-      const l = await getActiveLocationIdClient();
-      setOrgId(o ?? null);
-      setLocationId(l ?? null);
-      return { orgId: o ?? null, locationId: l ?? null };
-    } catch {
-      setOrgId(null);
-      setLocationId(null);
-      return { orgId: null, locationId: null };
-    }
+    // These helpers might be sync or async depending on your implementation.
+    // Promise.resolve handles both and stops TS screaming.
+    const o = await Promise.resolve(getActiveOrgIdClient());
+    const l = await Promise.resolve(getActiveLocationIdClient());
+
+    setOrgId(o || null);
+    setLocationId(l || null);
+
+    return { orgId: o || null, locationId: l || null };
   }, []);
 
-  useEffect(() => {
-    void refreshActiveContext();
-  }, [refreshActiveContext, pathname]);
-
-  // Persist operator changes
   const setOperator = useCallback((op: Operator | null) => {
-    setOperatorState(op);
-    if (op) writeJson(LS_OPERATOR, op);
-    else removeKey(LS_OPERATOR);
+    _setOperator(op);
+
+    if (op) {
+      writeJson(LS_OPERATOR, op);
+      setLocked(false);
+      setShowLockModal(false);
+    } else {
+      removeKey(LS_OPERATOR);
+      setLocked(true);
+    }
   }, []);
 
   const clearOperator = useCallback(() => {
     setOperator(null);
   }, [setOperator]);
 
-  // Manual lock, used by FAB or inactivity timers
-  const lockNow = useCallback(() => {
-    setForceLocked(true);
-    writeJson(LS_FORCE_LOCK, true);
-
-    // Tell the lock screen (which listens globally) to open itself
-    window.dispatchEvent(new CustomEvent("tt-open-workstation-lock"));
-  }, []);
-
-  // Open modal without forcing locked state (FAB "unlock workstation" button)
   const openLockModal = useCallback(() => {
-    window.dispatchEvent(new CustomEvent("tt-open-workstation-lock"));
+    setShowLockModal(true);
   }, []);
 
-  // When should we consider workstation locked?
-  // - if forced locked OR no operator selected
-  // - but only when active org+location exist (otherwise onboarding gets bricked)
-  const locked = useMemo(() => {
-    if (!orgId || !locationId) return false;
-    if (forceLocked) return true;
-    return operator == null;
-  }, [forceLocked, operator, orgId, locationId]);
-
-  // Clear "force lock" as soon as we have a valid operator in the current context
-  useEffect(() => {
-    if (!forceLocked) return;
-    if (!operator) return;
-    if (!orgId || !locationId) return;
-
-    // If operator belongs to current org/location, consider workstation unlocked
-    if (operator.orgId === orgId && operator.locationId === locationId) {
-      setForceLocked(false);
-      writeJson(LS_FORCE_LOCK, false);
-    }
-  }, [forceLocked, operator, orgId, locationId]);
+  const lockNow = useCallback(() => {
+    // Locking means: require operator to continue, modal should show
+    setLocked(true);
+    setShowLockModal(true);
+  }, []);
 
   const getActingContextClient = useCallback((): ActingContext => {
-    return {
-      orgId,
-      locationId,
-      acted_by_team_member_id: operator?.teamMemberId ?? null,
-      acted_by_name: operator?.name ?? null,
-      acted_by_initials: operator?.initials ?? null,
-      acted_by_role: operator?.role ?? null,
-    };
-  }, [operator, orgId, locationId]);
+    return readJson<ActingContext>(LS_ACTING) ?? {};
+  }, []);
 
-  const value: Ctx = useMemo(
+  const setActingContextClient = useCallback((patch: ActingContext) => {
+    const current = readJson<ActingContext>(LS_ACTING) ?? {};
+    const next = { ...current, ...patch };
+    writeJson(LS_ACTING, next);
+  }, []);
+
+  // Keep org/location in sync whenever route changes (helps after signup redirects)
+  useEffect(() => {
+    refreshActiveContext();
+  }, [pathname, refreshActiveContext]);
+
+  // If operator exists but context disappears (new account edge cases), keep UI stable:
+  // - We DO NOT auto-clear operator
+  // - We DO allow lock screen to show a "no active org/location selected" message
+  // (LockScreen handles that text without changing UI)
+  useEffect(() => {
+    // If operator missing, ensure locked state is true
+    if (!operator) setLocked(true);
+  }, [operator]);
+
+  const value = useMemo<Ctx>(
     () => ({
       locked,
       operator,
@@ -190,13 +175,31 @@ export function WorkstationLockProvider({
       openLockModal,
       lockNow,
       getActingContextClient,
+      setActingContextClient,
     }),
-    [locked, operator, setOperator, clearOperator, openLockModal, lockNow, getActingContextClient]
+    [
+      locked,
+      operator,
+      setOperator,
+      clearOperator,
+      openLockModal,
+      lockNow,
+      getActingContextClient,
+      setActingContextClient,
+    ]
   );
 
   return (
     <WorkstationLockContext.Provider value={value}>
       {children}
+
+      {/* UI stays exactly as-is: the lock modal is whatever your LockScreen renders */}
+      {showLockModal ? (
+        // Import path matches your existing structure (you already have the file)
+        // If your project uses a different relative path, keep it identical to your existing import.
+        // eslint-disable-next-line react/jsx-no-undef
+        <WorkstationLockScreen onClose={() => setShowLockModal(false)} />
+      ) : null}
     </WorkstationLockContext.Provider>
   );
 }

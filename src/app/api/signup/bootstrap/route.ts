@@ -1,138 +1,153 @@
-import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { getServerSupabase } from "@/lib/supabaseServer";
+// src/app/api/signup/bootstrap/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
 
-export async function POST() {
-  try {
-    const supabase = await getServerSupabase();
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const service = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
+export async function POST(req: NextRequest) {
+  const cookieStore = await cookies();
 
-    if (userError || !user) {
-      return NextResponse.json(
-        { ok: false, reason: "no-user" },
-        { status: 401 }
-      );
-    }
+  // Authenticated (RLS) client using cookies
+  const supabase = createServerClient(url, anon, {
+    cookies: {
+      get(name: string) {
+        return cookieStore.get(name)?.value;
+      },
+      set(name: string, value: string, options: any) {
+        cookieStore.set({ name, value, ...options });
+      },
+      remove(name: string, options: any) {
+        cookieStore.set({ name, value: "", ...options });
+      },
+    },
+  });
 
-    // -------------------------------------------------
-    // 1️⃣ Prevent duplicate bootstrap
-    // -------------------------------------------------
+  // Admin client (service role) for writes that may need elevated permissions
+  const admin = createClient(url, service);
 
-    const { data: existingMember } = await supabaseAdmin
-      .from("team_members")
-      .select("org_id, location_id")
-      .eq("user_id", user.id)
-      .maybeSingle();
+  const {
+    orgName,
+    locationName,
+    ownerName,
+    ownerInitials,
+    ownerEmail,
+  }: {
+    orgName?: string;
+    locationName?: string;
+    ownerName?: string;
+    ownerInitials?: string;
+    ownerEmail?: string;
+  } = await req.json().catch(() => ({}));
 
-    if (existingMember?.org_id && existingMember?.location_id) {
-      return NextResponse.json({
-        ok: true,
-        orgId: existingMember.org_id,
-        locationId: existingMember.location_id,
-        alreadyBootstrapped: true,
-      });
-    }
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
 
-    // -------------------------------------------------
-    // 2️⃣ Create Organisation
-    // -------------------------------------------------
+  if (userErr || !user) {
+    return NextResponse.json({ ok: false, reason: "not_authenticated" }, { status: 401 });
+  }
 
-    const { data: org, error: orgError } = await supabaseAdmin
-      .from("organisations")
-      .insert({
-        name: user.user_metadata?.business_name ?? "My Organisation",
-        created_by: user.id,
-      })
-      .select()
-      .single();
+  const safeOrgName = String(orgName || "My Organisation").trim() || "My Organisation";
+  const safeLocationName = String(locationName || "Main Location").trim() || "Main Location";
+  const safeOwnerName = String(ownerName || user.email || "Owner").trim() || "Owner";
+  const safeInitials = String(ownerInitials || "").trim().toUpperCase() || "ME";
+  const safeEmail = String(ownerEmail || user.email || "").trim() || null;
 
-    if (orgError || !org) {
-      return NextResponse.json(
-        { ok: false, reason: "org-create-failed", detail: orgError?.message },
-        { status: 500 }
-      );
-    }
+  // 1) Create org
+  const { data: orgRow, error: orgErr } = await admin
+    .from("orgs")
+    .insert({ name: safeOrgName, created_by: user.id })
+    .select("id")
+    .single();
 
-    // -------------------------------------------------
-    // 3️⃣ Create Default Location
-    // -------------------------------------------------
-
-    const { data: location, error: locationError } = await supabaseAdmin
-      .from("locations")
-      .insert({
-        org_id: org.id,
-        name: "Main Site",
-        active: true,
-      })
-      .select()
-      .single();
-
-    if (locationError || !location) {
-      return NextResponse.json(
-        {
-          ok: false,
-          reason: "location-create-failed",
-          detail: locationError?.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    // -------------------------------------------------
-    // 4️⃣ Create Owner Team Member (MANDATORY)
-    // -------------------------------------------------
-
-    const displayName =
-      user.user_metadata?.full_name ??
-      user.email ??
-      "Owner";
-
-    const initials = displayName
-      .split(" ")
-      .map((p: string) => p[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
-
-    const { error: teamError } = await supabaseAdmin
-      .from("team_members")
-      .insert({
-        org_id: org.id,
-        location_id: location.id,
-        user_id: user.id,
-        name: displayName,
-        initials,
-        role: "owner",
-        active: true,
-        login_enabled: true,
-        pin_enabled: true,
-      });
-
-    if (teamError) {
-      return NextResponse.json(
-        {
-          ok: false,
-          reason: "team-member-create-failed",
-          detail: teamError.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      ok: true,
-      orgId: org.id,
-      locationId: location.id,
-    });
-
-  } catch (err: any) {
+  if (orgErr || !orgRow?.id) {
     return NextResponse.json(
-      { ok: false, reason: "unexpected-error", detail: err?.message },
+      { ok: false, reason: "org_create_failed", error: orgErr?.message },
       { status: 500 }
     );
   }
+
+  // 2) Create location
+  const { data: locRow, error: locErr } = await admin
+    .from("locations")
+    .insert({ org_id: orgRow.id, name: safeLocationName, created_by: user.id })
+    .select("id")
+    .single();
+
+  if (locErr || !locRow?.id) {
+    return NextResponse.json(
+      { ok: false, reason: "location_create_failed", error: locErr?.message },
+      { status: 500 }
+    );
+  }
+
+  // 3) Create team member for owner (same as you already do)
+  const baseTm = {
+    org_id: orgRow.id,
+    location_id: locRow.id,
+    user_id: user.id,
+    name: safeOwnerName,
+    initials: safeInitials,
+    role: "owner",
+    email: safeEmail,
+    active: true,
+    login_enabled: true,
+    pin_enabled: true,
+    created_by: user.id,
+  };
+
+  // Try user_id conflict first (if your schema supports it), then email fallback
+  let tmId: string | null = null;
+
+  const { data: tm1, error: tmErr1 } = await admin
+    .from("team_members")
+    .upsert(baseTm as any, { onConflict: "org_id,location_id,user_id" })
+    .select("id")
+    .single();
+
+  if (!tmErr1 && tm1?.id) tmId = tm1.id;
+
+  if (!tmId && safeEmail) {
+    const { data: tm2, error: tmErr2 } = await admin
+      .from("team_members")
+      .upsert(baseTm as any, { onConflict: "org_id,location_id,email" })
+      .select("id")
+      .single();
+
+    if (!tmErr2 && tm2?.id) tmId = tm2.id;
+  }
+
+  if (!tmId) {
+    return NextResponse.json(
+      { ok: false, reason: "team_member_create_failed" },
+      { status: 500 }
+    );
+  }
+
+  // ✅ 4) Set ACTIVE context cookies using the SAME names workstation expects
+  const secure = process.env.NODE_ENV === "production";
+
+  cookieStore.set("tt_active_org_id", orgRow.id, {
+    path: "/",
+    sameSite: "lax",
+    secure,
+  });
+
+  cookieStore.set("tt_active_location_id", locRow.id, {
+    path: "/",
+    sameSite: "lax",
+    secure,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    orgId: orgRow.id,
+    locationId: locRow.id,
+    teamMemberId: tmId,
+  });
 }

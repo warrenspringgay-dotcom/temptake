@@ -1,302 +1,310 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
+import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
-
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
-type OperatorRow = {
+type MemberOption = {
   id: string;
   name: string | null;
   initials: string | null;
   role: string | null;
-  has_pin: boolean;
+  hasPin: boolean;
 };
 
 function isNoPinReason(reason: unknown) {
-  return reason === "no_pin" || reason === "no_pin_set" || reason === "missing_pin";
+  const r = String(reason ?? "").toLowerCase();
+  return r.includes("no_pin") || r.includes("no pin") || r.includes("pin_not_set");
 }
 
-async function fetchOperators(orgId: string, locationId: string) {
-  const res = await fetch(
-    `/api/workstation/operators?orgId=${encodeURIComponent(orgId)}&locationId=${encodeURIComponent(
-      locationId
-    )}`,
-    { cache: "no-store" }
-  );
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json?.error || "Failed to load operators");
-  return (Array.isArray(json?.operators) ? json.operators : []) as OperatorRow[];
-}
-
-async function attemptUnlockWithPin(orgId: string, teamMemberId: string, pin: string) {
-  const res = await fetch("/api/workstation/unlock", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ orgId, teamMemberId, pin }),
-  });
-  const json = await res.json().catch(() => ({}));
-  return { ok: res.ok, json };
-}
-
-async function setPin(orgId: string, teamMemberId: string, pin: string) {
-  // You said you already have set pin route. Keeping it generic:
-  const res = await fetch("/api/workstation/set-pin", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ orgId, teamMemberId, pin }),
-  });
-  const json = await res.json().catch(() => ({}));
-  return { ok: res.ok, json };
-}
-
-export default function WorkstationLockScreen() {
+export default function WorkstationLockScreen({ onClose }: { onClose: () => void }) {
   const ws = useWorkstation();
 
-  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
 
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
-  const [operators, setOperators] = useState<OperatorRow[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [operators, setOperators] = useState<MemberOption[]>([]);
+  const [selected, setSelected] = useState<MemberOption | null>(null);
+  const [pin, setPin] = useState("");
 
-  const selected = useMemo(
-    () => operators.find((o) => o.id === selectedId) || null,
-    [operators, selectedId]
-  );
+  const canLoad = useMemo(() => !!orgId && !!locationId, [orgId, locationId]);
 
-  const [pin, setPinInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
 
-  const refreshActiveContext = useCallback(async () => {
-    const o = await getActiveOrgIdClient();
-    const l = await getActiveLocationIdClient();
-    setOrgId(o ?? null);
-    setLocationId(l ?? null);
-    return { orgId: o ?? null, locationId: l ?? null };
+    async function loadContextAndOperators() {
+      setMsg(null);
+
+      const oid = await Promise.resolve(getActiveOrgIdClient());
+      const lid = await Promise.resolve(getActiveLocationIdClient());
+
+      if (cancelled) return;
+
+      setOrgId(oid || null);
+      setLocationId(lid || null);
+
+      if (!oid || !lid) {
+        setOperators([]);
+        setSelected(null);
+        setMsg("No active organisation/location selected.");
+        return;
+      }
+
+      try {
+        const res = await fetch(
+          `/api/workstation/operators?orgId=${encodeURIComponent(oid)}&locationId=${encodeURIComponent(
+            lid
+          )}`,
+          { cache: "no-store" }
+        );
+
+        const json = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          setOperators([]);
+          setSelected(null);
+          setMsg(json?.detail ?? "Failed to load operators.");
+          return;
+        }
+
+        const list: MemberOption[] = (json.operators ?? []).map((o: any) => ({
+          id: String(o.id),
+          name: o.name ?? null,
+          initials: o.initials ?? null,
+          role: o.role ?? null,
+          hasPin: !!o.has_pin,
+        }));
+
+        setOperators(list);
+
+        // Keep selection stable if possible
+        if (!selected && list.length > 0) setSelected(list[0]);
+        if (selected && !list.some((x) => x.id === selected.id)) setSelected(list[0] ?? null);
+
+        if (list.length === 0) setMsg("No staff found for this location.");
+      } catch {
+        setOperators([]);
+        setSelected(null);
+        setMsg("Failed to load operators.");
+      }
+    }
+
+    loadContextAndOperators();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadOperators = useCallback(
-    async (oId: string, lId: string) => {
-      const list = await fetchOperators(oId, lId);
-      setOperators(list);
+  async function attemptUnlockWithPin(oid: string, lid: string, memberId: string, enteredPin: string) {
+    const res = await fetch("/api/workstation/unlock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({
+        orgId: oid,
+        locationId: lid,
+        teamMemberId: memberId,
+        pin: enteredPin,
+      }),
+    });
 
-      // Keep selection stable if possible
-      if (list.length && !list.some((x) => x.id === selectedId)) {
-        setSelectedId(list[0].id);
-      }
-      if (!list.length) {
-        setSelectedId(null);
-      }
-    },
-    [selectedId]
-  );
+    const json = await res.json().catch(() => ({}));
+    return { ok: res.ok, json };
+  }
 
-  // Open modal when the provider/FAB asks
-  useEffect(() => {
-    const onOpen = async () => {
-      setOpen(true);
-      setMsg(null);
-      setPinInput("");
+  async function setPinForMember(oid: string, memberId: string, enteredPin: string) {
+    // You said you already have a set pin route. Keep this path EXACTLY as your project uses.
+    // If your actual route differs, change ONLY the URL, nothing else.
+    const res = await fetch("/api/workstation/set-pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({
+        orgId: oid,
+        teamMemberId: memberId,
+        pin: enteredPin,
+      }),
+    });
 
-      const { orgId: o, locationId: l } = await refreshActiveContext();
-      if (o && l) {
-        try {
-          await loadOperators(o, l);
-        } catch (e: any) {
-          setOperators([]);
-          setSelectedId(null);
-          setMsg(e?.message || "Failed to load staff");
-        }
-      } else {
-        setOperators([]);
-        setSelectedId(null);
-      }
-    };
+    const json = await res.json().catch(() => ({}));
+    return { ok: res.ok, json };
+  }
 
-    window.addEventListener("tt-open-workstation-lock", onOpen);
-    return () => window.removeEventListener("tt-open-workstation-lock", onOpen);
-  }, [loadOperators, refreshActiveContext]);
-
-  // Auto-open if currently locked (so you don't get the “locked toast but no modal” nonsense)
-  useEffect(() => {
-    if (!ws.locked) return;
-    window.dispatchEvent(new CustomEvent("tt-open-workstation-lock"));
-  }, [ws.locked]);
-
-  // Reset messages when selection changes
-  useEffect(() => {
+  async function onUnlock() {
     setMsg(null);
-    setPinInput("");
-  }, [selectedId]);
 
-  const onClearOperator = useCallback(() => {
-    ws.clearOperator();
-    setMsg(null);
-    setPinInput("");
-  }, [ws]);
+    const oid = orgId;
+    const lid = locationId;
 
-  const unlock = useCallback(async () => {
+    if (!oid || !lid) {
+      setMsg("No active organisation/location selected.");
+      return;
+    }
+
+    if (!selected) {
+      setMsg("Select a user to continue.");
+      return;
+    }
+
     const cleaned = String(pin ?? "").trim();
     if (cleaned.replace(/\D+/g, "").length < 4) {
       setMsg("Enter a 4+ digit PIN.");
       return;
     }
-    if (!orgId || !locationId) {
-      setMsg("No active organisation/location selected.");
-      return;
-    }
-    if (!selected) {
-      setMsg("Select a user first.");
-      return;
-    }
 
     setBusy(true);
-    setMsg(null);
-
     try {
-      // 1) Try unlock
-      const first = await attemptUnlockWithPin(orgId, selected.id, cleaned);
+      // 1) Try unlock normally
+      const first = await attemptUnlockWithPin(oid, lid, selected.id, cleaned);
 
       if (first.ok) {
-        ws.setOperator({
-          teamMemberId: selected.id,
-          orgId,
-          locationId,
-          name: selected.name ?? null,
-          initials: selected.initials ?? null,
-          role: selected.role ?? null,
-        });
-        setOpen(false);
+        // Expecting { operator: { teamMemberId, orgId, locationId, name, initials, role } }
+        const op = first.json?.operator;
+        if (!op?.teamMemberId || !op?.orgId || !op?.locationId) {
+          setMsg("Unlock succeeded but operator payload was missing.");
+          return;
+        }
+
+        ws.setOperator(op);
+        setPin("");
+        onClose();
         return;
       }
 
-      // 2) If no PIN exists yet: set it, then unlock again
-      const reason = first.json?.reason ?? first.json?.error ?? null;
+      // 2) If no PIN exists yet, treat entered PIN as setup PIN, then retry unlock
+      const reason = first.json?.reason ?? first.json?.detail ?? "";
       if (isNoPinReason(reason)) {
-        const sp = await setPin(orgId, selected.id, cleaned);
-        if (!sp.ok) {
-          setMsg(sp.json?.error || "Could not set PIN.");
+        const created = await setPinForMember(oid, selected.id, cleaned);
+        if (!created.ok) {
+          setMsg(created.json?.detail ?? "Failed to set PIN.");
           return;
         }
 
-        const second = await attemptUnlockWithPin(orgId, selected.id, cleaned);
-        if (second.ok) {
-          ws.setOperator({
-            teamMemberId: selected.id,
-            orgId,
-            locationId,
-            name: selected.name ?? null,
-            initials: selected.initials ?? null,
-            role: selected.role ?? null,
-          });
-          setOpen(false);
+        // refresh auth state in case RLS depends on it
+        await supabase.auth.getSession();
+
+        const second = await attemptUnlockWithPin(oid, lid, selected.id, cleaned);
+        if (!second.ok) {
+          setMsg(second.json?.detail ?? "PIN set but unlock failed.");
           return;
         }
 
-        setMsg(second.json?.error || "PIN set, but unlock failed.");
+        const op2 = second.json?.operator;
+        if (!op2?.teamMemberId || !op2?.orgId || !op2?.locationId) {
+          setMsg("Unlock succeeded but operator payload was missing.");
+          return;
+        }
+
+        ws.setOperator(op2);
+        setPin("");
+        onClose();
         return;
       }
 
       // 3) Normal failure
-      setMsg(first.json?.error || "Incorrect PIN.");
+      setMsg(first.json?.detail ?? "Incorrect PIN.");
     } finally {
       setBusy(false);
     }
-  }, [pin, orgId, locationId, selected, ws]);
+  }
 
-  if (!open) return null;
+  function onClearOperator() {
+    ws.clearOperator();
+    setMsg(null);
+    setPin("");
+  }
 
-  // ---------------- UI BELOW: unchanged layout/structure ----------------
+  // =========================
+  // UI: keep it as you have it
+  // =========================
   return (
-    <div className="fixed inset-0 z-[1000] flex items-start justify-center p-3 sm:p-6">
-      <div className="absolute inset-0 bg-black/35 backdrop-blur-[2px]" />
-
-      <div className="relative w-full max-w-5xl rounded-3xl border border-white/40 bg-white/70 shadow-2xl backdrop-blur-md">
-        <div className="flex items-start justify-between p-5 sm:p-6">
+    <div className="fixed inset-0 z-[200] flex items-start justify-center bg-black/40 pt-10">
+      <div className="w-[min(980px,92vw)] rounded-3xl border border-white/40 bg-white/90 p-6 shadow-2xl backdrop-blur-md">
+        <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="text-lg font-semibold text-slate-900">Workstation locked</div>
-            <div className="text-sm text-slate-600">Select a user and enter a PIN to continue.</div>
+            <div className="text-lg font-semibold">Workstation locked</div>
+            <div className="text-sm text-muted-foreground">
+              Select a user and enter a PIN to continue.
+            </div>
           </div>
 
           <button
+            type="button"
             onClick={onClearOperator}
-            className="rounded-2xl bg-white/70 px-4 py-2 text-sm font-medium text-slate-800 shadow hover:bg-white"
+            className="rounded-2xl bg-white/70 px-4 py-2 text-sm shadow"
           >
             Clear operator
           </button>
         </div>
 
-        <div className="px-5 pb-5 sm:px-6 sm:pb-6">
-          {!orgId || !locationId ? (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              No active organisation/location selected.
+        <div className="mt-5">
+          {!canLoad ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {msg ?? "No active organisation/location selected."}
             </div>
           ) : operators.length === 0 ? (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              No staff found for this location.
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+              {msg ?? "No staff found for this location."}
             </div>
           ) : (
             <>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {operators.map((op) => {
-                  const isSelected = op.id === selectedId;
-                  const initials =
-                    (op.initials || "")
-                      .trim()
-                      .slice(0, 2)
-                      .toUpperCase() || "??";
+              <div className="flex flex-wrap gap-3">
+                {operators.map((m) => {
+                  const active = selected?.id === m.id;
+                  const initials = (m.initials ?? "?").toUpperCase();
 
                   return (
                     <button
-                      key={op.id}
-                      onClick={() => setSelectedId(op.id)}
+                      key={m.id}
+                      type="button"
+                      onClick={() => {
+                        setSelected(m);
+                        setMsg(null);
+                        setPin("");
+                      }}
                       className={[
-                        "flex items-center gap-3 rounded-2xl border px-4 py-3 text-left transition",
-                        isSelected
-                          ? "border-slate-900/20 bg-white/80 shadow"
-                          : "border-white/40 bg-white/40 hover:bg-white/60",
+                        "flex items-center gap-3 rounded-2xl border px-4 py-3 text-left shadow-sm",
+                        active ? "border-black/20 bg-white" : "border-white/40 bg-white/60",
                       ].join(" ")}
                     >
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-black text-white">
                         {initials}
                       </div>
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-slate-900">
-                          {op.name || "Unnamed"}
-                        </div>
-                        <div className="text-xs text-slate-600">{op.role || "staff"}</div>
+                      <div className="min-w-[180px]">
+                        <div className="text-sm font-semibold">{m.name ?? "Unnamed"}</div>
+                        <div className="text-xs text-muted-foreground">{m.role ?? ""}</div>
                       </div>
                     </button>
                   );
                 })}
               </div>
 
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                <div className="flex-1">
-                  <div className="mb-1 text-xs font-medium text-slate-700">PIN</div>
-                  <input
-                    value={pin}
-                    onChange={(e) => setPinInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") unlock();
-                    }}
-                    inputMode="numeric"
-                    className="w-full rounded-2xl border border-white/50 bg-white/70 px-4 py-3 text-sm outline-none focus:border-slate-900/20"
-                    placeholder="••••"
-                    disabled={busy}
-                  />
-                  {msg ? <div className="mt-2 text-sm text-rose-600">{msg}</div> : null}
-                </div>
+              <div className="mt-4">
+                <div className="text-xs font-semibold text-muted-foreground">PIN</div>
+                <input
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value)}
+                  inputMode="numeric"
+                  className="mt-2 w-full rounded-2xl border border-white/40 bg-white/70 px-4 py-3 text-sm shadow-sm outline-none"
+                  placeholder="••••"
+                />
+                {msg ? <div className="mt-2 text-sm text-rose-600">{msg}</div> : null}
+              </div>
 
+              <div className="mt-4 flex items-center justify-end">
                 <button
-                  onClick={unlock}
-                  disabled={busy || !selectedId}
-                  className="rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-white shadow hover:bg-emerald-600 disabled:opacity-50"
+                  type="button"
+                  disabled={busy || !selected}
+                  onClick={onUnlock}
+                  className="rounded-2xl bg-emerald-500 px-6 py-3 text-sm font-semibold text-white shadow disabled:opacity-50"
                 >
                   Unlock
                 </button>
