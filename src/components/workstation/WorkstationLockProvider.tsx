@@ -1,12 +1,31 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { usePathname } from "next/navigation";
-import { supabase } from "@/lib/supabaseBrowser";
-import WorkstationLockScreen from "@/components/workstation/WorkstationLockScreen";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
-const LS_LOCKED = "tt_workstation_forced";
-const LS_OPERATOR = "tt_workstation_operator";
+
+import { supabase } from "@/lib/supabaseBrowser";
+import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
+
+import WorkstationLockScreen from "@/components/workstation/WorkstationLockScreen";
+
+const LS_LOCKED = "tt_ws_locked";
+const LS_OPERATOR = "tt_ws_operator";
+const LS_ACTING = "tt_ws_acting";
+
+type ActingContext = {
+  acted_by_team_member_id?: string | null;
+  acted_by_initials?: string | null;
+};
 
 export type Operator = {
   teamMemberId: string;
@@ -17,75 +36,76 @@ export type Operator = {
   role: string | null;
 };
 
-export type ActingContext = {
-  acted_by_team_member_id?: string | null;
-  acted_by_initials?: string | null;
-};
-
-export type Ctx = {
-  /** NEW (preferred) */
-  isLocked: boolean;
-  /** Backwards-compat alias for older code */
+type Ctx = {
+  // state
   locked: boolean;
-
-  isModalOpen: boolean;
+  lockRequired: boolean;
+  showLockModal: boolean;
   operator: Operator | null;
 
+  // active context
+  orgId: string | null;
+  locationId: string | null;
+
+  // actions
   openLockModal: () => void;
   closeLockModal: () => void;
 
   lockNow: () => void;
   unlockWorkstation: () => void;
 
-  setOperator: (op: Operator) => void;
+  setOperator: (op: Operator | null) => void;
   clearOperator: () => void;
 
+  setActingContextClient: (ctx: ActingContext) => void;
   getActingContextClient: () => ActingContext;
 };
 
-const WorkstationCtx = createContext<Ctx | null>(null);
+const WorkstationLockContext = createContext<Ctx | null>(null);
 
-function readBoolLS(key: string, fallback = false) {
-  if (typeof window === "undefined") return fallback;
-  const v = window.localStorage.getItem(key);
-  if (v == null) return fallback;
-  return v === "true";
-}
-
-function writeBoolLS(key: string, value: boolean) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(key, value ? "true" : "false");
-}
-
-function readJsonLS<T>(key: string): T | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(key);
-  if (!raw) return null;
+function readJson<T>(key: string): T | null {
   try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
     return JSON.parse(raw) as T;
   } catch {
     return null;
   }
 }
 
-function writeJsonLS(key: string, value: unknown) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(key, JSON.stringify(value));
+function writeJson<T>(key: string, value: T) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
 }
 
-function removeLS(key: string) {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(key);
+function readBool(key: string, fallback: boolean) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    return raw === "true";
+  } catch {
+    return fallback;
+  }
+}
+
+function writeBool(key: string, value: boolean) {
+  try {
+    localStorage.setItem(key, value ? "true" : "false");
+  } catch {
+    // ignore
+  }
 }
 
 function isAuthRoute(pathname: string) {
+  // Add any other auth-ish pages you have.
   return (
     pathname === "/login" ||
     pathname.startsWith("/login") ||
     pathname === "/signup" ||
     pathname.startsWith("/signup") ||
-    pathname === "/forgot-password" ||
-    pathname.startsWith("/forgot-password") ||
     pathname === "/reset-password" ||
     pathname.startsWith("/reset-password")
   );
@@ -93,114 +113,153 @@ function isAuthRoute(pathname: string) {
 
 export function WorkstationLockProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const authRoute = isAuthRoute(pathname || "");
 
-  const [hasSession, setHasSession] = useState(false);
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [locationId, setLocationId] = useState<string | null>(null);
 
-  const [isLocked, setIsLocked] = useState(false);
-  const [operator, setOperatorState] = useState<Operator | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [hasSession, setHasSession] = useState<boolean>(false);
 
-  // Hydrate from storage once
-  useEffect(() => {
-    const locked = readBoolLS(LS_LOCKED, false);
-    const op = readJsonLS<Operator>(LS_OPERATOR);
+  const [locked, setLockedState] = useState<boolean>(() => readBool(LS_LOCKED, false));
+  const [lockRequired, setLockRequired] = useState<boolean>(false);
+  const [showLockModal, setShowLockModal] = useState<boolean>(false);
 
-    setIsLocked(locked);
-    setOperatorState(op ?? null);
+  const [operator, setOperatorState] = useState<Operator | null>(() => readJson<Operator>(LS_OPERATOR));
 
-    if (locked && !authRoute) setIsModalOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const lastContextRef = useRef<{ orgId: string | null; locationId: string | null }>({
+    orgId: null,
+    locationId: null,
+  });
+
+  const setLocked = useCallback((v: boolean) => {
+    setLockedState(v);
+    writeBool(LS_LOCKED, v);
   }, []);
 
-  // Track Supabase session
+  const setOperator = useCallback((op: Operator | null) => {
+    setOperatorState(op);
+    writeJson<Operator | null>(LS_OPERATOR, op);
+  }, []);
+
+  const clearOperator = useCallback(() => {
+    setOperator(null);
+  }, [setOperator]);
+
+  const openLockModal = useCallback(() => setShowLockModal(true), []);
+  const closeLockModal = useCallback(() => setShowLockModal(false), []);
+
+  const lockNow = useCallback(() => {
+    setLocked(true);
+    setShowLockModal(true);
+  }, [setLocked]);
+
+  const unlockWorkstation = useCallback(() => {
+    setLocked(false);
+    setShowLockModal(false);
+  }, [setLocked]);
+
+  const setActingContextClient = useCallback((ctx: ActingContext) => {
+    writeJson(LS_ACTING, ctx);
+  }, []);
+
+  const getActingContextClient = useCallback((): ActingContext => {
+    return readJson<ActingContext>(LS_ACTING) ?? {};
+  }, []);
+
+  const refreshActiveContext = useCallback(async () => {
+    // These helpers might be sync or async depending on your implementation.
+    const o = await Promise.resolve(getActiveOrgIdClient() as any);
+    const l = await Promise.resolve(getActiveLocationIdClient() as any);
+
+    const nextOrgId = (typeof o === "string" ? o : null) as string | null;
+    const nextLocId = (typeof l === "string" ? l : null) as string | null;
+
+    setOrgId(nextOrgId);
+    setLocationId(nextLocId);
+
+    lastContextRef.current = { orgId: nextOrgId, locationId: nextLocId };
+
+    // If there's no active context, do NOT enforce lock (and don't show modal).
+    if (!nextOrgId || !nextLocId) {
+      setLockRequired(false);
+      setLocked(false);
+      setShowLockModal(false);
+      return { orgId: nextOrgId, locationId: nextLocId };
+    }
+
+    // Context exists, we can enforce lock.
+    setLockRequired(true);
+
+    // If we have an operator but it's for a different org/location, clear it and lock.
+    if (operator && (operator.orgId !== nextOrgId || operator.locationId !== nextLocId)) {
+      setOperator(null);
+      setLocked(true);
+      setShowLockModal(true);
+    }
+
+    return { orgId: nextOrgId, locationId: nextLocId };
+  }, [operator, setLocked, setOperator]);
+
+  // Keep hasSession accurate.
   useEffect(() => {
     let mounted = true;
 
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (!mounted) return;
-      setHasSession(!!data?.session);
+      setHasSession(!!data.session);
     })();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
-      setHasSession(!!session);
-    });
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, session: Session | null) => {
+        setHasSession(!!session);
+
+        // If user signed out, nuke workstation state so FAB doesn't stay "locked".
+        if (!session) {
+          setLockRequired(false);
+          setLocked(false);
+          setShowLockModal(false);
+          setOperator(null);
+          setOrgId(null);
+          setLocationId(null);
+        }
+      }
+    );
 
     return () => {
       mounted = false;
       sub.subscription.unsubscribe();
     };
-  }, []);
+  }, [setLocked, setOperator]);
 
-  // Never show lock UI on auth routes or without session
+  // Refresh context whenever route changes (after auth/session is known).
   useEffect(() => {
-    if (!hasSession || authRoute) {
-      setIsModalOpen(false);
-    } else {
-      if (isLocked) setIsModalOpen(true);
-    }
-  }, [hasSession, authRoute, isLocked]);
+    if (!hasSession) return;
+    refreshActiveContext();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSession, pathname]);
 
-  // Multi-tab sync
+  // Hard gate: never show workstation lock UI on auth pages or without a session.
   useEffect(() => {
-    function onStorage(e: StorageEvent) {
-      if (e.key === LS_LOCKED) setIsLocked(readBoolLS(LS_LOCKED, false));
-      if (e.key === LS_OPERATOR) setOperatorState(readJsonLS<Operator>(LS_OPERATOR));
+    if (!hasSession || isAuthRoute(pathname)) {
+      setShowLockModal(false);
+      setLockRequired(false);
+      setLocked(false);
+      return;
     }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
 
-  function lockNow() {
-    setIsLocked(true);
-    writeBoolLS(LS_LOCKED, true);
-    if (!authRoute) setIsModalOpen(true);
-  }
-
-  function unlockWorkstation() {
-    setIsLocked(false);
-    writeBoolLS(LS_LOCKED, false);
-    setIsModalOpen(false);
-  }
-
-  function openLockModal() {
-    setIsLocked(true);
-    writeBoolLS(LS_LOCKED, true);
-    if (!authRoute) setIsModalOpen(true);
-  }
-
-  function closeLockModal() {
-    setIsModalOpen(false);
-  }
-
-  function setOperator(op: Operator) {
-    setOperatorState(op);
-    writeJsonLS(LS_OPERATOR, op);
-
-    setIsLocked(false);
-    writeBoolLS(LS_LOCKED, false);
-    setIsModalOpen(false);
-  }
-
-  function clearOperator() {
-    setOperatorState(null);
-    removeLS(LS_OPERATOR);
-  }
-
-  function getActingContextClient(): ActingContext {
-    return {
-      acted_by_team_member_id: operator?.teamMemberId ?? null,
-      acted_by_initials: operator?.initials ?? null,
-    };
-  }
+    // If we require lock and are locked, show modal.
+    if (lockRequired && locked) setShowLockModal(true);
+  }, [hasSession, pathname, lockRequired, locked, setLocked]);
 
   const value: Ctx = useMemo(
     () => ({
-      isLocked,
-      locked: isLocked, // 👈 alias for your older code (IncidentModal etc.)
-      isModalOpen,
+      locked,
+      lockRequired,
+      showLockModal,
       operator,
+
+      orgId,
+      locationId,
 
       openLockModal,
       closeLockModal,
@@ -211,24 +270,41 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
       setOperator,
       clearOperator,
 
+      setActingContextClient,
       getActingContextClient,
     }),
-    [isLocked, isModalOpen, operator]
+    [
+      locked,
+      lockRequired,
+      showLockModal,
+      operator,
+      orgId,
+      locationId,
+      openLockModal,
+      closeLockModal,
+      lockNow,
+      unlockWorkstation,
+      setOperator,
+      clearOperator,
+      setActingContextClient,
+      getActingContextClient,
+    ]
   );
 
   return (
-    <WorkstationCtx.Provider value={value}>
+    <WorkstationLockContext.Provider value={value}>
       {children}
 
-      {hasSession && !authRoute && isLocked && isModalOpen ? (
+      {/* Don't mount this on auth pages or without a Supabase session */}
+      {hasSession && !isAuthRoute(pathname) && showLockModal ? (
         <WorkstationLockScreen onClose={closeLockModal} />
       ) : null}
-    </WorkstationCtx.Provider>
+    </WorkstationLockContext.Provider>
   );
 }
 
 export function useWorkstation() {
-  const ctx = useContext(WorkstationCtx);
+  const ctx = useContext(WorkstationLockContext);
   if (!ctx) throw new Error("useWorkstation must be used within <WorkstationLockProvider>");
   return ctx;
 }
