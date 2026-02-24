@@ -1,50 +1,49 @@
+// app/api/workstation/operators/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getServerSupabase } from "@/lib/supabaseServer";
 
-/**
-* Returns operators that can be used for PIN unlock.
-* IMPORTANT: filter by pin_enabled (NOT login_enabled), otherwise you only see managers.
-*/
 export async function GET(req: NextRequest) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const orgId = searchParams.get("orgId");
-    const locationId = searchParams.get("locationId");
+  const supabase = await getServerSupabase();
 
-    if (!orgId || !locationId) {
-      return NextResponse.json(
-        { ok: false, reason: "missing orgId/locationId", operators: [] },
-        { status: 400 }
-      );
-    }
+  const { data: auth, error: authErr } = await supabase.auth.getUser();
+  if (authErr || !auth?.user) {
+    return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
+  }
 
-    const { data, error } = await supabaseAdmin
-      .from("team_members")
-      .select("id,name,initials,role,pin_enabled")
-      .eq("org_id", orgId)
-      .eq("location_id", locationId)
-      .eq("pin_enabled", true)
-      .order("name", { ascending: true });
+  const { searchParams } = new URL(req.url);
+  const orgId = searchParams.get("orgId");
+  const locationId = searchParams.get("locationId"); // optional
 
-    if (error) {
-      return NextResponse.json(
-        { ok: false, reason: error.message, operators: [] },
-        { status: 500 }
-      );
-    }
+  if (!orgId) {
+    return NextResponse.json({ ok: false, reason: "missing_org" }, { status: 400 });
+  }
 
-    const operators = (data ?? []).map((r) => ({
-      id: r.id,
-      name: r.name ?? null,
-      initials: r.initials ?? null,
-      role: r.role ?? null,
-    }));
+  // Active + pin_enabled is the operator population rule
+  let q = supabase
+    .from("team_members")
+    .select("id, name, initials, role, pin_enabled, active")
+    .eq("org_id", orgId)
+    .eq("active", true)
+    .eq("pin_enabled", true)
+    .order("name", { ascending: true });
 
-    return NextResponse.json({ ok: true, operators });
-  } catch (e: any) {
+  if (locationId) q = q.eq("location_id", locationId);
+
+  const { data: members, error: membersErr } = await q;
+  if (membersErr) {
     return NextResponse.json(
-      { ok: false, reason: e?.message ?? "unknown error", operators: [] },
+      { ok: false, reason: "members_query_failed", details: membersErr.message },
       { status: 500 }
     );
   }
+
+  const operators = (members ?? []).map((m) => ({
+    id: m.id,
+    name: m.name ?? null,
+    initials: m.initials ?? null,
+    role: m.role ?? null,
+    pin_enabled: !!m.pin_enabled,
+  }));
+
+  return NextResponse.json({ ok: true, operators });
 }

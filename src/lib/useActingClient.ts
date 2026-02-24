@@ -15,10 +15,10 @@ function initialsFromName(name?: string | null) {
 }
 
 export function useActingClient() {
-  const { operator, getActingContextClient } = useWorkstation();
+  const { operator, getActiveContext } = useWorkstation();
 
   return useMemo(() => {
-    const acting = getActingContextClient() as any;
+    const acting = getActiveContext() as any;
 
     const operatorInitials =
       acting?.acted_by_initials ||
@@ -31,5 +31,5 @@ export function useActingClient() {
       acted_by_team_member_id: acting?.acted_by_team_member_id ?? null,
       acted_by_initials: operatorInitials,
     };
-  }, [operator, getActingContextClient]);
+  }, [operator, getActiveContext]);
 }
