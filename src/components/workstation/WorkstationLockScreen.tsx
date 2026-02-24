@@ -29,8 +29,6 @@ export default function WorkstationLockScreen() {
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
-  // Prevent auto-submit loops on wrong pin:
-  // store last attempted (memberId:pin) so it only auto-submits once per entry.
   const lastAttemptRef = useRef<string>("");
 
   const cleaned = useMemo(() => cleanPin(pin), [pin]);
@@ -45,34 +43,35 @@ export default function WorkstationLockScreen() {
     return { orgId: oo, locationId: ll };
   }, []);
 
-  const loadOperators = useCallback(
-    async (oId: string, lId: string) => {
-      const res = await fetch(
-        `/api/workstation/operators?orgId=${encodeURIComponent(oId)}&locationId=${encodeURIComponent(
-          lId
-        )}`,
-        { cache: "no-store" }
-      );
+  const loadOperators = useCallback(async (oId: string, lId: string) => {
+    const res = await fetch(
+      `/api/workstation/operators?orgId=${encodeURIComponent(oId)}&locationId=${encodeURIComponent(
+        lId
+      )}`,
+      { cache: "no-store" }
+    );
 
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json?.ok) {
-        setOperators([]);
-        setSelected(null);
-        setMsg("Could not load operators.");
-        return;
-      }
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json?.ok) {
+      setOperators([]);
+      setSelected(null);
+      setMsg("Could not load operators.");
+      return;
+    }
 
-      const list: OperatorRow[] = Array.isArray(json.operators) ? json.operators : [];
-      setOperators(list);
+    const list: OperatorRow[] = Array.isArray(json.operators) ? json.operators : [];
+    setOperators(list);
 
-      // Keep current selection if still present, else pick first
-      setSelected((prev) => {
-        if (prev && list.some((x) => x.id === prev.id)) return prev;
-        return list[0] ?? null;
-      });
-    },
-    []
-  );
+    // ✅ Auto-select previously logged-in operator if available in this list
+    const prevId = ws.operator?.teamMemberId ?? null;
+    const prev = prevId ? list.find((x) => x.id === prevId) : null;
+
+    setSelected((prevSelected) => {
+      if (prev) return prev;
+      if (prevSelected && list.some((x) => x.id === prevSelected.id)) return prevSelected;
+      return list[0] ?? null;
+    });
+  }, [ws.operator?.teamMemberId]);
 
   useEffect(() => {
     (async () => {
@@ -83,7 +82,6 @@ export default function WorkstationLockScreen() {
         setMsg("No active organisation/location selected.");
         return;
       }
-
       setMsg(null);
       await loadOperators(ctx.orgId, ctx.locationId);
     })();
@@ -154,36 +152,35 @@ export default function WorkstationLockScreen() {
         return;
       }
 
-      // Handle lockout / wrong pin cleanly
       if (r.status === 423) {
         setMsg("Too many attempts. Try again shortly.");
       } else {
         setMsg("Incorrect PIN.");
       }
 
-      // ✅ Break auto-submit loops:
+      // ✅ break auto-loop
       setPin("");
+      lastAttemptRef.current = "";
     } finally {
       setBusy(false);
     }
   }, [attemptUnlockWithPin, cleaned, locationId, orgId, selected, ws]);
 
-  // ✅ Auto-submit ONCE when 4 digits hit (per operator+pin)
+  // ✅ Auto-submit once on 4 digits
   useEffect(() => {
     if (!selected?.id) return;
     if (busy) return;
 
     if (cleaned.length === 4) {
       const attemptKey = `${selected.id}:${cleaned}`;
-      if (lastAttemptRef.current === attemptKey) return; // already tried this exact pin
-      // mark now, before awaiting
+      if (lastAttemptRef.current === attemptKey) return;
       lastAttemptRef.current = attemptKey;
       setMsg("Auto-unlocking...");
       void doUnlock();
     }
   }, [cleaned, selected?.id, busy, doUnlock]);
 
-  // When switching operator, reset pin + message + loop guard
+  // When switching operator, reset pin/message/guard
   useEffect(() => {
     lastAttemptRef.current = "";
     setPin("");
@@ -196,10 +193,8 @@ export default function WorkstationLockScreen() {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
-      {/* Backdrop (glass effect stays) */}
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
 
-      {/* Modal */}
       <div className="relative w-[92vw] max-w-[980px] rounded-3xl border border-white/30 bg-white/70 shadow-2xl backdrop-blur-xl">
         <div className="flex items-start justify-between gap-4 p-6">
           <div>
@@ -217,7 +212,6 @@ export default function WorkstationLockScreen() {
           </button>
         </div>
 
-        {/* Context warning */}
         {!orgId || !locationId ? (
           <div className="mx-6 mb-4 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-800">
             No active organisation/location selected.
@@ -225,7 +219,6 @@ export default function WorkstationLockScreen() {
         ) : null}
 
         <div className="grid grid-cols-1 gap-6 px-6 pb-6 md:grid-cols-2">
-          {/* Operator list */}
           <div>
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               Operator
@@ -267,7 +260,6 @@ export default function WorkstationLockScreen() {
             </div>
           </div>
 
-          {/* PIN */}
           <div>
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">PIN</div>
 
