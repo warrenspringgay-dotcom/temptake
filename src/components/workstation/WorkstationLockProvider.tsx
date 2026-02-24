@@ -42,18 +42,18 @@ type Ctx = {
   locked: boolean;
   operator: Operator | null;
 
+  // existing callers use these
   setOperator: (op: Operator | null) => void;
   clearOperator: () => void;
 
-  // QuickActionsFab expects these names (based on your build errors)
+  // ✅ QuickActionsFab expects this name
   openLockModal: () => void;
-  lockNow: () => void; // ✅ ALIAS expected by QuickActionsFab
 
-  // Safe helpers (keep, other files might use)
-  lockWorkstationNow: () => void;
+  // helpers (safe additions)
+  lockNow: () => void;
   unlockWorkstation: () => void;
 
-  // Acting context (useActingClient uses this)
+  // acting context (your useActingClient expects this)
   getActingContextClient: () => ActingContext;
 };
 
@@ -107,7 +107,7 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
 
   const [showLockModal, setShowLockModal] = useState<boolean>(false);
 
-  // Track active context (from cookies) so we can avoid locking before it exists.
+  // Track active context (from cookies) purely so we can avoid locking before it exists.
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
@@ -116,18 +116,15 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     writeBool(LS_LOCKED, v);
   }, []);
 
-  const setOperator = useCallback(
-    (op: Operator | null) => {
-      setOperatorState(op);
-      writeJson<Operator>(LS_OPERATOR, op);
-      if (op) {
-        // unlocked once an operator is set
-        persistLocked(false);
-        setShowLockModal(false);
-      }
-    },
-    [persistLocked]
-  );
+  const setOperator = useCallback((op: Operator | null) => {
+    setOperatorState(op);
+    writeJson<Operator>(LS_OPERATOR, op);
+    if (op) {
+      // unlocked once an operator is set
+      persistLocked(false);
+      setShowLockModal(false);
+    }
+  }, [persistLocked]);
 
   const clearOperator = useCallback(() => {
     setOperatorState(null);
@@ -139,16 +136,11 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     setShowLockModal(false);
   }, [persistLocked]);
 
-  const lockWorkstationNow = useCallback(() => {
+  const lockNow = useCallback(() => {
     // Locking does NOT clear operator; it just forces re-PIN.
     persistLocked(true);
     setShowLockModal(true);
   }, [persistLocked]);
-
-  // ✅ alias for existing callers (QuickActionsFab)
-  const lockNow = useCallback(() => {
-    lockWorkstationNow();
-  }, [lockWorkstationNow]);
 
   const openLockModal = useCallback(() => {
     setShowLockModal(true);
@@ -164,8 +156,9 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     setOrgId(oStr);
     setLocationId(lStr);
 
-    // If we don't have active context yet (new signup), DO NOT show lock modal.
-    // Also force locked=false to avoid the "No active organisation/location selected" trap.
+    // ✅ CRITICAL FIX:
+    // If we don't have active org/location yet (new signup), DO NOT show lock modal.
+    // Also force locked=false to avoid "No active organisation/location selected" trap.
     if (!oStr || !lStr) {
       persistLocked(false);
       setShowLockModal(false);
@@ -184,7 +177,7 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     if (!locked) setShowLockModal(false);
   }, [locked, orgId, locationId]);
 
-  // Keep context synced with auth changes
+  // Keep operator synced with auth changes (optional safety)
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange(() => {
       refreshActiveContext();
@@ -204,15 +197,11 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     () => ({
       locked,
       operator,
-
       setOperator,
       clearOperator,
-
       openLockModal,
-      lockNow, // ✅ required by QuickActionsFab
-      lockWorkstationNow,
+      lockNow,
       unlockWorkstation,
-
       getActingContextClient,
     }),
     [
@@ -222,7 +211,6 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
       clearOperator,
       openLockModal,
       lockNow,
-      lockWorkstationNow,
       unlockWorkstation,
       getActingContextClient,
     ]
@@ -232,6 +220,7 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     <WorkstationLockContext.Provider value={value}>
       {children}
 
+      {/* UI stays as-is: your modal component controls the look */}
       {showLockModal ? (
         <WorkstationLockScreen onClose={() => setShowLockModal(false)} />
       ) : null}
