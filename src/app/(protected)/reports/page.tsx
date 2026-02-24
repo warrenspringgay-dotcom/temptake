@@ -224,7 +224,11 @@ function isTeamRow(v: TeamRow | null): v is TeamRow {
 
 function isMissingLocationColumnError(err: any) {
   const msg = String(err?.message ?? "").toLowerCase();
-  return msg.includes("column") && msg.includes("location_id") && msg.includes("does not exist");
+  return (
+    msg.includes("column") &&
+    msg.includes("location_id") &&
+    msg.includes("does not exist")
+  );
 }
 
 /* ===================== Training areas ===================== */
@@ -296,10 +300,13 @@ function canonicalAreaName(raw: string): (typeof SFBB_AREAS)[number] | null {
 
   if (map[k]) return map[k];
 
-  if (k.includes("cross") && k.includes("contam")) return "Cross-contamination";
+  if (k.includes("cross") && k.includes("contam"))
+    return "Cross-contamination";
   if (k.includes("clean")) return "Cleaning";
-  if (k.includes("chill") || k.includes("fridge") || k.includes("freez")) return "Chilling";
-  if (k.includes("cook") || k.includes("hot") || k.includes("reheat")) return "Cooking";
+  if (k.includes("chill") || k.includes("fridge") || k.includes("freez"))
+    return "Chilling";
+  if (k.includes("cook") || k.includes("hot") || k.includes("reheat"))
+    return "Cooking";
   if (k.includes("allerg")) return "Allergens";
   if (k.includes("manage") || k.includes("supervis")) return "Management";
 
@@ -341,7 +348,8 @@ function normaliseTrainingAreas(
 
   if (typeof val === "object") {
     for (const [area, meta] of Object.entries(val as Record<string, any>)) {
-      const awarded = (meta as any)?.awarded_on ?? (meta as any)?.added_on ?? null;
+      const awarded =
+        (meta as any)?.awarded_on ?? (meta as any)?.added_on ?? null;
       const expires = (meta as any)?.expires_on ?? null;
       setArea(String(area), awarded, expires);
     }
@@ -376,7 +384,8 @@ function HygieneStars({
       ? "text-3xl"
       : "text-xl";
 
-  const dimmed = variant === "small" ? "opacity-80" : isGood ? "" : "opacity-80";
+  const dimmed =
+    variant === "small" ? "opacity-80" : isGood ? "" : "opacity-80";
 
   return (
     <div className="flex items-center gap-2">
@@ -386,7 +395,9 @@ function HygieneStars({
           return (
             <span
               key={i}
-              className={`${sizeClass} leading-none ${filled ? "" : "text-slate-300"}`}
+              className={`${sizeClass} leading-none ${
+                filled ? "" : "text-slate-300"
+              }`}
               aria-hidden
             >
               ★
@@ -1711,7 +1722,10 @@ export default function ReportsPage() {
       : [];
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
+    <div
+      id="tt-reports-root"
+      className="mx-auto max-w-6xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6"
+    >
       {/* Top controls */}
       <Card className="border-none bg-transparent p-0 shadow-none">
         <CardHeader className="flex flex-row items-center justify-between px-0 pb-3 pt-0">
@@ -2017,7 +2031,8 @@ export default function ReportsPage() {
         {/* Calibration checks */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-2 text-base font-semibold">
-            Calibration checks {calibrationChecks ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+            Calibration checks{" "}
+            {calibrationChecks ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
           <p className="mb-3 text-xs text-slate-500">
             Systimatic calibrations carried out on cold stores, probes and thermometers.
@@ -2081,7 +2096,9 @@ export default function ReportsPage() {
                         <td className="py-2 pr-3">{pill(r.probes_checked)}</td>
                         <td className="py-2 pr-3">{pill(r.thermometers_checked)}</td>
                         <td className="py-2 pr-3">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${allPill}`}>
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${allPill}`}
+                          >
                             {r.all_equipment_calibrated ? "Yes" : "No"}
                           </span>
                         </td>
@@ -2849,7 +2866,13 @@ export default function ReportsPage() {
       </div>
 
       <style jsx global>{`
+        /* ------------------ PRINT FIXES ------------------ */
         @media print {
+          @page {
+            size: A4;
+            margin: 12mm;
+          }
+
           nav,
           header,
           footer,
@@ -2877,11 +2900,65 @@ export default function ReportsPage() {
             text-decoration: none;
             color: inherit;
           }
+
+          html,
           body {
             background: white !important;
+            height: auto !important;
+            overflow: visible !important;
           }
-          .shadow-sm {
+
+          /* Kill the "app shell" constraints in print */
+          #tt-reports-root {
+            max-width: none !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+            background: white !important;
+            border-radius: 0 !important;
             box-shadow: none !important;
+          }
+
+          /* Stop overflow containers clipping content */
+          .overflow-x-auto {
+            overflow: visible !important;
+          }
+
+          /* Tables should actually lay out like tables, not scroll snapshots */
+          table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+          }
+
+          /* Remove effects that can confuse print layout engines */
+          .shadow-sm,
+          .shadow,
+          .shadow-md,
+          .shadow-lg {
+            box-shadow: none !important;
+          }
+
+          .backdrop-blur,
+          .backdrop-blur-sm {
+            backdrop-filter: none !important;
+          }
+
+          .rounded-3xl,
+          .rounded-2xl,
+          .rounded-xl {
+            border-radius: 0 !important;
+          }
+
+          /* Avoid cards splitting weirdly across pages */
+          #audit-print-root > * {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+
+          /* Give the print engine a sane baseline */
+          #audit-print-root {
+            width: 100% !important;
           }
         }
       `}</style>
