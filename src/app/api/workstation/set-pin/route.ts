@@ -11,7 +11,6 @@ function cleanPin(pin: unknown) {
 }
 
 export async function POST(req: Request) {
-  // Must be authenticated (owner/admin in UI gates, but server should still validate auth exists)
   const supabase = await getServerSupabase();
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth?.user?.id ?? null;
@@ -27,12 +26,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, reason: "missing" }, { status: 400 });
   }
 
-  // Ensure member exists (and belongs to this org/location)
+  // ✅ Loosen location requirement:
+  // allow member.location_id NULL or matching the provided locationId.
   const { data: member, error: mErr } = await supabaseAdmin
     .from("team_members")
     .select("id, org_id, location_id, active")
     .eq("org_id", orgId)
-    .eq("location_id", locationId)
     .eq("id", teamMemberId)
     .maybeSingle();
 
@@ -42,8 +41,11 @@ export async function POST(req: Request) {
   if (!(member as any).active) {
     return NextResponse.json({ ok: false, reason: "inactive" }, { status: 403 });
   }
+  const memberLoc = (member as any).location_id as string | null;
+  if (memberLoc && memberLoc !== locationId) {
+    return NextResponse.json({ ok: false, reason: "wrong-location" }, { status: 403 });
+  }
 
-  // Hash PIN using DB function (you already use verify_pin_bcrypt in unlock)
   const { data: hash, error: hErr } = await supabaseAdmin.rpc("hash_pin_bcrypt", {
     p_pin: pin,
   });
@@ -55,7 +57,6 @@ export async function POST(req: Request) {
     );
   }
 
-  // Upsert PIN row and reset lockouts
   const nowIso = new Date().toISOString();
 
   const { error: upErr } = await supabaseAdmin
@@ -79,12 +80,11 @@ export async function POST(req: Request) {
     );
   }
 
-  // ✅ IMPORTANT: make them eligible for workstation PIN operator list
+  // ✅ Make eligible for operator list (no location filter)
   await supabaseAdmin
     .from("team_members")
     .update({ pin_enabled: true })
     .eq("org_id", orgId)
-    .eq("location_id", locationId)
     .eq("id", teamMemberId);
 
   return NextResponse.json({ ok: true });
