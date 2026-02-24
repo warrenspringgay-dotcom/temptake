@@ -9,22 +9,21 @@ import React, {
   useState,
 } from "react";
 import { usePathname } from "next/navigation";
-import { supabase } from "@/lib/supabaseBrowser";
 
-/* ===================== Types ===================== */
+import WorkstationLockScreen from "@/components/workstation/WorkstationLockScreen";
 
-export type Operator = {
+type Operator = {
   teamMemberId: string;
-  orgId: string;
-  locationId: string;
+  orgId?: string | null;
+  locationId?: string | null;
   name?: string | null;
   initials?: string | null;
   role?: string | null;
 };
 
-export type ActingContext = {
-  acted_by_team_member_id?: string | null;
-  acted_by_initials?: string | null;
+type ActingContext = {
+  acted_by_team_member_id: string | null;
+  acted_by_initials: string | null;
 };
 
 type Ctx = {
@@ -33,21 +32,20 @@ type Ctx = {
   setOperator: (op: Operator | null) => void;
   clearOperator: () => void;
 
+  // Used by QuickActionsFab and anywhere else
   openLockModal: () => void;
-  closeLockModal: () => void;
+
+  // Optional, but handy
   lockNow: () => void;
 
-  // Used by useActingClient()
+  // Acting context helper (used by your useActingClient hook)
   getActingContextClient: () => ActingContext;
 };
 
 const WorkstationLockContext = createContext<Ctx | null>(null);
 
-/* ===================== Local Storage Keys ===================== */
-
-const LS_LOCKED = "tt_ws_locked_v1";
 const LS_OPERATOR = "tt_ws_operator_v1";
-const LS_AUTH_UID = "tt_ws_auth_uid_v1";
+const LS_LOCKED = "tt_ws_locked_v1";
 
 function readJson<T>(key: string): T | null {
   try {
@@ -59,23 +57,13 @@ function readJson<T>(key: string): T | null {
   }
 }
 
-function writeJson(key: string, value: any) {
+function writeJson(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // ignore
   }
 }
-
-function removeKey(key: string) {
-  try {
-    localStorage.removeItem(key);
-  } catch {
-    // ignore
-  }
-}
-
-/* ===================== Provider ===================== */
 
 export function WorkstationLockProvider({
   children,
@@ -84,148 +72,117 @@ export function WorkstationLockProvider({
 }) {
   const pathname = usePathname();
 
-  const [locked, setLocked] = useState<boolean>(false);
-  const [operator, setOperatorState] = useState<Operator | null>(null);
+  const [operator, _setOperator] = useState<Operator | null>(() => {
+    return readJson<Operator>(LS_OPERATOR);
+  });
+
+  // CRITICAL FIX:
+  // Do NOT default to locked=true for fresh sessions,
+  // otherwise brand new accounts get forced into lock screen before org/location exists.
+  const [locked, setLocked] = useState<boolean>(() => {
+    const saved = readJson<boolean>(LS_LOCKED);
+    return typeof saved === "boolean" ? saved : false;
+  });
+
   const [showLockModal, setShowLockModal] = useState(false);
 
-  // 1) Account-isolate the workstation state (localStorage is shared across accounts).
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (cancelled) return;
-
-      const uid = data.user?.id ?? null;
-      const prev = typeof window !== "undefined" ? localStorage.getItem(LS_AUTH_UID) : null;
-
-      if (uid && prev && prev !== uid) {
-        // Different logged-in user: wipe workstation state.
-        removeKey(LS_LOCKED);
-        removeKey(LS_OPERATOR);
-      }
-
-      if (uid) {
-        try {
-          localStorage.setItem(LS_AUTH_UID, uid);
-        } catch {}
-      }
-
-      // Load persisted state after we’ve handled user switching.
-      const persistedLocked = localStorage.getItem(LS_LOCKED) === "1";
-      const persistedOperator = readJson<Operator>(LS_OPERATOR);
-
-      setLocked(persistedLocked);
-      setOperatorState(persistedOperator);
-      setShowLockModal(persistedLocked);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+  const persistOperator = useCallback((op: Operator | null) => {
+    _setOperator(op);
+    writeJson(LS_OPERATOR, op);
   }, []);
 
-  // 2) If app is locked, ensure modal stays open (but don’t fight the UI if unlocked).
-  useEffect(() => {
-    if (locked) setShowLockModal(true);
-  }, [locked]);
-
-  // Optional: if you want locking to apply to route changes, keep it simple:
-  useEffect(() => {
-    if (locked) setShowLockModal(true);
-  }, [pathname, locked]);
-
-  const setOperator = useCallback((op: Operator | null) => {
-    setOperatorState(op);
-    if (op) writeJson(LS_OPERATOR, op);
-    else removeKey(LS_OPERATOR);
+  const persistLocked = useCallback((v: boolean) => {
+    setLocked(v);
+    writeJson(LS_LOCKED, v);
   }, []);
+
+  const setOperator = useCallback(
+    (op: Operator | null) => {
+      persistOperator(op);
+      if (op) {
+        persistLocked(false);
+        setShowLockModal(false);
+      } else {
+        // no operator = workstation effectively locked (but modal only shown when explicitly opened)
+        persistLocked(true);
+      }
+    },
+    [persistOperator, persistLocked]
+  );
 
   const clearOperator = useCallback(() => {
-    setOperator(null);
-  }, [setOperator]);
+    persistOperator(null);
+    persistLocked(true);
+    setShowLockModal(true);
+  }, [persistOperator, persistLocked]);
 
   const openLockModal = useCallback(() => {
+    // Opening the lock modal implies we're in "locked until operator chosen" mode
+    persistLocked(true);
     setShowLockModal(true);
-    setLocked(true);
-    try {
-      localStorage.setItem(LS_LOCKED, "1");
-    } catch {}
-  }, []);
-
-  const closeLockModal = useCallback(() => {
-    setShowLockModal(false);
-  }, []);
+  }, [persistLocked]);
 
   const lockNow = useCallback(() => {
-    // Lock immediately and clear operator (forces PIN selection)
-    setOperator(null);
+    persistLocked(true);
     setShowLockModal(true);
-    setLocked(true);
-    try {
-      localStorage.setItem(LS_LOCKED, "1");
-    } catch {}
-  }, [setOperator]);
-
-  const unlock = useCallback(() => {
-    setLocked(false);
-    setShowLockModal(false);
-    try {
-      localStorage.setItem(LS_LOCKED, "0");
-    } catch {}
-  }, []);
+  }, [persistLocked]);
 
   const getActingContextClient = useCallback((): ActingContext => {
-    // keep this tiny and stable; other files rely on these field names
+    if (!operator) {
+      return { acted_by_team_member_id: null, acted_by_initials: null };
+    }
     return {
-      acted_by_team_member_id: operator?.teamMemberId ?? null,
-      acted_by_initials: operator?.initials ?? null,
+      acted_by_team_member_id: operator.teamMemberId ?? null,
+      acted_by_initials: (operator.initials ?? null) as string | null,
     };
   }, [operator]);
+
+  // Keep legacy event hook so you can trigger lock screen anywhere without plumbing
+  useEffect(() => {
+    function onOpen() {
+      openLockModal();
+    }
+    window.addEventListener("tt-open-workstation-lock", onOpen);
+    return () => window.removeEventListener("tt-open-workstation-lock", onOpen);
+  }, [openLockModal]);
+
+  // If you’re on auth pages, never show the lock modal
+  useEffect(() => {
+    const onAuth =
+      pathname?.startsWith("/login") ||
+      pathname?.startsWith("/signup") ||
+      pathname?.startsWith("/auth") ||
+      pathname?.startsWith("/forgot-password") ||
+      pathname?.startsWith("/reset-password");
+
+    if (onAuth) {
+      setShowLockModal(false);
+    }
+  }, [pathname]);
 
   const value = useMemo<Ctx>(
     () => ({
       locked,
       operator,
-      setOperator: (op) => {
-        setOperator(op);
-        if (op) {
-          // setting an operator implies “unlocked”
-          unlock();
-        }
-      },
-      clearOperator,
-
-      openLockModal,
-      closeLockModal,
-      lockNow,
-
-      getActingContextClient,
-    }),
-    [
-      locked,
-      operator,
       setOperator,
       clearOperator,
       openLockModal,
-      closeLockModal,
       lockNow,
-      unlock,
       getActingContextClient,
-    ]
+    }),
+    [locked, operator, setOperator, clearOperator, openLockModal, lockNow, getActingContextClient]
   );
 
   return (
     <WorkstationLockContext.Provider value={value}>
       {children}
 
-      {/* UI stays as-is: your lock screen component controls styling */}
-      {showLockModal ? null : null}
+      {/* Single source of truth: the provider owns the lock UI.
+          This prevents the “FAB locked but page unlocked” split-brain. */}
+      {showLockModal ? <WorkstationLockScreen /> : null}
     </WorkstationLockContext.Provider>
   );
 }
-
-/* ===================== Hook ===================== */
 
 export function useWorkstation() {
   const ctx = useContext(WorkstationLockContext);

@@ -18,24 +18,17 @@ export function useActingClient() {
   const { operator, getActingContextClient } = useWorkstation();
 
   return useMemo(() => {
-    // Your repo has drifted types between versions, so don't trust them.
-    const actingAny = (getActingContextClient?.() ?? {}) as any;
-
-    // Support both naming schemes (current + older)
-    const actedByTeamMemberId: string | null =
-      (actingAny.acted_by_team_member_id ?? null) ||
-      (actingAny.team_member_id ?? null) ||
-      (operator?.teamMemberId ?? null);
+    const acting = getActingContextClient() as any;
 
     const operatorInitials =
-      (actingAny.acted_by_initials ?? null) ||
+      acting?.acted_by_initials ||
       (operator?.initials ?? "").trim().toUpperCase() ||
       initialsFromName(operator?.name) ||
       null;
 
     return {
       operator,
-      acted_by_team_member_id: actedByTeamMemberId,
+      acted_by_team_member_id: acting?.acted_by_team_member_id ?? null,
       acted_by_initials: operatorInitials,
     };
   }, [operator, getActingContextClient]);
