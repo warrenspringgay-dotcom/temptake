@@ -1264,12 +1264,6 @@ export default function TempFab() {
       status,
     };
 
-    // Optional: stamp operator ids if your schema has them
-    const opAny = operator as any;
-    if (opAny?.teamMemberId) payload.acted_by_team_member_id = opAny.teamMemberId;
-    if (opAny?.team_member_id) payload.done_by_team_member_id = opAny.team_member_id;
-    if (opAny?.location_staff_id) payload.location_staff_id = opAny.location_staff_id;
-
     const { data: inserted, error } = await supabase
       .from("food_temp_logs")
       .insert(payload)
