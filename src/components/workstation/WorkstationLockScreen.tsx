@@ -49,12 +49,25 @@ async function attemptUnlockWithPin(params: {
   return { res, json };
 }
 
+// ✅ ADDED: call your existing set-pin route (no UI changes)
+async function attemptSetPin(params: {
+  orgId: string;
+  locationId: string;
+  teamMemberId: string;
+  pin: string;
+}) {
+  const res = await fetch("/api/workstation/set-pin", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const json = await res.json().catch(() => ({}));
+  return { res, json };
+}
+
 async function readOrgAndLocation(): Promise<{ orgId: string | null; locationId: string | null }> {
   try {
-    const [orgId, locationId] = await Promise.all([
-      getActiveOrgIdClient(),
-      getActiveLocationIdClient(),
-    ]);
+    const [orgId, locationId] = await Promise.all([getActiveOrgIdClient(), getActiveLocationIdClient()]);
     return { orgId, locationId };
   } catch {
     return { orgId: null, locationId: null };
@@ -157,14 +170,15 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
     setMsg(null);
 
     try {
-      const { res, json } = await attemptUnlockWithPin({
+      // 1) Try unlock normally
+      const first = await attemptUnlockWithPin({
         orgId,
         locationId,
         teamMemberId: selected.id,
         pin: p,
       });
 
-      if (res.ok && json?.ok) {
+      if (first.res.ok && first.json?.ok) {
         ws.setOperator({
           teamMemberId: selected.id,
           orgId,
@@ -184,10 +198,72 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
         return;
       }
 
+      // 2) If backend says no-pin-set → set pin, then retry unlock once
+      const firstReason = first.json?.reason ?? first.json?.message ?? null;
+
+      if (String(firstReason) === "no-pin-set") {
+        const setPinRes = await attemptSetPin({
+          orgId,
+          locationId,
+          teamMemberId: selected.id,
+          pin: p,
+        });
+
+        if (!(setPinRes.res.ok && setPinRes.json?.ok)) {
+          const r =
+            setPinRes.json?.reason ||
+            setPinRes.json?.message ||
+            "Could not set PIN.";
+          setMsg(String(r));
+          setPin("");
+          return;
+        }
+
+        // clear attempt lock so retry isn't blocked
+        lastAttemptRef.current = "";
+
+        const second = await attemptUnlockWithPin({
+          orgId,
+          locationId,
+          teamMemberId: selected.id,
+          pin: p,
+        });
+
+        if (second.res.ok && second.json?.ok) {
+          ws.setOperator({
+            teamMemberId: selected.id,
+            orgId,
+            locationId,
+            name: selected.name ?? null,
+            initials:
+              (selected.initials ?? "").trim().toUpperCase() ||
+              initialsFromName(selected.name) ||
+              null,
+            role: selected.role ?? null,
+          });
+
+          ws.unlockWorkstation();
+          setPin("");
+          setMsg(null);
+          onClose();
+          return;
+        }
+
+        const r2 =
+          second.json?.reason ||
+          second.json?.message ||
+          (second.res.status === 401 ? "Incorrect PIN." : null) ||
+          "Unlock failed.";
+        setMsg(String(r2));
+        setPin("");
+        return;
+      }
+
+      // 3) Other errors as before
       const reason =
-        json?.reason ||
-        json?.message ||
-        (res.status === 401 ? "Incorrect PIN." : null) ||
+        first.json?.reason ||
+        first.json?.message ||
+        (first.res.status === 401 ? "Incorrect PIN." : null) ||
         "Unlock failed.";
       setMsg(String(reason));
       setPin("");
