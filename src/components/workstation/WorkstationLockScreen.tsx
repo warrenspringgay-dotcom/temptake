@@ -49,7 +49,6 @@ async function attemptUnlockWithPin(params: {
   return { res, json };
 }
 
-// ✅ ADDED: call your existing set-pin route (no UI changes)
 async function attemptSetPin(params: {
   orgId: string;
   locationId: string;
@@ -81,10 +80,12 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
   const [selected, setSelected] = useState<OperatorRow | null>(null);
 
   const [pin, setPin] = useState("");
+  const [pin2, setPin2] = useState(""); // ✅ confirm pin
+  const [needsSetPin, setNeedsSetPin] = useState(false); // ✅ set-pin mode
+
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // ✅ org/location are async → state
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
@@ -123,7 +124,6 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
 
       setOperators(list);
 
-      // Auto-select previous operator if present
       const lastId = ws.operator?.teamMemberId ?? null;
       const found = lastId ? list.find((o) => o.id === lastId) : null;
       setSelected(found ?? list[0] ?? null);
@@ -137,13 +137,38 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
   // Clear pin when changing operator
   useEffect(() => {
     setPin("");
+    setPin2("");
     setMsg(null);
+    setNeedsSetPin(false); // ✅ reset set-pin mode when operator changes
   }, [selected?.id]);
 
   const selectedLabel = useMemo(() => {
     if (!selected) return "No operators available.";
     return `${selected.name ?? "Unnamed"}${selected.role ? ` (${selected.role})` : ""}`;
   }, [selected]);
+
+  function setOperatorAndUnlock() {
+    if (!orgId || !locationId || !selected?.id) return;
+
+    ws.setOperator({
+      teamMemberId: selected.id,
+      orgId,
+      locationId,
+      name: selected.name ?? null,
+      initials:
+        (selected.initials ?? "").trim().toUpperCase() ||
+        initialsFromName(selected.name) ||
+        null,
+      role: selected.role ?? null,
+    });
+
+    ws.unlockWorkstation();
+    setPin("");
+    setPin2("");
+    setMsg(null);
+    setNeedsSetPin(false);
+    onClose();
+  }
 
   async function handleUnlock() {
     if (busy) return;
@@ -156,6 +181,75 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
       setMsg("Select an operator.");
       return;
     }
+
+    // ✅ If we're in set-pin mode, validate both pins first
+    if (needsSetPin) {
+      const p1 = pin.trim();
+      const p2 = pin2.trim();
+      if (p1.length !== 4 || p2.length !== 4) {
+        setMsg("Enter 4 digits in both fields.");
+        return;
+      }
+      if (p1 !== p2) {
+        setMsg("PINs do not match.");
+        setPin("");
+        setPin2("");
+        return;
+      }
+
+      setBusy(true);
+      setMsg(null);
+
+      try {
+        const sp = await attemptSetPin({
+          orgId,
+          locationId,
+          teamMemberId: selected.id,
+          pin: p1,
+        });
+
+        if (!(sp.res.ok && sp.json?.ok)) {
+          const r = sp.json?.reason || sp.json?.message || "Could not set PIN.";
+          setMsg(String(r));
+          setPin("");
+          setPin2("");
+          return;
+        }
+
+        // Now unlock
+        const un = await attemptUnlockWithPin({
+          orgId,
+          locationId,
+          teamMemberId: selected.id,
+          pin: p1,
+        });
+
+        if (un.res.ok && un.json?.ok) {
+          setOperatorAndUnlock();
+          return;
+        }
+
+        const r2 =
+          un.json?.reason ||
+          un.json?.message ||
+          (un.res.status === 401 ? "Incorrect PIN." : null) ||
+          "Unlock failed.";
+        setMsg(String(r2));
+        setPin("");
+        setPin2("");
+      } catch {
+        setMsg("Unlock failed.");
+        setPin("");
+        setPin2("");
+      } finally {
+        setBusy(false);
+        lastAttemptRef.current = "";
+      }
+
+      return;
+    }
+
+    // ✅ normal unlock mode
     const p = pin.trim();
     if (p.length !== 4) {
       setMsg("Enter 4 digits.");
@@ -170,7 +264,6 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
     setMsg(null);
 
     try {
-      // 1) Try unlock normally
       const first = await attemptUnlockWithPin({
         orgId,
         locationId,
@@ -179,92 +272,27 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
       });
 
       if (first.res.ok && first.json?.ok) {
-        ws.setOperator({
-          teamMemberId: selected.id,
-          orgId,
-          locationId,
-          name: selected.name ?? null,
-          initials:
-            (selected.initials ?? "").trim().toUpperCase() ||
-            initialsFromName(selected.name) ||
-            null,
-          role: selected.role ?? null,
-        });
-
-        ws.unlockWorkstation();
-        setPin("");
-        setMsg(null);
-        onClose();
+        setOperatorAndUnlock();
         return;
       }
 
-      // 2) If backend says no-pin-set → set pin, then retry unlock once
       const firstReason = first.json?.reason ?? first.json?.message ?? null;
 
+      // ✅ if no pin set, switch UI into set-pin mode instead of silently setting it
       if (String(firstReason) === "no-pin-set") {
-        const setPinRes = await attemptSetPin({
-          orgId,
-          locationId,
-          teamMemberId: selected.id,
-          pin: p,
-        });
-
-        if (!(setPinRes.res.ok && setPinRes.json?.ok)) {
-          const r =
-            setPinRes.json?.reason ||
-            setPinRes.json?.message ||
-            "Could not set PIN.";
-          setMsg(String(r));
-          setPin("");
-          return;
-        }
-
-        // clear attempt lock so retry isn't blocked
-        lastAttemptRef.current = "";
-
-        const second = await attemptUnlockWithPin({
-          orgId,
-          locationId,
-          teamMemberId: selected.id,
-          pin: p,
-        });
-
-        if (second.res.ok && second.json?.ok) {
-          ws.setOperator({
-            teamMemberId: selected.id,
-            orgId,
-            locationId,
-            name: selected.name ?? null,
-            initials:
-              (selected.initials ?? "").trim().toUpperCase() ||
-              initialsFromName(selected.name) ||
-              null,
-            role: selected.role ?? null,
-          });
-
-          ws.unlockWorkstation();
-          setPin("");
-          setMsg(null);
-          onClose();
-          return;
-        }
-
-        const r2 =
-          second.json?.reason ||
-          second.json?.message ||
-          (second.res.status === 401 ? "Incorrect PIN." : null) ||
-          "Unlock failed.";
-        setMsg(String(r2));
+        setNeedsSetPin(true);
+        setMsg("Please set a 4-digit PIN for this operator.");
         setPin("");
+        setPin2("");
         return;
       }
 
-      // 3) Other errors as before
       const reason =
         first.json?.reason ||
         first.json?.message ||
         (first.res.status === 401 ? "Incorrect PIN." : null) ||
         "Unlock failed.";
+
       setMsg(String(reason));
       setPin("");
     } catch {
@@ -276,20 +304,23 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
     }
   }
 
-  // Auto-submit on 4 digits
+  // Auto-submit on 4 digits (only in normal unlock mode)
   useEffect(() => {
+    if (needsSetPin) return;
     if (!selected?.id) return;
     if (pin.trim().length === 4 && !busy) {
       handleUnlock();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin]);
+  }, [pin, needsSetPin]);
 
   function clearOperator() {
     ws.clearOperator();
     setSelected(null);
     setPin("");
+    setPin2("");
     setMsg(null);
+    setNeedsSetPin(false);
   }
 
   return (
@@ -301,8 +332,14 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
       <div className="w-[92vw] max-w-[860px] rounded-3xl border border-white/30 bg-white/70 shadow-2xl backdrop-blur-md">
         <div className="flex items-center justify-between px-6 pt-5">
           <div>
-            <div className="text-lg font-semibold text-slate-900">Workstation locked</div>
-            <div className="text-sm text-slate-600">Select a user and enter a PIN to continue.</div>
+            <div className="text-lg font-semibold text-slate-900">
+              {needsSetPin ? "Set operator PIN" : "Workstation locked"}
+            </div>
+            <div className="text-sm text-slate-600">
+              {needsSetPin
+                ? "This operator doesn’t have a PIN yet. Set one to continue."
+                : "Select a user and enter a PIN to continue."}
+            </div>
           </div>
 
           <button
@@ -359,7 +396,9 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
 
           {/* PIN entry */}
           <div className="rounded-2xl border border-white/40 bg-white/60 p-4">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-600">PIN</div>
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-600">
+              {needsSetPin ? "New PIN" : "PIN"}
+            </div>
 
             <div className="mb-2 text-sm text-slate-700">{selectedLabel}</div>
 
@@ -379,7 +418,32 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
               autoFocus
             />
 
-            <div className="mt-2 text-xs text-slate-600">Enter 4 digits.</div>
+            {needsSetPin ? (
+              <>
+                <div className="mt-3 mb-2 text-xs font-medium uppercase tracking-wide text-slate-600">
+                  Confirm PIN
+                </div>
+                <input
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={4}
+                  value={pin2}
+                  onChange={(e) => {
+                    const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                    setPin2(v);
+                    setMsg(null);
+                  }}
+                  className="w-full rounded-xl border border-white/60 bg-white/70 px-4 py-3 text-lg tracking-[0.4em] outline-none focus:ring-2 focus:ring-slate-900/20"
+                  placeholder="••••"
+                  disabled={busy || !selected}
+                />
+                <div className="mt-2 text-xs text-slate-600">
+                  Enter the same 4 digits twice to confirm.
+                </div>
+              </>
+            ) : (
+              <div className="mt-2 text-xs text-slate-600">Enter 4 digits.</div>
+            )}
 
             {msg ? <div className="mt-2 text-sm text-red-600">{msg}</div> : null}
 
@@ -387,15 +451,25 @@ export default function WorkstationLockScreen({ onClose }: { onClose: () => void
               <button
                 type="button"
                 onClick={handleUnlock}
-                disabled={busy || !selected || pin.trim().length !== 4}
+                disabled={
+                  busy ||
+                  !selected ||
+                  (needsSetPin
+                    ? pin.trim().length !== 4 || pin2.trim().length !== 4
+                    : pin.trim().length !== 4)
+                }
                 className={[
                   "rounded-xl px-5 py-2.5 text-sm font-semibold text-white",
-                  busy || !selected || pin.trim().length !== 4
+                  busy ||
+                  !selected ||
+                  (needsSetPin
+                    ? pin.trim().length !== 4 || pin2.trim().length !== 4
+                    : pin.trim().length !== 4)
                     ? "bg-emerald-600/50"
                     : "bg-emerald-600 hover:bg-emerald-700",
                 ].join(" ")}
               >
-                {busy ? "Unlocking..." : "Unlock"}
+                {busy ? (needsSetPin ? "Setting..." : "Unlocking...") : needsSetPin ? "Set PIN" : "Unlock"}
               </button>
             </div>
           </div>
