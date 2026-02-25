@@ -261,36 +261,32 @@ export default function TeamManager() {
   return new Set<string>((json.pinSetIds ?? []).map(String));
 }
 
- async function loadPinStatusForMember(oid: string, memberId: string) {
-  if (!oid || !memberId) {
-    setPinSet(false);
-    return;
-  }
-
-  setPinLoading(true);
-  setPinMsg(null);
-
-  try {
-    const res = await fetch("/api/workstation/pin-status", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ orgId: oid, memberIds: [memberId] }),
-      cache: "no-store",
-    });
-
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || !json?.ok) {
-      console.warn("[team] pin status api failed:", json?.detail ?? res.statusText);
+  /* -------------------- Load PIN status for edit modal -------------------- */
+  async function loadPinStatusForMember(oid: string, memberId: string) {
+    if (!oid || !memberId) {
       setPinSet(false);
       return;
     }
+    setPinLoading(true);
+    setPinMsg(null);
+    try {
+      const { data, error } = await supabase
+        .from("team_member_pins")
+        .select("team_member_id")
+        .eq("org_id", oid)
+        .eq("team_member_id", memberId)
+        .maybeSingle();
 
-    const setIds = new Set<string>((json.pinSetIds ?? []).map(String));
-    setPinSet(setIds.has(memberId));
-  } finally {
-    setPinLoading(false);
+      if (error && (error as any).code !== "PGRST116") {
+        // PGRST116 is "Results contain 0 rows" sometimes, depends on config
+        console.warn("[team] load pin status error:", error.message);
+      }
+
+      setPinSet(!!data?.team_member_id);
+    } finally {
+      setPinLoading(false);
+    }
   }
-}
 
   async function setOrResetPin() {
     if (!editing) return;
@@ -1214,36 +1210,40 @@ export default function TeamManager() {
         </div>
       )}
 
-      {/* Edit / Add modal */}
       {editOpen && editing && (
-        <ModalPortal>
-          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setEditOpen(false)}>
-            <div
-              className="
-                mx-auto mt-10 w-[min(1100px,calc(100vw-2rem))]
-                rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur
-                max-h-[calc(100dvh-5rem)] overflow-y-auto
-                lg:max-h-none lg:overflow-visible
-              "
-              onClick={(e) => e.stopPropagation()}
+  <ModalPortal>
+    <div
+      className="fixed inset-0 z-50 bg-black/30 overflow-y-auto p-4 sm:p-6"
+      onClick={() => setEditOpen(false)}
+    >
+      <div
+        className="
+          mx-auto w-[min(1100px,calc(100vw-2rem))]
+          rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur
+          max-h-[calc(100dvh-2rem)] overflow-y-auto
+        "
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-3 px-4 pt-4 pb-3 bg-white/90 backdrop-blur border-b border-slate-200">
+          <div className="flex items-center justify-between">
+            <div className="text-base font-semibold">
+              {editing.id ? "Edit member" : "Add member"}
+            </div>
+            <button
+              onClick={() => setEditOpen(false)}
+              className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
             >
-              <div className="mb-3 flex items-center justify-between">
-                <div className="text-base font-semibold">
-                  {editing.id ? "Edit member" : "Add member"}
-                </div>
-                <button
-                  onClick={() => setEditOpen(false)}
-                  className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-                >
-                  ✕
-                </button>
-              </div>
+              ✕
+            </button>
+          </div>
+        </div>
 
-              {!locationId ? (
-                <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                  No active location selected. Pick a location at the top of the app first.
-                </div>
-              ) : null}
+        {!locationId ? (
+          <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            No active location selected. Pick a location at the top of the app first.
+          </div>
+        ) : null}
+
 
               {/* TWO-COLUMN LAYOUT ON DESKTOP */}
               <div className="grid gap-4 lg:grid-cols-2">
