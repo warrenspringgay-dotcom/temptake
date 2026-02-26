@@ -10,14 +10,16 @@ import { WorkstationLockProvider } from "@/components/workstation/WorkstationLoc
 import { PHProvider } from "@/components/PosthogProvider";
 export default function ClientProviders({ children }: { children: React.ReactNode }) {
   return (
-    <PHProvider>
+    
     <GlobalLoadingProvider>
+        <PHProvider>
       <AuthProvider>
         <ToastProvider>
           <WorkstationLockProvider>{children}</WorkstationLockProvider>
         </ToastProvider>
       </AuthProvider>
+      </PHProvider>
     </GlobalLoadingProvider>
-    </PHProvider>
+    
   );
 }
