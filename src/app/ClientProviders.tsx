@@ -7,9 +7,10 @@ import { AuthProvider } from "@/components/AuthProvider";
 import { GlobalLoadingProvider } from "@/components/GlobalLoadingProvider";
 import { ToastProvider } from "@/components/ui/use-toast";
 import { WorkstationLockProvider } from "@/components/workstation/WorkstationLockProvider";
-
+import { PHProvider } from "@/components/PosthogProvider";
 export default function ClientProviders({ children }: { children: React.ReactNode }) {
   return (
+    <PHProvider>
     <GlobalLoadingProvider>
       <AuthProvider>
         <ToastProvider>
@@ -17,5 +18,6 @@ export default function ClientProviders({ children }: { children: React.ReactNod
         </ToastProvider>
       </AuthProvider>
     </GlobalLoadingProvider>
+    </PHProvider>
   );
 }
