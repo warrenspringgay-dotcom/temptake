@@ -441,8 +441,8 @@ export default function RoutineManager() {
           </button>
         </div>
 
-        <div className="mt-2 text-[11px] text-slate-500">
-          Tip: Tap a routine to view steps. Use “Use routine” to run it.
+         <div className="mt-4 text-xs text-slate-500">
+          Create routines - add steps to routines that you carry out everyday. Load routines fast from the Plus menu.
         </div>
       </div>
 
