@@ -367,6 +367,9 @@ export default function SuppliersManager() {
             + Add supplier
           </button>
         </div>
+         <div className="mt-4 text-xs text-slate-500">
+          Add suppliers - keep track of suppliers, thier details and products.
+        </div>
       </div>
 
       {loading ? (

@@ -822,8 +822,7 @@ export default function CleaningRotaPage() {
         </div>
 
         <div className="mt-4 text-xs text-slate-500">
-          Tip: On phones you can swipe a task card left to complete and right to undo, or just use
-          the Tick / Undo buttons.
+          Log tasks completed or defer if not completed today.
         </div>
 
         {allDone && !signoff && (

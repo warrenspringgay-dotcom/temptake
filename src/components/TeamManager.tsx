@@ -1045,6 +1045,9 @@ export default function TeamManager() {
             )}
           </div>
         </div>
+         <div className="mt-4 text-xs text-slate-500">
+          Add team members - set each members access to the app none/email login/pin login
+        </div>
       </div>
 
       {/* Card grid */}
