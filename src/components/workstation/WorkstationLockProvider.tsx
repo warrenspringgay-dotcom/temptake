@@ -342,6 +342,45 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     ]
   );
 
+  const AUTO_LOCK_MS = 5 * 60 * 1000; // 5 minutes – tweak if needed
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // helper to clear/restart timer
+  const resetInactivityTimer = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (!locked && operator) {
+      timerRef.current = setTimeout(() => {
+        console.log("[workstation] auto-locking after inactivity");
+        setLocked(true);
+        writeLockedToLS(true);
+        setShowLockModal(true);
+      }, AUTO_LOCK_MS);
+    }
+  }, [locked, operator]);
+
+  // restart timer whenever lock state or operator changes
+  useEffect(() => {
+    resetInactivityTimer();
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [locked, operator, resetInactivityTimer]);
+
+  // listen for user activity to reset timer
+  useEffect(() => {
+    const activity = () => resetInactivityTimer();
+    window.addEventListener("mousemove", activity);
+    window.addEventListener("mousedown", activity);
+    window.addEventListener("keydown", activity);
+    window.addEventListener("touchstart", activity);
+    return () => {
+      window.removeEventListener("mousemove", activity);
+      window.removeEventListener("mousedown", activity);
+      window.removeEventListener("keydown", activity);
+      window.removeEventListener("touchstart", activity);
+    };
+  }, [resetInactivityTimer]);
+  
   return (
     <Ctx.Provider value={value}>
       {children}
