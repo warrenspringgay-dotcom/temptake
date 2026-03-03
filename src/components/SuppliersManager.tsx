@@ -49,22 +49,87 @@ function cls(...p: Array<string | false | undefined>) {
 
 function parseCats(input: unknown): string[] {
   try {
+    // Already an array
     if (Array.isArray(input)) {
       return input
         .map((x) => (x == null ? "" : String(x)))
         .map((s) => s.trim())
         .filter(Boolean);
     }
+
     if (input == null) return [];
     if (typeof input === "object") return [];
+
     if (typeof input === "string") {
       const raw = input.trim();
       if (!raw) return [];
+
+      // 1) JSON array string e.g. ["Meat","Frozen"]
+      if (raw.startsWith("[") && raw.endsWith("]")) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            return parsed
+              .map((x) => (x == null ? "" : String(x)))
+              .map((s) => s.trim())
+              .filter(Boolean);
+          }
+        } catch {
+          // fall through
+        }
+      }
+
+      // 2) Postgres array string e.g. {Meat,Frozen} or {"Meat","Frozen"}
+      if (raw.startsWith("{") && raw.endsWith("}")) {
+        const inner = raw.slice(1, -1).trim();
+        if (!inner) return [];
+
+        // Split on commas not inside quotes
+        const out: string[] = [];
+        let cur = "";
+        let inQuotes = false;
+
+        for (let i = 0; i < inner.length; i++) {
+          const ch = inner[i];
+          if (ch === '"') {
+            // handle escaped quotes \" (rare but possible)
+            const prev = inner[i - 1];
+            if (prev !== "\\") inQuotes = !inQuotes;
+            cur += ch;
+            continue;
+          }
+
+          if (ch === "," && !inQuotes) {
+            const v = cur.trim();
+            if (v) out.push(v);
+            cur = "";
+            continue;
+          }
+          cur += ch;
+        }
+
+        const last = cur.trim();
+        if (last) out.push(last);
+
+        return out
+          .map((s) => s.trim())
+          .map((s) => {
+            // strip surrounding quotes if present
+            if (s.startsWith('"') && s.endsWith('"')) {
+              return s.slice(1, -1).replace(/\\"/g, '"').trim();
+            }
+            return s;
+          })
+          .filter(Boolean);
+      }
+
+      // 3) Legacy delimited string e.g. "Meat, Frozen"
       return raw
         .split(/[;,|]/g)
         .map((s) => s.trim())
         .filter(Boolean);
     }
+
     return [];
   } catch {
     return [];
@@ -347,7 +412,7 @@ export default function SuppliersManager() {
   /* -------------------- Render -------------------- */
   return (
     <div className="mx-auto w-full max-w-6xl px-0 sm:px-4">
-    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
+      <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
         <h1 className="text-lg font-semibold text-slate-900">Suppliers</h1>
         <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
           <input
@@ -359,7 +424,9 @@ export default function SuppliersManager() {
           <button
             className={cls(
               "shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-white",
-              canManage ? "bg-emerald-600 hover:bg-emerald-700" : "cursor-not-allowed bg-slate-400"
+              canManage
+                ? "bg-emerald-600 hover:bg-emerald-700"
+                : "cursor-not-allowed bg-slate-400"
             )}
             onClick={openAddModal}
             disabled={!canManage}
@@ -367,7 +434,7 @@ export default function SuppliersManager() {
             + Add supplier
           </button>
         </div>
-         <div className="mt-4 text-xs text-slate-500">
+        <div className="mt-4 text-xs text-slate-500">
           Add suppliers - keep track of suppliers, thier details and products.
         </div>
       </div>
@@ -515,7 +582,10 @@ export default function SuppliersManager() {
       {/* ---------- VIEW ---------- */}
       {viewOpen && viewing && (
         <ModalPortal>
-          <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setViewOpen(false)}>
+          <div
+            className="fixed inset-0 z-50 bg-black/40"
+            onClick={() => setViewOpen(false)}
+          >
             <div
               className="mx-auto mt-16 w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 text-slate-900 shadow-2xl backdrop-blur-sm"
               onClick={(e) => e.stopPropagation()}
@@ -523,24 +593,30 @@ export default function SuppliersManager() {
               <div className="rounded-t-3xl bg-slate-900 p-4 text-white">
                 <div className="text-sm opacity-80">Supplier</div>
                 <div className="text-xl font-semibold">{viewing.name}</div>
-                <div className="opacity-80">{viewing.active ? "Active" : "Inactive"}</div>
+                <div className="opacity-80">
+                  {viewing.active ? "Active" : "Inactive"}
+                </div>
               </div>
               <div className="space-y-3 p-4 text-sm">
                 <div>
-                  <span className="font-medium">Contact:</span> {viewing.contact || "—"}
+                  <span className="font-medium">Contact:</span>{" "}
+                  {viewing.contact || "—"}
                 </div>
                 <div>
-                  <span className="font-medium">Phone:</span> {viewing.phone || "—"}
+                  <span className="font-medium">Phone:</span>{" "}
+                  {viewing.phone || "—"}
                 </div>
                 <div>
-                  <span className="font-medium">Email:</span> {viewing.email || "—"}
+                  <span className="font-medium">Email:</span>{" "}
+                  {viewing.email || "—"}
                 </div>
                 <div>
                   <span className="font-medium">Categories:</span>{" "}
                   {parseCats(viewing.categories).join(", ") || "—"}
                 </div>
                 <div>
-                  <span className="font-medium">Notes:</span> {viewing.notes || "—"}
+                  <span className="font-medium">Notes:</span>{" "}
+                  {viewing.notes || "—"}
                 </div>
               </div>
               <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
@@ -559,7 +635,10 @@ export default function SuppliersManager() {
       {/* ---------- EDIT ---------- */}
       {editOpen && editing && (
         <ModalPortal>
-          <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setEditOpen(false)}>
+          <div
+            className="fixed inset-0 z-50 bg-black/40"
+            onClick={() => setEditOpen(false)}
+          >
             <div
               className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl backdrop-blur-sm"
               onClick={(e) => e.stopPropagation()}
@@ -584,7 +663,9 @@ export default function SuppliersManager() {
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                   placeholder="Contact"
                   value={editing.contact}
-                  onChange={(e) => setEditing((s) => ({ ...s!, contact: e.target.value }))}
+                  onChange={(e) =>
+                    setEditing((s) => ({ ...s!, contact: e.target.value }))
+                  }
                 />
                 <div className="grid grid-cols-2 gap-3">
                   <input
@@ -631,7 +712,9 @@ export default function SuppliersManager() {
                       onChange={(e) =>
                         setEditing((s) => ({ ...s!, addCategory: e.target.value }))
                       }
-                      onKeyDown={(e) => e.key === "Enter" && addFreeCat(editing, setEditing as any)}
+                      onKeyDown={(e) =>
+                        e.key === "Enter" && addFreeCat(editing, setEditing as any)
+                      }
                     />
                     <button
                       type="button"
@@ -655,7 +738,9 @@ export default function SuppliersManager() {
                     type="checkbox"
                     className="accent-emerald-600"
                     checked={editing.active}
-                    onChange={(e) => setEditing((s) => ({ ...s!, active: e.target.checked }))}
+                    onChange={(e) =>
+                      setEditing((s) => ({ ...s!, active: e.target.checked }))
+                    }
                   />
                   Active
                 </label>
@@ -684,7 +769,10 @@ export default function SuppliersManager() {
       {/* ---------- ADD ---------- */}
       {addOpen && (
         <ModalPortal>
-          <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setAddOpen(false)}>
+          <div
+            className="fixed inset-0 z-50 bg-black/40"
+            onClick={() => setAddOpen(false)}
+          >
             <div
               className="mx-auto mt-8 w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-2xl backdrop-blur-sm"
               onClick={(e) => e.stopPropagation()}
@@ -710,7 +798,9 @@ export default function SuppliersManager() {
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
                   placeholder="Contact"
                   value={adding.contact}
-                  onChange={(e) => setAdding((s) => ({ ...s, contact: e.target.value }))}
+                  onChange={(e) =>
+                    setAdding((s) => ({ ...s, contact: e.target.value }))
+                  }
                 />
                 <div className="grid grid-cols-2 gap-3">
                   <input
@@ -757,7 +847,9 @@ export default function SuppliersManager() {
                       onChange={(e) =>
                         setAdding((s) => ({ ...s, addCategory: e.target.value }))
                       }
-                      onKeyDown={(e) => e.key === "Enter" && addFreeCat(adding, setAdding as any)}
+                      onKeyDown={(e) =>
+                        e.key === "Enter" && addFreeCat(adding, setAdding as any)
+                      }
                     />
                     <button
                       type="button"
