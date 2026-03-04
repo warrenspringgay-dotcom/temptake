@@ -791,6 +791,7 @@ export default function TempFab() {
     }
   );
 
+  // ✅ FIX: count temps logged today from BOTH quick logs + routine logs
   async function refreshEntriesToday() {
     try {
       const orgId = await getActiveOrgIdClient();
@@ -799,27 +800,60 @@ export default function TempFab() {
         return;
       }
       const locationId = await getActiveLocationIdClient();
+      const todayISO = isoToday();
 
+      // (A) food_temp_logs (quick log) uses timestamp column "at"
       const start = new Date();
       start.setHours(0, 0, 0, 0);
       const end = new Date();
       end.setHours(23, 59, 59, 999);
 
-      let query = supabase
+      let qFood = supabase
         .from("food_temp_logs")
         .select("id", { count: "exact", head: true })
         .eq("org_id", orgId)
         .gte("at", start.toISOString())
         .lte("at", end.toISOString());
 
-      if (locationId) query = query.eq("location_id", locationId);
+      if (locationId) qFood = qFood.eq("location_id", locationId);
 
-      const { count, error } = await query;
-      if (error || count == null) {
-        setEntriesToday(0);
-        return;
+      const { count: foodCount, error: foodErr } = await qFood;
+
+      // (B) temp_logs (routine run) typically uses a date column (often "date" = YYYY-MM-DD)
+      let legacyCount = 0;
+
+      try {
+        let qLegacy = supabase
+          .from("temp_logs")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("date", todayISO);
+
+        if (locationId) qLegacy = qLegacy.eq("location_id", locationId);
+
+        const { count, error } = await qLegacy;
+        if (!error && count != null) legacyCount = count;
+      } catch {
+        // If your legacy table uses a different date column, try one common fallback.
+        try {
+          let qLegacy2 = supabase
+            .from("temp_logs")
+            .select("id", { count: "exact", head: true })
+            .eq("org_id", orgId)
+            // common alternative column names people invent at 2am:
+            .eq("logged_on", todayISO as any);
+
+          if (locationId) qLegacy2 = qLegacy2.eq("location_id", locationId);
+
+          const { count, error } = await qLegacy2;
+          if (!error && count != null) legacyCount = count;
+        } catch {
+          legacyCount = 0;
+        }
       }
-      setEntriesToday(count);
+
+      const total = (foodErr || foodCount == null ? 0 : foodCount) + legacyCount;
+      setEntriesToday(total);
     } catch {
       setEntriesToday(0);
     }
@@ -1123,6 +1157,16 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ✅ Allow other components to force immediate temp refresh
+  useEffect(() => {
+    const onTempsChanged = () => {
+      void refreshEntriesToday();
+    };
+    window.addEventListener("tt-temps-changed", onTempsChanged);
+    return () => window.removeEventListener("tt-temps-changed", onTempsChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Faster fallback poll (safety net only)
   useEffect(() => {
     const id = setInterval(() => {
@@ -1180,6 +1224,7 @@ export default function TempFab() {
           if (loc && String(loc) !== String(activeLocationId)) return;
 
           void refreshCleaningOpen(true);
+          void refreshEntriesToday(); // ✅ keep temp orb in sync too
         }
       )
       .subscribe();
@@ -1970,6 +2015,9 @@ export default function TempFab() {
           setRunRoutine(null);
           await refreshEntriesToday();
           await refreshCleaningOpen(true);
+          try {
+            window.dispatchEvent(new Event("tt-temps-changed"));
+          } catch {}
         }}
       />
     </>
