@@ -23,6 +23,11 @@ import WorkstationLockScreen from "@/components/workstation/WorkstationLockScree
 const LS_FORCE_LOCKED = "tt_workstation_force_locked"; // "true" | "false"
 const LS_OPERATOR = "tt_workstation_operator"; // JSON Operator
 
+// Cookies used by middleware (do not rename)
+const CK_ACTIVE_ORG = "tt_active_org";
+const CK_ACTIVE_LOCATION = "tt_active_location";
+const CK_OPERATOR_ROLE = "tt_operator_role";
+
 export type Operator = {
   teamMemberId: string;
   orgId: string;
@@ -96,9 +101,44 @@ function writeOperatorToLS(op: Operator | null) {
   } catch {}
 }
 
+function normalizeRole(role: string | null | undefined) {
+  const r = String(role ?? "").trim().toLowerCase();
+  return r || "";
+}
+
+function setCookie(name: string, value: string, maxAgeSeconds = 60 * 60 * 24 * 365) {
+  try {
+    // Keep it middleware-readable (NOT httpOnly)
+    document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(
+      value
+    )}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax; Secure`;
+  } catch {}
+}
+
+function clearCookie(name: string) {
+  try {
+    document.cookie = `${encodeURIComponent(name)}=; Path=/; Max-Age=0; SameSite=Lax; Secure`;
+  } catch {}
+}
+
+function syncMiddlewareCookiesFromOperator(op: Operator | null) {
+  if (typeof window === "undefined") return;
+
+  if (!op) {
+    clearCookie(CK_OPERATOR_ROLE);
+    // NOTE: We intentionally do NOT clear active org/location here.
+    // Those are app context cookies. Clearing them can cause extra “unknown-context” blocks.
+    return;
+  }
+
+  // These are required for your middleware manager-only checks
+  setCookie(CK_ACTIVE_ORG, String(op.orgId));
+  setCookie(CK_ACTIVE_LOCATION, String(op.locationId));
+  setCookie(CK_OPERATOR_ROLE, normalizeRole(op.role) || "staff");
+}
+
 async function readOrgAndLocation(): Promise<{ orgId: string | null; locationId: string | null }> {
   try {
-    // These are async in your branch, so we await them.
     const [orgId, locationId] = await Promise.all([
       getActiveOrgIdClient(),
       getActiveLocationIdClient(),
@@ -134,6 +174,7 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
   const setOperator = useCallback((op: Operator | null) => {
     setOperatorState(op);
     writeOperatorToLS(op);
+    syncMiddlewareCookiesFromOperator(op);
   }, []);
 
   const clearOperator = useCallback(() => {
@@ -242,6 +283,9 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
 
     setLocked(lsLocked);
     setOperatorState(lsOp);
+
+    // keep cookies aligned with persisted operator (prevents “works until refresh”)
+    syncMiddlewareCookiesFromOperator(lsOp);
   }, []);
 
   /**
@@ -343,7 +387,7 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
   );
 
   const AUTO_LOCK_MS = 5 * 60 * 1000; // 5 minutes – tweak if needed
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // helper to clear/restart timer
   const resetInactivityTimer = useCallback(() => {
@@ -380,7 +424,7 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
       window.removeEventListener("touchstart", activity);
     };
   }, [resetInactivityTimer]);
-  
+
   return (
     <Ctx.Provider value={value}>
       {children}
