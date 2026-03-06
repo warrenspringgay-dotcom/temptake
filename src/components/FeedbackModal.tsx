@@ -21,6 +21,66 @@ function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+async function resolveOrgIdForCurrentUser(userId: string): Promise<string | null> {
+  // 1) Existing helper first
+  try {
+    const helperOrgId = await getActiveOrgIdClient();
+    if (helperOrgId) return String(helperOrgId);
+  } catch {
+    // ignore and continue
+  }
+
+  // 2) user_orgs is the real membership source
+  try {
+    const { data: membership, error } = await supabase
+      .from("user_orgs")
+      .select("org_id")
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
+
+    if (!error && membership?.org_id) {
+      return String(membership.org_id);
+    }
+  } catch {
+    // ignore and continue
+  }
+
+  // 3) legacy fallback: profiles
+  try {
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("org_id")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (!error && profile?.org_id) {
+      return String(profile.org_id);
+    }
+  } catch {
+    // ignore and continue
+  }
+
+  // 4) fallback: linked team member
+  try {
+    const { data: teamMember, error } = await supabase
+      .from("team_members")
+      .select("org_id")
+      .eq("user_id", userId)
+      .eq("active", true)
+      .limit(1)
+      .maybeSingle();
+
+    if (!error && teamMember?.org_id) {
+      return String(teamMember.org_id);
+    }
+  } catch {
+    // ignore and continue
+  }
+
+  return null;
+}
+
 export default function FeedbackModal({
   open,
   onClose,
@@ -41,7 +101,6 @@ export default function FeedbackModal({
 
   useEffect(() => {
     if (!open) return;
-    // Reset each time it opens (keeps it fast and frictionless)
     setKind("other");
     setMessage("");
     setStatus(null);
@@ -53,6 +112,7 @@ export default function FeedbackModal({
       setStatus("You must be signed in to send feedback.");
       return;
     }
+
     const text = message.trim();
     if (text.length < 3) {
       setStatus("Add a little more detail (at least 3 characters).");
@@ -63,7 +123,8 @@ export default function FeedbackModal({
     setStatus(null);
 
     try {
-      const orgId = await getActiveOrgIdClient();
+      const orgId = await resolveOrgIdForCurrentUser(user.id);
+
       if (!orgId) {
         setStatus("No active organisation found.");
         setSending(false);
@@ -93,7 +154,7 @@ export default function FeedbackModal({
       }
 
       setStatus("Thanks. Feedback sent.");
-      // Close quickly after success so it feels instant
+
       setTimeout(() => {
         onClose();
       }, 600);
