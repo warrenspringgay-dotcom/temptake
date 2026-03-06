@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabaseBrowser";
 /**
  * Store active location per-org in localStorage so multi-org users don't cross-contaminate state.
  * We ALSO best-effort mirror to profiles.active_location_id for SSR/server reads,
- * but we do not rely on it (RLS / auth / offline etc).
+ * but we do not rely on it as the only source.
  */
 function storageKey(orgId: string) {
   return `temptake_active_location_id:${orgId}`;
@@ -19,28 +19,57 @@ export async function getActiveLocationIdClient(orgId?: string | null): Promise<
     if (raw && raw.trim()) return raw.trim();
   }
 
-  // 2) best-effort: profiles.active_location_id (global fallback)
   try {
     const { data: userRes } = await supabase.auth.getUser();
     const user = userRes?.user;
     if (!user) return null;
 
-    const { data, error } = await supabase
+    // 2) best-effort: profiles.active_location_id
+    const { data: profile, error: profileErr } = await supabase
       .from("profiles")
       .select("active_location_id")
       .eq("id", user.id)
       .maybeSingle();
 
-    if (error) return null;
+    if (!profileErr) {
+      const profileLocationId = profile?.active_location_id
+        ? String(profile.active_location_id)
+        : null;
 
-    const id = data?.active_location_id ? String(data.active_location_id) : null;
-
-    // If we have orgId, hydrate localStorage for that org so we stop re-hitting profiles.
-    if (id && typeof window !== "undefined" && orgId) {
-      localStorage.setItem(storageKey(orgId), id);
+      if (profileLocationId) {
+        if (typeof window !== "undefined" && orgId) {
+          localStorage.setItem(storageKey(orgId), profileLocationId);
+        }
+        return profileLocationId;
+      }
     }
 
-    return id;
+    // 3) fallback: team_members.location_id for this signed-in user
+    let tmQuery = supabase
+      .from("team_members")
+      .select("location_id")
+      .eq("user_id", user.id)
+      .eq("active", true)
+      .limit(1);
+
+    if (orgId) {
+      tmQuery = tmQuery.eq("org_id", orgId);
+    }
+
+    const { data: tmRows, error: tmErr } = await tmQuery;
+
+    if (tmErr) return null;
+
+    const tmLocationId =
+      tmRows && tmRows.length > 0 && tmRows[0]?.location_id
+        ? String(tmRows[0].location_id)
+        : null;
+
+    if (tmLocationId && typeof window !== "undefined" && orgId) {
+      localStorage.setItem(storageKey(orgId), tmLocationId);
+    }
+
+    return tmLocationId;
   } catch {
     return null;
   }

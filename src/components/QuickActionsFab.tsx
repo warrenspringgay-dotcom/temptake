@@ -89,6 +89,17 @@ function inferStatus(
 type HasPosition = { position: number };
 const byPosition = (a: HasPosition, b: HasPosition) => a.position - b.position;
 
+async function getActiveContext(): Promise<{
+  orgId: string | null;
+  locationId: string | null;
+}> {
+  const orgId = await getActiveOrgIdClient();
+  if (!orgId) return { orgId: null, locationId: null };
+
+  const locationId = await getActiveLocationIdClient(orgId);
+  return { orgId, locationId };
+}
+
 /* ===================== Daily sign-off modal + logic ===================== */
 
 type DailySignoffRow = {
@@ -688,7 +699,6 @@ export default function TempFab() {
         type: "error",
       });
 
-      // ✅ pop the PIN modal immediately
       openWorkstationLock();
       return false;
     }
@@ -791,18 +801,17 @@ export default function TempFab() {
     }
   );
 
-  // ✅ FIX: count temps logged today from BOTH quick logs + routine logs
   async function refreshEntriesToday() {
     try {
-      const orgId = await getActiveOrgIdClient();
+      const { orgId, locationId } = await getActiveContext();
+
       if (!orgId) {
         setEntriesToday(0);
         return;
       }
-      const locationId = await getActiveLocationIdClient();
+
       const todayISO = isoToday();
 
-      // (A) food_temp_logs (quick log) uses timestamp column "at"
       const start = new Date();
       start.setHours(0, 0, 0, 0);
       const end = new Date();
@@ -819,7 +828,6 @@ export default function TempFab() {
 
       const { count: foodCount, error: foodErr } = await qFood;
 
-      // (B) temp_logs (routine run) typically uses a date column (often "date" = YYYY-MM-DD)
       let legacyCount = 0;
 
       try {
@@ -834,13 +842,11 @@ export default function TempFab() {
         const { count, error } = await qLegacy;
         if (!error && count != null) legacyCount = count;
       } catch {
-        // If your legacy table uses a different date column, try one common fallback.
         try {
           let qLegacy2 = supabase
             .from("temp_logs")
             .select("id", { count: "exact", head: true })
             .eq("org_id", orgId)
-            // common alternative column names people invent at 2am:
             .eq("logged_on", todayISO as any);
 
           if (locationId) qLegacy2 = qLegacy2.eq("location_id", locationId);
@@ -859,7 +865,6 @@ export default function TempFab() {
     }
   }
 
-  // Count today’s open cleaning tasks
   async function refreshCleaningOpen(force = false) {
     if (cleaningRefreshInFlight.current) {
       cleaningRefreshQueued.current = true;
@@ -869,34 +874,31 @@ export default function TempFab() {
     cleaningRefreshInFlight.current = true;
 
     try {
-      const orgId = force
-        ? activeOrgId ?? (await getActiveOrgIdClient())
-        : activeOrgId ?? (await getActiveOrgIdClient());
-      if (!orgId) {
+      let orgId = activeOrgId;
+      let locationId = activeLocationId;
+
+      if (force || !orgId || !locationId) {
+        const ctx = await getActiveContext();
+        orgId = ctx.orgId;
+        locationId = ctx.locationId;
+      }
+
+      if (!orgId || !locationId) {
         setOpenCleaning(0);
         return;
       }
 
-      const locationId = force
-        ? activeLocationId ?? (await getActiveLocationIdClient())
-        : activeLocationId ?? (await getActiveLocationIdClient());
-
-      if (!locationId) {
-        setOpenCleaning(0);
-        return;
-      }
-
-      if (orgId !== activeOrgId) setActiveOrgId(orgId ?? null);
-      if (locationId !== activeLocationId)
-        setActiveLocationId(locationId ?? null);
+      if (orgId !== activeOrgId) setActiveOrgId(orgId);
+      if (locationId !== activeLocationId) setActiveLocationId(locationId);
 
       const todayISO = isoToday();
 
       const { data: tData, error: tErr } = await supabase
         .from("cleaning_tasks")
-        .select("id, frequency, weekday, month_day")
+        .select("id, frequency, weekday, month_day, location_id")
         .eq("org_id", orgId)
-        .eq("location_id", locationId);
+        .eq("active", true)
+        .or(`location_id.is.null,location_id.eq.${locationId}`);
 
       if (tErr || !tData) {
         setOpenCleaning(0);
@@ -908,6 +910,7 @@ export default function TempFab() {
         frequency: "daily" | "weekly" | "monthly" | null;
         weekday: number | null;
         month_day: number | null;
+        location_id: string | null;
       };
 
       const tasks: TaskRow[] = tData as TaskRow[];
@@ -926,21 +929,36 @@ export default function TempFab() {
         return;
       }
 
-      const { data: rData, error: rErr } = await supabase
+      let doneIds = new Set<string>();
+
+      const runsByDoneDate = await supabase
         .from("cleaning_task_runs")
-        .select("task_id, run_on")
+        .select("task_id")
         .eq("org_id", orgId)
         .eq("location_id", locationId)
-        .eq("run_on", todayISO);
+        .eq("done_date", todayISO);
 
-      if (rErr) {
-        setOpenCleaning(0);
-        return;
+      if (!runsByDoneDate.error && runsByDoneDate.data) {
+        doneIds = new Set<string>(
+          runsByDoneDate.data.map((r: any) => String(r.task_id))
+        );
+      } else {
+        const runsByRunOn = await supabase
+          .from("cleaning_task_runs")
+          .select("task_id")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .eq("run_on", todayISO);
+
+        if (runsByRunOn.error) {
+          setOpenCleaning(0);
+          return;
+        }
+
+        doneIds = new Set<string>(
+          (runsByRunOn.data ?? []).map((r: any) => String(r.task_id))
+        );
       }
-
-      const doneIds = new Set<string>(
-        (rData ?? []).map((r: any) => String(r.task_id))
-      );
 
       const openCount = dueToday.filter((t) => !doneIds.has(String(t.id))).length;
       setOpenCleaning(openCount);
@@ -956,15 +974,13 @@ export default function TempFab() {
     }
   }
 
-  // Open sign-off (loads existing row if present)
   async function openDaySignoff() {
     setShowMenu(false);
 
     if (!requireOperator()) return;
 
     try {
-      const orgId = await getActiveOrgIdClient();
-      const locationId = await getActiveLocationIdClient();
+      const { orgId, locationId } = await getActiveContext();
 
       if (!orgId || !locationId) {
         addToast({
@@ -1019,7 +1035,6 @@ export default function TempFab() {
     }
   }
 
-  // Save sign-off (upsert by unique index)
   async function saveDaySignoff() {
     if (!requireOperator()) return;
 
@@ -1036,8 +1051,7 @@ export default function TempFab() {
 
     setSignoffSaving(true);
     try {
-      const orgId = await getActiveOrgIdClient();
-      const locationId = await getActiveLocationIdClient();
+      const { orgId, locationId } = await getActiveContext();
 
       if (!orgId || !locationId) throw new Error("Missing org/location");
 
@@ -1105,8 +1119,7 @@ export default function TempFab() {
   useEffect(() => {
     (async () => {
       try {
-        const orgId = await getActiveOrgIdClient();
-        const locationId = await getActiveLocationIdClient();
+        const { orgId, locationId } = await getActiveContext();
         setActiveOrgId(orgId ?? null);
         setActiveLocationId(locationId ?? null);
 
@@ -1150,14 +1163,12 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Initial refresh
   useEffect(() => {
     void refreshEntriesToday();
     void refreshCleaningOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ Allow other components to force immediate temp refresh
   useEffect(() => {
     const onTempsChanged = () => {
       void refreshEntriesToday();
@@ -1167,7 +1178,6 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Faster fallback poll (safety net only)
   useEffect(() => {
     const id = setInterval(() => {
       void refreshCleaningOpen(false);
@@ -1176,7 +1186,6 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId, activeLocationId]);
 
-  // Refresh on focus/visibility
   useEffect(() => {
     const onVis = () => {
       if (document.visibilityState === "visible") void refreshCleaningOpen(true);
@@ -1192,7 +1201,6 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Allow other pages to force immediate refresh
   useEffect(() => {
     const onCleaningChanged = () => {
       void refreshCleaningOpen(true);
@@ -1203,7 +1211,6 @@ export default function TempFab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime: update orb instantly when logs change
   useEffect(() => {
     if (!activeOrgId || !activeLocationId) return;
     const channel = supabase
@@ -1224,7 +1231,7 @@ export default function TempFab() {
           if (loc && String(loc) !== String(activeLocationId)) return;
 
           void refreshCleaningOpen(true);
-          void refreshEntriesToday(); // ✅ keep temp orb in sync too
+          void refreshEntriesToday();
         }
       )
       .subscribe();
@@ -1258,8 +1265,7 @@ export default function TempFab() {
     ];
     const status: "pass" | "fail" | null = inferStatus(tempNum, preset);
 
-    const org_id = await getActiveOrgIdClient();
-    const location_id = await getActiveLocationIdClient();
+    const { orgId: org_id, locationId: location_id } = await getActiveContext();
 
     if (!org_id) {
       addToast({
@@ -1340,7 +1346,6 @@ export default function TempFab() {
     setForm((f) => ({ ...f, item: "", temp_c: "" }));
     await refreshEntriesToday();
 
-    // If FAIL, open corrective action modal
     if (status === "fail" && inserted?.id) {
       setCorrective({
         open: true,
@@ -1547,7 +1552,6 @@ export default function TempFab() {
               )}
 
               <div className="space-y-2">
-                {/* Workstation control */}
                 {locked || !operatorInitials ? (
                   <button
                     type="button"
@@ -1609,7 +1613,6 @@ export default function TempFab() {
                   </span>
                 </button>
 
-                {/* Day sign-off */}
                 <button
                   type="button"
                   onClick={openDaySignoff}
@@ -1621,15 +1624,13 @@ export default function TempFab() {
                   </span>
                 </button>
 
-                {/* Log incident */}
                 <button
                   type="button"
                   onClick={async () => {
                     setShowMenu(false);
                     if (!requireOperator()) return;
 
-                    const orgId = await getActiveOrgIdClient();
-                    const locationId = await getActiveLocationIdClient();
+                    const { orgId, locationId } = await getActiveContext();
 
                     if (!orgId || !locationId) {
                       addToast({
@@ -1669,7 +1670,6 @@ export default function TempFab() {
                   Open wall
                 </button>
 
-                {/* Feedback */}
                 <button
                   type="button"
                   onClick={() => {
@@ -1690,7 +1690,6 @@ export default function TempFab() {
         </div>
       )}
 
-      {/* Feedback modal */}
       <FeedbackModal
         open={feedbackOpen}
         onClose={() => setFeedbackOpen(false)}
@@ -1698,7 +1697,6 @@ export default function TempFab() {
         area={form.location ? String(form.location) : null}
       />
 
-      {/* Incident modal */}
       <IncidentModal
         open={incidentOpen}
         onClose={() => setIncidentOpen(false)}
@@ -1714,7 +1712,6 @@ export default function TempFab() {
         }}
       />
 
-      {/* Day sign-off modal */}
       <SignoffModal
         open={signoffOpen}
         dateLabel={signoffDateLabel}
@@ -1729,7 +1726,6 @@ export default function TempFab() {
         operatorLocked={!operatorInitials || locked}
       />
 
-      {/* Corrective action modal */}
       <CorrectiveModal
         open={corrective.open}
         saving={correctiveSaving}
@@ -1744,7 +1740,6 @@ export default function TempFab() {
         setRecheckTemp={setCorrectiveRecheckTemp}
       />
 
-      {/* Routine picker modal */}
       {showPicker && (
         <div
           className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
@@ -1802,7 +1797,6 @@ export default function TempFab() {
         </div>
       )}
 
-      {/* Quick entry modal */}
       {open && (
         <div
           className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
@@ -1832,7 +1826,6 @@ export default function TempFab() {
             </div>
 
             <div className="flex-1 space-y-3 overflow-y-auto p-4 text-sm">
-              {/* voice controls */}
               <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
@@ -2004,7 +1997,6 @@ export default function TempFab() {
         </div>
       )}
 
-      {/* Routine run modal */}
       <RoutineRunModal
         open={!!runRoutine}
         routine={runRoutine as any}

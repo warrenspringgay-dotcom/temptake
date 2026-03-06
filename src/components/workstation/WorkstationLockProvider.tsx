@@ -108,7 +108,6 @@ function normalizeRole(role: string | null | undefined) {
 
 function setCookie(name: string, value: string, maxAgeSeconds = 60 * 60 * 24 * 365) {
   try {
-    // Keep it middleware-readable (NOT httpOnly)
     document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(
       value
     )}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax; Secure`;
@@ -126,12 +125,9 @@ function syncMiddlewareCookiesFromOperator(op: Operator | null) {
 
   if (!op) {
     clearCookie(CK_OPERATOR_ROLE);
-    // NOTE: We intentionally do NOT clear active org/location here.
-    // Those are app context cookies. Clearing them can cause extra “unknown-context” blocks.
     return;
   }
 
-  // These are required for your middleware manager-only checks
   setCookie(CK_ACTIVE_ORG, String(op.orgId));
   setCookie(CK_ACTIVE_LOCATION, String(op.locationId));
   setCookie(CK_OPERATOR_ROLE, normalizeRole(op.role) || "staff");
@@ -139,10 +135,10 @@ function syncMiddlewareCookiesFromOperator(op: Operator | null) {
 
 async function readOrgAndLocation(): Promise<{ orgId: string | null; locationId: string | null }> {
   try {
-    const [orgId, locationId] = await Promise.all([
-      getActiveOrgIdClient(),
-      getActiveLocationIdClient(),
-    ]);
+    const orgId = await getActiveOrgIdClient();
+    if (!orgId) return { orgId: null, locationId: null };
+
+    const locationId = await getActiveLocationIdClient(orgId);
     return { orgId, locationId };
   } catch {
     return { orgId: null, locationId: null };
@@ -159,7 +155,6 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
 
   const [showLockModal, setShowLockModal] = useState<boolean>(false);
 
-  // ✅ org/location are async → keep in state
   const [orgId, setOrgId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
 
@@ -185,7 +180,6 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     setShowLockModal(false);
   }, []);
 
-  // ✅ Refresh org/location when route changes (or after login redirect)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -230,9 +224,6 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     };
   }, [operator]);
 
-  /**
-   * Session tracking
-   */
   useEffect(() => {
     let unsub: { unsubscribe: () => void } | null = null;
 
@@ -245,13 +236,11 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
           setHasSession(!!session);
 
           if (!session) {
-            // signing out: clear operator + unlock + close modal
             writeLockedToLS(false);
             setLocked(false);
             setShowLockModal(false);
             setOperator(null);
           } else {
-            // signing in: refresh org/location after redirect settles
             setTimeout(async () => {
               const { orgId: o, locationId: l } = await readOrgAndLocation();
               setOrgId(o);
@@ -271,9 +260,6 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     };
   }, [setOperator]);
 
-  /**
-   * Boot: load persisted state (but never show modal on /login).
-   */
   useEffect(() => {
     if (bootedRef.current) return;
     bootedRef.current = true;
@@ -284,13 +270,9 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     setLocked(lsLocked);
     setOperatorState(lsOp);
 
-    // keep cookies aligned with persisted operator (prevents “works until refresh”)
     syncMiddlewareCookiesFromOperator(lsOp);
   }, []);
 
-  /**
-   * Auto-assign operator from auth user (kills split-lock).
-   */
   useEffect(() => {
     if (isAuthPage) return;
     if (!hasSession) return;
@@ -336,11 +318,6 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     };
   }, [hasSession, isAuthPage, orgId, locationId, setOperator, unlockWorkstation]);
 
-  /**
-   * Modal visibility rules:
-   * - Never on /login
-   * - Only when locked + authed + org/location chosen
-   */
   useEffect(() => {
     if (isAuthPage) {
       setShowLockModal(false);
@@ -386,10 +363,9 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     ]
   );
 
-  const AUTO_LOCK_MS = 5 * 60 * 1000; // 5 minutes – tweak if needed
+  const AUTO_LOCK_MS = 5 * 60 * 1000;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // helper to clear/restart timer
   const resetInactivityTimer = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     if (!locked && operator) {
@@ -402,7 +378,6 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     }
   }, [locked, operator]);
 
-  // restart timer whenever lock state or operator changes
   useEffect(() => {
     resetInactivityTimer();
     return () => {
@@ -410,7 +385,6 @@ export function WorkstationLockProvider({ children }: { children: React.ReactNod
     };
   }, [locked, operator, resetInactivityTimer]);
 
-  // listen for user activity to reset timer
   useEffect(() => {
     const activity = () => resetInactivityTimer();
     window.addEventListener("mousemove", activity);

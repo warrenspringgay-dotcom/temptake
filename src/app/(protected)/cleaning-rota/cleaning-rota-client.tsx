@@ -16,16 +16,14 @@ type Task = {
   active: boolean;
   position: number;
   notes?: string | null;
-  // important: may be null for org-wide
   location_id?: string | null;
 };
 
 type Run = {
   id: string;
   task_id: string;
-  done_date: string; // YYYY-MM-DD
+  done_date: string;
   done_by_initials: string | null;
-  // location scope
   location_id?: string | null;
 };
 
@@ -54,7 +52,6 @@ export default function CleaningRotaClient() {
 
   const [saving, setSaving] = useState(false);
 
-  // quick add (you may already have UI for this)
   const [newName, setNewName] = useState("");
   const [newArea, setNewArea] = useState("");
   const [newFreq, setNewFreq] = useState("daily");
@@ -83,9 +80,8 @@ export default function CleaningRotaClient() {
       }
       setOrgId(oid);
 
-     const locId = await getActiveLocationIdClient(oid);
+      const locId = await getActiveLocationIdClient(oid);
       if (!locId) {
-        // Multi-site org must choose location; single-site should auto-set via helper.
         setLocationId(null);
         setTasks([]);
         setRuns([]);
@@ -94,11 +90,6 @@ export default function CleaningRotaClient() {
       }
       setLocationId(locId);
 
-      // 1) Tasks for this org:
-      // - include org-wide tasks (location_id IS NULL)
-      // - include site-specific tasks (location_id == active)
-      //
-      // NOTE: Supabase .or syntax: "col.is.null,col.eq.value"
       const { data: taskData, error: taskErr } = await supabase
         .from("cleaning_tasks")
         .select("id,name,area,frequency,weekday,month_day,active,position,notes,location_id")
@@ -125,7 +116,6 @@ export default function CleaningRotaClient() {
 
       setTasks(taskRows);
 
-      // 2) Runs for selected day AND selected location only
       const { data: runData, error: runErr } = await supabase
         .from("cleaning_task_runs")
         .select("id,task_id,done_date,done_by_initials,location_id")
@@ -157,10 +147,8 @@ export default function CleaningRotaClient() {
 
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // reload runs when date changes (keeping tasks stable)
   useEffect(() => {
     (async () => {
       if (!orgId || !locationId) return;
@@ -203,7 +191,6 @@ export default function CleaningRotaClient() {
     setSaving(true);
     try {
       if (existing) {
-        // delete run (uncheck) for this location+date
         const { error } = await supabase
           .from("cleaning_task_runs")
           .delete()
@@ -213,12 +200,11 @@ export default function CleaningRotaClient() {
 
         if (error) throw error;
       } else {
-        // insert run for this location+date
         const initials = prompt("Staff initials (optional)")?.trim()?.toUpperCase() ?? null;
 
         const { error } = await supabase.from("cleaning_task_runs").insert({
           org_id: orgId,
-          location_id: locationId, // ✅ the whole point
+          location_id: locationId,
           task_id: task.id,
           done_date: date,
           done_by_initials: initials,
@@ -227,7 +213,6 @@ export default function CleaningRotaClient() {
         if (error) throw error;
       }
 
-      // refresh runs only (cheap)
       const { data: runData } = await supabase
         .from("cleaning_task_runs")
         .select("id,task_id,done_date,done_by_initials,location_id")
@@ -267,7 +252,7 @@ export default function CleaningRotaClient() {
     try {
       const { error } = await supabase.from("cleaning_tasks").insert({
         org_id: orgId,
-        location_id: locationId, // ✅ new tasks are site-specific by default
+        location_id: locationId,
         name,
         area: newArea.trim() || null,
         frequency: newFreq,
