@@ -115,27 +115,48 @@ export async function GET(req: Request) {
       userId = user.id;
     }
 
-    // 3) Get org_id (use admin so RLS can’t block it)
-    const { data: profile, error: profileErr } = await supabaseAdmin
-      .from("profiles")
-      .select("org_id")
-      .eq("id", userId)
-      .maybeSingle();
+   // 3) Get org_id from user_orgs first (staff accounts live here)
+let orgId: string | null = null;
 
-    const orgId = profile?.org_id ?? null;
+const { data: membership, error: membershipErr } = await supabaseAdmin
+  .from("user_orgs")
+  .select("org_id")
+  .eq("user_id", userId)
+  .limit(1)
+  .maybeSingle();
 
-    if (profileErr || !orgId) {
-      const out: StatusJson = {
-        ok: true,
-        loggedIn: true,
-        hasValid: false,
-        active: false,
-        onTrial: false,
-        reason: "no_org",
-      };
-      return NextResponse.json(out, { status: 200 });
-    }
+if (membershipErr) {
+  console.error("[billing/status] user_orgs lookup error", membershipErr);
+}
 
+if (membership?.org_id) {
+  orgId = String(membership.org_id);
+} else {
+  // fallback for any older accounts still relying on profiles
+  const { data: profile, error: profileErr } = await supabaseAdmin
+    .from("profiles")
+    .select("org_id")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (profileErr) {
+    console.error("[billing/status] profiles lookup error", profileErr);
+  }
+
+  orgId = profile?.org_id ? String(profile.org_id) : null;
+}
+
+if (!orgId) {
+  const out: StatusJson = {
+    ok: true,
+    loggedIn: true,
+    hasValid: false,
+    active: false,
+    onTrial: false,
+    reason: "no_org",
+  };
+  return NextResponse.json(out, { status: 200 });
+}
     // 4) Read subscription using admin (RLS-proof)
     let { data: sub, error: subErr } = await supabaseAdmin
       .from("billing_subscriptions")
