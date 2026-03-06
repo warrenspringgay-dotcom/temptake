@@ -43,26 +43,47 @@ export async function getSubscriptionForCurrentUser(): Promise<UserSubscriptionI
     };
   }
 
-  // 2) Get org_id from profile
+ // 2) Resolve org_id from user_orgs first (staff accounts live here)
+let orgId: string | null = null;
+
+const { data: membership, error: membershipErr } = await supabase
+  .from("user_orgs")
+  .select("org_id")
+  .eq("user_id", user.id)
+  .limit(1)
+  .maybeSingle();
+
+if (membershipErr) {
+  console.error("[billing] user_orgs lookup error", membershipErr);
+}
+
+if (membership?.org_id) {
+  orgId = membership.org_id;
+} else {
+  // fallback to profiles for older accounts
   const { data: profile, error: profileErr } = await supabase
     .from("profiles")
     .select("org_id")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (profileErr || !profile?.org_id) {
-    console.error("[billing] no org_id on profile", profileErr);
-    return {
-      loggedIn: true,
-      active: false,
-      status: null,
-      currentPeriodEnd: null,
-      trialEndsAt: null,
-      hasValid: false,
-    };
+  if (profileErr) {
+    console.error("[billing] profiles lookup error", profileErr);
   }
 
-  const orgId = profile.org_id as string;
+  orgId = profile?.org_id ?? null;
+}
+
+if (!orgId) {
+  return {
+    loggedIn: true,
+    active: false,
+    status: null,
+    currentPeriodEnd: null,
+    trialEndsAt: null,
+    hasValid: false,
+  };
+}
 
   // 3) Try to read existing subscription for this org
   let row: {
