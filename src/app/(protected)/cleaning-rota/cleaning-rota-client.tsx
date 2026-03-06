@@ -83,7 +83,7 @@ export default function CleaningRotaClient() {
       }
       setOrgId(oid);
 
-      const locId = await getActiveLocationIdClient();
+     const locId = await getActiveLocationIdClient(oid);
       if (!locId) {
         // Multi-site org must choose location; single-site should auto-set via helper.
         setLocationId(null);
