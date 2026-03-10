@@ -34,7 +34,7 @@ import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
 // ✅ Workstation operator (PIN user)
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
-const LS_LAST_LOCATION = "tt_last_location";
+const DEFAULT_AREA = "Kitchen";
 
 type FormState = {
   date: string;
@@ -605,11 +605,11 @@ export default function TempFab() {
   const [openCleaning, setOpenCleaning] = useState<number | null>(null);
   const [showMenu, setShowMenu] = useState(false);
 
-  const [locations, setLocations] = useState<string[]>([]);
+  const [locations, setLocations] = useState<string[]>([DEFAULT_AREA]);
   const [form, setForm] = useState<FormState>({
     date: isoToday(),
     staff_initials: "",
-    location: "",
+    location: DEFAULT_AREA,
     item: "",
     target_key: TARGET_PRESETS[0]?.key ?? "chill",
     temp_c: "",
@@ -784,7 +784,8 @@ export default function TempFab() {
           ...f,
           temp_c: r.temp_c ?? f.temp_c,
           item: r.item ?? f.item,
-          location: r.location ?? f.location,
+          location:
+            r.location && locations.includes(r.location) ? r.location : f.location,
           staff_initials: operatorInitials || f.staff_initials,
         }));
 
@@ -1099,21 +1100,14 @@ export default function TempFab() {
     }
   }
 
-  /* --------- boot: locations + last used values --------- */
+  /* --------- boot: locations + default values --------- */
 
   useEffect(() => {
     setForm((f) => ({
       ...f,
       date: isoToday(),
+      location: DEFAULT_AREA,
     }));
-
-    try {
-      const lsLoc = localStorage.getItem(LS_LAST_LOCATION) || "";
-      setForm((f) => ({
-        ...f,
-        location: lsLoc || f.location,
-      }));
-    } catch {}
   }, []);
 
   useEffect(() => {
@@ -1137,31 +1131,42 @@ export default function TempFab() {
 
           const { data: logsData } = await q;
 
-          const fromAreas: string[] =
-            (logsData ?? [])
-              .map((r: LogRow) => (r.area ?? "").toString().trim())
-              .filter((s: string) => s.length > 0);
+          const fromAreas: string[] = (logsData ?? [])
+            .map((r: LogRow) => (r.area ?? "").toString().trim())
+            .filter((s: string) => s.length > 0);
 
           const unique: string[] = Array.from(new Set<string>(fromAreas));
-          const finalAreas: string[] = unique.length ? unique : ["Kitchen"];
+          const finalAreas: string[] = [
+            DEFAULT_AREA,
+            ...unique.filter((a) => a.toLowerCase() !== DEFAULT_AREA.toLowerCase()),
+          ];
 
           setLocations(finalAreas);
 
-          if (!form.location) {
-            setForm((f) => ({ ...f, location: finalAreas[0] || "Kitchen" }));
-          }
+          setForm((f) => ({
+            ...f,
+            location: f.location || DEFAULT_AREA,
+          }));
         }
       } catch {
-        if (!locations.length) {
-          setLocations(["Kitchen"]);
-          if (!form.location) {
-            setForm((f) => ({ ...f, location: "Kitchen" }));
-          }
-        }
+        setLocations([DEFAULT_AREA]);
+        setForm((f) => ({
+          ...f,
+          location: f.location || DEFAULT_AREA,
+        }));
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    setForm((f) => ({
+      ...f,
+      date: isoToday(),
+      location: DEFAULT_AREA,
+    }));
+  }, [open]);
 
   useEffect(() => {
     void refreshEntriesToday();
@@ -1330,10 +1335,6 @@ export default function TempFab() {
       return;
     }
 
-    try {
-      if (form.location) localStorage.setItem(LS_LAST_LOCATION, form.location);
-    } catch {}
-
     addToast({ title: "Temperature saved", type: "success" });
 
     posthog.capture("temp_quick_log_saved", {
@@ -1343,7 +1344,12 @@ export default function TempFab() {
       status,
     });
 
-    setForm((f) => ({ ...f, item: "", temp_c: "" }));
+    setForm((f) => ({
+      ...f,
+      location: DEFAULT_AREA,
+      item: "",
+      temp_c: "",
+    }));
     await refreshEntriesToday();
 
     if (status === "fail" && inserted?.id) {
@@ -1896,7 +1902,7 @@ export default function TempFab() {
 
                 <div>
                   <label className="block text-xs font-medium text-slate-700">
-                    Initials (operator)
+                    Staff Initials (operator)
                   </label>
                   <input
                     value={operatorInitials}
@@ -1911,20 +1917,19 @@ export default function TempFab() {
                 <label className="block text-xs font-medium text-slate-700">
                   Location / Area
                 </label>
-                <input
+                <select
                   value={form.location}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, location: e.target.value }))
                   }
-                  list="tt-areas"
                   className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
-                  placeholder="e.g. Walk-in fridge"
-                />
-                <datalist id="tt-areas">
+                >
                   {locations.map((l) => (
-                    <option key={l} value={l} />
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
                   ))}
-                </datalist>
+                </select>
               </div>
 
               <div>
