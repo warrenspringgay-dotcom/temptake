@@ -56,6 +56,7 @@ export default function UserMenu() {
   const [canInstall, setCanInstall] = useState(false);
   const [standalone, setStandalone] = useState(false);
   const [ios, setIos] = useState(false);
+  const [showIosInstallHelp, setShowIosInstallHelp] = useState(false);
 
   // Close on route change
   useEffect(() => setOpen(false), [pathname]);
@@ -131,9 +132,9 @@ export default function UserMenu() {
       return;
     }
 
-    // iOS: no prompt API. Route to dashboard (no /app fallback).
+    // iOS: no prompt API. Show manual install instructions instead.
     if (ios && !deferredPrompt) {
-      router.push("/dashboard");
+      setShowIosInstallHelp(true);
       return;
     }
 
@@ -183,89 +184,132 @@ export default function UserMenu() {
   }
 
   return (
-    <div className="relative" ref={menuRef}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-white text-xs font-semibold hover:bg-gray-50"
-        title={email ?? "Signed in"}
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        {inits}
-      </button>
-
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 mt-2 w-72 overflow-hidden rounded-2xl border bg-white shadow-lg"
+    <>
+      <div className="relative" ref={menuRef}>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-white text-xs font-semibold hover:bg-gray-50"
+          title={email ?? "Signed in"}
+          aria-haspopup="menu"
+          aria-expanded={open}
         >
-          <div className="border-b px-4 py-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-              Signed in as
+          {inits}
+        </button>
+
+        {open && (
+          <div
+            role="menu"
+            className="absolute right-0 mt-2 w-72 overflow-hidden rounded-2xl border bg-white shadow-lg"
+          >
+            <div className="border-b px-4 py-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                Signed in as
+              </div>
+              <div className="truncate text-sm font-semibold text-gray-900">
+                {email ?? "—"}
+              </div>
             </div>
-            <div className="truncate text-sm font-semibold text-gray-900">
-              {email ?? "—"}
+
+            <div className="p-2 text-sm">
+              <Link href="/settings" className={itemCls()} role="menuitem">
+                Settings
+              </Link>
+
+              <Link href="/food-hygiene" className={itemCls()} role="menuitem">
+                Food hygiene rating log
+              </Link>
+
+              <Link href="/locations" className={itemCls()} role="menuitem">
+                Locations
+              </Link>
+
+              <Link href="/billing" className={itemCls()} role="menuitem">
+                Billing &amp; subscription
+              </Link>
+
+              <Link href="/guides" className={itemCls()} role="menuitem">
+                Guides
+              </Link>
+
+              <Link href="/help" className={itemCls()} role="menuitem">
+                Help &amp; support
+              </Link>
+
+              <button
+                type="button"
+                onClick={handleInstallClick}
+                className={itemCls(false) + " w-full text-left"}
+                role="menuitem"
+                title={
+                  standalone
+                    ? "App is already installed"
+                    : canInstall
+                    ? "Install the app"
+                    : ios
+                    ? "Install via Add to Home Screen"
+                    : "Get the app"
+                }
+              >
+                {standalone ? "App installed" : canInstall ? "Install app" : "Get the app"}
+              </button>
+
+              <div className="my-2 border-t" />
+
+              <button
+                type="button"
+                onClick={signOut}
+                className="block w-full rounded-lg px-3 py-2 text-left text-red-700 hover:bg-red-50"
+                role="menuitem"
+              >
+                Sign out
+              </button>
             </div>
           </div>
+        )}
+      </div>
 
-          <div className="p-2 text-sm">
-            <Link href="/settings" className={itemCls()} role="menuitem">
-              Settings
-            </Link>
+      {showIosInstallHelp && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowIosInstallHelp(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-lg font-semibold text-gray-900">
+              Install TempTake
+            </div>
+            <div className="mt-3 space-y-2 text-sm text-gray-600">
+              <p>On iPhone or iPad:</p>
+              <p>1. Open TempTake in Safari</p>
+              <p>2. Tap the Share button</p>
+              <p>3. Tap “Add to Home Screen”</p>
+            </div>
 
-            <Link href="/food-hygiene" className={itemCls()} role="menuitem">
-              Food hygiene rating log
-            </Link>
-
-            <Link href="/locations" className={itemCls()} role="menuitem">
-              Locations
-            </Link>
-
-            <Link href="/billing" className={itemCls()} role="menuitem">
-              Billing &amp; subscription
-            </Link>
-
-            <Link href="/guides" className={itemCls()} role="menuitem">
-              Guides
-            </Link>
-
-            <Link href="/help" className={itemCls()} role="menuitem">
-              Help &amp; support
-            </Link>
-
-            {/* ✅ Install/Get app: triggers PWA prompt when possible, otherwise routes to dashboard */}
-            <button
-              type="button"
-              onClick={handleInstallClick}
-              className={itemCls(false) + " w-full text-left"}
-              role="menuitem"
-              title={
-                standalone
-                  ? "App is already installed"
-                  : canInstall
-                  ? "Install the app"
-                  : ios
-                  ? "Install via Add to Home Screen"
-                  : "Get the app"
-              }
-            >
-              {standalone ? "App installed" : canInstall ? "Install app" : "Get the app"}
-            </button>
-
-            <div className="my-2 border-t" />
-
-            <button
-              type="button"
-              onClick={signOut}
-              className="block w-full rounded-lg px-3 py-2 text-left text-red-700 hover:bg-red-50"
-              role="menuitem"
-            >
-              Sign out
-            </button>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowIosInstallHelp(false)}
+                className="rounded-lg border px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowIosInstallHelp(false);
+                  router.push("/dashboard");
+                }}
+                className="rounded-lg bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900"
+              >
+                Open app
+              </button>
+            </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
