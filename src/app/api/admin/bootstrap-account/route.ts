@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
           .maybeSingle();
 
         if (!existingErr && !existing) {
-          const trialDays = 14;
+          const trialDays = 30;
           const trialEndsAt = new Date();
           trialEndsAt.setDate(trialEndsAt.getDate() + trialDays);
 

@@ -8,7 +8,6 @@ import { TARGET_PRESETS } from "@/lib/temp-constants";
 import ActionMenu from "@/components/ActionMenu";
 import type { RoutineWithItems, RoutineItemInput } from "@/types/routines";
 
-
 type RoutineItem = {
   id?: string;
   routine_id?: string;
@@ -29,6 +28,33 @@ type RoutineRow = {
 function cls(...p: Array<string | false | undefined>) {
   return p.filter(Boolean).join(" ");
 }
+
+const NEW_ROUTINE_STARTER_ITEMS: RoutineItem[] = [
+  {
+    position: 1,
+    location: "",
+    item: "",
+    target_key: "chill",
+  },
+  {
+    position: 2,
+    location: "",
+    item: "",
+    target_key: "frozen",
+  },
+  {
+    position: 3,
+    location: "",
+    item: "",
+    target_key: "hot_hold",
+  },
+];
+
+const STARTER_PLACEHOLDERS = [
+  { location: "Main kitchen", item: "Fridge temperature" },
+  { location: "Main kitchen", item: "Freezer temperature" },
+  { location: "Service area", item: "Hot hold" },
+];
 
 export default function RoutinesManager() {
   const [rows, setRows] = useState<RoutineRow[]>([]);
@@ -77,19 +103,18 @@ export default function RoutinesManager() {
       if (iErr) throw iErr;
 
       const grouped = new Map<string, RoutineItem[]>();
-(items ?? []).forEach((it: any) => {
-  const arr = grouped.get(it.routine_id) ?? [];
-  arr.push({
-    id: it.id,
-    routine_id: it.routine_id,
-    position: Number(it.position ?? 0),
-    location: it.location ?? null,
-    item: it.item ?? null,
-    target_key: it.target_key ?? "chill",
-  });
-  grouped.set(it.routine_id, arr);
-});
-
+      (items ?? []).forEach((it: any) => {
+        const arr = grouped.get(it.routine_id) ?? [];
+        arr.push({
+          id: it.id,
+          routine_id: it.routine_id,
+          position: Number(it.position ?? 0),
+          location: it.location ?? null,
+          item: it.item ?? null,
+          target_key: it.target_key ?? "chill",
+        });
+        grouped.set(it.routine_id, arr);
+      });
 
       setRows(
         routines.map((r: any) => ({
@@ -130,7 +155,7 @@ export default function RoutinesManager() {
       id: null,
       name: baseName,
       active: true,
-      items: [],
+      items: NEW_ROUTINE_STARTER_ITEMS.map((it) => ({ ...it })),
       last_used_at: null,
     });
     setEditOpen(true);
@@ -144,7 +169,11 @@ export default function RoutinesManager() {
   }
 
   function openEdit(r: RoutineRow) {
-    setEditing(JSON.parse(JSON.stringify(r)));
+    const copy = JSON.parse(JSON.stringify(r));
+    if (!copy.id && (!copy.items || !copy.items.length)) {
+      copy.items = NEW_ROUTINE_STARTER_ITEMS.map((it: RoutineItem) => ({ ...it }));
+    }
+    setEditing(copy);
     setEditOpen(true);
   }
 
@@ -447,6 +476,16 @@ export default function RoutinesManager() {
               </label>
             </div>
 
+            <div className="mt-4">
+              <div className="text-sm font-medium text-gray-900">
+                Items to check
+              </div>
+              <div className="mt-1 text-sm text-gray-500">
+                Add all the items checked during this routine. Example: fridge,
+                freezer, hot hold.
+              </div>
+            </div>
+
             <div className="mt-4 space-y-2">
               {editing.items.map((it, i) => (
                 <div
@@ -472,7 +511,9 @@ export default function RoutinesManager() {
                   />
                   <input
                     className="rounded-xl border px-3 py-2"
-                    placeholder="Location"
+                    placeholder={
+                      STARTER_PLACEHOLDERS[i]?.location ?? "Location"
+                    }
                     value={it.location ?? ""}
                     onChange={(e) => {
                       const copy: RoutineRow = {
@@ -488,7 +529,7 @@ export default function RoutinesManager() {
                   />
                   <input
                     className="rounded-xl border px-3 py-2"
-                    placeholder="Item"
+                    placeholder={STARTER_PLACEHOLDERS[i]?.item ?? "Item"}
                     value={it.item ?? ""}
                     onChange={(e) => {
                       const copy: RoutineRow = {
@@ -546,8 +587,7 @@ export default function RoutinesManager() {
                     items: [
                       ...editing.items,
                       {
-                        position:
-                          (editing.items.at(-1)?.position ?? 0) + 1,
+                        position: (editing.items.at(-1)?.position ?? 0) + 1,
                         location: "",
                         item: "",
                         target_key: "chill",
@@ -556,7 +596,7 @@ export default function RoutinesManager() {
                   })
                 }
               >
-                + Add step
+                + Add item
               </button>
             </div>
 
