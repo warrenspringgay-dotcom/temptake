@@ -35,6 +35,16 @@ import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
 const DEFAULT_AREA = "Kitchen";
+const PRESET_AREAS = [
+  "Kitchen",
+  "Prep",
+  "Front counter",
+  "Storage",
+  "Walk-in fridge",
+  "Walk-in freezer",
+  "Hot hold",
+  "Service area",
+];
 
 type FormState = {
   date: string;
@@ -605,7 +615,8 @@ export default function TempFab() {
   const [openCleaning, setOpenCleaning] = useState<number | null>(null);
   const [showMenu, setShowMenu] = useState(false);
 
-  const [locations, setLocations] = useState<string[]>([DEFAULT_AREA]);
+  const [locations, setLocations] = useState<string[]>(PRESET_AREAS);
+  const [customLocationEnabled, setCustomLocationEnabled] = useState(false);
   const [form, setForm] = useState<FormState>({
     date: isoToday(),
     staff_initials: "",
@@ -780,14 +791,30 @@ export default function TempFab() {
     {
       lang: "en-GB",
       onResult: (r) => {
-        setForm((f) => ({
-          ...f,
-          temp_c: r.temp_c ?? f.temp_c,
-          item: r.item ?? f.item,
-          location:
-            r.location && locations.includes(r.location) ? r.location : f.location,
-          staff_initials: operatorInitials || f.staff_initials,
-        }));
+        setForm((f) => {
+          const nextLocation = r.location?.trim() || "";
+          const isPreset = nextLocation
+            ? locations.some(
+                (loc) => loc.toLowerCase() === nextLocation.toLowerCase()
+              )
+            : false;
+
+          return {
+            ...f,
+            temp_c: r.temp_c ?? f.temp_c,
+            item: r.item ?? f.item,
+            location: nextLocation || f.location,
+            staff_initials: operatorInitials || f.staff_initials,
+          };
+        });
+
+        if (r.location?.trim()) {
+          const nextLocation = r.location.trim();
+          const isPreset = locations.some(
+            (loc) => loc.toLowerCase() === nextLocation.toLowerCase()
+          );
+          setCustomLocationEnabled(!isPreset);
+        }
 
         posthog.capture("temp_voice_parsed", {
           raw: r.raw,
@@ -1108,6 +1135,7 @@ export default function TempFab() {
       date: isoToday(),
       location: DEFAULT_AREA,
     }));
+    setCustomLocationEnabled(false);
   }, []);
 
   useEffect(() => {
@@ -1135,11 +1163,14 @@ export default function TempFab() {
             .map((r: LogRow) => (r.area ?? "").toString().trim())
             .filter((s: string) => s.length > 0);
 
-          const unique: string[] = Array.from(new Set<string>(fromAreas));
-          const finalAreas: string[] = [
-            DEFAULT_AREA,
-            ...unique.filter((a) => a.toLowerCase() !== DEFAULT_AREA.toLowerCase()),
-          ];
+          const uniqueDynamic = Array.from(new Set(fromAreas));
+
+          const finalAreas: string[] = Array.from(
+            new Set([
+              ...PRESET_AREAS,
+              ...uniqueDynamic,
+            ])
+          );
 
           setLocations(finalAreas);
 
@@ -1149,7 +1180,7 @@ export default function TempFab() {
           }));
         }
       } catch {
-        setLocations([DEFAULT_AREA]);
+        setLocations(PRESET_AREAS);
         setForm((f) => ({
           ...f,
           location: f.location || DEFAULT_AREA,
@@ -1166,6 +1197,7 @@ export default function TempFab() {
       date: isoToday(),
       location: DEFAULT_AREA,
     }));
+    setCustomLocationEnabled(false);
   }, [open]);
 
   useEffect(() => {
@@ -1350,6 +1382,7 @@ export default function TempFab() {
       item: "",
       temp_c: "",
     }));
+    setCustomLocationEnabled(false);
     await refreshEntriesToday();
 
     if (status === "fail" && inserted?.id) {
@@ -1902,7 +1935,7 @@ export default function TempFab() {
 
                 <div>
                   <label className="block text-xs font-medium text-slate-700">
-                    Staff Initials (operator)
+                    Initials (operator)
                   </label>
                   <input
                     value={operatorInitials}
@@ -1918,10 +1951,17 @@ export default function TempFab() {
                   Location / Area
                 </label>
                 <select
-                  value={form.location}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, location: e.target.value }))
-                  }
+                  value={customLocationEnabled ? "__custom__" : form.location}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value === "__custom__") {
+                      setCustomLocationEnabled(true);
+                      setForm((f) => ({ ...f, location: "" }));
+                      return;
+                    }
+                    setCustomLocationEnabled(false);
+                    setForm((f) => ({ ...f, location: value }));
+                  }}
                   className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                 >
                   {locations.map((l) => (
@@ -1929,7 +1969,19 @@ export default function TempFab() {
                       {l}
                     </option>
                   ))}
+                  <option value="__custom__">Other…</option>
                 </select>
+
+                {customLocationEnabled && (
+                  <input
+                    value={form.location}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, location: e.target.value }))
+                    }
+                    className="mt-2 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
+                    placeholder="Enter custom location"
+                  />
+                )}
               </div>
 
               <div>
