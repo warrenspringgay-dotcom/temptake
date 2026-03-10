@@ -1,19 +1,16 @@
-// src/components/RoutinesClient.tsx
+// src/app/(protected)/routines/RoutinesManager.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_PRESETS } from "@/lib/temp-constants";
-
-import EditRoutineModal, {
-  type RoutineDraft,
-  type RoutineItemDraft,
-} from "@/components/EditRoutineModal";
+import ActionMenu from "@/components/ActionMenu";
+import type { RoutineWithItems, RoutineItemInput } from "@/types/routines";
 
 type RoutineItem = {
-  id: string;
-  routine_id: string;
+  id?: string;
+  routine_id?: string;
   position: number;
   location: string | null;
   item: string | null;
@@ -21,407 +18,426 @@ type RoutineItem = {
 };
 
 type RoutineRow = {
-  id: string;
+  id: string | null; // null = not yet saved
   name: string;
   active: boolean | null;
   items: RoutineItem[];
   last_used_at?: string | null;
 };
 
-export default function RoutinesClient() {
+function cls(...p: Array<string | false | undefined>) {
+  return p.filter(Boolean).join(" ");
+}
+
+const NEW_ROUTINE_STARTER_ITEMS: RoutineItem[] = [
+  {
+    position: 1,
+    location: "",
+    item: "",
+    target_key: "chill",
+  },
+  {
+    position: 2,
+    location: "",
+    item: "",
+    target_key: "frozen",
+  },
+  {
+    position: 3,
+    location: "",
+    item: "",
+    target_key: "hot_hold",
+  },
+];
+
+const STARTER_PLACEHOLDERS = [
+  { location: "Main kitchen", item: "Fridge temperature" },
+  { location: "Main kitchen", item: "Freezer temperature" },
+  { location: "Service area", item: "Hot hold" },
+];
+
+export default function RoutinesManager() {
   const [rows, setRows] = useState<RoutineRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [orgId, setOrgId] = useState<string | null>(null);
 
-  const [name, setName] = useState("");
-  const [location, setLocation] = useState("");
-  const [item, setItem] = useState("");
-  const [target, setTarget] = useState<string>(TARGET_PRESETS[0]?.key ?? "chill");
+  const [q, setQ] = useState("");
+  const [newName, setNewName] = useState("");
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewing, setViewing] = useState<RoutineRow | null>(null);
-
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<RoutineRow | null>(null);
 
+  // ================= Fetch routines =================
   async function refresh() {
     setLoading(true);
     try {
-      const orgId = await getActiveOrgIdClient();
-      if (!orgId) {
+      const id = await getActiveOrgIdClient();
+      setOrgId(id ?? null);
+      if (!id) {
         setRows([]);
         return;
       }
 
-      // temp_routines: base rows
-      const {
-        data: routines,
-        error: rErr,
-      } = await supabase
+      const { data: routines, error: rErr } = await supabase
         .from("temp_routines")
         .select("id,name,active,last_used_at")
-        .eq("org_id", orgId)
+        .eq("org_id", id)
         .order("name");
 
       if (rErr) throw rErr;
 
-      const routineIds = (routines ?? []).map((r: any) => r.id as string);
-      if (!routineIds.length) {
+      if (!routines?.length) {
         setRows([]);
         return;
       }
 
-      // temp_routine_items: items for those routines
-      const {
-        data: items,
-        error: iErr,
-      } = await supabase
+      const ids = routines.map((r: RoutineWithItems) => r.id);
+
+      const { data: items, error: iErr } = await supabase
         .from("temp_routine_items")
         .select("id,routine_id,position,location,item,target_key")
-        .in("routine_id", routineIds);
+        .in("routine_id", ids);
 
       if (iErr) throw iErr;
 
       const grouped = new Map<string, RoutineItem[]>();
-
       (items ?? []).forEach((it: any) => {
-        const arr = grouped.get(it.routine_id as string) ?? [];
+        const arr = grouped.get(it.routine_id) ?? [];
         arr.push({
-          id: String(it.id),
-          routine_id: String(it.routine_id),
+          id: it.id,
+          routine_id: it.routine_id,
           position: Number(it.position ?? 0),
           location: it.location ?? null,
           item: it.item ?? null,
           target_key: it.target_key ?? "chill",
         });
-        grouped.set(String(it.routine_id), arr);
+        grouped.set(it.routine_id, arr);
       });
 
-      const nextRows: RoutineRow[] = (routines ?? []).map((r: any) => ({
-        id: String(r.id),
-        name: String(r.name ?? ""),
-        active: r.active ?? true,
-        last_used_at: (r.last_used_at as string | null) ?? null,
-        items: (grouped.get(String(r.id)) ?? []).sort(
-          (a: RoutineItem, b: RoutineItem) => a.position - b.position
-        ),
-      }));
-
-      setRows(nextRows);
+      setRows(
+        routines.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          active: r.active ?? true,
+          last_used_at: r.last_used_at ?? null,
+          items: (grouped.get(r.id) ?? []).sort(
+            (a, b) => a.position - b.position
+          ),
+        }))
+      );
+    } catch (e) {
+      console.error(e);
+      setRows([]);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    void refresh();
+    refresh();
   }, []);
 
-  async function add() {
-    if (!name.trim()) return;
+  // ================= Filter =================
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter((r) => r.name.toLowerCase().includes(term));
+  }, [rows, q]);
 
-    const orgId = await getActiveOrgIdClient();
-    if (!orgId) return;
+  // ================= Actions =================
+  function addQuick() {
+    // Always open the editor; if the text box is empty, use a default name
+    const baseName = newName.trim() || "New routine";
 
-    const {
-      data: created,
-      error: cErr,
-    } = await supabase
-      .from("temp_routines")
-      .insert({
-        org_id: orgId,
-        name: name.trim(),
-        active: true,
-      })
-      .select("id")
-      .single();
-
-    if (cErr || !created?.id) {
-      alert(cErr?.message ?? "Failed to create routine");
-      return;
-    }
-
-    if (location || item || target) {
-      const { error: iErr } = await supabase
-        .from("temp_routine_items")
-        .insert({
-          routine_id: created.id,
-          position: 1,
-          location: location || null,
-          item: item || null,
-          target_key: target,
-        });
-
-      if (iErr) {
-        alert(iErr.message);
-        return;
-      }
-    }
-
-    setName("");
-    setLocation("");
-    setItem("");
-    await refresh();
+    setEditing({
+      id: null,
+      name: baseName,
+      active: true,
+      items: NEW_ROUTINE_STARTER_ITEMS.map((it) => ({ ...it })),
+      last_used_at: null,
+    });
+    setEditOpen(true);
+    setNewName("");
   }
 
-  const openView = (r: RoutineRow) => {
+  function openView(r: RoutineRow) {
+    if (!r.id) return; // can't view unsaved ones
     setViewing(r);
     setViewOpen(true);
-  };
+  }
 
-  const openEdit = (r: RoutineRow) => {
-    // deep copy so edits don’t mutate the table rows directly
-    const clone: RoutineRow = JSON.parse(JSON.stringify(r));
-    setEditing(clone);
+  function openEdit(r: RoutineRow) {
+    const copy = JSON.parse(JSON.stringify(r));
+    if (!copy.id && (!copy.items || !copy.items.length)) {
+      copy.items = NEW_ROUTINE_STARTER_ITEMS.map((it: RoutineItem) => ({ ...it }));
+    }
+    setEditing(copy);
     setEditOpen(true);
-  };
+  }
 
   async function saveEdit() {
     if (!editing) return;
 
-    const { error } = await supabase
-      .from("temp_routines")
-      .update({
-        name: editing.name,
-        active: editing.active ?? true,
-      })
-      .eq("id", editing.id);
+    try {
+      let currentOrgId = orgId;
+      if (!currentOrgId) {
+        currentOrgId = await getActiveOrgIdClient();
+        setOrgId(currentOrgId);
+      }
+      if (!currentOrgId) throw new Error("No organisation found.");
 
-    if (error) {
-      alert(error.message);
-      return;
+      let routineId = editing.id;
+
+      if (!routineId) {
+        // New routine
+        const { data, error } = await supabase
+          .from("temp_routines")
+          .insert({
+            org_id: currentOrgId,
+            name: editing.name,
+            active: editing.active ?? true,
+          })
+          .select("id")
+          .single();
+
+        if (error) throw error;
+        routineId = data.id as string;
+      } else {
+        // Existing routine
+        const { error: uErr } = await supabase
+          .from("temp_routines")
+          .update({
+            name: editing.name,
+            active: editing.active ?? true,
+          })
+          .eq("id", routineId);
+
+        if (uErr) throw uErr;
+
+        await supabase
+          .from("temp_routine_items")
+          .delete()
+          .eq("routine_id", routineId);
+      }
+
+      const inserts = editing.items.map((it, i) => ({
+        routine_id: routineId,
+        position: it.position ?? i + 1,
+        location: it.location ?? null,
+        item: it.item ?? null,
+        target_key: it.target_key,
+      }));
+
+      if (inserts.length) {
+        const { error: iErr } = await supabase
+          .from("temp_routine_items")
+          .insert(inserts);
+        if (iErr) throw iErr;
+      }
+
+      setEditOpen(false);
+      setEditing(null);
+      await refresh();
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "Save failed.");
     }
-
-    // Replace existing items with the edited list
-    await supabase
-      .from("temp_routine_items")
-      .delete()
-      .eq("routine_id", editing.id);
-
-    const inserts = editing.items.map((it, i) => ({
-      routine_id: editing.id,
-      position: it.position ?? i + 1,
-      location: it.location ?? null,
-      item: it.item ?? null,
-      target_key: it.target_key,
-    }));
-
-    const { error: iErr } = await supabase
-      .from("temp_routine_items")
-      .insert(inserts);
-
-    if (iErr) {
-      alert(iErr.message);
-      return;
-    }
-
-    setEditOpen(false);
-    await refresh();
   }
 
-  async function deleteRoutine(id: string) {
+  async function removeRoutine(id: string | null) {
+    if (!id) return;
     if (!confirm("Delete routine?")) return;
     const { error } = await supabase
       .from("temp_routines")
       .delete()
       .eq("id", id);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
+    if (error) return alert(error.message);
     await refresh();
   }
 
+  // ================= Render =================
   return (
-    <div className="space-y-6 rounded-2xl border bg-white p-4 shadow-sm">
-      <h1 className="text-xl font-semibold">Temperature Routines</h1>
+    <div className="space-y-4 rounded-2xl border bg-white p-4">
+      <div className="flex items-center gap-2">
+        <h1 className="text-lg font-semibold">Routines</h1>
+        <div className="ml-auto flex items-center gap-2">
+          <input
+            className="h-9 rounded-xl border px-3 text-sm"
+            placeholder="Search…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+      </div>
 
-      {/* Quick add */}
-      <div className="grid gap-3 sm:grid-cols-5">
+      {/* Quick add (opens modal) */}
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
         <input
-          className="rounded-lg border px-3 py-2"
-          placeholder="Routine name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
+          className="rounded-xl border px-3 py-2"
+          placeholder="New routine name"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
         />
-        <input
-          className="rounded-lg border px-3 py-2"
-          placeholder="Location"
-          value={location}
-          onChange={(e) => setLocation(e.target.value)}
-        />
-        <input
-          className="rounded-lg border px-3 py-2"
-          placeholder="Item"
-          value={item}
-          onChange={(e) => setItem(e.target.value)}
-        />
-        <select
-          className="rounded-lg border px-3 py-2"
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-        >
-          {TARGET_PRESETS.map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.label}
-            </option>
-          ))}
-        </select>
         <button
-          onClick={add}
-          className="rounded-lg bg-black px-3 py-2 text-white hover:bg-gray-900"
+          type="button"
+          className="rounded-xl bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900 disabled:bg-gray-400"
+          onClick={addQuick}
+          disabled={loading}
         >
-          Add
+          Add routine
         </button>
       </div>
 
       {/* List */}
       <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
+        <table className="min-w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-[55%]" />
+            <col className="w-[12%]" />
+            <col className="w-[33%]" />
+          </colgroup>
           <thead>
             <tr className="text-left text-gray-500">
               <th className="py-2 pr-3">Name</th>
               <th className="py-2 pr-3">Items</th>
-              <th className="py-2 pr-3">Last used</th>
               <th className="py-2 pr-3">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td
-                  colSpan={4}
-                  className="py-6 text-center text-gray-500"
-                >
+                <td colSpan={3} className="py-6 text-center text-gray-500">
                   Loading…
                 </td>
               </tr>
-            ) : rows.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={4}
-                  className="py-6 text-center text-gray-500"
-                >
-                  No routines
-                </td>
-              </tr>
-            ) : (
-              rows.map((r: RoutineRow) => (
-                <tr
-                  key={r.id}
-                  className="border-t align-middle"
-                >
+            ) : filtered.length ? (
+              filtered.map((r) => (
+                <tr key={r.id ?? `temp-${r.name}`} className="border-t">
                   <td className="py-2 pr-3">
-                    {/* blue link exactly like team page */}
                     <button
-                      className="text-blue-600 underline hover:text-blue-700"
-                      onClick={() => openView(r)}
-                      title="View routine"
+                      type="button"
+                      className="text-blue-600 underline hover:text-blue-700 disabled:text-gray-400"
+                      title={r.id ? "Open" : "Save this routine first"}
+                      onClick={() => r.id && openView(r)}
+                      disabled={!r.id}
                     >
                       {r.name}
                     </button>
                   </td>
+
+                  <td className="py-2 pr-3">{r.items.length}</td>
+
                   <td className="py-2 pr-3">
-                    {r.items.length}
-                  </td>
-                  <td className="py-2 pr-3">
-                    {r.last_used_at
-                      ? new Date(r.last_used_at).toLocaleString()
-                      : "—"}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <div className="flex gap-2">
-                      <button
-                        className="rounded-lg border px-2 py-1 text-xs hover:bg-gray-50"
-                        onClick={() => openView(r)}
-                        aria-label="View"
-                      >
-                        🔭
-                      </button>
-                      <button
-                        className="rounded-lg border px-2 py-1 text-xs hover:bg-gray-50"
-                        onClick={() => openEdit(r)}
-                        aria-label="Edit"
-                      >
-                        ✏️
-                      </button>
-                      <button
-                        className="rounded-lg border px-2 py-1 text-xs hover:bg-gray-50"
-                        onClick={() => deleteRoutine(r.id)}
-                        aria-label="Delete"
-                      >
-                        🗑️
-                      </button>
+                    <div className="relative inline-block text-left">
+                      <ActionMenu
+                        items={[
+                          ...(r.id
+                            ? [
+                                {
+                                  label: "View",
+                                  onClick: () => openView(r),
+                                },
+                              ]
+                            : []),
+                          { label: "Edit", onClick: () => openEdit(r) },
+                          ...(r.id
+                            ? [
+                                {
+                                  label: "Use routine",
+                                  href: `/dashboard?run=${encodeURIComponent(
+                                    r.id
+                                  )}`,
+                                },
+                                {
+                                  label: "Delete",
+                                  onClick: () => removeRoutine(r.id),
+                                  variant: "danger" as const,
+                                },
+                              ]
+                            : []),
+                        ]}
+                      />
                     </div>
                   </td>
                 </tr>
               ))
+            ) : (
+              <tr>
+                <td colSpan={3} className="py-6 text-center text-gray-500">
+                  No routines yet.
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
       </div>
 
-      {/* View modal */}
-      {viewOpen && viewing && (
+      {/* ===== View Card ===== */}
+      {viewOpen && viewing && viewing.id && (
         <div
           className="fixed inset-0 z-50 bg-black/40"
           onClick={() => setViewOpen(false)}
         >
           <div
-            className="mx-auto mt-16 w-full max-w-2xl rounded-2xl border bg-white p-4"
+            className="mx-auto mt-16 w-full max-w-xl overflow-y-auto rounded-2xl border bg-white"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-base font-semibold">
-                Routine · {viewing.name}
-              </div>
-              <div className="flex items-center gap-2">
-                <a
-                  href={`/dashboard?r=${encodeURIComponent(
-                    viewing.id
-                  )}`}
-                  className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
-                >
-                  Use routine
-                </a>
-                <button
-                  onClick={() => setViewOpen(false)}
-                  className="rounded-md p-2 hover:bg-gray-100"
-                >
-                  ✕
-                </button>
+            <div className="bg-slate-800 px-4 py-3 text-white">
+              <div className="text-sm opacity-80">Routine</div>
+              <div className="text-xl font-semibold">{viewing.name}</div>
+              <div className="opacity-80">
+                {viewing.active ? "Active" : "Inactive"}
               </div>
             </div>
-            <ul className="divide-y">
-              {viewing.items.map((it: RoutineItem) => (
-                <li
-                  key={it.id}
-                  className="py-2 text-sm"
-                >
-                  <div className="font-medium">
-                    Step {it.position}
-                  </div>
-                  <div className="text-gray-600">
-                    {[
-                      it.location,
-                      it.item,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || "—"}{" "}
-                    · target: <code>{it.target_key}</code>
-                  </div>
-                </li>
-              ))}
-            </ul>
+
+            <div className="p-4">
+              {viewing.items.length ? (
+                <ul className="divide-y">
+                  {viewing.items.map((it) => (
+                    <li
+                      key={`${it.position}-${it.item}-${it.location}`}
+                      className="py-2 text-sm"
+                    >
+                      <div className="font-medium">Step {it.position}</div>
+                      <div className="text-gray-600">
+                        {[it.location, it.item].filter(Boolean).join(" · ") ||
+                          "—"}{" "}
+                        · target: <code>{it.target_key}</code>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-sm text-gray-600">
+                  No items in this routine.
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t bg-gray-50 p-3">
+              <a
+                href={`/dashboard?run=${encodeURIComponent(viewing.id)}`}
+                className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
+              >
+                Use routine
+              </a>
+              <button
+                className="rounded-md bg-white px-3 py-1.5 text-sm"
+                onClick={() => setViewOpen(false)}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Edit modal */}
+      {/* ===== Edit Modal ===== */}
       {editOpen && editing && (
         <div
-          className="fixed inset-0 z-50 bg-black/40"
+          className="fixed inset-0 z-50 bg-black/40 overflow-y-auto"
           onClick={() => setEditOpen(false)}
         >
           <div
@@ -430,7 +446,7 @@ export default function RoutinesClient() {
           >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">
-                Edit routine
+                {editing.id ? "Edit routine" : "New routine"}
               </div>
               <button
                 onClick={() => setEditOpen(false)}
@@ -445,10 +461,7 @@ export default function RoutinesClient() {
                 className="h-10 w-full rounded-xl border px-3"
                 value={editing.name}
                 onChange={(e) =>
-                  setEditing({
-                    ...editing,
-                    name: e.target.value,
-                  })
+                  setEditing({ ...editing, name: e.target.value })
                 }
               />
               <label className="mt-2 flex items-center gap-2 text-sm">
@@ -456,25 +469,51 @@ export default function RoutinesClient() {
                   type="checkbox"
                   checked={!!editing.active}
                   onChange={(e) =>
-                    setEditing({
-                      ...editing,
-                      active: e.target.checked,
-                    })
+                    setEditing({ ...editing, active: e.target.checked })
                   }
                 />
                 Active
               </label>
             </div>
 
+            <div className="mt-4">
+              <div className="text-sm font-medium text-gray-900">
+                Items to check
+              </div>
+              <div className="mt-1 text-sm text-gray-500">
+                Add all the items checked during this routine. Example: fridge,
+                freezer, hot hold.
+              </div>
+            </div>
+
             <div className="mt-4 space-y-2">
               {editing.items.map((it, i) => (
                 <div
-                  key={it.id ?? i}
-                  className="grid gap-2 sm:grid-cols-3"
+                  key={i}
+                  className="grid gap-2 sm:grid-cols-[80px_1fr_1fr_1fr_auto]"
                 >
                   <input
                     className="rounded-xl border px-3 py-2"
-                    placeholder="Location"
+                    placeholder="#"
+                    type="number"
+                    value={it.position}
+                    onChange={(e) => {
+                      const copy: RoutineRow = {
+                        ...editing,
+                        items: [...editing.items],
+                      };
+                      copy.items[i] = {
+                        ...copy.items[i],
+                        position: Number(e.target.value) || 0,
+                      };
+                      setEditing(copy);
+                    }}
+                  />
+                  <input
+                    className="rounded-xl border px-3 py-2"
+                    placeholder={
+                      STARTER_PLACEHOLDERS[i]?.location ?? "Location"
+                    }
                     value={it.location ?? ""}
                     onChange={(e) => {
                       const copy: RoutineRow = {
@@ -490,7 +529,7 @@ export default function RoutinesClient() {
                   />
                   <input
                     className="rounded-xl border px-3 py-2"
-                    placeholder="Item"
+                    placeholder={STARTER_PLACEHOLDERS[i]?.item ?? "Item"}
                     value={it.item ?? ""}
                     onChange={(e) => {
                       const copy: RoutineRow = {
@@ -520,16 +559,45 @@ export default function RoutinesClient() {
                     }}
                   >
                     {TARGET_PRESETS.map((p) => (
-                      <option
-                        key={p.key}
-                        value={p.key}
-                      >
+                      <option key={p.key} value={p.key}>
                         {p.label}
                       </option>
                     ))}
                   </select>
+                  <button
+                    className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+                    onClick={() => {
+                      const copy: RoutineRow = {
+                        ...editing,
+                        items: editing.items.filter((_, idx) => idx !== i),
+                      };
+                      setEditing(copy);
+                    }}
+                  >
+                    Remove
+                  </button>
                 </div>
               ))}
+
+              <button
+                className="mt-2 rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+                onClick={() =>
+                  setEditing({
+                    ...editing,
+                    items: [
+                      ...editing.items,
+                      {
+                        position: (editing.items.at(-1)?.position ?? 0) + 1,
+                        location: "",
+                        item: "",
+                        target_key: "chill",
+                      },
+                    ],
+                  })
+                }
+              >
+                + Add item
+              </button>
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
