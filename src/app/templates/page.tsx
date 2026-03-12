@@ -23,10 +23,10 @@ const templates = [
   },
   {
     title: "Food Temperature Log Sheet",
-    href: "#",
+    href: "/templates/cooking-temperature-log",
     description:
       "Record food probe checks and hot holding temperatures in one place.",
-    badge: "Coming soon",
+    badge: "Available now",
   },
   {
     title: "Kitchen Opening Checklist",
