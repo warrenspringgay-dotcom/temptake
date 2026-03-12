@@ -33,7 +33,7 @@ function isStaticAsset(pathname: string) {
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/assets") ||
     pathname.match(
-      /\.(ico|png|jpg|jpeg|gif|webp|svg|css|js|txt|map|json|webmanifest|woff2?)$/
+      /\.(ico|png|jpg|jpeg|gif|webp|svg|css|js|txt|map|json|pdf|webmanifest|woff2?)$/
     )
   );
 }
