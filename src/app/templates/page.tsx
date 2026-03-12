@@ -18,49 +18,49 @@ const templates = [
     title: "Fridge Temperature Log Sheet",
     href: "/templates/fridge-temperature-log",
     description:
-      "A free printable fridge temperature log sheet for daily temperature checks and staff initials.",
+      "A free printable fridge temperature log sheet for daily temperature checks and staff initials. Free download",
     badge: "Available now",
   },
   {
     title: "Food Temperature Log Sheet",
     href: "/templates/cooking-temperature-log",
     description:
-      "Record food probe checks and hot holding temperatures in one place.",
+      "Record food probe checks and hot holding temperatures in one place. Free download",
     badge: "Available now",
   },
   {
     title: "Delivery Temperature Log Sheet",
     href: "/templates/delivery-temperature-log",
     description:
-      "A simple log for recording food holdings for deliveries",
+      "A simple log for recording food holdings for deliveries. Free download",
     badge: "Available now",
   },
   {
     title: "Hot Holding Temperature Log Sheet",
     href: "/templates/hot-holding-temperature-log",
     description:
-      "An easy to use temperature log sheet specifically for hot holds.",
+      "An easy to use temperature log sheet specifically for hot holds. Free download",
     badge: "Available now",
   },
   {
     title: "Food cooling sheet",
     href: "/templates/food-cooling-log",
     description:
-      "A sheet to help track and log food cooling.",
+      "A sheet to help track and log food cooling. Free download",
     badge: "Available now",
   },
    {
     title: "Temperature probe calibration log",
     href: "/templates/probe-calibration-log",
     description:
-      "A sheet to periodically log temperature probe calibrations",
+      "A sheet to periodically log temperature probe calibrations. Free download",
     badge: "Available now",
   },
    {
     title: "Kitchen opening checklist",
     href: "/templates/kitchen-opening-checklist",
     description:
-      "A must checklist to complete to be compliant.",
+      "A must checklist to complete to be compliant. Free download",
     badge: "Available now",
   },
 ];
