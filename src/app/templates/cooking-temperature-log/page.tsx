@@ -42,7 +42,7 @@ export default function CookingTemperatureLogPage() {
             </p>
 
             <TemplateActions
-              pdfHref="/downloads/cooking-temperature-log.pdf"
+              pdfHref="/downloads/cooking_temperature_log.pdf"
               printHref="/templates/cooking-temperature-log/print"
             />
           </div>

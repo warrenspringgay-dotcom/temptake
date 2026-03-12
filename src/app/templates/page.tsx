@@ -29,11 +29,11 @@ const templates = [
     badge: "Available now",
   },
   {
-    title: "Kitchen Opening Checklist",
-    href: "#",
+    title: "Delivery Temperature Log Sheet",
+    href: "templates/delivery-temperature-log",
     description:
-      "A simple opening checklist for food prep, cleaning and readiness checks.",
-    badge: "Coming soon",
+      "A simple log for recording food holdings for deliveries",
+    badge: "Available",
   },
   {
     title: "Kitchen Closing Checklist",
