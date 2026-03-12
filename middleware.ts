@@ -13,6 +13,7 @@ const PUBLIC_PATHS = new Set<string>([
   "/privacy",
   "/terms",
   "/cookies",
+  "/termplates",
 ]);
 
 const OPERATOR_ROLE_COOKIE = "tt_operator_role";
