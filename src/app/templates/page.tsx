@@ -63,6 +63,20 @@ const templates = [
       "A must checklist to complete to be compliant. Free download",
     badge: "Available now",
   },
+  {
+    title: "Kitchen closing checklist",
+    href: "/templates/kitchen-closing-checklist",
+    description:
+      "An easy checklist for when you close your kitchen down for the shift. Free download",
+    badge: "Available now",
+  },
+  {
+    title: "Daily food safety diary",
+    href: "/templates/daily-food-safety-diary",
+    description:
+      "A sheet you should be filling out every shift. Free download",
+    badge: "Available now",
+  },
 ];
 
 export default function TemplatesPage() {
