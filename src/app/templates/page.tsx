@@ -43,11 +43,25 @@ const templates = [
     badge: "Available now",
   },
   {
-    title: "EHO Inspection Checklist",
-    href: "#",
+    title: "Food cooling sheet",
+    href: "/templates/food-cooling-log",
     description:
-      "A practical checklist to help restaurants prepare for an EHO inspection.",
-    badge: "Coming soon",
+      "A sheet to help track and log food cooling.",
+    badge: "Available now",
+  },
+   {
+    title: "Temperature probe calibration log",
+    href: "/templates/probe-calibration-log",
+    description:
+      "A sheet to periodically log temperature probe calibrations",
+    badge: "Available now",
+  },
+   {
+    title: "Kitchen opening checklist",
+    href: "/templates/kitchen-opening-checklist",
+    description:
+      "A must checklist to complete to be compliant.",
+    badge: "Available now",
   },
 ];
 
