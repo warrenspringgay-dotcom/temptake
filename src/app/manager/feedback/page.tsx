@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 
-const SUPERADMIN_USER_ID = "ae9dde44-35bf-4045-984f-cef2cae3359b";
+const SUPERADMIN_USER_ID = "16baae4d-e077-4c89-b402-2b5d725539e8";
 
 type FeedbackItem = {
   id: string;
