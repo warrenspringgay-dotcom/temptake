@@ -32,6 +32,7 @@ function isStaticAsset(pathname: string) {
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/assets") ||
+     pathname.startsWith("/downloads") ||
     pathname.match(
       /\.(ico|png|jpg|jpeg|gif|webp|svg|css|js|txt|map|json|pdf|webmanifest|woff2?)$/
     )

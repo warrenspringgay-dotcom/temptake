@@ -30,17 +30,17 @@ const templates = [
   },
   {
     title: "Delivery Temperature Log Sheet",
-    href: "templates/delivery-temperature-log",
+    href: "/templates/delivery-temperature-log",
     description:
       "A simple log for recording food holdings for deliveries",
-    badge: "Available",
+    badge: "Available now",
   },
   {
-    title: "Kitchen Closing Checklist",
-    href: "#",
+    title: "Hot Holding Temperature Log Sheet",
+    href: "/templates/hot-holding-temperature-log",
     description:
-      "End-of-day checklist for cleaning, stock, safety and close-down tasks.",
-    badge: "Coming soon",
+      "An easy to use temperature log sheet specifically for hot holds.",
+    badge: "Available now",
   },
   {
     title: "EHO Inspection Checklist",
