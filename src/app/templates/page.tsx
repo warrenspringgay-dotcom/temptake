@@ -86,7 +86,7 @@ export default function TemplatesPage() {
         <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
           <div className="max-w-3xl">
             <div className="mb-4 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700">
-              Free downloads for restaurants and takeaways
+              Food hygiene templates to free download.
             </div>
 
             <h1 className="text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl">
