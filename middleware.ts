@@ -102,6 +102,7 @@ export async function middleware(req: NextRequest) {
   const isPublic =
     PUBLIC_PATHS.has(pathname) ||
     pathname.startsWith("/guides/") ||
+     pathname.startsWith("/templates/") ||
     pathname.startsWith("/demo-wall");
 
   if (!session && !isPublic) {
