@@ -9,6 +9,6 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ["/login", "/signup", "/dashboard"],
       },
     ],
-    sitemap: "https://temptake.app/sitemap.xml",
+    sitemap: "https://temptake.com/sitemap.xml",
   };
 }
