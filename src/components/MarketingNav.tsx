@@ -12,6 +12,7 @@ const MARKETING_TABS: Tab[] = [
   { href: "/app", label: "Demo" },
   { href: "/guides", label: "Guides" },
   { href: "/pricing", label: "Pricing" },
+  { href: "/templates", label: "Templates" },
 ];
 
 function cls(...parts: Array<string | false | undefined>) {

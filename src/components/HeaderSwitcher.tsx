@@ -20,6 +20,7 @@ export default function HeaderSwitcher() {
     if (
       p === "/" ||
       p.startsWith("/launch") ||
+      p.startsWith("/templates") ||
       p.startsWith("/pricing") ||
       p.startsWith("/guides") ||
       p.startsWith("/demo-wall") ||

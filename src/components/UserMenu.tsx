@@ -1,4 +1,3 @@
-// src/components/UserMenu.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -36,7 +35,6 @@ function isStandalone() {
   return iosStandalone || displayModeStandalone;
 }
 
-// Type for the PWA install prompt event (not in TS lib by default)
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
@@ -50,7 +48,6 @@ export default function UserMenu() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // PWA install support
   const [deferredPrompt, setDeferredPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
   const [canInstall, setCanInstall] = useState(false);
@@ -58,10 +55,8 @@ export default function UserMenu() {
   const [ios, setIos] = useState(false);
   const [showIosInstallHelp, setShowIosInstallHelp] = useState(false);
 
-  // Close on route change
   useEffect(() => setOpen(false), [pathname]);
 
-  // Close on click outside or Escape
   useEffect(() => {
     if (!open) return;
 
@@ -85,7 +80,6 @@ export default function UserMenu() {
     };
   }, [open]);
 
-  // Capture install prompt on supported browsers (mostly Android Chrome/Edge)
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -93,7 +87,6 @@ export default function UserMenu() {
     setStandalone(isStandalone());
 
     function handler(e: Event) {
-      // Stop Chrome from showing its mini-infobar automatically
       e.preventDefault();
       const bip = e as BeforeInstallPromptEvent;
       setDeferredPrompt(bip);
@@ -123,33 +116,25 @@ export default function UserMenu() {
   }
 
   async function handleInstallClick() {
-    // Close menu immediately for a cleaner UX
     setOpen(false);
 
-    // If already installed, take them to the product.
     if (standalone) {
       router.push("/dashboard");
       return;
     }
 
-    // iOS: no prompt API. Show manual install instructions instead.
     if (ios && !deferredPrompt) {
       setShowIosInstallHelp(true);
       return;
     }
 
-    // Supported install prompt
     if (deferredPrompt) {
       try {
         await deferredPrompt.prompt();
         const choice = await deferredPrompt.userChoice;
-
-        // Chrome controls re-firing of beforeinstallprompt.
-        // Once used, clear it.
         setDeferredPrompt(null);
         setCanInstall(false);
 
-        // If dismissed, route back to dashboard.
         if (choice.outcome !== "accepted") {
           router.push("/dashboard");
         }
@@ -159,7 +144,6 @@ export default function UserMenu() {
       return;
     }
 
-    // Fallback: route to dashboard
     router.push("/dashboard");
   }
 
@@ -226,6 +210,14 @@ export default function UserMenu() {
 
               <Link href="/billing" className={itemCls()} role="menuitem">
                 Billing &amp; subscription
+              </Link>
+
+              <Link href="/templates" className={itemCls()} role="menuitem">
+                Templates
+              </Link>
+
+              <Link href="/tools" className={itemCls()} role="menuitem">
+                Tools
               </Link>
 
               <Link href="/guides" className={itemCls()} role="menuitem">

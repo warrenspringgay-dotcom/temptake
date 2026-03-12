@@ -1,10 +1,8 @@
-// src/components/NavTabs.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Trophy } from "lucide-react";
 
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -22,7 +20,7 @@ type Tab = {
   requiresPlan?: boolean;
 };
 
-const TABS: Tab[] = [
+const APP_TABS: Tab[] = [
   { href: "/dashboard", label: "Dashboard" },
 
   { href: "/staff", label: "Staff", requiresStaffOnly: true, requiresPlan: true },
@@ -31,7 +29,6 @@ const TABS: Tab[] = [
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning Rota", requiresPlan: true },
 
-  // ✅ MANAGER ONLY
   { href: "/manager", label: "Manager Dashboard", requiresManager: true, requiresPlan: true },
   { href: "/team", label: "Team", requiresManager: true, requiresPlan: true },
   { href: "/suppliers", label: "Suppliers", requiresManager: true, requiresPlan: true },
@@ -39,6 +36,15 @@ const TABS: Tab[] = [
 
   { href: "/leaderboard", label: "Leaderboard", requiresPlan: true },
   { href: "/reports", label: "Reports", requiresPlan: true },
+];
+
+const PUBLIC_TABS: Tab[] = [
+  { href: "/", label: "Home" },
+  { href: "/templates", label: "Templates" },
+  { href: "/guides", label: "Guides" },
+  { href: "/tools", label: "Tools" },
+  { href: "/pricing", label: "Pricing" },
+
 ];
 
 function isFutureIso(iso: unknown) {
@@ -52,7 +58,7 @@ function roleScore(role: string) {
   if (r === "owner") return 4;
   if (r === "admin") return 3;
   if (r === "manager") return 2;
-  return 1; // staff default
+  return 1;
 }
 
 function isManagerLike(role: string | null | undefined) {
@@ -60,15 +66,16 @@ function isManagerLike(role: string | null | undefined) {
   return r === "owner" || r === "admin" || r === "manager";
 }
 
-export default function NavTabs() {
+type NavTabsProps = {
+  mode?: "app" | "public";
+};
+
+export default function NavTabs({ mode = "app" }: NavTabsProps) {
   const pathname = usePathname();
   const { user, ready } = useAuth();
   const billing = useSubscriptionStatus();
-
-  // ✅ Workstation operator (PIN-based identity)
   const { operator } = useWorkstation();
 
-  // plan gating
   const planOK = useMemo(() => {
     if ((billing as any)?.loading) return true;
 
@@ -97,7 +104,14 @@ export default function NavTabs() {
     let alive = true;
 
     (async () => {
-      // Operator wins for UI gating
+      if (mode === "public") {
+        if (!alive) return;
+        setRoleName(null);
+        setIsManager(false);
+        setRoleLoading(false);
+        return;
+      }
+
       if (operator?.role) {
         if (!alive) return;
         const r = String(operator.role).toLowerCase();
@@ -135,8 +149,9 @@ export default function NavTabs() {
           return;
         }
 
-        // Helper: fetch roles with user_id/email, with optional location or org-level fallback
-        async function fetchRoles(scope: "location" | "org"): Promise<Array<{ role: string | null }>> {
+        async function fetchRoles(
+          scope: "location" | "org"
+        ): Promise<Array<{ role: string | null }>> {
           let q = supabase.from("team_members").select("role").eq("org_id", orgId);
 
           if (scope === "location") {
@@ -146,13 +161,11 @@ export default function NavTabs() {
             q = q.is("location_id", null);
           }
 
-          // Prefer user_id match
           const byUser = await q.eq("user_id", userId);
           if (!byUser.error && Array.isArray(byUser.data) && byUser.data.length) {
             return byUser.data as any;
           }
 
-          // Fallback email match
           if (email) {
             const byEmail = await q.ilike("email", email);
             if (!byEmail.error && Array.isArray(byEmail.data) && byEmail.data.length) {
@@ -163,10 +176,7 @@ export default function NavTabs() {
           return [];
         }
 
-        // 1) Try location role first
         let rows: Array<{ role: string | null }> = await fetchRoles("location");
-
-        // 2) Fallback to org-level role
         if (!rows.length) rows = await fetchRoles("org");
 
         if (!alive) return;
@@ -198,12 +208,14 @@ export default function NavTabs() {
     return () => {
       alive = false;
     };
-  }, [ready, user, operator?.role]);
+  }, [ready, user, operator?.role, mode]);
 
   const visibleTabs = useMemo(() => {
+    if (mode === "public") return PUBLIC_TABS;
+
     const roleKnown = !roleLoading;
 
-    return TABS.filter((t) => {
+    return APP_TABS.filter((t) => {
       if (t.requiresManager) {
         if (!roleKnown) return false;
         return isManager;
@@ -214,16 +226,17 @@ export default function NavTabs() {
       }
       return true;
     });
-  }, [roleLoading, isManager]);
+  }, [mode, roleLoading, isManager]);
 
-  if (!ready || !user) return null;
+  if (mode === "app" && (!ready || !user)) return null;
 
   return (
     <ul className="flex min-w-max flex-nowrap items-center gap-1 overflow-x-auto px-2">
       {visibleTabs.map((t) => {
-        const active = pathname === t.href || (pathname?.startsWith(t.href + "/") ?? false);
+        const active =
+          pathname === t.href || (t.href !== "/" && (pathname?.startsWith(t.href + "/") ?? false));
 
-        const lockedByPlan = !!t.requiresPlan && !planOK;
+        const lockedByPlan = mode === "app" && !!t.requiresPlan && !planOK;
         const href = lockedByPlan ? "/billing" : t.href;
 
         return (

@@ -20,6 +20,7 @@ export default function FabShell() {
     pathname === "/" ||
     pathname?.startsWith("/login") ||
     pathname?.startsWith("/guides") ||
+   
     pathname?.startsWith("/client-launch") ||
     pathname?.startsWith("/signup");
 

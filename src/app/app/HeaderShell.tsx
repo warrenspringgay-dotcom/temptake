@@ -1,4 +1,3 @@
-// src/app/app/HeaderShell.tsx
 "use client";
 
 import Link from "next/link";
@@ -16,12 +15,10 @@ export default function HeaderShell() {
   const { ready, user } = useAuth();
   const pathname = usePathname();
 
-  // ✅ ensure server + first client render match
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // Public routes where we hide the header (or at least the nav)
-  const hideOnPublic = useMemo(() => {
+  const isPublicRoute = useMemo(() => {
     const p = pathname || "";
     return (
       p === "/" ||
@@ -29,21 +26,23 @@ export default function HeaderShell() {
       p.startsWith("/signup") ||
       p.startsWith("/pricing") ||
       p.startsWith("/guides") ||
+      p.startsWith("/templates") ||
+      p.startsWith("/tools") ||
       p.startsWith("/demo-wall") ||
-      p.startsWith("/app") // demo dashboard (public)
+      p.startsWith("/app")
     );
   }, [pathname]);
 
-  // ✅ only decide to hide after mount (prevents hydration mismatch)
-  if (mounted && hideOnPublic && !user) {
+  const logoHref = user ? "/dashboard" : "/";
+
+  if (mounted && !user && (pathname?.startsWith("/login") || pathname?.startsWith("/signup"))) {
     return null;
   }
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 backdrop-blur-md">
       <div className="flex h-14 w-full items-center gap-3 px-3 sm:px-4 md:mx-auto md:max-w-6xl md:gap-4">
-        {/* Logo + brand */}
-        <Link href="/dashboard" className="flex items-center gap-2">
+        <Link href={logoHref} className="flex items-center gap-2">
           <Image
             src="/logo.png"
             alt="TempTake logo"
@@ -57,25 +56,52 @@ export default function HeaderShell() {
           </span>
         </Link>
 
-        {/* Centre: nav tabs (desktop only) */}
         <div className="flex flex-1 items-center justify-center md:justify-start">
-          {!hideOnPublic && ready && user && (
+          {isPublicRoute ? (
             <nav className="hidden md:block">
-              <NavTabs />
+              <NavTabs mode="public" />
             </nav>
+          ) : (
+            ready &&
+            user && (
+              <nav className="hidden md:block">
+                <NavTabs mode="app" />
+              </nav>
+            )
           )}
         </div>
 
-        {/* Desktop right: org/location + user menu */}
-        {ready && user && (
+        {isPublicRoute ? (
           <div className="hidden items-center gap-2 md:flex">
-            
-            <LocationSwitcher />
-            <UserMenu />
+            {ready && user ? (
+              <UserMenu />
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  className="rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                >
+                  Sign in
+                </Link>
+                <Link
+                  href="/signup"
+                  className="rounded-lg bg-black px-3 py-2 text-sm font-medium text-white hover:bg-slate-900"
+                >
+                  Get started
+                </Link>
+              </>
+            )}
           </div>
+        ) : (
+          ready &&
+          user && (
+            <div className="hidden items-center gap-2 md:flex">
+              <LocationSwitcher />
+              <UserMenu />
+            </div>
+          )
         )}
 
-        {/* Mobile: ONE hamburger that includes nav + account */}
         <div className="flex md:hidden">
           <MobileMenu />
         </div>

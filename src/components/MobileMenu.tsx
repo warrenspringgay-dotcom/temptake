@@ -1,4 +1,3 @@
-// src/components/MobileMenu.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -22,30 +21,34 @@ type Tab = {
   requiresPlan?: boolean;
 };
 
+const PUBLIC_NAV: Tab[] = [
+  { href: "/", label: "Home" },
+  { href: "/templates", label: "Templates" },
+  { href: "/guides", label: "Guides" },
+  { href: "/tools", label: "Tools" },
+  { href: "/pricing", label: "Pricing" },
+];
+
 const APP_NAV: Tab[] = [
   { href: "/dashboard", label: "Dashboard" },
-
-  // Staff-only (example)
   { href: "/staff", label: "Staff", requiresStaffOnly: true, requiresPlan: true },
-
   { href: "/routines", label: "Routines", requiresPlan: true },
   { href: "/allergens", label: "Allergens", requiresPlan: true },
   { href: "/cleaning-rota", label: "Cleaning rota", requiresPlan: true },
   { href: "/food-hygiene", label: "Food hygiene", requiresPlan: true },
-
-  // ✅ Manager-only
   { href: "/manager", label: "Manager Dashboard", requiresManager: true, requiresPlan: true },
   { href: "/team", label: "Team", requiresManager: true, requiresPlan: true },
   { href: "/suppliers", label: "Suppliers", requiresManager: true, requiresPlan: true },
   { href: "/billing", label: "Billing & subscription", requiresManager: true, requiresPlan: true },
   { href: "/settings", label: "Settings", requiresManager: true, requiresPlan: true },
-
   { href: "/leaderboard", label: "Leaderboard", requiresPlan: true },
   { href: "/reports", label: "Reports", requiresPlan: true },
 ];
 
 const ACCOUNT_LINKS: { href: string; label: string }[] = [
   { href: "/locations", label: "Locations" },
+  { href: "/templates", label: "Templates" },
+  { href: "/tools", label: "Tools" },
   { href: "/guides", label: "Guides" },
   { href: "/help", label: "Help & support" },
 ];
@@ -90,13 +93,21 @@ export default function MobileMenu() {
   const sub = useSubscriptionStatus();
   const { operator } = useWorkstation();
 
+  const isPublicRoute =
+    pathname === "/" ||
+    pathname.startsWith("/pricing") ||
+    pathname.startsWith("/guides") ||
+    pathname.startsWith("/templates") ||
+    pathname.startsWith("/tools") ||
+    pathname.startsWith("/demo-wall") ||
+    pathname.startsWith("/app");
+
   const hasValid = !!(sub as any)?.hasValid;
 
   const [open, setOpen] = useState(false);
   const [roleLoading, setRoleLoading] = useState(true);
   const [canSeeManager, setCanSeeManager] = useState(false);
 
-  // PWA install support
   const [deferredPrompt, setDeferredPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
   const [canInstall, setCanInstall] = useState(false);
@@ -130,14 +141,20 @@ export default function MobileMenu() {
     };
   }, []);
 
-  // --- manager gating: workstation operator wins; otherwise auth-user lookup (org + location) ---
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
+      if (isPublicRoute) {
+        if (!cancelled) {
+          setCanSeeManager(false);
+          setRoleLoading(false);
+        }
+        return;
+      }
+
       setRoleLoading(true);
 
-      // ✅ Workstation operator role overrides
       if (operator?.role) {
         const ok = isManagerRole(operator.role);
         if (!cancelled) {
@@ -147,7 +164,6 @@ export default function MobileMenu() {
         return;
       }
 
-      // Fallback: normal auth gating
       if (!ready || !user) {
         if (!cancelled) {
           setCanSeeManager(false);
@@ -175,7 +191,6 @@ export default function MobileMenu() {
 
         let role: string | null = null;
 
-        // Prefer user_id match (location-aware)
         const byUser = await supabase
           .from("team_members")
           .select("role")
@@ -213,12 +228,13 @@ export default function MobileMenu() {
     return () => {
       cancelled = true;
     };
-  }, [ready, user, operator?.role]);
+  }, [ready, user, operator?.role, isPublicRoute]);
 
   const navLinks = useMemo(() => {
+    if (isPublicRoute) return PUBLIC_NAV;
+
     if (!user) return [];
 
-    // While role is unknown, be conservative: hide manager/staff-only links to avoid flash
     const roleKnown = !roleLoading;
 
     return APP_NAV.filter((l) => {
@@ -236,7 +252,7 @@ export default function MobileMenu() {
 
       return true;
     });
-  }, [user, hasValid, roleLoading, canSeeManager]);
+  }, [isPublicRoute, user, hasValid, roleLoading, canSeeManager]);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -253,7 +269,6 @@ export default function MobileMenu() {
       return;
     }
 
-    // iOS: no prompt API. Route to dashboard.
     if (ios && !deferredPrompt) {
       router.push("/dashboard");
       return;
@@ -319,7 +334,7 @@ export default function MobileMenu() {
             </div>
 
             <div className="max-h-[75vh] overflow-y-auto p-2">
-              {!user ? (
+              {!user && !isPublicRoute ? (
                 <div className="space-y-2 p-2">
                   <Link
                     href="/login"
@@ -338,19 +353,21 @@ export default function MobileMenu() {
                 </div>
               ) : (
                 <>
-                  <div className="px-2 pt-2">
-                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-emerald-700">
-                        Location
-                      </div>
-                      <div className="mt-2">
-                        <LocationSwitcher />
-                      </div>
-                      <div className="mt-2 text-[11px] text-emerald-800/80">
-                        Logs and tasks will be saved to the selected location.
+                  {user && !isPublicRoute && (
+                    <div className="px-2 pt-2">
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                        <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-emerald-700">
+                          Location
+                        </div>
+                        <div className="mt-2">
+                          <LocationSwitcher />
+                        </div>
+                        <div className="mt-2 text-[11px] text-emerald-800/80">
+                          Logs and tasks will be saved to the selected location.
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
 
                   <div className="px-2 pt-3">
                     <div className="px-2 pb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
@@ -384,51 +401,72 @@ export default function MobileMenu() {
                     </div>
 
                     <div className="space-y-1">
-                      {ACCOUNT_LINKS.map((l) => (
-                        <Link
-                          key={l.href}
-                          href={l.href}
-                          onClick={() => setOpen(false)}
-                          className={cls(
-                            "block rounded-2xl px-4 py-3 text-sm font-medium",
-                            isActive(pathname, l.href)
-                              ? "bg-slate-100 text-slate-900"
-                              : "text-slate-800 hover:bg-slate-50"
-                          )}
-                        >
-                          {l.label}
-                        </Link>
-                      ))}
+                      {user ? (
+                        <>
+                          {ACCOUNT_LINKS.map((l) => (
+                            <Link
+                              key={l.href}
+                              href={l.href}
+                              onClick={() => setOpen(false)}
+                              className={cls(
+                                "block rounded-2xl px-4 py-3 text-sm font-medium",
+                                isActive(pathname, l.href)
+                                  ? "bg-slate-100 text-slate-900"
+                                  : "text-slate-800 hover:bg-slate-50"
+                              )}
+                            >
+                              {l.label}
+                            </Link>
+                          ))}
 
-                      <button
-                        type="button"
-                        onClick={handleInstallClick}
-                        className={cls(
-                          "block w-full rounded-2xl px-4 py-3 text-left text-sm font-medium",
-                          "text-slate-800 hover:bg-slate-50"
-                        )}
-                        title={
-                          standalone
-                            ? "App is already installed"
-                            : canInstall
-                            ? "Install the app"
-                            : ios
-                            ? "Install via Add to Home Screen"
-                            : "Get the app"
-                        }
-                      >
-                        {standalone ? "App installed" : canInstall ? "Install app" : "Get the app"}
-                      </button>
-                    </div>
+                          <button
+                            type="button"
+                            onClick={handleInstallClick}
+                            className={cls(
+                              "block w-full rounded-2xl px-4 py-3 text-left text-sm font-medium",
+                              "text-slate-800 hover:bg-slate-50"
+                            )}
+                            title={
+                              standalone
+                                ? "App is already installed"
+                                : canInstall
+                                ? "Install the app"
+                                : ios
+                                ? "Get the app"
+                                : "Get the app"
+                            }
+                          >
+                            {standalone ? "App installed" : canInstall ? "Install app" : "Get the app"}
+                          </button>
 
-                    <div className="mt-2">
-                      <button
-                        type="button"
-                        onClick={signOut}
-                        className="w-full rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-semibold text-red-700 hover:bg-red-100"
-                      >
-                        Sign out
-                      </button>
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={signOut}
+                              className="w-full rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-semibold text-red-700 hover:bg-red-100"
+                            >
+                              Sign out
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <Link
+                            href="/login"
+                            onClick={() => setOpen(false)}
+                            className="block rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center text-sm font-semibold text-slate-900 hover:bg-slate-50"
+                          >
+                            Sign in
+                          </Link>
+                          <Link
+                            href="/signup"
+                            onClick={() => setOpen(false)}
+                            className="block rounded-2xl bg-black px-4 py-3 text-center text-sm font-semibold text-white hover:bg-slate-900"
+                          >
+                            Get started
+                          </Link>
+                        </>
+                      )}
                     </div>
                   </div>
                 </>
