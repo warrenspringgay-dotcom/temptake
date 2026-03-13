@@ -167,7 +167,7 @@ export default function FeedbackModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[60]">
       <button
         type="button"
         className="absolute inset-0 bg-black/40"
@@ -175,7 +175,7 @@ export default function FeedbackModal({
         aria-label="Close feedback"
       />
 
-      <div className="absolute bottom-4 left-4 right-4 mx-auto max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl">
+      <div className="absolute center-4 left-4 right-4 mx-auto max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl">
         <div className="border-b border-slate-200 px-5 py-4">
           <div className="text-sm font-extrabold text-slate-900">
             Send feedback
