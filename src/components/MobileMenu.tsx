@@ -25,7 +25,6 @@ const PUBLIC_NAV: Tab[] = [
   { href: "/", label: "Home" },
   { href: "/templates", label: "Templates" },
   { href: "/guides", label: "Guides" },
-  { href: "/feedback", label: "Feedback" },
   { href: "/pricing", label: "Pricing" },
 ];
 
@@ -48,7 +47,7 @@ const APP_NAV: Tab[] = [
 const ACCOUNT_LINKS: { href: string; label: string }[] = [
   { href: "/locations", label: "Locations" },
   { href: "/templates", label: "Templates" },
-  { href: "/tools", label: "Tools" },
+  { href: "/Feedback", label: "Feedback" },
   { href: "/guides", label: "Guides" },
   { href: "/help", label: "Help & support" },
 ];
