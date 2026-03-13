@@ -19,7 +19,7 @@ type Frequency = "daily" | "weekly" | "monthly";
 
 type Task = {
   id: string;
-  location_id: string; // ✅
+  location_id: string;
   org_id: string;
   task: string;
   area: string | null;
@@ -31,7 +31,7 @@ type Task = {
 
 type Run = {
   task_id: string;
-  run_on: string; // yyyy-mm-dd
+  run_on: string;
   done_by: string | null;
   done_at?: string | null;
 };
@@ -52,12 +52,18 @@ type DaySignoff = {
   created_at: string | null;
 };
 
+type TeamMemberOption = {
+  id: string;
+  initials: string;
+  name: string | null;
+};
+
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 
 function startOfWeekMonday(d: Date) {
   const x = new Date(d);
-  const day = x.getDay(); // 0=Sun..6=Sat
-  const diff = (day === 0 ? -6 : 1) - day; // Monday start
+  const day = x.getDay();
+  const diff = (day === 0 ? -6 : 1) - day;
   x.setDate(x.getDate() + diff);
   x.setHours(0, 0, 0, 0);
   return x;
@@ -93,7 +99,6 @@ function isDueOn(task: Task, date: Date) {
   return false;
 }
 
-/** Best effort initials from a name (first letters of up to 2 words). */
 function initialsFromName(name?: string | null) {
   const s = String(name ?? "").trim();
   if (!s) return "";
@@ -104,12 +109,18 @@ function initialsFromName(name?: string | null) {
     .join("");
 }
 
-/** Use operator initials first, then typed initials. */
 function bestInitials(operatorInitials: string, typedInitials: string) {
   return (operatorInitials || typedInitials).trim().toUpperCase();
 }
 
-/** Classic confetti overlay (no emojis) using framer-motion only. */
+function normalizeInitials(value?: string | null) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
+}
+
 function ClassicConfetti({ show }: { show: boolean }) {
   const pieces = useMemo(() => Array.from({ length: 34 }, (_, i) => i), []);
 
@@ -181,17 +192,20 @@ export default function CleaningRotaPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [deferrals, setDeferrals] = useState<Deferral[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMemberOption[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const [manageOpen, setManageOpen] = useState(false);
 
-  // Header initials box (staff can still override)
+  // Header initials box still acts as the default for new task rows
   const [initials, setInitials] = useState<string>("");
   const [initialsDirty, setInitialsDirty] = useState(false);
 
-  // Acting context from workstation operator
+  // Per-task selected initials
+  const [taskInitials, setTaskInitials] = useState<Record<string, string>>({});
+
   const operatorInitials = useMemo(() => {
     const ini = String(operator?.initials ?? "").trim().toUpperCase();
     return ini || initialsFromName(operator?.name) || "";
@@ -199,26 +213,27 @@ export default function CleaningRotaPage() {
 
   const operatorTeamMemberId = operator?.teamMemberId ?? null;
 
-  // (Optional) Auth user id for auditing only
   const [authUserId, setAuthUserId] = useState<string | null>(null);
 
   const [showConfetti, setShowConfetti] = useState(false);
 
-  // Collapsible categories (default expanded)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
-  // Prevent confetti on first load, and only allow it after a user action
   const initializedRef = useRef(false);
   const userActionRef = useRef(false);
   const prevAllDoneRef = useRef<boolean>(false);
 
-  // ===== Day sign-off (daily_signoffs) =====
   const [signoff, setSignoff] = useState<DaySignoff | null>(null);
   const [signoffOpen, setSignoffOpen] = useState(false);
   const [signoffInitials, setSignoffInitials] = useState("");
   const [signoffInitialsDirty, setSignoffInitialsDirty] = useState(false);
   const [signoffNotes, setSignoffNotes] = useState("");
   const [signoffSaving, setSignoffSaving] = useState(false);
+
+  const defaultRowInitials = useMemo(
+    () => normalizeInitials(bestInitials(operatorInitials, initials)),
+    [operatorInitials, initials]
+  );
 
   const deferralsFromMap = useMemo(() => {
     const m = new Map<string, Set<string>>();
@@ -255,12 +270,68 @@ export default function CleaningRotaPage() {
     return m;
   }, [runs]);
 
-  // Default header initials from operator (but do not overwrite manual typing)
+  const initialsOptions = useMemo(() => {
+    const map = new Map<string, TeamMemberOption>();
+
+    if (defaultRowInitials) {
+      map.set(defaultRowInitials, {
+        id: `default-${defaultRowInitials}`,
+        initials: defaultRowInitials,
+        name: operator?.name ?? "Current user",
+      });
+    }
+
+    for (const tm of teamMembers) {
+      const clean = normalizeInitials(tm.initials);
+      if (!clean) continue;
+      if (!map.has(clean)) {
+        map.set(clean, {
+          id: tm.id,
+          initials: clean,
+          name: tm.name,
+        });
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.initials === defaultRowInitials) return -1;
+      if (b.initials === defaultRowInitials) return 1;
+      return a.initials.localeCompare(b.initials);
+    });
+  }, [teamMembers, defaultRowInitials, operator?.name]);
+
+  function getTaskInitials(taskId: string) {
+    return normalizeInitials(taskInitials[taskId] || defaultRowInitials);
+  }
+
+  function setTaskInitialsValue(taskId: string, value: string) {
+    const clean = normalizeInitials(value);
+    setTaskInitials((prev) => ({ ...prev, [taskId]: clean }));
+  }
+
   useEffect(() => {
     if (initialsDirty) return;
     if (!operatorInitials) return;
     setInitials(operatorInitials);
   }, [operatorInitials, initialsDirty]);
+
+  useEffect(() => {
+    if (!dueToday.length) return;
+
+    setTaskInitials((prev) => {
+      let changed = false;
+      const next = { ...prev };
+
+      for (const task of dueToday) {
+        if (!next[task.id]) {
+          next[task.id] = defaultRowInitials;
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+  }, [defaultRowInitials, tasks.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadSignoff(oid: string, lid: string) {
     const { data, error } = await supabase
@@ -310,20 +381,50 @@ export default function CleaningRotaPage() {
     }
   }
 
+  async function loadTeamMembers(oid: string, lid: string) {
+    const { data, error } = await supabase
+      .from("team_members")
+      .select("id,name,initials,location_id")
+      .eq("org_id", oid)
+      .or(`location_id.eq.${lid},location_id.is.null`)
+      .order("name", { ascending: true });
+
+    if (error) {
+      console.warn("[cleaning] team members fetch failed:", error.message);
+      setTeamMembers([]);
+      return;
+    }
+
+    const deduped = new Map<string, TeamMemberOption>();
+
+    for (const row of data ?? []) {
+      const clean = normalizeInitials((row as any).initials);
+      if (!clean) continue;
+
+      if (!deduped.has(clean)) {
+        deduped.set(clean, {
+          id: String((row as any).id),
+          initials: clean,
+          name: (row as any).name ? String((row as any).name) : null,
+        });
+      }
+    }
+
+    setTeamMembers(Array.from(deduped.values()));
+  }
+
   async function resolveSignerTeamMemberId(
     oid: string,
     lid: string,
     ini: string
   ): Promise<string | null> {
-    const clean = (ini ?? "").trim().toUpperCase();
+    const clean = normalizeInitials(ini);
     if (!clean) return null;
 
-    // If operator exists and initials match operator initials, trust operator teamMemberId.
     if (operatorTeamMemberId && operatorInitials && clean === operatorInitials) {
       return operatorTeamMemberId;
     }
 
-    // Otherwise try to find someone at this location with those initials.
     const byLoc = await supabase
       .from("team_members")
       .select("id")
@@ -335,7 +436,6 @@ export default function CleaningRotaPage() {
 
     if (!byLoc.error && byLoc.data?.id) return String(byLoc.data.id);
 
-    // Fallback: org-wide record
     const byOrgWide = await supabase
       .from("team_members")
       .select("id")
@@ -366,6 +466,7 @@ export default function CleaningRotaPage() {
         setTasks([]);
         setRuns([]);
         setDeferrals([]);
+        setTeamMembers([]);
         setSignoff(null);
         setLoading(false);
         return;
@@ -407,7 +508,7 @@ export default function CleaningRotaPage() {
       setRuns((rData ?? []) as Run[]);
       setDeferrals(((dData ?? []) as Deferral[]) || []);
 
-      await loadSignoff(oid, lid);
+      await Promise.all([loadSignoff(oid, lid), loadTeamMembers(oid, lid)]);
     } catch (e: any) {
       setErr(e?.message ?? "Something went wrong");
     } finally {
@@ -500,9 +601,8 @@ export default function CleaningRotaPage() {
 
     userActionRef.current = true;
 
-    const doneBy = bestInitials(operatorInitials, initials) || null;
+    const doneBy = getTaskInitials(taskId) || null;
 
-    // Use operator team_member_id when possible; else resolve by initials if user overwrote.
     const doneByTeamMemberId =
       doneBy && operatorTeamMemberId && operatorInitials && doneBy === operatorInitials
         ? operatorTeamMemberId
@@ -606,24 +706,37 @@ export default function CleaningRotaPage() {
     userActionRef.current = true;
 
     const nowIso = new Date().toISOString();
-    const doneBy = bestInitials(operatorInitials, initials) || null;
+    const initialsUsed = Array.from(
+      new Set(idsToDo.map((taskId) => getTaskInitials(taskId)).filter(Boolean))
+    );
 
-    const doneByTeamMemberId =
-      doneBy && operatorTeamMemberId && operatorInitials && doneBy === operatorInitials
-        ? operatorTeamMemberId
-        : doneBy
-        ? await resolveSignerTeamMemberId(orgId, locationId, doneBy)
-        : null;
+    const initialsToMemberId = new Map<string, string | null>();
 
-    const payloads = idsToDo.map((task_id) => ({
-      org_id: orgId,
-      location_id: locationId,
-      task_id,
-      run_on: todayIso,
-      done_by: doneBy,
-      done_by_team_member_id: doneByTeamMemberId,
-      done_at: nowIso,
-    }));
+    await Promise.all(
+      initialsUsed.map(async (ini) => {
+        const memberId =
+          ini && operatorTeamMemberId && operatorInitials && ini === operatorInitials
+            ? operatorTeamMemberId
+            : ini
+            ? await resolveSignerTeamMemberId(orgId, locationId, ini)
+            : null;
+
+        initialsToMemberId.set(ini, memberId);
+      })
+    );
+
+    const payloads = idsToDo.map((task_id) => {
+      const doneBy = getTaskInitials(task_id) || null;
+      return {
+        org_id: orgId,
+        location_id: locationId,
+        task_id,
+        run_on: todayIso,
+        done_by: doneBy,
+        done_by_team_member_id: doneBy ? initialsToMemberId.get(doneBy) ?? null : null,
+        done_at: nowIso,
+      };
+    });
 
     const { data, error } = await supabase
       .from("cleaning_task_runs")
@@ -682,7 +795,6 @@ export default function CleaningRotaPage() {
         signoff_on: todayIso,
         signed_by: ini,
         signed_by_team_member_id: signerTeamMemberId,
-        // auth user is just an audit trail, not the acting operator identity
         signed_by_user_id: authUserId,
         notes: signoffNotes.trim() || null,
       };
@@ -722,7 +834,6 @@ export default function CleaningRotaPage() {
     }
   }
 
-  // Default signoff initials from operator when modal opens (unless user typed)
   useEffect(() => {
     if (!signoffOpen) return;
     if (signoffInitialsDirty) return;
@@ -879,6 +990,8 @@ export default function CleaningRotaPage() {
                       const deferredFromToday =
                         deferralsFromMap.get(todayIso)?.has(t.id) ?? false;
 
+                      const selectedInitials = getTaskInitials(t.id);
+
                       return (
                         <motion.div
                           key={t.id}
@@ -907,7 +1020,23 @@ export default function CleaningRotaPage() {
                               )}
                             </div>
 
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              {!done && (
+                                <select
+                                  value={selectedInitials}
+                                  onChange={(e) => setTaskInitialsValue(t.id, e.target.value)}
+                                  className="h-8 min-w-[78px] rounded-full border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 outline-none"
+                                  aria-label={`Initials for ${t.task}`}
+                                >
+                                  {initialsOptions.map((opt) => (
+                                    <option key={opt.initials} value={opt.initials}>
+                                      {opt.initials}
+                                      {opt.name ? ` · ${opt.name}` : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+
                               {!done && (
                                 <button
                                   onClick={() => deferToTomorrow(t.id)}
