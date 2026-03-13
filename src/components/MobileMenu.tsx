@@ -25,7 +25,7 @@ const PUBLIC_NAV: Tab[] = [
   { href: "/", label: "Home" },
   { href: "/templates", label: "Templates" },
   { href: "/guides", label: "Guides" },
-  { href: "/tools", label: "Tools" },
+  { href: "/feedback", label: "Feedback" },
   { href: "/pricing", label: "Pricing" },
 ];
 
