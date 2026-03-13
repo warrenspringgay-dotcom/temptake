@@ -200,6 +200,10 @@ export default function UserMenu() {
                 Settings
               </Link>
 
+              <Link href="/feedback" className={itemCls()} role="menuitem">
+                My feedback
+              </Link>
+
               <Link href="/food-hygiene" className={itemCls()} role="menuitem">
                 Food hygiene rating log
               </Link>
@@ -216,8 +220,8 @@ export default function UserMenu() {
                 Templates
               </Link>
 
-              <Link href="/tools" className={itemCls()} role="menuitem">
-                Tools
+              <Link href="/feedback" className={itemCls()} role="menuitem">
+                Feedback
               </Link>
 
               <Link href="/guides" className={itemCls()} role="menuitem">

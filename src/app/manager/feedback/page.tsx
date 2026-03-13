@@ -1,12 +1,12 @@
-// src/app/manager/feedback/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
 
 const SUPERADMIN_USER_ID = "16baae4d-e077-4c89-b402-2b5d725539e8";
+
+type FeedbackStatus = "received" | "in_progress" | "resolved";
 
 type FeedbackItem = {
   id: string;
@@ -19,6 +19,11 @@ type FeedbackItem = {
   created_at: string;
   meta: any;
   org_id: string;
+  status: FeedbackStatus;
+  admin_reply: string | null;
+  admin_reply_at: string | null;
+  resolved_at: string | null;
+  updated_at: string | null;
 };
 
 type TeamMemberLite = {
@@ -30,20 +35,29 @@ type TeamMemberLite = {
   active: boolean | null;
 };
 
+type OrgLite = {
+  id: string;
+  name: string | null;
+};
+
 function cls(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-function fmtDDMMYYYY(iso: string) {
+function fmtDDMMYYYY(iso?: string | null) {
+  if (!iso) return "—";
   const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = d.getFullYear();
   return `${dd}/${mm}/${yyyy}`;
 }
 
-function fmtTimeHHMM(iso: string) {
+function fmtTimeHHMM(iso?: string | null) {
+  if (!iso) return "—";
   const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   return `${hh}:${mm}`;
@@ -64,22 +78,44 @@ function displayUser(
       secondary: tm.email ? tm.email : shortId(userId),
     };
   }
+
   if (tm?.email) {
     return {
       primary: tm.email,
       secondary: shortId(userId),
     };
   }
+
   return {
-    primary: shortId(userId),
-    secondary: userId,
+    primary: "Unknown user",
+    secondary: shortId(userId),
   };
+}
+
+function displayOrg(orgId: string, org?: OrgLite | null) {
+  if (org?.name?.trim()) return org.name.trim();
+  return shortId(orgId);
+}
+
+function statusLabel(status?: string | null) {
+  if (status === "in_progress") return "In progress";
+  if (status === "resolved") return "Resolved";
+  return "Received";
+}
+
+function statusPillClass(status?: string | null) {
+  if (status === "resolved") {
+    return "bg-emerald-100 text-emerald-800 border border-emerald-200";
+  }
+  if (status === "in_progress") {
+    return "bg-amber-100 text-amber-800 border border-amber-200";
+  }
+  return "bg-slate-100 text-slate-800 border border-slate-200";
 }
 
 export default function ManagerFeedbackPage() {
   const router = useRouter();
 
-  // ✅ Access control (client gate)
   const [authChecking, setAuthChecking] = useState(true);
   const [authorized, setAuthorized] = useState(false);
 
@@ -88,20 +124,24 @@ export default function ManagerFeedbackPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [kind, setKind] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // user_id -> team member
-  const [teamByUserId, setTeamByUserId] = useState<
-    Record<string, TeamMemberLite>
-  >({});
+  const [teamByUserId, setTeamByUserId] = useState<Record<string, TeamMemberLite>>(
+    {}
+  );
+  const [orgById, setOrgById] = useState<Record<string, OrgLite>>({});
+
+  const [editStatus, setEditStatus] = useState<FeedbackStatus>("received");
+  const [editReply, setEditReply] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const selected = useMemo(
     () => items.find((i) => i.id === selectedId) ?? null,
     [items, selectedId]
   );
 
-  // ✅ Hard gate: only your Supabase user id can view this page
   useEffect(() => {
     let alive = true;
 
@@ -116,8 +156,6 @@ export default function ManagerFeedbackPage() {
           if (!alive) return;
           setAuthorized(false);
           setAuthChecking(false);
-
-          // Bounce them somewhere safe. You asked for /dashboard as fallback.
           router.replace("/dashboard");
           router.refresh();
           return;
@@ -140,46 +178,13 @@ export default function ManagerFeedbackPage() {
     };
   }, [router]);
 
-  async function loadTeamMembersFor(userIds: string[], orgId: string) {
-    if (!userIds.length) {
-      setTeamByUserId({});
-      return;
-    }
-
-    // De-dupe + keep sane size
-    const unique = Array.from(new Set(userIds)).filter(Boolean).slice(0, 500);
-
-    const { data, error } = await supabase
-      .from("team_members")
-      .select("user_id,name,email,initials,role,active")
-      .eq("org_id", orgId)
-      .in("user_id", unique);
-
-    if (error) {
-      console.warn("team_members lookup failed:", error.message);
-      setTeamByUserId({});
-      return;
-    }
-
-    const map: Record<string, TeamMemberLite> = {};
-    (data ?? []).forEach((r: any) => {
-      const uid = r.user_id ? String(r.user_id) : null;
-      if (!uid) return;
-      map[uid] = {
-        user_id: uid,
-        name: r.name ? String(r.name) : null,
-        email: r.email ? String(r.email) : null,
-        initials: r.initials ? String(r.initials) : null,
-        role: r.role ? String(r.role) : null,
-        active: typeof r.active === "boolean" ? r.active : null,
-      };
-    });
-
-    setTeamByUserId(map);
-  }
+  useEffect(() => {
+    if (!selected) return;
+    setEditStatus(selected.status ?? "received");
+    setEditReply(selected.admin_reply ?? "");
+  }, [selected]);
 
   async function load() {
-    // Don’t even try if not authorized
     if (!authorized) return;
 
     setLoading(true);
@@ -187,13 +192,15 @@ export default function ManagerFeedbackPage() {
 
     try {
       let query = supabase
-  .from("feedback_items")
-  .select("id,kind,message,page_path,area,location_id,user_id,created_at,meta,org_id")
-  .order("created_at", { ascending: false })
-  .limit(500);
-
+        .from("feedback_items")
+        .select(
+          "id,kind,message,page_path,area,location_id,user_id,created_at,meta,org_id,status,admin_reply,admin_reply_at,resolved_at,updated_at"
+        )
+        .order("created_at", { ascending: false })
+        .limit(500);
 
       if (kind !== "all") query = query.eq("kind", kind);
+      if (statusFilter !== "all") query = query.eq("status", statusFilter);
 
       const { data, error: e } = await query;
       if (e) throw e;
@@ -201,72 +208,101 @@ export default function ManagerFeedbackPage() {
       const list = (data ?? []) as FeedbackItem[];
       setItems(list);
 
-      // Resolve users -> team members
-     // Resolve users -> team members (grouped by org)
-const byOrg = new Map<string, string[]>();
+      const byOrg = new Map<string, string[]>();
+      const orgIds = new Set<string>();
 
-for (const row of list) {
-  if (!row.org_id || !row.user_id) continue;
-  const arr = byOrg.get(row.org_id) ?? [];
-  arr.push(row.user_id);
-  byOrg.set(row.org_id, arr);
-}
+      for (const row of list) {
+        if (row.org_id) orgIds.add(row.org_id);
 
-// Build one combined map
-const combined: Record<string, TeamMemberLite> = {};
-
-for (const [oid, uids] of byOrg.entries()) {
-  const unique = Array.from(new Set(uids)).slice(0, 500);
-
-  const { data, error } = await supabase
-    .from("team_members")
-    .select("user_id,name,email,initials,role,active")
-    .eq("org_id", oid)
-    .in("user_id", unique);
-
-  if (error) {
-    console.warn("team_members lookup failed for org:", oid, error.message);
-    continue;
-  }
-
-  (data ?? []).forEach((r: any) => {
-    const uid = r.user_id ? String(r.user_id) : null;
-    if (!uid) return;
-    combined[uid] = {
-      user_id: uid,
-      name: r.name ? String(r.name) : null,
-      email: r.email ? String(r.email) : null,
-      initials: r.initials ? String(r.initials) : null,
-      role: r.role ? String(r.role) : null,
-      active: typeof r.active === "boolean" ? r.active : null,
-    };
-  });
-}
-
-setTeamByUserId(combined);
-
-
-      // Keep selected row stable if still present
-      if (selectedId && !list.some((x) => x.id === selectedId)) {
-        setSelectedId(null);
+        if (!row.org_id || !row.user_id) continue;
+        const arr = byOrg.get(row.org_id) ?? [];
+        arr.push(row.user_id);
+        byOrg.set(row.org_id, arr);
       }
 
-      setLoading(false);
+      const combinedUsers: Record<string, TeamMemberLite> = {};
+
+      for (const [oid, uids] of byOrg.entries()) {
+        const unique = Array.from(new Set(uids)).slice(0, 500);
+
+        const { data: teamData, error: teamError } = await supabase
+          .from("team_members")
+          .select("user_id,name,email,initials,role,active")
+          .eq("org_id", oid)
+          .in("user_id", unique);
+
+        if (teamError) {
+          console.warn("team_members lookup failed for org:", oid, teamError.message);
+          continue;
+        }
+
+        (teamData ?? []).forEach((r: any) => {
+          const uid = r.user_id ? String(r.user_id) : null;
+          if (!uid) return;
+          combinedUsers[uid] = {
+            user_id: uid,
+            name: r.name ? String(r.name) : null,
+            email: r.email ? String(r.email) : null,
+            initials: r.initials ? String(r.initials) : null,
+            role: r.role ? String(r.role) : null,
+            active: typeof r.active === "boolean" ? r.active : null,
+          };
+        });
+      }
+
+      setTeamByUserId(combinedUsers);
+
+      const uniqueOrgIds = Array.from(orgIds);
+      if (uniqueOrgIds.length > 0) {
+        const { data: orgData, error: orgError } = await supabase
+          .from("orgs")
+          .select("id,name")
+          .in("id", uniqueOrgIds);
+
+        if (orgError) {
+          console.warn("organisations lookup failed:", orgError.message);
+          setOrgById({});
+        } else {
+          const combinedOrgs: Record<string, OrgLite> = {};
+          (orgData ?? []).forEach((r: any) => {
+            const id = r.id ? String(r.id) : null;
+            if (!id) return;
+            combinedOrgs[id] = {
+              id,
+              name: r.name ? String(r.name) : null,
+            };
+          });
+          setOrgById(combinedOrgs);
+        }
+      } else {
+        setOrgById({});
+      }
+
+      if (list.length > 0) {
+        setSelectedId((prev) => {
+          if (prev && list.some((x) => x.id === prev)) return prev;
+          return list[0].id;
+        });
+      } else {
+        setSelectedId(null);
+      }
     } catch (e: any) {
       setError(e?.message ?? "Failed to load feedback.");
       setItems([]);
       setTeamByUserId({});
+      setOrgById({});
+      setSelectedId(null);
+    } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    // Only load once authorized + auth check done
     if (!authChecking && authorized) {
       load();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authChecking, authorized, kind]);
+  }, [authChecking, authorized, kind, statusFilter]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -274,9 +310,12 @@ setTeamByUserId(combined);
 
     return items.filter((i) => {
       const tm = teamByUserId[i.user_id];
+      const org = orgById[i.org_id];
       const hay = [
         i.kind,
+        i.status,
         i.message,
+        i.admin_reply ?? "",
         i.page_path ?? "",
         i.area ?? "",
         i.location_id ?? "",
@@ -285,13 +324,59 @@ setTeamByUserId(combined);
         tm?.name ?? "",
         tm?.email ?? "",
         tm?.initials ?? "",
+        org?.name ?? "",
+        i.org_id ?? "",
       ]
         .join(" ")
         .toLowerCase();
 
       return hay.includes(needle);
     });
-  }, [items, q, teamByUserId]);
+  }, [items, q, teamByUserId, orgById]);
+
+  async function saveSelected() {
+    if (!selected) return;
+
+    setSaving(true);
+    try {
+      const nextStatus = editStatus;
+      const nextReply = editReply.trim() || null;
+      const nowIso = new Date().toISOString();
+
+      const payload: {
+        status: FeedbackStatus;
+        admin_reply: string | null;
+        admin_reply_at: string | null;
+        resolved_at: string | null;
+        updated_at: string;
+      } = {
+        status: nextStatus,
+        admin_reply: nextReply,
+        admin_reply_at: nextReply ? nowIso : null,
+        resolved_at: nextStatus === "resolved" ? nowIso : null,
+        updated_at: nowIso,
+      };
+
+      const { data, error } = await supabase
+        .from("feedback_items")
+        .update(payload)
+        .eq("id", selected.id)
+        .select(
+          "id,kind,message,page_path,area,location_id,user_id,created_at,meta,org_id,status,admin_reply,admin_reply_at,resolved_at,updated_at"
+        )
+        .single();
+
+      if (error) throw error;
+
+      const updated = data as FeedbackItem;
+      setItems((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+      setSelectedId(updated.id);
+    } catch (e: any) {
+      alert(e?.message ?? "Could not save feedback update.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function deleteSelected() {
     if (!selected) return;
@@ -300,7 +385,11 @@ setTeamByUserId(combined);
     if (!ok) return;
 
     try {
-      const { error } = await supabase.from("feedback_items").delete().eq("id", selected.id);
+      const { error } = await supabase
+        .from("feedback_items")
+        .delete()
+        .eq("id", selected.id);
+
       if (error) throw error;
 
       setItems((prev) => prev.filter((x) => x.id !== selected.id));
@@ -310,7 +399,6 @@ setTeamByUserId(combined);
     }
   }
 
-  // While auth is checking, render nothing heavy (prevents data flashing)
   if (authChecking) {
     return (
       <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
@@ -321,20 +409,15 @@ setTeamByUserId(combined);
     );
   }
 
-  // If not authorized, we already redirected. Render nothing to avoid flicker.
-  if (!authorized) {
-    return null;
-  }
+  if (!authorized) return null;
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="text-xl font-extrabold text-slate-900">
-            Manager feedback
-          </div>
+          <div className="text-xl font-extrabold text-slate-900">Manager feedback</div>
           <div className="text-sm text-slate-500">
-            Trial + live feedback sent from the app.
+            Internal inbox for trial + live feedback from the app.
           </div>
         </div>
 
@@ -358,6 +441,17 @@ setTeamByUserId(combined);
             <option value="other">Other</option>
           </select>
 
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="h-10 rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
+          >
+            <option value="all">All statuses</option>
+            <option value="received">Received</option>
+            <option value="in_progress">In progress</option>
+            <option value="resolved">Resolved</option>
+          </select>
+
           <button
             type="button"
             onClick={load}
@@ -369,7 +463,6 @@ setTeamByUserId(combined);
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-        {/* Inbox list */}
         <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
             <div className="text-xs font-extrabold uppercase tracking-wide text-slate-600">
@@ -389,6 +482,7 @@ setTeamByUserId(combined);
                 {filtered.map((i) => {
                   const active = i.id === selectedId;
                   const tm = teamByUserId[i.user_id] ?? null;
+                  const org = orgById[i.org_id] ?? null;
                   const u = displayUser(i.user_id, tm);
 
                   return (
@@ -407,9 +501,20 @@ setTeamByUserId(combined);
                               <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[11px] font-extrabold uppercase tracking-wide text-white">
                                 {i.kind}
                               </span>
+
+                              <span
+                                className={cls(
+                                  "rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                                  statusPillClass(i.status)
+                                )}
+                              >
+                                {statusLabel(i.status)}
+                              </span>
+
                               <span className="text-xs text-slate-500">
                                 {fmtDDMMYYYY(i.created_at)} {fmtTimeHHMM(i.created_at)}
                               </span>
+
                               {tm?.initials ? (
                                 <span className="text-xs font-semibold text-slate-700">
                                   {tm.initials}
@@ -423,22 +528,25 @@ setTeamByUserId(combined);
 
                             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
                               <span>
-                                Page:{" "}
-                                <span className="font-mono">
-                                  {i.page_path ?? "—"}
+                                Org:{" "}
+                                <span className="font-medium text-slate-700">
+                                  {displayOrg(i.org_id, org)}
                                 </span>
                               </span>
                               <span>
-                                Area:{" "}
-                                <span className="font-mono">{i.area ?? "—"}</span>
+                                Page: <span className="font-mono">{i.page_path ?? "—"}</span>
                               </span>
                               <span>
-                                User: <span className="font-mono">{u.primary}</span>
+                                Area: <span className="font-mono">{i.area ?? "—"}</span>
+                              </span>
+                              <span>
+                                User:{" "}
+                                <span className="font-medium text-slate-700">{u.primary}</span>
                               </span>
                             </div>
                           </div>
 
-                          <div className="text-[11px] text-slate-400 font-mono">
+                          <div className="font-mono text-[11px] text-slate-400">
                             {shortId(i.id)}
                           </div>
                         </div>
@@ -451,7 +559,6 @@ setTeamByUserId(combined);
           )}
         </div>
 
-        {/* Detail panel */}
         <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
             <div className="text-xs font-extrabold uppercase tracking-wide text-slate-600">
@@ -470,8 +577,18 @@ setTeamByUserId(combined);
                   <div className="text-sm font-extrabold text-slate-900">
                     {selected.kind}
                   </div>
-                  <div className="text-xs text-slate-500">
-                    {fmtDDMMYYYY(selected.created_at)} {fmtTimeHHMM(selected.created_at)}
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <span
+                      className={cls(
+                        "rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                        statusPillClass(selected.status)
+                      )}
+                    >
+                      {statusLabel(selected.status)}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {fmtDDMMYYYY(selected.created_at)} {fmtTimeHHMM(selected.created_at)}
+                    </span>
                   </div>
                 </div>
 
@@ -506,12 +623,22 @@ setTeamByUserId(combined);
                       {tm?.role ? <> · {tm.role}</> : null}
                       {tm?.active === false ? <> · inactive</> : null}
                     </div>
-                    <div className="mt-1 font-mono text-[11px] text-slate-500">
-                      {selected.user_id}
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      Linked auth user: {shortId(selected.user_id)}
                     </div>
                   </div>
                 );
               })()}
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold text-slate-600">Organisation</div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {displayOrg(selected.org_id, orgById[selected.org_id])}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  Org ID: {shortId(selected.org_id)}
+                </div>
+              </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -529,9 +656,7 @@ setTeamByUserId(combined);
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="text-xs font-semibold text-slate-600">
-                    Location ID
-                  </div>
+                  <div className="text-xs font-semibold text-slate-600">Location ID</div>
                   <div className="mt-1 font-mono text-xs text-slate-900">
                     {selected.location_id ?? "—"}
                   </div>
@@ -542,6 +667,65 @@ setTeamByUserId(combined);
                   <div className="mt-1 font-mono text-xs text-slate-900">
                     {selected.id}
                   </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">
+                    Status
+                  </label>
+                  <select
+                    value={editStatus}
+                    onChange={(e) => setEditStatus(e.target.value as FeedbackStatus)}
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"
+                  >
+                    <option value="received">Received</option>
+                    <option value="in_progress">In progress</option>
+                    <option value="resolved">Resolved</option>
+                  </select>
+
+                  <div className="mt-2 text-[11px] text-slate-500">
+                    Resolved on: {fmtDDMMYYYY(selected.resolved_at)}
+                    {selected.resolved_at ? ` ${fmtTimeHHMM(selected.resolved_at)}` : ""}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <div className="text-xs font-semibold text-slate-600">Last reply</div>
+                  <div className="mt-1 text-sm text-slate-900">
+                    {selected.admin_reply?.trim() ? "Reply sent" : "No reply yet"}
+                  </div>
+                  <div className="mt-2 text-[11px] text-slate-500">
+                    {selected.admin_reply_at
+                      ? `Updated ${fmtDDMMYYYY(selected.admin_reply_at)} ${fmtTimeHHMM(
+                          selected.admin_reply_at
+                        )}`
+                      : "—"}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                <label className="mb-1 block text-xs font-semibold text-slate-600">
+                  Reply to user
+                </label>
+                <textarea
+                  value={editReply}
+                  onChange={(e) => setEditReply(e.target.value)}
+                  placeholder="Write a reply the user will see on their feedback page..."
+                  rows={6}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                />
+                <div className="mt-2 flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={saveSelected}
+                    disabled={saving}
+                    className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-60"
+                  >
+                    {saving ? "Saving..." : "Save update"}
+                  </button>
                 </div>
               </div>
 
