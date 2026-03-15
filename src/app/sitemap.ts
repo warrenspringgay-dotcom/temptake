@@ -5,39 +5,39 @@ const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, "") || "https://temptake.com";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const now = new Date();
+  const lastModified = new Date("2026-03-01");
 
   return [
     // Core marketing pages
     {
       url: `${SITE_URL}/`,
-      lastModified: now,
+      lastModified,
       changeFrequency: "weekly",
       priority: 1,
     },
     {
       url: `${SITE_URL}/app`,
-      lastModified: now,
+      lastModified,
       changeFrequency: "weekly",
       priority: 0.9,
     },
     {
       url: `${SITE_URL}/pricing`,
-      lastModified: now,
+      lastModified,
       changeFrequency: "monthly",
       priority: 0.8,
     },
     {
       url: `${SITE_URL}/demo-wall`,
-      lastModified: now,
+      lastModified,
       changeFrequency: "weekly",
       priority: 0.8,
     },
 
-    // Help & education (trust + relevance)
+    // Help & education
     {
       url: `${SITE_URL}/help`,
-      lastModified: now,
+      lastModified,
       changeFrequency: "weekly",
       priority: 0.9,
     },
@@ -45,39 +45,85 @@ export default function sitemap(): MetadataRoute.Sitemap {
     // Guides hub
     {
       url: `${SITE_URL}/guides`,
-      lastModified: now,
+      lastModified,
       changeFrequency: "weekly",
       priority: 0.9,
     },
 
-    // Individual guides (ranking pages)
+    // Individual guides
     {
       url: `${SITE_URL}/guides/food-hygiene-temperature-logs-uk`,
-      lastModified: now,
+      lastModified,
       changeFrequency: "monthly",
       priority: 0.85,
     },
     {
       url: `${SITE_URL}/guides/kitchen-cleaning-rota-uk`,
-      lastModified: now,
+      lastModified,
       changeFrequency: "monthly",
       priority: 0.85,
     },
     {
       url: `${SITE_URL}/guides/allergen-matrix-uk`,
-      lastModified: now,
+      lastModified,
       changeFrequency: "monthly",
       priority: 0.85,
     },
     {
       url: `${SITE_URL}/guides/food-hygiene-training-expiry-uk`,
-      lastModified: now,
+      lastModified,
       changeFrequency: "monthly",
       priority: 0.85,
     },
     {
       url: `${SITE_URL}/guides/safer-food-better-business-logs`,
-      lastModified: now,
+      lastModified,
+      changeFrequency: "monthly",
+      priority: 0.85,
+    },
+
+    // Templates hub
+    {
+      url: `${SITE_URL}/templates`,
+      lastModified,
+      changeFrequency: "weekly",
+      priority: 0.9,
+    },
+
+    // Template pages (SEO magnets)
+    {
+      url: `${SITE_URL}/templates/fridge-temperature-log`,
+      lastModified,
+      changeFrequency: "monthly",
+      priority: 0.85,
+    },
+    {
+      url: `${SITE_URL}/templates/freezer-temperature-log`,
+      lastModified,
+      changeFrequency: "monthly",
+      priority: 0.85,
+    },
+    {
+      url: `${SITE_URL}/templates/hot-holding-temperature-log`,
+      lastModified,
+      changeFrequency: "monthly",
+      priority: 0.85,
+    },
+    {
+      url: `${SITE_URL}/templates/cooking-temperature-log`,
+      lastModified,
+      changeFrequency: "monthly",
+      priority: 0.85,
+    },
+    {
+      url: `${SITE_URL}/templates/food-delivery-temperature-log`,
+      lastModified,
+      changeFrequency: "monthly",
+      priority: 0.85,
+    },
+    {
+      url: `${SITE_URL}/templates/food-temperature-record-sheet`,
+      lastModified,
       changeFrequency: "monthly",
       priority: 0.85,
     },
