@@ -95,6 +95,72 @@ function inferStatus(
   return "pass";
 }
 
+/* ---------- temp helpers ---------- */
+function isFrozenPreset(preset?: TargetPreset) {
+  if (!preset) return false;
+
+  const label = (preset.label ?? "").toLowerCase();
+
+  if (
+    typeof preset.minC === "number" &&
+    typeof preset.maxC === "number" &&
+    preset.minC <= 0 &&
+    preset.maxC <= 0
+  ) {
+    return true;
+  }
+
+  if (label.includes("frozen") || label.includes("freezer")) {
+    return true;
+  }
+
+  return false;
+}
+
+function normalizeTempStringForPreset(
+  raw: string,
+  preset?: TargetPreset
+): string {
+  const value = (raw ?? "").trim();
+  if (!value) return "";
+
+  if (!preset || !isFrozenPreset(preset)) return value;
+
+  // Do not fight the user mid-typing
+  if (value === "-" || value === "." || value === "-." || value === "+") {
+    return value;
+  }
+
+  const compact = value.replace(/\s+/g, "");
+
+  // 18 / +18 / 18.2 => -18 / -18 / -18.2
+  if (/^[+]?\d*\.?\d+$/.test(compact)) {
+    return `-${compact.replace(/^\+/, "")}`;
+  }
+
+  // already negative numeric
+  if (/^-\d*\.?\d+$/.test(compact)) {
+    return compact;
+  }
+
+  return value;
+}
+
+function parseTempForPreset(
+  raw: string,
+  preset?: TargetPreset
+): number | null {
+  const normalized = normalizeTempStringForPreset(raw, preset).trim();
+  if (!normalized) return null;
+
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
+function tempPlaceholderForPreset(preset?: TargetPreset) {
+  return isFrozenPreset(preset) ? "e.g. 18 = -18°C" : "e.g. 3.4";
+}
+
 /** TS-safe sort comparator (noImplicitAny) */
 type HasPosition = { position: number };
 const byPosition = (a: HasPosition, b: HasPosition) => a.position - b.position;
@@ -299,6 +365,10 @@ function CorrectiveModal({
       ? "—"
       : `${draft.temp_c}°C`;
 
+  const preset =
+    (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[draft.target_key];
+  const frozen = isFrozenPreset(preset);
+
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center p-3">
       <button
@@ -370,10 +440,18 @@ function CorrectiveModal({
               <input
                 value={recheckTemp}
                 onChange={(e) => setRecheckTemp(e.target.value)}
+                onBlur={() =>
+                  setRecheckTemp(normalizeTempStringForPreset(recheckTemp, preset))
+                }
                 className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
-                placeholder="e.g. 3.2"
+                placeholder={frozen ? "e.g. 18 = -18°C" : "e.g. 3.2"}
                 inputMode="decimal"
               />
+              {frozen && (
+                <div className="mt-1 text-[11px] text-emerald-700">
+                  Frozen item: typing 18 will save as -18°C
+                </div>
+              )}
             </div>
           )}
 
@@ -631,6 +709,12 @@ export default function TempFab() {
     setForm((f) => ({ ...f, staff_initials: operatorInitials }));
   }, [operatorInitials]);
 
+  const selectedPreset = useMemo(
+    () =>
+      (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[form.target_key],
+    [form.target_key]
+  );
+
   const canSave =
     !!form.date &&
     !!form.location &&
@@ -730,10 +814,9 @@ export default function TempFab() {
       corrective.target_key
     ];
 
-    const reTemp = correctiveRecheckEnabled ? Number(correctiveRecheckTemp) : NaN;
-
-    const recheck_temp_c =
-      correctiveRecheckEnabled && Number.isFinite(reTemp) ? reTemp : null;
+    const recheck_temp_c = correctiveRecheckEnabled
+      ? parseTempForPreset(correctiveRecheckTemp, preset)
+      : null;
 
     const recheck_status =
       recheck_temp_c != null ? inferStatus(recheck_temp_c, preset) : null;
@@ -793,15 +876,16 @@ export default function TempFab() {
       onResult: (r) => {
         setForm((f) => {
           const nextLocation = r.location?.trim() || "";
-          const isPreset = nextLocation
-            ? locations.some(
-                (loc) => loc.toLowerCase() === nextLocation.toLowerCase()
-              )
-            : false;
+          const nextPreset =
+            (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
+              f.target_key
+            ];
 
           return {
             ...f,
-            temp_c: r.temp_c ?? f.temp_c,
+            temp_c: r.temp_c
+              ? normalizeTempStringForPreset(String(r.temp_c), nextPreset)
+              : f.temp_c,
             item: r.item ?? f.item,
             location: nextLocation || f.location,
             staff_initials: operatorInitials || f.staff_initials,
@@ -1166,10 +1250,7 @@ export default function TempFab() {
           const uniqueDynamic = Array.from(new Set(fromAreas));
 
           const finalAreas: string[] = Array.from(
-            new Set([
-              ...PRESET_AREAS,
-              ...uniqueDynamic,
-            ])
+            new Set([...PRESET_AREAS, ...uniqueDynamic])
           );
 
           setLocations(finalAreas);
@@ -1296,10 +1377,12 @@ export default function TempFab() {
     if (!canSave) return;
     if (!requireOperator()) return;
 
-    const tempNum = Number.isFinite(Number(form.temp_c)) ? Number(form.temp_c) : null;
     const preset = (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
       form.target_key
     ];
+
+    const normalizedTemp = normalizeTempStringForPreset(form.temp_c, preset);
+    const tempNum = parseTempForPreset(normalizedTemp, preset);
     const status: "pass" | "fail" | null = inferStatus(tempNum, preset);
 
     const { orgId: org_id, locationId: location_id } = await getActiveContext();
@@ -1516,6 +1599,7 @@ export default function TempFab() {
 
   const showTempWarning = entriesToday !== null && entriesToday === 0;
   const showCleaningWarning = openCleaning !== null && openCleaning > 0;
+  const selectedPresetIsFrozen = isFrozenPreset(selectedPreset);
 
   /* --------- render --------- */
 
@@ -2006,7 +2090,17 @@ export default function TempFab() {
                   <select
                     value={form.target_key}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, target_key: e.target.value }))
+                      setForm((f) => ({
+                        ...f,
+                        target_key: e.target.value,
+                        temp_c: normalizeTempStringForPreset(
+                          f.temp_c,
+                          (TARGET_BY_KEY as Record<
+                            string,
+                            TargetPreset | undefined
+                          >)[e.target.value]
+                        ),
+                      }))
                     }
                     className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                   >
@@ -2027,10 +2121,27 @@ export default function TempFab() {
                     onChange={(e) =>
                       setForm((f) => ({ ...f, temp_c: e.target.value }))
                     }
+                    onBlur={() =>
+                      setForm((f) => ({
+                        ...f,
+                        temp_c: normalizeTempStringForPreset(
+                          f.temp_c,
+                          (TARGET_BY_KEY as Record<
+                            string,
+                            TargetPreset | undefined
+                          >)[f.target_key]
+                        ),
+                      }))
+                    }
                     className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 shadow-sm"
                     inputMode="decimal"
-                    placeholder="e.g. 3.4"
+                    placeholder={tempPlaceholderForPreset(selectedPreset)}
                   />
+                  {selectedPresetIsFrozen && (
+                    <div className="mt-1 text-[11px] text-emerald-700">
+                      Frozen preset: type 18 and it will save as -18°C
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

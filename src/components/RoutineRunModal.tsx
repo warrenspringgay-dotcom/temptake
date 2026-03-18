@@ -1,4 +1,3 @@
-// src/components/RoutineRunModal.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -32,6 +31,75 @@ function inferStatus(
   if (minC != null && temp < minC) return "fail";
   if (maxC != null && temp > maxC) return "fail";
   return "pass";
+}
+
+/* ---------- temp helpers ---------- */
+function isFrozenPreset(preset?: TargetPreset) {
+  if (!preset) return false;
+
+  const label = (preset.label ?? "").toLowerCase();
+
+  // Primary rule: both min and max are at or below zero
+  if (
+    typeof preset.minC === "number" &&
+    typeof preset.maxC === "number" &&
+    preset.minC <= 0 &&
+    preset.maxC <= 0
+  ) {
+    return true;
+  }
+
+  // Fallback for label-based presets
+  if (label.includes("frozen") || label.includes("freezer")) {
+    return true;
+  }
+
+  return false;
+}
+
+function normalizeTempStringForPreset(
+  raw: string,
+  preset?: TargetPreset
+): string {
+  const value = (raw ?? "").trim();
+  if (!value) return "";
+
+  if (!preset || !isFrozenPreset(preset)) return value;
+
+  // Preserve in-progress typing states so the field does not fight the user
+  if (value === "-" || value === "." || value === "-." || value === "+") {
+    return value;
+  }
+
+  // Remove spaces
+  const compact = value.replace(/\s+/g, "");
+
+  // If user typed +18, 18, 18.2 -> make it negative
+  if (/^[+]?\d*\.?\d+$/.test(compact)) {
+    return `-${compact.replace(/^\+/, "")}`;
+  }
+
+  // If already negative numeric, keep it
+  if (/^-\d*\.?\d+$/.test(compact)) {
+    return compact;
+  }
+
+  return value;
+}
+
+function parseTempForPreset(
+  raw: string,
+  preset?: TargetPreset
+): number | null {
+  const normalized = normalizeTempStringForPreset(raw, preset).trim();
+  if (!normalized) return null;
+
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
+function tempPlaceholderForPreset(preset?: TargetPreset) {
+  return isFrozenPreset(preset) ? "e.g. 18 = -18°C" : "e.g. 75.1";
 }
 
 /* ---------- matching helpers ---------- */
@@ -153,7 +221,15 @@ export default function RoutineRunModal({
           const it = items[idx];
           if (!it) return;
 
-          setTemps((t) => ({ ...t, [it.id]: r.temp_c as string }));
+          const preset =
+            (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
+              it.target_key
+            ];
+
+          setTemps((t) => ({
+            ...t,
+            [it.id]: normalizeTempStringForPreset(String(r.temp_c), preset),
+          }));
         }
       },
       onError: (msg) => {
@@ -182,6 +258,17 @@ export default function RoutineRunModal({
       return false;
     }
     return true;
+  }
+
+  function handleTempChange(itemId: string, value: string) {
+    setTemps((t) => ({ ...t, [itemId]: value }));
+  }
+
+  function handleTempBlur(itemId: string, preset?: TargetPreset) {
+    setTemps((t) => ({
+      ...t,
+      [itemId]: normalizeTempStringForPreset(t[itemId] ?? "", preset),
+    }));
   }
 
   async function handleSave(e?: React.FormEvent) {
@@ -230,11 +317,13 @@ export default function RoutineRunModal({
           const raw = (temps[it.id] ?? "").trim();
           if (!raw) return null;
 
-          const temp = Number.isFinite(Number(raw)) ? Number(raw) : null;
           const preset =
             (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
               it.target_key
             ];
+
+          const normalizedRaw = normalizeTempStringForPreset(raw, preset);
+          const temp = parseTempForPreset(normalizedRaw, preset);
           const status = inferStatus(temp, preset);
 
           // Base payload (matches your existing schema)
@@ -402,6 +491,7 @@ export default function RoutineRunModal({
                         it.target_key
                       ];
                     const isActive = it.id === activeId;
+                    const frozen = isFrozenPreset(preset);
 
                     return (
                       <tr
@@ -419,7 +509,12 @@ export default function RoutineRunModal({
                         <td className="p-2">{it.location ?? "—"}</td>
                         <td className="p-2">{it.item ?? "—"}</td>
                         <td className="p-2 text-xs text-slate-500">
-                          {preset?.label ?? it.target_key ?? "—"}
+                          <div>{preset?.label ?? it.target_key ?? "—"}</div>
+                          {frozen && (
+                            <div className="mt-1 text-[11px] text-emerald-700">
+                              Frozen: typing 18 saves as -18°C
+                            </div>
+                          )}
                         </td>
                         <td className="p-2">
                           <input
@@ -427,16 +522,17 @@ export default function RoutineRunModal({
                               inputRefs.current[it.id] = el;
                             }}
                             className={cls(
-                              "w-24 rounded-lg border bg-white px-2 py-1 shadow-sm",
+                              "w-28 rounded-lg border bg-white px-2 py-1 shadow-sm",
                               isActive
                                 ? "border-emerald-300 ring-2 ring-emerald-200"
                                 : "border-slate-300"
                             )}
                             value={temps[it.id] ?? ""}
                             onChange={(e) =>
-                              setTemps((t) => ({ ...t, [it.id]: e.target.value }))
+                              handleTempChange(it.id, e.target.value)
                             }
-                            placeholder="e.g. 75.1"
+                            onBlur={() => handleTempBlur(it.id, preset)}
+                            placeholder={tempPlaceholderForPreset(preset)}
                             inputMode="decimal"
                           />
                         </td>
@@ -455,6 +551,7 @@ export default function RoutineRunModal({
                     it.target_key
                   ];
                 const isActive = it.id === activeId;
+                const frozen = isFrozenPreset(preset);
 
                 return (
                   <div
@@ -486,6 +583,12 @@ export default function RoutineRunModal({
                       {it.location ?? "—"}
                     </div>
 
+                    {frozen && (
+                      <div className="mt-2 text-[11px] text-emerald-700">
+                        Frozen item: type 18 and it will save as -18°C
+                      </div>
+                    )}
+
                     <input
                       ref={(el) => {
                         inputRefs.current[it.id] = el;
@@ -496,11 +599,12 @@ export default function RoutineRunModal({
                           ? "border-emerald-300 ring-2 ring-emerald-200"
                           : "border-slate-300"
                       )}
-                      placeholder="Temperature"
+                      placeholder={tempPlaceholderForPreset(preset)}
                       value={temps[it.id] ?? ""}
                       onChange={(e) =>
-                        setTemps((t) => ({ ...t, [it.id]: e.target.value }))
+                        handleTempChange(it.id, e.target.value)
                       }
+                      onBlur={() => handleTempBlur(it.id, preset)}
                       inputMode="decimal"
                     />
                   </div>
