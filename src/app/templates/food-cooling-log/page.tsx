@@ -1,11 +1,42 @@
 import Image from "next/image";
 import Link from "next/link";
+import type { Metadata } from "next";
 import TemplateActions from "@/components/TemplateActions";
 
-export const metadata = {
-  title: "Food Cooling Log Sheet (Free Download) | TempTake",
+const SITE_URL = "https://temptake.com";
+const SLUG = "food-cooling-log";
+const CANONICAL = `${SITE_URL}/templates/${SLUG}`;
+
+export const metadata: Metadata = {
+  title: "Food Cooling Log Sheet (Free PDF Download) | UK Food Safety",
   description:
-    "Download a free food cooling log sheet for restaurants, takeaways and catering businesses. Record cooling times, temperatures, corrective action and staff initials in a printable format.",
+    "Download a free food cooling log sheet for restaurants, takeaways and catering businesses. Record cooling times, temperatures, pass or fail results, corrective action and staff initials in a printable UK-friendly format.",
+  alternates: { canonical: CANONICAL },
+  keywords: [
+    "food cooling log sheet",
+    "cooling temperature log sheet",
+    "food cooling record sheet",
+    "cooling log template",
+    "food cooling log PDF",
+    "cooling temperature record UK",
+    "food cooling chart",
+    "cooling log for cooked food",
+    "food cooling log sheet UK",
+  ],
+  openGraph: {
+    type: "website",
+    url: CANONICAL,
+    title: "Food Cooling Log Sheet (Free PDF Download)",
+    description:
+      "Free printable food cooling log sheet for UK food businesses. Record cooling times, temperatures, pass or fail results and corrective action.",
+    siteName: "TempTake",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Food Cooling Log Sheet (Free PDF Download)",
+    description:
+      "Free printable food cooling log sheet for UK food businesses. Record cooling times, temperatures, pass or fail results and corrective action.",
+  },
 };
 
 const rows = Array.from({ length: 12 }).map((_, i) => ({ id: i + 1 }));
@@ -15,7 +46,7 @@ export default function FoodCoolingLogPage() {
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <section className="border-b border-slate-200 bg-gradient-to-b from-slate-50 to-white">
         <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
-          <div className="max-w-3xl">
+          <div className="max-w-4xl">
             <Link
               href="/templates"
               className="mb-5 inline-flex text-sm font-medium text-emerald-700 hover:text-emerald-800"
@@ -23,24 +54,41 @@ export default function FoodCoolingLogPage() {
               ← Back to templates
             </Link>
 
-            <div className="mb-4 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700">
-              Free printable template
+            <div className="mb-4 flex flex-wrap gap-2">
+              <div className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700">
+                Free printable template
+              </div>
+              <div className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-700">
+                UK food safety
+              </div>
+              <div className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-700">
+                PDF + print
+              </div>
             </div>
 
             <h1 className="text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl">
               Food Cooling Log Sheet
             </h1>
 
-            <p className="mt-5 text-lg leading-8 text-slate-600">
-              A printable food cooling log sheet for restaurants, takeaways and
-              catering businesses. Record food cooling times, temperatures,
-              corrective action and staff initials in a simple format.
+            <p className="mt-5 max-w-3xl text-lg leading-8 text-slate-600">
+              A free food cooling log sheet for restaurants, takeaways, cafés
+              and catering businesses. Use it to record cooling times,
+              temperatures, pass or fail results, corrective action and staff
+              initials in a simple printable format.
             </p>
 
-            <TemplateActions
-              pdfHref="/downloads/food-cooling-log.pdf"
-              printHref="/templates/food-cooling-log/print"
-            />
+            <p className="mt-4 max-w-3xl text-base leading-7 text-slate-600">
+              This food cooling record sheet is useful if you need a clear way
+              to show when cooling started, when it finished, what temperatures
+              were taken, and what happened if food did not cool as expected.
+            </p>
+
+            <div className="mt-8">
+              <TemplateActions
+                pdfHref="/downloads/food-cooling-log.pdf"
+                printHref="/templates/food-cooling-log/print"
+              />
+            </div>
           </div>
         </div>
       </section>
@@ -54,7 +102,7 @@ export default function FoodCoolingLogPage() {
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 Record the start and finish of cooling checks so there is actual
-                evidence instead of hopeful storytelling.
+                evidence instead of hopeful storytelling and kitchen folklore.
               </p>
             </div>
 
@@ -66,23 +114,141 @@ export default function FoodCoolingLogPage() {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-2xl font-semibold text-slate-900">
-                Why this template matters
-              </h2>
+            <div className="space-y-6">
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-2xl font-semibold text-slate-900">
+                  Why a food cooling log matters
+                </h2>
 
-              <div className="mt-4 space-y-4 text-base leading-7 text-slate-600">
-                <p>
-                  Cooling food safely matters because the danger zone is not
-                  just a dramatic phrase people use in training. If food sits
-                  warm for too long, you have a problem.
-                </p>
+                <div className="mt-4 space-y-4 text-base leading-7 text-slate-600">
+                  <p>
+                    Cooling food safely matters because warm food left sitting
+                    too long creates a real food safety risk. “We left it out
+                    for a bit and it was probably fine” is not a control
+                    measure, no matter how confident someone sounds saying it.
+                  </p>
 
-                <p>
-                  This sheet gives staff a clear way to record when cooling
-                  started, the temperatures taken and what happened if the food
-                  did not cool as expected.
+                  <p>
+                    A proper cooling temperature log sheet gives staff a clear
+                    way to record when cooling started, the temperatures taken,
+                    whether the food passed, and what corrective action was
+                    taken if it did not cool as expected.
+                  </p>
+
+                  <p>
+                    This is useful for kitchens cooling cooked food for later
+                    use, batch cooking businesses, caterers, and any site that
+                    needs a clear record instead of relying on memory and vibes.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-2xl font-semibold text-slate-900">
+                  What to record on a food cooling log sheet
+                </h2>
+
+                <ul className="mt-4 space-y-3 text-base leading-7 text-slate-600">
+                  <li>• Date of the cooling check</li>
+                  <li>• Food item or batch name</li>
+                  <li>• Start time</li>
+                  <li>• Start temperature</li>
+                  <li>• End time</li>
+                  <li>• End temperature</li>
+                  <li>• Pass or fail result</li>
+                  <li>• Corrective action notes</li>
+                  <li>• Staff initials</li>
+                </ul>
+
+                <p className="mt-4 text-base leading-7 text-slate-600">
+                  That is enough to create a useful cooling record sheet without
+                  turning it into an overbuilt form nobody wants to complete.
                 </p>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-2xl font-semibold text-slate-900">
+                  What inspectors usually expect
+                </h2>
+
+                <div className="mt-4 space-y-4 text-base leading-7 text-slate-600">
+                  <p>
+                    Inspectors usually want to see that cooling checks are:
+                  </p>
+
+                  <ul className="space-y-2">
+                    <li>• being carried out consistently</li>
+                    <li>• recorded clearly with real times and temperatures</li>
+                    <li>• linked to actual food safety controls</li>
+                    <li>• followed up properly if cooling failed</li>
+                    <li>• believable, not back-filled fiction</li>
+                  </ul>
+
+                  <p>
+                    A food cooling log only helps if it reflects what actually
+                    happened. Blank rows, identical fake-looking entries, and no
+                    corrective action when food fails are the sort of nonsense
+                    that makes records look weak instantly.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-2xl font-semibold text-slate-900">
+                  When this template is useful
+                </h2>
+
+                <div className="mt-4 space-y-4 text-base leading-7 text-slate-600">
+                  <p>
+                    This food cooling log template is useful for:
+                  </p>
+
+                  <ul className="space-y-2">
+                    <li>• restaurants cooling cooked food for later service</li>
+                    <li>• takeaways batch-cooking and storing food safely</li>
+                    <li>• caterers preparing food ahead of time</li>
+                    <li>• businesses using chill-down processes</li>
+                    <li>• kitchens that still need a printable cooling log PDF</li>
+                  </ul>
+
+                  <p>
+                    It also works as a simple cooling temperature record sheet if
+                    you want a paper option before moving to digital records.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-2xl font-semibold text-slate-900">
+                  Related templates and guides
+                </h2>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <Link
+                    href="/templates/cooking-temperature-log"
+                    className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm font-semibold text-slate-900 hover:bg-slate-100"
+                  >
+                    Cooking temperature log sheet
+                  </Link>
+                  <Link
+                    href="/templates/delivery-temperature-log"
+                    className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm font-semibold text-slate-900 hover:bg-slate-100"
+                  >
+                    Delivery temperature log sheet
+                  </Link>
+                  <Link
+                    href="/guides/food-hygiene-temperature-logs-uk"
+                    className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm font-semibold text-slate-900 hover:bg-slate-100"
+                  >
+                    Food hygiene temperature logs guide
+                  </Link>
+                  <Link
+                    href="/pricing"
+                    className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm font-semibold text-slate-900 hover:bg-slate-100"
+                  >
+                    TempTake pricing
+                  </Link>
+                </div>
               </div>
             </div>
 
@@ -104,20 +270,44 @@ export default function FoodCoolingLogPage() {
 
               <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h2 className="text-lg font-semibold text-slate-900">
+                  Free download options
+                </h2>
+                <p className="mt-3 text-sm leading-6 text-slate-600">
+                  Download the PDF if you want a printable cooling log, or use
+                  the print version if you just need the sheet quickly without
+                  turning this into a project.
+                </p>
+
+                <div className="mt-5">
+                  <TemplateActions
+                    pdfHref="/downloads/food-cooling-log.pdf"
+                    printHref="/templates/food-cooling-log/print"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-lg font-semibold text-slate-900">
                   Ready to go digital?
                 </h2>
                 <p className="mt-3 text-sm leading-6 text-slate-600">
                   TempTake lets you record cooling checks digitally, keep
-                  corrective actions together and stop relying on paper records
-                  that disappear into the void.
+                  corrective actions together, and stop relying on paper records
+                  that disappear into the void the moment a shift gets busy.
                 </p>
 
-                <div className="mt-5">
+                <div className="mt-5 flex flex-wrap gap-2">
                   <Link
                     href="/signup"
                     className="inline-flex items-center rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
                   >
                     Start free trial
+                  </Link>
+                  <Link
+                    href="/launch"
+                    className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+                  >
+                    See TempTake
                   </Link>
                 </div>
               </div>
