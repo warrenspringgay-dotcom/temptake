@@ -118,13 +118,34 @@ export default function LaunchPage() {
     <div className="fixed inset-0 z-20 overflow-y-auto overflow-x-hidden">
       <LaunchClient tallyId={tallyId} />
 
-      <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white">
+      <main className="relative min-h-screen overflow-hidden bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white">
+        {/* Brand background */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute left-[-120px] top-24 h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl" />
+          <div className="absolute right-[-120px] top-40 h-80 w-80 rounded-full bg-cyan-500/10 blur-3xl" />
+          <div className="absolute bottom-[-120px] left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-emerald-500/10 blur-3xl" />
+
+          <div className="absolute left-10 top-24 hidden opacity-[0.04] lg:block">
+            <Image src="/logo.png" width={220} height={220} alt="" aria-hidden />
+          </div>
+          <div className="absolute bottom-28 right-10 hidden rotate-12 opacity-[0.04] lg:block">
+            <Image src="/logo.png" width={260} height={260} alt="" aria-hidden />
+          </div>
+        </div>
+
         {/* Top bar */}
-        <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 pt-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-            <Link href="/launch" className="flex items-center gap-2">
-              <Image src="/logo.png" width={44} height={44} alt="TempTake" />
-              <span className="font-semibold">TempTake</span>
+        <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-4 pt-4">
+          <div className="flex items-center gap-3 text-sm font-semibold text-slate-100">
+            <Link href="/launch" className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 shadow-lg shadow-black/20 backdrop-blur">
+                <Image src="/logo.png" width={28} height={28} alt="TempTake" />
+              </div>
+              <div className="leading-tight">
+                <div className="font-semibold text-white">TempTake</div>
+                <div className="text-[11px] font-medium text-slate-400">
+                  Food safety that gets done
+                </div>
+              </div>
             </Link>
           </div>
 
@@ -153,9 +174,21 @@ export default function LaunchPage() {
         </header>
 
         {/* HERO */}
-        <section className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pb-16 pt-10 md:flex-row md:items-center md:pb-24 md:pt-16">
+        <section className="relative z-10 mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pb-16 pt-10 md:flex-row md:items-center md:pb-24 md:pt-16">
           <div className="md:w-1/2">
-            <div className="inline-flex flex-wrap items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-emerald-200">
+            <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3 shadow-lg shadow-black/20 backdrop-blur">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/95 shadow-md">
+                <Image src="/logo.png" width={30} height={30} alt="TempTake logo" />
+              </div>
+              <div className="leading-tight">
+                <div className="text-lg font-semibold text-white">TempTake</div>
+                <div className="text-xs text-slate-400">
+                  Digital food safety records for real kitchens
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 inline-flex flex-wrap items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
               Built for UK food businesses
               <span className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
@@ -179,7 +212,7 @@ export default function LaunchPage() {
               audit trail without chasing half-filled sheets.
             </p>
 
-            <div className="mt-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-4">
+            <div className="mt-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-4 shadow-lg shadow-emerald-500/10">
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
                 Pricing starts from
               </div>
@@ -253,6 +286,24 @@ export default function LaunchPage() {
           {/* HERO SCREENSHOTS */}
           <div className="md:w-1/2">
             <div className="mx-auto max-w-2xl">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 shadow-lg shadow-black/20 backdrop-blur">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/95 shadow-sm">
+                    <Image src="/logo.png" width={24} height={24} alt="TempTake logo" />
+                  </div>
+                  <div className="leading-tight">
+                    <div className="text-sm font-semibold text-white">TempTake</div>
+                    <div className="text-[11px] text-slate-400">
+                      Live product preview
+                    </div>
+                  </div>
+                </div>
+
+                <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-200">
+                  Real screens
+                </span>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2 overflow-hidden rounded-3xl border border-white/10 bg-slate-900/70 shadow-2xl shadow-emerald-500/10">
                   <Image
@@ -289,11 +340,12 @@ export default function LaunchPage() {
         </section>
 
         {/* PRICE STRIP */}
-        <section className="border-t border-white/10 bg-slate-950/70">
+        <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
           <div className="mx-auto w-full max-w-6xl px-4 py-8">
             <div className="grid gap-4 rounded-3xl border border-emerald-500/25 bg-emerald-500/5 p-5 shadow-lg shadow-emerald-500/5 md:grid-cols-[1.1fr_1fr] md:items-center">
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
+                <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
+                  <Image src="/logo.png" width={18} height={18} alt="TempTake" />
                   Straightforward pricing
                 </div>
                 <h2 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">
@@ -330,7 +382,7 @@ export default function LaunchPage() {
         </section>
 
         {/* PROOF / OUTCOME */}
-        <section className="border-t border-white/10 bg-slate-950/70">
+        <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
           <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
             <div className="grid gap-6 md:grid-cols-2 md:items-center">
               <div>
@@ -368,7 +420,8 @@ export default function LaunchPage() {
               </div>
 
               <div className="rounded-3xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg shadow-black/30">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  <Image src="/logo.png" width={16} height={16} alt="TempTake" />
                   Audit trail preview
                 </div>
                 <div className="mt-4 space-y-2 text-sm">
@@ -390,7 +443,7 @@ export default function LaunchPage() {
         </section>
 
         {/* HOW IT WORKS */}
-        <section className="border-t border-white/10 bg-slate-950/70">
+        <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
           <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
             <div className="max-w-2xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
@@ -424,7 +477,7 @@ export default function LaunchPage() {
         </section>
 
         {/* SCREENSHOT GALLERY */}
-        <section className="border-t border-white/10 bg-slate-950/80">
+        <section className="relative z-10 border-t border-white/10 bg-slate-950/80">
           <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
             <div className="max-w-3xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
@@ -458,7 +511,11 @@ export default function LaunchPage() {
                     />
                   </div>
                   <div className="p-4">
-                    <h3 className="text-base font-semibold text-slate-50">{screen.title}</h3>
+                    <div className="inline-flex items-center gap-2 text-[11px] text-slate-500">
+                      <Image src="/logo.png" width={14} height={14} alt="TempTake" />
+                      TempTake
+                    </div>
+                    <h3 className="mt-2 text-base font-semibold text-slate-50">{screen.title}</h3>
                     <p className="mt-2 text-sm text-slate-300">{screen.description}</p>
                   </div>
                 </div>
@@ -468,7 +525,7 @@ export default function LaunchPage() {
         </section>
 
         {/* FEATURE GRID */}
-        <section className="border-t border-white/10 bg-slate-950/70">
+        <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
           <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-12 md:py-16">
             <div className="max-w-2xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
@@ -507,7 +564,7 @@ export default function LaunchPage() {
         </section>
 
         {/* GUIDES */}
-        <section id="guides" className="border-t border-white/10 bg-slate-950">
+        <section id="guides" className="relative z-10 border-t border-white/10 bg-slate-950">
           <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
             <div className="mb-6 max-w-3xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
@@ -562,7 +619,7 @@ export default function LaunchPage() {
         <FAQSection />
 
         {/* OPTIONAL CONTACT / HUMAN HELP */}
-        <section className="border-t border-white/10 bg-slate-950/80">
+        <section className="relative z-10 border-t border-white/10 bg-slate-950/80">
           <div className="mx-auto w-full max-w-6xl px-4 py-10">
             <div className="flex flex-col items-start justify-between gap-4 rounded-3xl border border-slate-800 bg-slate-900/60 p-6 shadow-lg shadow-black/30 md:flex-row md:items-center">
               <div className="max-w-2xl">
@@ -587,8 +644,18 @@ export default function LaunchPage() {
         </section>
 
         {/* FINAL CTA */}
-        <section className="border-t border-white/10 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950">
+        <section className="relative z-10 border-t border-white/10 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950">
           <div className="mx-auto w-full max-w-5xl px-4 py-16 text-center md:py-20">
+            <div className="mx-auto mb-4 flex w-fit items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 shadow-lg shadow-black/20 backdrop-blur">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/95 shadow-sm">
+                <Image src="/logo.png" width={22} height={22} alt="TempTake logo" />
+              </div>
+              <div className="text-left leading-tight">
+                <div className="text-sm font-semibold text-white">TempTake</div>
+                <div className="text-[11px] text-slate-400">Built for UK food businesses</div>
+              </div>
+            </div>
+
             <h2 className="text-3xl font-semibold text-white sm:text-4xl">
               Paper logs do not become reliable
               <span className="block text-emerald-300">just because everyone is busy.</span>
@@ -625,9 +692,19 @@ export default function LaunchPage() {
         </section>
 
         {/* FOOTER */}
-        <footer className="border-t border-white/10 bg-slate-950">
-          <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-5 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-            <div>© {new Date().getFullYear()} TempTake. All rights reserved.</div>
+        <footer className="relative z-10 border-t border-white/10 bg-slate-950">
+          <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-6 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5">
+                <Image src="/logo.png" width={22} height={22} alt="TempTake logo" />
+              </div>
+              <div className="leading-tight">
+                <div className="text-sm font-semibold text-white">TempTake</div>
+                <div className="text-[11px] text-slate-500">
+                  © {new Date().getFullYear()} · Food safety that gets done
+                </div>
+              </div>
+            </div>
 
             <div className="flex flex-wrap items-center gap-3">
               <span>Made for UK food businesses.</span>
@@ -691,7 +768,7 @@ function FAQSection() {
   ];
 
   return (
-    <section id="faq" className="border-t border-white/10 bg-slate-950/90">
+    <section id="faq" className="relative z-10 border-t border-white/10 bg-slate-950/90">
       <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
         <div className="mb-6 max-w-3xl">
           <h2 className="text-2xl font-semibold sm:text-3xl">
