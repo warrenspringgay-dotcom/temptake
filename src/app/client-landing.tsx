@@ -5,21 +5,6 @@ import Image from "next/image";
 
 import LaunchClient from "./launch/LauncgClient";
 
-/* ---------------------- DEMO SOCIAL WALL DATA (NOT “REAL”) ---------------------- */
-
-const demoNotes = [
-  { initials: "JB", message: "The pulsing FAB saves so much time 🔥" },
-  { initials: "SC", message: "Finally… something my team actually wants to use" },
-  { initials: "MK", message: "Paper logs are on the char-grill" },
-  { initials: "TR", message: "Take my money already" },
-  { initials: "DW", message: "Saved me 90 mins today. 90!" },
-  { initials: "RH", message: "Just beat my CDP to top spot on the leaderboard" },
-  { initials: "LF", message: "EHO walked in, pressed one button, walked out happy" },
-  { initials: "NP", message: "I can see how my kitchen is running from home" },
-];
-
-/* ---------------------- PUBLIC GUIDES (LAUNCH PAGE) ---------------------- */
-
 const GUIDES = [
   {
     title: "Temperature logs (UK)",
@@ -58,6 +43,59 @@ const GUIDES = [
   },
 ];
 
+type Screen = {
+  src: string;
+  alt: string;
+  title: string;
+  description: string;
+  orientation: "landscape" | "portrait";
+};
+
+const SCREENSHOTS: Screen[] = [
+  {
+    src: "/dashboard.jpg",
+    alt: "TempTake dashboard screen",
+    title: "Dashboard overview",
+    description: "See alerts, completion, checks and site activity in one place.",
+    orientation: "landscape",
+  },
+  {
+    src: "/wall.jpg",
+    alt: "TempTake dashboard wall screen",
+    title: "Team visibility",
+    description: "Keep site communication and task visibility front and centre.",
+    orientation: "portrait",
+  },
+  {
+    src: "/training.jpg",
+    alt: "TempTake training records screen",
+    title: "Training records",
+    description: "Track certificates, progress and expiry in one place.",
+    orientation: "portrait",
+  },
+  {
+    src: "/temp_log.jpg",
+    alt: "TempTake temperature logging screen",
+    title: "Temperature logging",
+    description: "Fast checks with clear pass and fail records.",
+    orientation: "portrait",
+  },
+  {
+    src: "/cleaning_rota.jpg",
+    alt: "TempTake cleaning rota screen",
+    title: "Cleaning rota",
+    description: "Daily tasks kept visible and easy to complete.",
+    orientation: "portrait",
+  },
+  {
+    src: "/allergens.jpg",
+    alt: "TempTake allergen matrix screen",
+    title: "Allergen controls",
+    description: "Keep allergen information clear and current.",
+    orientation: "portrait",
+  },
+];
+
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -65,8 +103,6 @@ function cls(...parts: Array<string | false | undefined>) {
 export default function LaunchPage() {
   const tallyId = "obb4vX";
 
-  // Server renders the page fast + crawlable.
-  // Client only handles sticky CTA + Tally popup open.
   const tallyAttrs = {
     "data-tally-open": tallyId,
     "data-tally-layout": "modal",
@@ -74,6 +110,9 @@ export default function LaunchPage() {
     "data-tally-emoji-animation": "wave",
     "data-tally-auto-close": "0",
   } as const;
+
+  const heroPrimary = SCREENSHOTS[0];
+  const heroSecondary = [SCREENSHOTS[3], SCREENSHOTS[4]];
 
   return (
     <div className="fixed inset-0 z-20 overflow-y-auto overflow-x-hidden">
@@ -113,173 +152,218 @@ export default function LaunchPage() {
           </div>
         </header>
 
-        {/* ----------------------- HERO SECTION ----------------------- */}
+        {/* HERO */}
         <section className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pb-16 pt-10 md:flex-row md:items-center md:pb-24 md:pt-16">
           <div className="md:w-1/2">
             <div className="inline-flex flex-wrap items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Early access for UK kitchens
+              Built for UK food businesses
               <span className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
-                🎙 Voice entry
+                Free trial available
               </span>
             </div>
 
             <h1 className="mt-5 text-3xl font-semibold leading-tight sm:text-4xl lg:text-5xl">
-              Food safety checks
-              <span className="block text-emerald-300">logged properly.</span>
+              Food safety records
+              <span className="block text-emerald-300">
+                your team will actually keep up to date.
+              </span>
             </h1>
 
             <p className="mt-4 max-w-xl text-sm text-slate-200 sm:text-base">
               TempTake replaces paper logs with fast, inspection-ready records for{" "}
-              <span className="font-semibold">temperatures, cleaning, allergens and training</span>.
-              Log checks mid-service with{" "}
-              <span className="font-semibold text-emerald-200">voice entry</span> when hands are full.
+              <span className="font-semibold">
+                temperatures, cleaning, allergens and training
+              </span>
+              . Log checks during service, track what is missing, and keep a proper
+              audit trail without chasing half-filled sheets.
             </p>
 
-            {/* CTA hierarchy: ONE primary, ONE secondary */}
+            <div className="mt-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-4">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
+                Pricing starts from
+              </div>
+              <div className="mt-1 flex items-end gap-2">
+                <span className="text-4xl font-semibold leading-none text-white sm:text-5xl">
+                  £9.99
+                </span>
+                <span className="pb-1 text-sm text-emerald-200">/ month</span>
+              </div>
+              <p className="mt-2 text-sm text-slate-300">
+                1 site. Unlimited staff logins. Unlimited devices. No per-log nonsense.
+              </p>
+            </div>
+
             <div className="mt-6 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                {...tallyAttrs}
+              <Link
+                href="/signup"
                 className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 transition hover:brightness-105"
               >
-                Join early access
-              </button>
+                Start free trial
+              </Link>
+
+              <Link
+                href="/pricing"
+                className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
+              >
+                View pricing
+              </Link>
 
               <Link
                 href="/app"
-                className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
+                className="inline-flex items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20"
               >
                 View demo
               </Link>
-
-              <Link
-                href="#faq"
-                className="inline-flex items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20"
-              >
-                What EHOs expect
-              </Link>
             </div>
 
-            {/* Outcome-first facts */}
+            <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] text-slate-300">
+              <span>✓ Mobile-friendly</span>
+              <span>✓ Multi-site ready</span>
+              <span>✓ Exportable records</span>
+              <span>✓ UK-focused workflows</span>
+            </div>
+
             <dl className="mt-8 grid grid-cols-2 gap-4 text-xs text-slate-200 sm:text-sm md:max-w-md">
               <div>
                 <dt className="text-slate-400">Built for</dt>
                 <dd className="mt-0.5 font-semibold">
-                  Restaurants, pubs, bistros & takeaways
-                </dd>
-              </div>
-              <div>
-                <dt className="text-slate-400">Core modules</dt>
-                <dd className="mt-0.5 font-semibold">
-                  Temps • Cleaning • Allergens • Training
+                  Restaurants, takeaways, pubs & cafés
                 </dd>
               </div>
               <div>
                 <dt className="text-slate-400">Audit trail</dt>
-                <dd className="mt-0.5 font-semibold">Initials • timestamps • exports</dd>
+                <dd className="mt-0.5 font-semibold">
+                  Initials • timestamps • corrective actions
+                </dd>
               </div>
               <div>
-                <dt className="text-slate-400">Availability</dt>
-                <dd className="mt-0.5 font-semibold">Beta kitchens now • iOS next</dd>
+                <dt className="text-slate-400">Manager visibility</dt>
+                <dd className="mt-0.5 font-semibold">
+                  See what is done, missed or overdue
+                </dd>
+              </div>
+              <div>
+                <dt className="text-slate-400">Designed for</dt>
+                <dd className="mt-0.5 font-semibold">Mobile use during service</dd>
               </div>
             </dl>
           </div>
 
-          {/* ----------------------- PHONE PREVIEW ----------------------- */}
+          {/* HERO SCREENSHOTS */}
           <div className="md:w-1/2">
-            <div className="mx-auto max-w-md rounded-[2rem] border border-white/15 bg-slate-900/70 p-4 shadow-2xl shadow-emerald-500/20 backdrop-blur">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-2xl bg-emerald-500 text-xs font-bold text-slate-950">
-                    TT
+            <div className="mx-auto max-w-2xl">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2 overflow-hidden rounded-3xl border border-white/10 bg-slate-900/70 shadow-2xl shadow-emerald-500/10">
+                  <Image
+                    src={heroPrimary.src}
+                    alt={heroPrimary.alt}
+                    width={1600}
+                    height={900}
+                    className="h-[230px] w-full object-cover object-top sm:h-[280px] lg:h-[320px]"
+                    priority
+                  />
+                </div>
+
+                {heroSecondary.map((screen) => (
+                  <div
+                    key={screen.src}
+                    className="overflow-hidden rounded-3xl border border-white/10 bg-slate-900/70 shadow-xl shadow-black/30"
+                  >
+                    <Image
+                      src={screen.src}
+                      alt={screen.alt}
+                      width={900}
+                      height={1600}
+                      className="h-[260px] w-full object-cover object-top sm:h-[300px] lg:h-[340px]"
+                    />
                   </div>
-                  <div>
-                    <div className="text-xs font-semibold text-slate-50">TempTake</div>
-                    <div className="text-[11px] text-slate-400">Demo kitchen · Today</div>
-                  </div>
-                </div>
-                <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-[11px] font-medium text-emerald-300">
-                  Inspection-ready
-                </span>
+                ))}
               </div>
 
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                <PreviewPill title="Temps today" value="12" glow />
-                <PreviewPill title="Cleaning" value="8/10" />
-                <PreviewPill title="Allergen review" value="Due in 7d" amber />
-              </div>
-
-              <div className="mt-4 space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                    Today’s checks
-                  </span>
-                  <span className="text-[11px] text-slate-500">Tap to log</span>
-                </div>
-
-                <div className="space-y-1.5">
-                  <MockLogRow label="Walk-in fridge" temp="3.4°C" status="pass" time="08:15" />
-                  <MockLogRow label="Chicken curry (hot hold)" temp="62.0°C" status="pass" time="12:05" />
-                  <MockLogRow label="Fish prep bench" temp="11.8°C" status="fail" time="10:32" />
-                </div>
-              </div>
-
-              <div className="mt-5 grid grid-cols-2 gap-2">
-                <button className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105">
-                  + Quick temp log
-                </button>
-                <button className="rounded-xl border border-slate-600 bg-slate-900/80 px-3 py-2 text-xs font-medium text-slate-100 hover:bg-slate-800/80">
-                  🎙 Voice log
-                </button>
-                <button className="col-span-2 rounded-xl border border-slate-600 bg-slate-900/80 px-3 py-2 text-xs font-medium text-slate-100 hover:bg-slate-800/80">
-                  Open cleaning rota
-                </button>
-              </div>
-
-              <div className="mt-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">
-                Voice entry: “Walk-in fridge 3.4 degrees, initials WS” → logged with timestamp.
+              <div className="mt-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-[12px] text-emerald-200">
+                Real screens from the product, not made-up marketing wallpaper.
               </div>
             </div>
           </div>
         </section>
 
-        {/* ----------------------- TRUST / PROOF SECTION ----------------------- */}
+        {/* PRICE STRIP */}
+        <section className="border-t border-white/10 bg-slate-950/70">
+          <div className="mx-auto w-full max-w-6xl px-4 py-8">
+            <div className="grid gap-4 rounded-3xl border border-emerald-500/25 bg-emerald-500/5 p-5 shadow-lg shadow-emerald-500/5 md:grid-cols-[1.1fr_1fr] md:items-center">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
+                  Straightforward pricing
+                </div>
+                <h2 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">
+                  From just <span className="text-emerald-300">£9.99/month</span>
+                </h2>
+                <p className="mt-2 max-w-2xl text-sm text-slate-300 sm:text-base">
+                  1 site gets full core access. Unlimited staff logins. Unlimited devices.
+                  Scale up by site count, not by being charged for every little thing.
+                </p>
+              </div>
+
+              <div className="grid gap-2 text-sm text-slate-100 sm:grid-cols-2">
+                <div className="rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-3">
+                  <div className="text-slate-400">1 site</div>
+                  <div className="mt-1 text-2xl font-semibold text-emerald-300">£9.99</div>
+                </div>
+                <div className="rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-3">
+                  <div className="text-slate-400">2–3 sites</div>
+                  <div className="mt-1 text-2xl font-semibold text-slate-50">£19.99</div>
+                </div>
+                <div className="rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-3">
+                  <div className="text-slate-400">4–5 sites</div>
+                  <div className="mt-1 text-2xl font-semibold text-slate-50">£29.99</div>
+                </div>
+                <div className="rounded-2xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-3">
+                  <div className="text-emerald-200">6+ sites</div>
+                  <div className="mt-1 text-base font-semibold text-emerald-100">
+                    Custom pricing
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* PROOF / OUTCOME */}
         <section className="border-t border-white/10 bg-slate-950/70">
           <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
             <div className="grid gap-6 md:grid-cols-2 md:items-center">
               <div>
                 <h2 className="text-2xl font-semibold sm:text-3xl">
                   What your EHO cares about
-                  <span className="text-emerald-300"> is what TempTake shows.</span>
+                  <span className="text-emerald-300"> is what TempTake helps you show.</span>
                 </h2>
                 <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                  Clear logs, consistent checks, proof of corrective action, and a system your team
-                  actually follows. Not a binder of “we’ll fill it in later”.
+                  Clear logs. Consistent checks. Proof of corrective action. Visibility for
+                  managers. Not a folder full of paperwork nobody kept up properly.
                 </p>
 
                 <ul className="mt-4 space-y-2 text-sm text-slate-200">
-                  <li>• Initials + timestamps on every record</li>
-                  <li>• Failed temps trigger corrective actions (auditable)</li>
-                  <li>• Managers see what’s missing before inspection day</li>
-                  <li>• Exportable records when you need them</li>
+                  <li>• Initials and timestamps on every record</li>
+                  <li>• Failed temps recorded with corrective action</li>
+                  <li>• Cleaning tasks visible by day and location</li>
+                  <li>• Training expiry easier to stay ahead of</li>
                 </ul>
 
                 <div className="mt-6 flex flex-wrap items-center gap-3">
+                  <Link
+                    href="/signup"
+                    className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
+                  >
+                    Start free trial
+                  </Link>
+
                   <Link
                     href="/app"
                     className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
                   >
                     View demo
                   </Link>
-
-                  <button
-                    type="button"
-                    {...tallyAttrs}
-                    className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
-                  >
-                    Join early access
-                  </button>
                 </div>
               </div>
 
@@ -297,7 +381,7 @@ export default function LaunchPage() {
                     </div>
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    This is the “show me your system” moment EHOs love.
+                    When someone asks how your system works, you can actually show it.
                   </div>
                 </div>
               </div>
@@ -305,7 +389,85 @@ export default function LaunchPage() {
           </div>
         </section>
 
-        {/* ----------------------- FEATURE GRID ----------------------- */}
+        {/* HOW IT WORKS */}
+        <section className="border-t border-white/10 bg-slate-950/70">
+          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
+            <div className="max-w-2xl">
+              <h2 className="text-2xl font-semibold sm:text-3xl">
+                Simple for staff.
+                <span className="text-emerald-300"> Useful for managers.</span>
+              </h2>
+              <p className="mt-3 text-sm text-slate-300 sm:text-base">
+                TempTake is built around what actually happens in kitchens: quick checks, busy
+                shifts, missed paperwork, and managers needing visibility without chasing everyone.
+              </p>
+            </div>
+
+            <div className="mt-8 grid gap-4 md:grid-cols-3">
+              <StepCard
+                number="01"
+                title="Set up your locations and checks"
+                description="Create your routines, cleaning tasks, allergen controls, and training records around how your business already works."
+              />
+              <StepCard
+                number="02"
+                title="Staff log checks on mobile"
+                description="Temperatures, cleaning, and daily records can be completed quickly during service instead of being left for later."
+              />
+              <StepCard
+                number="03"
+                title="Managers see what needs attention"
+                description="Spot misses, review failures, and show proper records when inspection time comes around."
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* SCREENSHOT GALLERY */}
+        <section className="border-t border-white/10 bg-slate-950/80">
+          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
+            <div className="max-w-3xl">
+              <h2 className="text-2xl font-semibold sm:text-3xl">
+                What the product actually looks like.
+                <span className="text-emerald-300"> Imagine that.</span>
+              </h2>
+              <p className="mt-3 text-sm text-slate-300 sm:text-base">
+                Real screens from TempTake showing temperature logs, cleaning workflows, allergen
+                controls, training records, and site visibility.
+              </p>
+            </div>
+
+            <div className="mt-8 grid auto-rows-[1fr] gap-5 md:grid-cols-2 xl:grid-cols-3">
+              {SCREENSHOTS.map((screen) => (
+                <div
+                  key={screen.src}
+                  className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/70 shadow-lg shadow-black/30"
+                >
+                  <div className="overflow-hidden border-b border-slate-800">
+                    <Image
+                      src={screen.src}
+                      alt={screen.alt}
+                      width={screen.orientation === "landscape" ? 1600 : 900}
+                      height={screen.orientation === "landscape" ? 900 : 1600}
+                      className={cls(
+                        "w-full object-cover",
+                        screen.orientation === "landscape"
+                          ? "h-[220px] object-top"
+                          : "h-[520px] object-top"
+                      )}
+                    />
+                  </div>
+                  <div className="p-4">
+                    <h3 className="text-base font-semibold text-slate-50">{screen.title}</h3>
+                    <p className="mt-2 text-sm text-slate-300">{screen.description}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* FEATURE GRID */}
         <section className="border-t border-white/10 bg-slate-950/70">
           <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-12 md:py-16">
             <div className="max-w-2xl">
@@ -314,8 +476,8 @@ export default function LaunchPage() {
                 <span className="text-emerald-300"> without clipboard chaos.</span>
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                Daily checks stay simple and fast. No more half-filled sheets, missing initials,
-                or “we’ll do it later” turning into “we never did it”.
+                Daily checks stay simple and fast. No more missing initials, unreadable sheets, or
+                “we’ll do it later” becoming “we never did it”.
               </p>
             </div>
 
@@ -328,32 +490,33 @@ export default function LaunchPage() {
               <FeatureCard
                 title="Cleaning rota"
                 pill="Front & back of house"
-                description="Daily/weekly/monthly tasks on mobile. Swipe to complete, see what’s open."
+                description="Daily, weekly and monthly tasks on mobile. See what is done and what is still open."
               />
               <FeatureCard
                 title="Allergen & training"
                 pill="Matrix & certificates"
-                description="Keep allergen info current and stop training quietly expiring."
+                description="Keep allergen information current and stop staff training quietly expiring."
               />
               <FeatureCard
                 title="Voice entry"
-                pill="Hands busy? No problem"
-                description="Speak checks during service. Auditable, timestamped, and fast."
+                pill="Built for busy shifts"
+                description="Speak checks during service when hands are full and speed matters."
               />
             </div>
           </div>
         </section>
 
-        {/* ----------------------- GUIDES SECTION ----------------------- */}
+        {/* GUIDES */}
         <section id="guides" className="border-t border-white/10 bg-slate-950">
           <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
             <div className="mb-6 max-w-3xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
-                Practical guides you can share with the team.
+                Practical guides your team can actually use.
                 <span className="text-emerald-300"> No fluff.</span>
               </h2>
               <p className="mt-2 text-sm text-slate-300 sm:text-base">
-                Useful even before you sign up. Built around UK expectations and real kitchen workflows.
+                Useful whether you use TempTake yet or not. Built around UK expectations and real
+                kitchen workflows.
               </p>
             </div>
 
@@ -380,13 +543,12 @@ export default function LaunchPage() {
             </div>
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                {...tallyAttrs}
+              <Link
+                href="/signup"
                 className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
               >
-                Join early access
-              </button>
+                Start free trial
+              </Link>
               <Link
                 href="/pricing"
                 className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
@@ -397,13 +559,72 @@ export default function LaunchPage() {
           </div>
         </section>
 
-        {/* ----------------------- FAQ SECTION ----------------------- */}
         <FAQSection />
 
-        {/* ----------------------- DEMO SOCIAL WALL ----------------------- */}
-        <StagedWall notes={demoNotes} />
+        {/* OPTIONAL CONTACT / HUMAN HELP */}
+        <section className="border-t border-white/10 bg-slate-950/80">
+          <div className="mx-auto w-full max-w-6xl px-4 py-10">
+            <div className="flex flex-col items-start justify-between gap-4 rounded-3xl border border-slate-800 bg-slate-900/60 p-6 shadow-lg shadow-black/30 md:flex-row md:items-center">
+              <div className="max-w-2xl">
+                <h2 className="text-xl font-semibold text-white sm:text-2xl">
+                  Prefer a quick walkthrough first?
+                </h2>
+                <p className="mt-2 text-sm text-slate-300">
+                  If you want to see how TempTake would work in your kitchen before starting, book a
+                  quick intro and we’ll show you the core workflow.
+                </p>
+              </div>
 
-        {/* ----------------------- FOOTER ----------------------- */}
+              <button
+                type="button"
+                {...tallyAttrs}
+                className="inline-flex items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-5 py-2.5 text-sm font-medium text-emerald-200 hover:bg-emerald-500/20"
+              >
+                Book a walkthrough
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* FINAL CTA */}
+        <section className="border-t border-white/10 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950">
+          <div className="mx-auto w-full max-w-5xl px-4 py-16 text-center md:py-20">
+            <h2 className="text-3xl font-semibold text-white sm:text-4xl">
+              Paper logs do not become reliable
+              <span className="block text-emerald-300">just because everyone is busy.</span>
+            </h2>
+            <p className="mx-auto mt-4 max-w-2xl text-sm text-slate-300 sm:text-base">
+              TempTake is built to make food safety records easier to complete, easier to review,
+              and easier to show when someone asks.
+            </p>
+
+            <div className="mt-5 text-sm text-slate-300">
+              Plans from <span className="font-semibold text-emerald-300">£9.99/month</span>.
+            </div>
+
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+              <Link
+                href="/signup"
+                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
+              >
+                Start free trial
+              </Link>
+
+              <Link
+                href="/pricing"
+                className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
+              >
+                View pricing
+              </Link>
+            </div>
+
+            <p className="mt-4 text-[12px] text-slate-500">
+              Start now, or book a walkthrough if you want to see it first.
+            </p>
+          </div>
+        </section>
+
+        {/* FOOTER */}
         <footer className="border-t border-white/10 bg-slate-950">
           <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-5 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
             <div>© {new Date().getFullYear()} TempTake. All rights reserved.</div>
@@ -415,13 +636,9 @@ export default function LaunchPage() {
                 Guides
               </a>
 
-              <button
-                type="button"
-                {...tallyAttrs}
-                className="text-slate-300 hover:text-emerald-300"
-              >
-                Join early access
-              </button>
+              <Link href="/signup" className="text-slate-300 hover:text-emerald-300">
+                Free trial
+              </Link>
 
               <span className="hidden sm:inline text-slate-700">|</span>
 
@@ -445,33 +662,31 @@ export default function LaunchPage() {
   );
 }
 
-/* ----------------------- FAQ SECTION ----------------------- */
-
 function FAQSection() {
   const faqs = [
     {
       q: "Do I still need Safer Food Better Business (SFBB)?",
-      a: "SFBB is still the recognised system in many UK businesses. TempTake helps you run the daily checks and keep records in a way that aligns with SFBB expectations, but it doesn’t replace your legal responsibilities.",
+      a: "SFBB is still the recognised system in many UK businesses. TempTake helps you run daily checks and keep records in a way that aligns with SFBB expectations, but it does not remove your legal responsibilities.",
     },
     {
       q: "What does an EHO expect to see during an inspection?",
-      a: "Consistent records (initials + timestamps), checks done at sensible intervals, evidence of corrective action when something fails, and a system your staff actually follow.",
+      a: "Consistent records, initials and timestamps, sensible check frequency, evidence of corrective action where something fails, and a system staff actually follow in practice.",
     },
     {
       q: "What happens if a temperature fails?",
-      a: "TempTake flags it and you record a corrective action (and optionally a re-check temp). That creates an audit trail instead of a crossed-out number on paper.",
+      a: "TempTake flags it and lets you record a corrective action, with an optional re-check temperature. That gives you a cleaner audit trail than a crossed-out number on paper.",
     },
     {
       q: "Can I export logs if I need to show them?",
-      a: "Yes. The whole point is that you can show inspection-ready records quickly without hunting through binders.",
+      a: "Yes. The point is to make records easier to review and easier to produce when needed.",
     },
     {
       q: "Can staff log checks without a manager?",
-      a: "Yes. Staff can log temps/cleaning with initials. Managers get visibility of what’s missing and what needs attention.",
+      a: "Yes. Staff can log temperatures and cleaning with initials, while managers can see what is missing and what needs attention.",
     },
     {
       q: "Does it work for multi-site groups?",
-      a: "Yes. Pricing is banded by location count and the app is designed to scale from one site to multiple.",
+      a: "Yes. TempTake is designed to work for single-site operators and businesses managing multiple locations.",
     },
   ];
 
@@ -484,7 +699,8 @@ function FAQSection() {
             <span className="text-emerald-300"> Not marketing fluff.</span>
           </h2>
           <p className="mt-2 text-sm text-slate-300 sm:text-base">
-            Clear answers to the stuff that matters when you’re trying to stay compliant and keep service moving.
+            Straight answers to the stuff that matters when you are trying to stay compliant and
+            keep service moving.
           </p>
         </div>
 
@@ -509,113 +725,6 @@ function FAQSection() {
   );
 }
 
-/* ----------------------- DEMO SOCIAL WALL ----------------------- */
-
-function StagedWall({ notes }: { notes: Array<{ initials: string; message: string }> }) {
-  return (
-    <section className="border-t border-white/10 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 py-24">
-      <div className="mx-auto mb-14 max-w-5xl px-4 text-center">
-        <h2 className="mb-4 text-4xl font-extrabold text-white md:text-6xl">
-          Demo reactions wall
-        </h2>
-        <p className="text-lg text-slate-300 md:text-xl">
-          Example only (placeholder quotes until beta kitchens give real ones).
-        </p>
-      </div>
-
-      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-4 md:grid-cols-2 lg:grid-cols-3">
-        {notes.map((note, i) => (
-          <div
-            key={i}
-            className="relative rounded-3xl border border-emerald-400/60 bg-slate-950/80 p-8 shadow-[0_0_40px_rgba(34,197,94,0.45)] transition-all duration-300 hover:-rotate-1 hover:scale-105 md:p-9"
-            style={{ transform: `rotate(${Math.sin(i * 0.7) * 4}deg)` }}
-          >
-            <div className="mb-6 flex items-center justify-between">
-              <div className="text-4xl font-black text-emerald-300">{note.initials}</div>
-              <span className="rounded-full border border-emerald-400/70 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
-                Demo quote
-              </span>
-            </div>
-            <p className="whitespace-pre-wrap text-xl leading-relaxed text-slate-100">
-              “{note.message}”
-            </p>
-
-            <div className="pointer-events-none absolute -inset-px rounded-3xl border border-emerald-400/20 blur-[2px]" />
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-16 text-center">
-        <p className="text-xl font-semibold text-emerald-200 md:text-2xl">
-          Join the beta kitchens.
-        </p>
-      </div>
-    </section>
-  );
-}
-
-/* ----------------------- SMALL PRESENTATIONAL COMPONENTS ----------------------- */
-
-function PreviewPill({
-  title,
-  value,
-  glow,
-  amber,
-}: {
-  title: string;
-  value: string;
-  glow?: boolean;
-  amber?: boolean;
-}) {
-  return (
-    <div
-      className={`rounded-xl border px-3 py-2 ${
-        glow
-          ? "border-emerald-500/60 bg-emerald-500/10 shadow-[0_0_20px_rgba(16,185,129,0.5)]"
-          : amber
-          ? "border-amber-400/60 bg-amber-400/10"
-          : "border-slate-700 bg-slate-800/70"
-      }`}
-    >
-      <div className="text-[10px] uppercase tracking-wide text-slate-400">{title}</div>
-      <div className="mt-1 text-lg font-semibold text-slate-50">{value}</div>
-    </div>
-  );
-}
-
-function MockLogRow({
-  label,
-  temp,
-  status,
-  time,
-}: {
-  label: string;
-  temp: string;
-  status: "pass" | "fail";
-  time: string;
-}) {
-  const ok = status === "pass";
-  return (
-    <div className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2">
-      <div>
-        <div className="text-[12px] font-medium text-slate-50">{label}</div>
-        <div className="mt-0.5 text-[11px] text-slate-400">Logged at {time}</div>
-      </div>
-      <div className="text-right">
-        <div className="text-[13px] font-semibold text-slate-50">{temp}</div>
-        <span
-          className={
-            "mt-0.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium " +
-            (ok ? "bg-emerald-500/15 text-emerald-300" : "bg-red-500/20 text-red-200")
-          }
-        >
-          {ok ? "Pass" : "Check"}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 function FeatureCard({
   title,
   description,
@@ -632,6 +741,26 @@ function FeatureCard({
       </div>
       <h3 className="mt-3 text-base font-semibold text-slate-50">{title}</h3>
       <p className="mt-2 text-xs text-slate-300 sm:text-sm">{description}</p>
+    </div>
+  );
+}
+
+function StepCard({
+  number,
+  title,
+  description,
+}: {
+  number: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-black/30">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-300">
+        {number}
+      </div>
+      <h3 className="mt-3 text-base font-semibold text-slate-50">{title}</h3>
+      <p className="mt-2 text-sm text-slate-300">{description}</p>
     </div>
   );
 }
