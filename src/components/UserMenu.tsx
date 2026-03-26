@@ -22,13 +22,33 @@ function itemCls(disabled?: boolean) {
 
 function isIOS() {
   if (typeof window === "undefined") return false;
+
   const ua = window.navigator.userAgent || "";
-  return /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream;
+  const platform = window.navigator.platform || "";
+
+  return (
+    /iPad|iPhone|iPod/.test(ua) ||
+    (platform === "MacIntel" && window.navigator.maxTouchPoints > 1)
+  );
+}
+
+function isSafariBrowser() {
+  if (typeof window === "undefined") return false;
+
+  const ua = window.navigator.userAgent || "";
+
+  return (
+    /Safari/i.test(ua) &&
+    !/CriOS/i.test(ua) &&
+    !/FxiOS/i.test(ua) &&
+    !/EdgiOS/i.test(ua) &&
+    !/OPiOS/i.test(ua)
+  );
 }
 
 function isStandalone() {
   if (typeof window === "undefined") return false;
-  const iosStandalone = (window.navigator as any).standalone === true;
+  const iosStandalone = (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
   const displayModeStandalone =
     window.matchMedia &&
     window.matchMedia("(display-mode: standalone)").matches;
@@ -53,6 +73,7 @@ export default function UserMenu() {
   const [canInstall, setCanInstall] = useState(false);
   const [standalone, setStandalone] = useState(false);
   const [ios, setIos] = useState(false);
+  const [safari, setSafari] = useState(false);
   const [showIosInstallHelp, setShowIosInstallHelp] = useState(false);
 
   useEffect(() => setOpen(false), [pathname]);
@@ -84,6 +105,7 @@ export default function UserMenu() {
     if (typeof window === "undefined") return;
 
     setIos(isIOS());
+    setSafari(isSafariBrowser());
     setStandalone(isStandalone());
 
     function handler(e: Event) {
@@ -93,7 +115,15 @@ export default function UserMenu() {
       setCanInstall(true);
     }
 
+    function onInstalled() {
+      setStandalone(true);
+      setDeferredPrompt(null);
+      setCanInstall(false);
+      setShowIosInstallHelp(false);
+    }
+
     window.addEventListener("beforeinstallprompt", handler);
+    window.addEventListener("appinstalled", onInstalled);
 
     const mm = window.matchMedia?.("(display-mode: standalone)");
     const onChange = () => setStandalone(isStandalone());
@@ -101,6 +131,7 @@ export default function UserMenu() {
 
     return () => {
       window.removeEventListener("beforeinstallprompt", handler);
+      window.removeEventListener("appinstalled", onInstalled);
       mm?.removeEventListener?.("change", onChange);
     };
   }, []);
@@ -123,11 +154,6 @@ export default function UserMenu() {
       return;
     }
 
-    if (ios && !deferredPrompt) {
-      setShowIosInstallHelp(true);
-      return;
-    }
-
     if (deferredPrompt) {
       try {
         await deferredPrompt.prompt();
@@ -141,6 +167,11 @@ export default function UserMenu() {
       } catch {
         router.push("/dashboard");
       }
+      return;
+    }
+
+    if (ios) {
+      setShowIosInstallHelp(true);
       return;
     }
 
@@ -220,9 +251,7 @@ export default function UserMenu() {
                 Templates
               </Link>
 
-              <Link href="/feedback" className={itemCls()} role="menuitem">
-                Feedback
-              </Link>
+          
 
               <Link href="/guides" className={itemCls()} role="menuitem">
                 Guides
@@ -243,11 +272,19 @@ export default function UserMenu() {
                     : canInstall
                     ? "Install the app"
                     : ios
-                    ? "Install via Add to Home Screen"
+                    ? safari
+                      ? "Install via Add to Home Screen"
+                      : "Open in Safari to install"
                     : "Get the app"
                 }
               >
-                {standalone ? "App installed" : canInstall ? "Install app" : "Get the app"}
+                {standalone
+                  ? "App installed"
+                  : canInstall
+                  ? "Install app"
+                  : ios
+                  ? "Install app"
+                  : "Get the app"}
               </button>
 
               <div className="my-2 border-t" />
@@ -277,12 +314,22 @@ export default function UserMenu() {
             <div className="text-lg font-semibold text-gray-900">
               Install TempTake
             </div>
-            <div className="mt-3 space-y-2 text-sm text-gray-600">
-              <p>On iPhone or iPad:</p>
-              <p>1. Open TempTake in Safari</p>
-              <p>2. Tap the Share button</p>
-              <p>3. Tap “Add to Home Screen”</p>
-            </div>
+
+            {safari ? (
+              <div className="mt-3 space-y-2 text-sm text-gray-600">
+                <p>On iPhone or iPad:</p>
+                <p>1. Tap the Share button in Safari</p>
+                <p>2. Scroll down and tap “Add to Home Screen”</p>
+                <p>3. Tap “Add”</p>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2 text-sm text-gray-600">
+                <p>On Apple devices, TempTake needs to be installed from Safari.</p>
+                <p>1. Open this page in Safari</p>
+                <p>2. Tap the Share button</p>
+                <p>3. Tap “Add to Home Screen”</p>
+              </div>
+            )}
 
             <div className="mt-5 flex justify-end gap-2">
               <button

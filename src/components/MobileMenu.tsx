@@ -63,13 +63,33 @@ function isActive(pathname: string, href: string) {
 
 function isIOS() {
   if (typeof window === "undefined") return false;
+
   const ua = window.navigator.userAgent || "";
-  return /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream;
+  const platform = window.navigator.platform || "";
+
+  return (
+    /iPad|iPhone|iPod/.test(ua) ||
+    (platform === "MacIntel" && window.navigator.maxTouchPoints > 1)
+  );
+}
+
+function isSafariBrowser() {
+  if (typeof window === "undefined") return false;
+
+  const ua = window.navigator.userAgent || "";
+
+  return (
+    /Safari/i.test(ua) &&
+    !/CriOS/i.test(ua) &&
+    !/FxiOS/i.test(ua) &&
+    !/EdgiOS/i.test(ua) &&
+    !/OPiOS/i.test(ua)
+  );
 }
 
 function isStandalone() {
   if (typeof window === "undefined") return false;
-  const iosStandalone = (window.navigator as any).standalone === true;
+  const iosStandalone = (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
   const displayModeStandalone =
     window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
   return iosStandalone || displayModeStandalone;
@@ -101,7 +121,7 @@ export default function MobileMenu() {
     pathname.startsWith("/demo-wall") ||
     pathname.startsWith("/app");
 
-  const hasValid = !!(sub as any)?.hasValid;
+  const hasValid = !!(sub as { hasValid?: boolean } | null)?.hasValid;
 
   const [open, setOpen] = useState(false);
   const [roleLoading, setRoleLoading] = useState(true);
@@ -112,6 +132,8 @@ export default function MobileMenu() {
   const [canInstall, setCanInstall] = useState(false);
   const [standalone, setStandalone] = useState(false);
   const [ios, setIos] = useState(false);
+  const [safari, setSafari] = useState(false);
+  const [showIosInstallHelp, setShowIosInstallHelp] = useState(false);
 
   useEffect(() => setOpen(false), [pathname]);
 
@@ -119,6 +141,7 @@ export default function MobileMenu() {
     if (typeof window === "undefined") return;
 
     setIos(isIOS());
+    setSafari(isSafariBrowser());
     setStandalone(isStandalone());
 
     function handler(e: Event) {
@@ -128,7 +151,15 @@ export default function MobileMenu() {
       setCanInstall(true);
     }
 
+    function onInstalled() {
+      setStandalone(true);
+      setDeferredPrompt(null);
+      setCanInstall(false);
+      setShowIosInstallHelp(false);
+    }
+
     window.addEventListener("beforeinstallprompt", handler);
+    window.addEventListener("appinstalled", onInstalled);
 
     const mm = window.matchMedia?.("(display-mode: standalone)");
     const onChange = () => setStandalone(isStandalone());
@@ -136,6 +167,7 @@ export default function MobileMenu() {
 
     return () => {
       window.removeEventListener("beforeinstallprompt", handler);
+      window.removeEventListener("appinstalled", onInstalled);
       mm?.removeEventListener?.("change", onChange);
     };
   }, []);
@@ -268,11 +300,6 @@ export default function MobileMenu() {
       return;
     }
 
-    if (ios && !deferredPrompt) {
-      router.push("/dashboard");
-      return;
-    }
-
     if (deferredPrompt) {
       try {
         await deferredPrompt.prompt();
@@ -282,7 +309,11 @@ export default function MobileMenu() {
       } catch {
         // ignore
       }
-      router.push("/dashboard");
+      return;
+    }
+
+    if (ios) {
+      setShowIosInstallHelp(true);
       return;
     }
 
@@ -431,11 +462,19 @@ export default function MobileMenu() {
                                 : canInstall
                                 ? "Install the app"
                                 : ios
-                                ? "Get the app"
+                                ? safari
+                                  ? "Install via Add to Home Screen"
+                                  : "Open in Safari to install"
                                 : "Get the app"
                             }
                           >
-                            {standalone ? "App installed" : canInstall ? "Install app" : "Get the app"}
+                            {standalone
+                              ? "App installed"
+                              : canInstall
+                              ? "Install app"
+                              : ios
+                              ? "Install app"
+                              : "Get the app"}
                           </button>
 
                           <div className="mt-2">
@@ -470,6 +509,58 @@ export default function MobileMenu() {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showIosInstallHelp && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowIosInstallHelp(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-lg font-semibold text-gray-900">
+              Install TempTake
+            </div>
+
+            {safari ? (
+              <div className="mt-3 space-y-2 text-sm text-gray-600">
+                <p>On iPhone or iPad:</p>
+                <p>1. Tap the Share button in Safari</p>
+                <p>2. Scroll down and tap “Add to Home Screen”</p>
+                <p>3. Tap “Add”</p>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2 text-sm text-gray-600">
+                <p>On Apple devices, TempTake needs to be installed from Safari.</p>
+                <p>1. Open this page in Safari</p>
+                <p>2. Tap the Share button</p>
+                <p>3. Tap “Add to Home Screen”</p>
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowIosInstallHelp(false)}
+                className="rounded-lg border px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowIosInstallHelp(false);
+                  router.push("/dashboard");
+                }}
+                className="rounded-lg bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-900"
+              >
+                Open app
+              </button>
             </div>
           </div>
         </div>
