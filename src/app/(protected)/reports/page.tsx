@@ -9,7 +9,7 @@ import { getActiveLocationIdClient } from "@/lib/locationClient";
 import Button from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Download, Printer } from "lucide-react";
-
+import EmailReportButton from "@/components/reports/EmailReportButton";
 /* ===================== Types ===================== */
 
 type TempRow = {
@@ -1763,34 +1763,42 @@ export default function ReportsPage() {
           </div>
 
           <div className="flex flex-col justify-end gap-2 sm:col-span-2 lg:col-span-2">
-            <Button
-              onClick={runInstantAudit90}
-              disabled={loading || !orgId}
-              className="w-full rounded-xl bg-emerald-600 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-            >
-              Instant Audit (last 90 days)
-            </Button>
+  <Button
+    onClick={runInstantAudit90}
+    disabled={loading || !orgId}
+    className="w-full rounded-xl bg-emerald-600 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+  >
+    Instant Audit (last 90 days)
+  </Button>
 
-            <Button
-              variant="outline"
-              onClick={downloadCSV}
-              disabled={!temps?.length}
-              className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-            >
-              <Download className="mr-2 h-4 w-4" /> Export CSV
-            </Button>
+  <Button
+    variant="outline"
+    onClick={downloadCSV}
+    disabled={!temps?.length}
+    className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+  >
+    <Download className="mr-2 h-4 w-4" /> Export CSV
+  </Button>
 
-            <Button
-              variant="outline"
-              onClick={printReport}
-              disabled={!temps?.length}
-              className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-            >
-              <Printer className="mr-2 h-4 w-4" /> Print
-            </Button>
-          </div>
-        </div>
+  <Button
+    variant="outline"
+    onClick={printReport}
+    disabled={!temps?.length}
+    className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+  >
+    <Printer className="mr-2 h-4 w-4" /> Print
+  </Button>
 
+  <EmailReportButton
+    orgId={orgId}
+    from={from}
+    to={to}
+    locationId={locationFilter !== "all" ? locationFilter : null}
+    locationLabel={currentLocationLabel}
+    disabled={loading || !orgId}
+  />
+</div>
+</div>
         {/* Location on its own row */}
         <div className="mt-3 rounded-2xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm">
           <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
