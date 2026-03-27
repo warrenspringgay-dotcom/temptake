@@ -1,10 +1,38 @@
 import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import autoTableImport from "jspdf-autotable";
 import type { ReportData } from "@/lib/reports/buildReportData";
 
 type JsPDFWithAutoTable = jsPDF & {
   lastAutoTable?: { finalY: number };
 };
+
+type AutoTableCell = string | number;
+
+type AutoTableOptions = {
+  startY?: number;
+  head?: AutoTableCell[][];
+  body?: AutoTableCell[][];
+  styles?: {
+    fontSize?: number;
+    cellPadding?: number;
+    overflow?: "linebreak" | "ellipsize" | "hidden" | "visible";
+  };
+  headStyles?: {
+    fillColor?: [number, number, number];
+  };
+  theme?: "grid" | "striped" | "plain";
+  margin?: {
+    left?: number;
+    right?: number;
+    top?: number;
+    bottom?: number;
+  };
+};
+
+const autoTable = autoTableImport as unknown as (
+  doc: JsPDFWithAutoTable,
+  options: AutoTableOptions
+) => void;
 
 function safeDate(val: any): Date | null {
   if (!val) return null;
@@ -154,7 +182,7 @@ export async function renderReportPdf(report: ReportData): Promise<Buffer> {
   const sections: Array<{
     title: string;
     head: string[];
-    body: (string | number)[][];
+    body: AutoTableCell[][];
     landscape?: boolean;
   }> = [
     {
@@ -344,7 +372,7 @@ export async function renderReportPdf(report: ReportData): Promise<Buffer> {
     };
   }
 
-  const matrixRows = Array.from(grouped.values())
+  const matrixRows: AutoTableCell[][] = Array.from(grouped.values())
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((row) => [
       row.name,
