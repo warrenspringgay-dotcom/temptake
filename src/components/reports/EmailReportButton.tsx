@@ -1,7 +1,8 @@
 // src/components/reports/EmailReportButton.tsx
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Mail, Loader2 } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 
@@ -28,6 +29,7 @@ export default function EmailReportButton({
 }: Props) {
   const { user } = useAuth();
 
+  const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   const [sendToSelf, setSendToSelf] = useState(true);
   const [extraEmail, setExtraEmail] = useState("");
@@ -36,6 +38,10 @@ export default function EmailReportButton({
   const [success, setSuccess] = useState<string | null>(null);
 
   const selfEmail = user?.email?.trim() || "";
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const recipients = useMemo(() => {
     const list: string[] = [];
@@ -121,6 +127,111 @@ export default function EmailReportButton({
     }
   }
 
+  const modal =
+    open && mounted
+      ? createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setOpen(false)}
+          >
+            <div
+              className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">Email report</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {locationLabel} • {from} to {to}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={sendToSelf}
+                    onChange={(e) => setSendToSelf(e.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-slate-300"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-slate-900">Send to me</div>
+                    <div className="text-xs text-slate-500">
+                      {selfEmail || "No logged-in email"}
+                    </div>
+                  </div>
+                </label>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-900">
+                    Extra email recipient
+                  </label>
+                  <input
+                    type="email"
+                    value={extraEmail}
+                    onChange={(e) => setExtraEmail(e.target.value)}
+                    placeholder="inspector@example.com"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-0 placeholder:text-slate-400 focus:border-slate-400"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Leave blank if you only want to send it to yourself.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Recipients
+                  </div>
+                  <div className="mt-2 space-y-1 text-sm text-slate-800">
+                    {recipients.length ? (
+                      recipients.map((email) => <div key={email}>{email}</div>)
+                    ) : (
+                      <div className="text-slate-500">No recipients selected</div>
+                    )}
+                  </div>
+                </div>
+
+                {error ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {error}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={sending}
+                  className="inline-flex items-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                >
+                  {sending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Send report
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
     <>
       <button
@@ -143,98 +254,7 @@ export default function EmailReportButton({
         </div>
       ) : null}
 
-      {open ? (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">Email report</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  {locationLabel} • {from} to {to}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-4">
-              <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                <input
-                  type="checkbox"
-                  checked={sendToSelf}
-                  onChange={(e) => setSendToSelf(e.target.checked)}
-                  className="mt-1 h-4 w-4 rounded border-slate-300"
-                />
-                <div>
-                  <div className="text-sm font-medium text-slate-900">Send to me</div>
-                  <div className="text-xs text-slate-500">{selfEmail || "No logged-in email"}</div>
-                </div>
-              </label>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-900">
-                  Extra email recipient
-                </label>
-                <input
-                  type="email"
-                  value={extraEmail}
-                  onChange={(e) => setExtraEmail(e.target.value)}
-                  placeholder="inspector@example.com"
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-0 placeholder:text-slate-400 focus:border-slate-400"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  Leave blank if you only want to send it to yourself.
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Recipients
-                </div>
-                <div className="mt-2 space-y-1 text-sm text-slate-800">
-                  {recipients.length ? (
-                    recipients.map((email) => <div key={email}>{email}</div>)
-                  ) : (
-                    <div className="text-slate-500">No recipients selected</div>
-                  )}
-                </div>
-              </div>
-
-              {error ? (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                  {error}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSend}
-                disabled={sending}
-                className="inline-flex items-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-              >
-                {sending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Send report
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {modal}
     </>
   );
 }
