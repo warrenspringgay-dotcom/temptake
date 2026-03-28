@@ -245,6 +245,14 @@ export default function AllergenManager() {
   const [qCat, setQCat] = useState<"All" | Category>("All");
   const [qFlags, setQFlags] = useState<Flags>(emptyFlags());
 
+  // Modals
+  type Draft = Omit<MatrixRow, "id" | "locked"> & { id?: string; locked?: boolean };
+  const [modalOpen, setModalOpen] = useState(false);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [viewRow, setViewRow] = useState<MatrixRow | null>(null);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+
   const operatorInitials =
     (operator?.initials ?? "").trim().toUpperCase() ||
     initialsFromName(operator?.name) ||
@@ -252,7 +260,6 @@ export default function AllergenManager() {
 
   /* ---------- Reviewer resolution (operator-first, click-time safe) ---------- */
   async function getReviewerLabel(): Promise<string> {
-    // 1) Workstation operator wins
     const opIni =
       (operator?.initials ?? "").trim().toUpperCase() ||
       initialsFromName(operator?.name) ||
@@ -262,11 +269,9 @@ export default function AllergenManager() {
     const opName = (operator?.name ?? "").trim();
     if (opName) return opName;
 
-    // 2) Fallback: auth user's initials if we have them
     const authIni = (authUserInitials ?? "").trim().toUpperCase();
     if (authIni) return authIni;
 
-    // 3) Fallback: auth email (better than lying)
     try {
       const { data } = await supabase.auth.getUser();
       const email = (data.user?.email ?? "").trim();
@@ -301,7 +306,6 @@ export default function AllergenManager() {
           await loadAuthUserInitials(org);
         }
 
-        // ✅ Operator wins for permissions (PIN/operator mode)
         if (operator?.role) {
           setCanManage(isManagerRole(operator.role));
         } else {
@@ -317,7 +321,6 @@ export default function AllergenManager() {
           if (!cancelled) setCanManage(allowed);
         }
 
-        // If we have an org, load cloud data (overwrites local shadow)
         if (org) {
           await Promise.all([loadFromSupabase(org), loadReviewFromSupabase(org)]);
         }
@@ -549,138 +552,134 @@ export default function AllergenManager() {
   }, [review, hydrated]);
 
   /* ---------- CRUD ---------- */
- async function upsertItem(d: {
-  id?: string;
-  item: string;
-  category?: Category;
-  notes?: string;
-  ingredientsText?: string;
-  ingredientsLabelImageUrl?: string;
-  flags: Flags;
-}): Promise<boolean> {
-  if (!canManage) {
-    alert("Only managers / owners can edit the allergen matrix.");
-    return false;
-  }
-
-  const currentOrgId = orgId ?? (await getActiveOrgIdClient().catch(() => null));
-  const beforeRow = d.id ? rows.find((r) => r.id === d.id) ?? null : null;
-  const isExistingRow = !!beforeRow;
-
-  const applyLocal = (forcedId?: string) => {
-    setRows((rs) => {
-      const idToUse = forcedId ?? d.id ?? uid();
-      const patch: MatrixRow = {
-        id: idToUse,
-        item: d.item,
-        category: d.category,
-        flags: d.flags,
-        notes: d.notes,
-        ingredientsText: d.ingredientsText ?? "",
-        ingredientsLabelImageUrl: d.ingredientsLabelImageUrl ?? "",
-        locked: true,
-      };
-      const exists = rs.some((r) => r.id === idToUse);
-      return exists ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r)) : [...rs, patch];
-    });
-  };
-
-  if (!currentOrgId) {
-    applyLocal();
-    return true;
-  }
-
-  let rowId = isExistingRow ? d.id : undefined;
-
-  try {
-    if (isExistingRow && rowId) {
-  const { error } = await supabase
-    .from("allergen_items")
-    .update({
-      item: d.item,
-      category: d.category ?? null,
-      notes: d.notes ?? null,
-      ingredients_text: d.ingredientsText ?? null,
-      ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
-      locked: true,
-      org_id: currentOrgId,
-      organisation_id: currentOrgId,
-    })
-    .eq("id", rowId);
-
-  if (error) throw error;
-} else {
-      const { data, error } = await supabase
-        .from("allergen_items")
-        .insert({
-          item: d.item,
-          category: d.category ?? null,
-          notes: d.notes ?? null,
-          ingredients_text: d.ingredientsText ?? null,
-          ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
-          locked: true,
-          org_id: currentOrgId,
-          organisation_id: currentOrgId,
-        })
-        .select("id")
-        .single();
-
-      if (error) throw error;
-      rowId = String(data.id);
+  async function upsertItem(d: {
+    id?: string;
+    item: string;
+    category?: Category;
+    notes?: string;
+    ingredientsText?: string;
+    ingredientsLabelImageUrl?: string;
+    flags: Flags;
+  }): Promise<boolean> {
+    if (!canManage) {
+      alert("Only managers / owners can edit the allergen matrix.");
+      return false;
     }
 
-    if (rowId) {
-      const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
-        item_id: rowId!,
-        key: k,
-        value: !!d.flags[k],
-        org_id: currentOrgId,
-      }));
+    const currentOrgId = orgId ?? (await getActiveOrgIdClient().catch(() => null));
+    const beforeRow = d.id ? rows.find((r) => r.id === d.id) ?? null : null;
 
-      if (payload.length) {
-        const { error: flagsErr } = await supabase
-          .from("allergen_flags")
-          .upsert(payload, { onConflict: "item_id,key" });
+    const applyLocal = (forcedId?: string) => {
+      setRows((rs) => {
+        const idToUse = forcedId ?? d.id ?? uid();
+        const patch: MatrixRow = {
+          id: idToUse,
+          item: d.item,
+          category: d.category,
+          flags: d.flags,
+          notes: d.notes,
+          ingredientsText: d.ingredientsText ?? "",
+          ingredientsLabelImageUrl: d.ingredientsLabelImageUrl ?? "",
+          locked: true,
+        };
+        const exists = rs.some((r) => r.id === idToUse);
+        return exists ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r)) : [...rs, patch];
+      });
+    };
 
-        if (flagsErr) {
-          console.warn("Saving allergen flags failed:", flagsErr.message);
-          throw flagsErr;
+    if (!currentOrgId) {
+      applyLocal();
+      return true;
+    }
+
+    let rowId = d.id as string | undefined;
+
+    try {
+      if (rowId) {
+        const { error } = await supabase
+          .from("allergen_items")
+          .update({
+            item: d.item,
+            category: d.category ?? null,
+            notes: d.notes ?? null,
+            ingredients_text: d.ingredientsText ?? null,
+            ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
+            locked: true,
+            org_id: currentOrgId,
+            organisation_id: currentOrgId,
+          })
+          .eq("id", rowId);
+
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from("allergen_items")
+          .insert({
+            item: d.item,
+            category: d.category ?? null,
+            notes: d.notes ?? null,
+            ingredients_text: d.ingredientsText ?? null,
+            ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
+            locked: true,
+            org_id: currentOrgId,
+            organisation_id: currentOrgId,
+          })
+          .select("id")
+          .single();
+
+        if (error) throw error;
+        rowId = String(data!.id);
+      }
+
+      if (rowId) {
+        const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
+          item_id: rowId!,
+          key: k,
+          value: !!d.flags[k],
+          org_id: currentOrgId,
+        }));
+
+        if (payload.length) {
+          const { error: flagsErr } = await supabase
+            .from("allergen_flags")
+            .upsert(payload, { onConflict: "item_id,key" });
+
+          if (flagsErr) console.warn("Saving allergen flags failed (ignored):", flagsErr.message);
         }
       }
+
+      if (currentOrgId && rowId) {
+        const afterRow: MatrixRow = {
+          id: rowId,
+          item: d.item,
+          category: d.category,
+          flags: d.flags,
+          notes: d.notes,
+          ingredientsText: d.ingredientsText ?? "",
+          ingredientsLabelImageUrl: d.ingredientsLabelImageUrl ?? "",
+          locked: true,
+        };
+
+        await logAllergenChange({
+          orgId: currentOrgId,
+          action: d.id ? "update" : "create",
+          itemId: rowId,
+          before: beforeRow,
+          after: afterRow,
+          staffInitials: operatorInitials,
+        });
+
+        setChangeLogRefreshKey((n) => n + 1);
+      }
+
+      applyLocal(rowId);
+      return true;
+    } catch (error: any) {
+      console.error("Saving allergen item failed:", error);
+      alert(`Save failed: ${error?.message ?? "Unknown error"}`);
+      return false;
     }
-
-    if (currentOrgId && rowId) {
-      const afterRow: MatrixRow = {
-        id: rowId,
-        item: d.item,
-        category: d.category,
-        flags: d.flags,
-        notes: d.notes,
-        ingredientsText: d.ingredientsText ?? "",
-        ingredientsLabelImageUrl: d.ingredientsLabelImageUrl ?? "",
-        locked: true,
-      };
-
-      await logAllergenChange({
-        orgId: currentOrgId,
-        action: isExistingRow ? "update" : "create",
-        itemId: rowId,
-        before: beforeRow,
-        after: afterRow,
-        staffInitials: operatorInitials,
-      });
-
-      setChangeLogRefreshKey((n) => n + 1);
-    }
-
-    applyLocal(rowId);
-    return true;
-  } catch (error: any) {
-    console.error("Saving allergen item failed:", error);
-    alert(`Save failed: ${error?.message ?? "Unknown error"}`);
-    return false;
   }
-}
 
   async function deleteItem(idToDelete: string) {
     if (!canManage) {
@@ -732,7 +731,6 @@ export default function AllergenManager() {
     const id = orgId ?? (await getActiveOrgIdClient().catch(() => null));
     const today = todayISO();
 
-    // ✅ Operator-first, click-time computed (no stale render values)
     const reviewer = await getReviewerLabel();
     const newInterval = review.intervalDays || 30;
 
@@ -805,6 +803,57 @@ export default function AllergenManager() {
     bumpVibrate(15);
   }
 
+  async function uploadIngredientsLabel(file: File) {
+    if (!draft?.id) {
+      alert("Save the item first, then reopen it to upload the ingredients label photo.");
+      return;
+    }
+
+    if (!orgId) {
+      alert("No organisation found. Please refresh and try again.");
+      return;
+    }
+
+    setUploadingImage(true);
+
+    try {
+      const path = buildAllergenLabelPath({
+        orgId,
+        itemId: draft.id,
+        filename: file.name,
+      });
+
+      const { error: uploadErr } = await supabase.storage
+        .from(ALLERGEN_LABEL_BUCKET)
+        .upload(path, file, {
+          cacheControl: "3600",
+          upsert: true,
+        });
+
+      if (uploadErr) throw uploadErr;
+
+      const { data: publicUrlData } = supabase.storage
+        .from(ALLERGEN_LABEL_BUCKET)
+        .getPublicUrl(path);
+
+      const url = publicUrlData?.publicUrl ?? "";
+      if (!url) throw new Error("Image uploaded but URL could not be created.");
+
+      setDraft((d) =>
+        d
+          ? {
+              ...d,
+              ingredientsLabelImageUrl: url,
+            }
+          : d
+      );
+    } catch (e: any) {
+      alert(`Image upload failed: ${e?.message ?? "Unknown error"}`);
+    } finally {
+      setUploadingImage(false);
+    }
+  }
+
   /* ===== Query (SAFE FOODS) ===== */
   const selectedAllergenKeys = useMemo(
     () => (ALLERGENS.map((a) => a.key) as AllergenKey[]).filter((k) => qFlags[k]),
@@ -819,14 +868,7 @@ export default function AllergenManager() {
     });
   }, [hydrated, rows, qCat, selectedAllergenKeys]);
 
-  /* ===== Add/Edit modal ===== */
-  type Draft = Omit<MatrixRow, "id" | "locked"> & { id?: string; locked?: boolean };
-  const [modalOpen, setModalOpen] = useState(false);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [viewRow, setViewRow] = useState<MatrixRow | null>(null);
-  const [viewOpen, setViewOpen] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
-
+  /* ===== Modal actions ===== */
   const openAdd = () => {
     if (!canManage) {
       alert("Only managers / owners can add allergen items.");
@@ -868,73 +910,24 @@ export default function AllergenManager() {
   const closeModal = () => setModalOpen(false);
   const closeViewModal = () => setViewOpen(false);
 
-  async function uploadIngredientsLabel(file: File) {
-    if (!draft) return;
-    if (!orgId) {
-      alert("No organisation found. Please refresh and try again.");
-      return;
-    }
+  const saveDraft = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!draft || !draft.item.trim()) return;
 
-    const itemIdForPath = draft.id ?? uid();
-    const path = buildAllergenLabelPath({
-      orgId,
-      itemId: itemIdForPath,
-      filename: file.name,
+    const ok = await upsertItem({
+      id: draft.id,
+      item: draft.item.trim(),
+      category: draft.category,
+      flags: draft.flags,
+      notes: (draft.notes ?? "").trim(),
+      ingredientsText: (draft.ingredientsText ?? "").trim(),
+      ingredientsLabelImageUrl: (draft.ingredientsLabelImageUrl ?? "").trim(),
     });
 
-    setUploadingImage(true);
-
-    try {
-      const { error: uploadErr } = await supabase.storage
-        .from(ALLERGEN_LABEL_BUCKET)
-        .upload(path, file, {
-          cacheControl: "3600",
-          upsert: true,
-        });
-
-      if (uploadErr) throw uploadErr;
-
-      const { data: publicUrlData } = supabase.storage
-        .from(ALLERGEN_LABEL_BUCKET)
-        .getPublicUrl(path);
-
-      const url = publicUrlData?.publicUrl ?? "";
-      if (!url) throw new Error("Image uploaded but URL could not be created.");
-
-      setDraft((d) =>
-        d
-          ? {
-              ...d,
-              id: d.id ?? itemIdForPath,
-              ingredientsLabelImageUrl: url,
-            }
-          : d
-      );
-    } catch (e: any) {
-      alert(`Image upload failed: ${e?.message ?? "Unknown error"}`);
-    } finally {
-      setUploadingImage(false);
+    if (ok) {
+      setModalOpen(false);
     }
-  }
-
-const saveDraft = async (e?: React.FormEvent) => {
-  e?.preventDefault();
-  if (!draft || !draft.item.trim()) return;
-
-  const ok = await upsertItem({
-    id: draft.id,
-    item: draft.item.trim(),
-    category: draft.category,
-    flags: draft.flags,
-    notes: (draft.notes ?? "").trim(),
-    ingredientsText: (draft.ingredientsText ?? "").trim(),
-    ingredientsLabelImageUrl: (draft.ingredientsLabelImageUrl ?? "").trim(),
-  });
-
-  if (ok) {
-    setModalOpen(false);
-  }
-};
+  };
 
   const reviewPanelTone = hydrated
     ? overdue(review)
@@ -1102,7 +1095,7 @@ const saveDraft = async (e?: React.FormEvent) => {
 
       <div className="mb-2 hidden text-sm font-semibold text-slate-900 md:block">Allergen matrix</div>
 
-      {/* Desktop: scrollable grid with sticky header */}
+      {/* Desktop */}
       <div className="hidden md:block">
         <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm">
           <div className="max-h-[70vh] overflow-auto rounded-2xl">
@@ -1181,7 +1174,7 @@ const saveDraft = async (e?: React.FormEvent) => {
         </div>
       </div>
 
-      {/* Mobile cards */}
+      {/* Mobile */}
       <div className="md:hidden">
         {rows.length === 0 ? (
           <div className="rounded-xl border border-slate-200 bg-white/80 p-4 text-center text-slate-500">
@@ -1339,20 +1332,6 @@ const saveDraft = async (e?: React.FormEvent) => {
                 })}
               </div>
 
-             <label className="mt-3 block text-sm">
-  <div className="mb-1 text-slate-600">Prep / cross-contamination notes</div>
-  <textarea
-    className="w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5"
-    rows={3}
-    value={draft.notes ?? ""}
-    onChange={(e) => setDraft((d) => ({ ...d!, notes: e.target.value }))}
-    placeholder="Example: Cooked in shared fryer with gluten items, or may contain traces from shared prep surfaces."
-  />
-  <p className="mt-1 text-xs text-slate-500">
-    Add anything important about shared equipment, frying oil, prep areas, or trace contamination risk.
-  </p>
-</label>
-
               <label className="mt-3 block text-sm">
                 <div className="mb-1 text-slate-600">Ingredients</div>
                 <textarea
@@ -1365,9 +1344,7 @@ const saveDraft = async (e?: React.FormEvent) => {
               </label>
 
               <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
-                <div className="mb-2 text-sm font-medium text-slate-900">
-                  Ingredients label photo
-                </div>
+                <div className="mb-2 text-sm font-medium text-slate-900">Ingredients label photo</div>
 
                 <input
                   type="file"
@@ -1379,14 +1356,14 @@ const saveDraft = async (e?: React.FormEvent) => {
                     await uploadIngredientsLabel(file);
                     e.currentTarget.value = "";
                   }}
-                  disabled={uploadingImage || !orgId}
+                  disabled={uploadingImage || !draft.id}
                 />
 
                 <div className="mt-2 text-xs text-slate-500">
                   {uploadingImage
                     ? "Uploading image…"
-                    : !orgId
-                    ? "Image upload is available once the organisation is loaded."
+                    : !draft.id
+                    ? "Save the item first, then reopen it to upload a packaging label photo."
                     : "Upload a photo of the packaging ingredient label."}
                 </div>
 
@@ -1426,6 +1403,20 @@ const saveDraft = async (e?: React.FormEvent) => {
                   </div>
                 ) : null}
               </div>
+
+              <label className="mt-3 block text-sm">
+                <div className="mb-1 text-slate-600">Prep / cross-contamination notes</div>
+                <textarea
+                  className="w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5"
+                  rows={3}
+                  value={draft.notes ?? ""}
+                  onChange={(e) => setDraft((d) => ({ ...d!, notes: e.target.value }))}
+                  placeholder="Example: Cooked in shared fryer with gluten items, or may contain traces from shared prep surfaces."
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Add anything important about shared equipment, frying oil, prep areas, or trace contamination risk.
+                </p>
+              </label>
 
               <p className="mt-3 text-xs text-slate-500">
                 Press <kbd>Enter</kbd> to save, or <kbd>Esc</kbd> to cancel.
