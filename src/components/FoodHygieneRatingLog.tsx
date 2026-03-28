@@ -63,7 +63,6 @@ const FINDING_PRIORITIES: { value: FindingPriority; label: string }[] = [
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
 
-// shared “dashboard standard” wrappers
 const PAGE = "max-w-5xl mx-auto px-3 sm:px-4 py-4 space-y-5";
 const GLASS =
   "rounded-3xl border border-white/40 bg-white/80 shadow-lg shadow-slate-900/5 backdrop-blur";
@@ -126,7 +125,6 @@ export default function FoodHygieneRatingLog() {
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // rating form state
   const [rating, setRating] = useState<number | "">("");
   const [visitDate, setVisitDate] = useState("");
   const [expiresDate, setExpiresDate] = useState("");
@@ -134,7 +132,6 @@ export default function FoodHygieneRatingLog() {
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
 
-  // inspection feedback state
   const [officerName, setOfficerName] = useState("");
   const [inspectionSummary, setInspectionSummary] = useState("");
   const [showFindings, setShowFindings] = useState(false);
@@ -143,12 +140,14 @@ export default function FoodHygieneRatingLog() {
   async function loadRows() {
     setLoading(true);
     setErr(null);
+
     try {
       const orgId = await getActiveOrgIdClient();
       if (!orgId) {
         setRows([]);
         return;
       }
+
       const locationId = await getActiveLocationIdClient();
 
       let query = supabase
@@ -219,17 +218,19 @@ export default function FoodHygieneRatingLog() {
     );
   }
 
-  const preparedFindings = useMemo(
-    () =>
-      findings
-        .map((f) => ({
-          ...f,
-          finding_text: f.finding_text.trim(),
-          due_date: f.due_date.trim(),
-        }))
-        .filter((f) => f.finding_text.length > 0),
-    [findings]
-  );
+  const preparedFindings = useMemo(() => {
+    if (!showFindings) return [];
+
+    return findings
+      .map((f) => ({
+        ...f,
+        finding_text: f.finding_text.trim(),
+        due_date: f.due_date.trim(),
+      }))
+      .filter((f) => f.finding_text.length > 0);
+  }, [findings, showFindings]);
+
+  const activeInspectionSummary = showFindings ? inspectionSummary.trim() : "";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -263,7 +264,7 @@ export default function FoodHygieneRatingLog() {
       const shouldCreateInspection =
         preparedFindings.length > 0 ||
         officerName.trim().length > 0 ||
-        inspectionSummary.trim().length > 0 ||
+        activeInspectionSummary.length > 0 ||
         authority.trim().length > 0 ||
         reference.trim().length > 0 ||
         notes.trim().length > 0;
@@ -277,7 +278,7 @@ export default function FoodHygieneRatingLog() {
           inspecting_authority: authority.trim() || null,
           officer_name: officerName.trim() || null,
           reference: reference.trim() || null,
-          summary: inspectionSummary.trim() || notes.trim() || null,
+          summary: activeInspectionSummary || notes.trim() || null,
         };
 
         const { data: inspectionRow, error: inspectionError } = await supabase
@@ -569,7 +570,15 @@ export default function FoodHygieneRatingLog() {
                   <input
                     type="checkbox"
                     checked={showFindings}
-                    onChange={(e) => setShowFindings(e.target.checked)}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      setShowFindings(next);
+
+                      if (!next) {
+                        setInspectionSummary("");
+                        setFindings([emptyFinding()]);
+                      }
+                    }}
                     className="h-4 w-4 rounded border-slate-300"
                   />
                   <span className="text-slate-700">Add inspection findings</span>
@@ -596,7 +605,7 @@ export default function FoodHygieneRatingLog() {
                   </h3>
                   <p className="mt-1 text-xs text-slate-500">
                     Capture the actual pointers from the inspection so they can flow into manager
-                    review instead of rotting inside a generic notes box like forgotten lettuce.
+                    review instead of rotting inside a generic notes box.
                   </p>
                 </div>
 
@@ -729,7 +738,7 @@ export default function FoodHygieneRatingLog() {
                   saving && "opacity-70 cursor-not-allowed"
                 )}
               >
-                {saving ? "Saving…" : "Save rating"}
+                {saving ? "Saving…" : "Save inspection"}
               </button>
 
               <button

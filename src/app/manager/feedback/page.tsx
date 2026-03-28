@@ -8,10 +8,7 @@ const SUPERADMIN_USER_ID = "16baae4d-e077-4c89-b402-2b5d725539e8";
 
 type AppFeedbackStatus = "received" | "in_progress" | "resolved";
 type InspectionFindingStatus = "open" | "in_progress" | "resolved";
-type UnifiedStatus =
-  | AppFeedbackStatus
-  | InspectionFindingStatus
-  | null;
+type UnifiedStatus = AppFeedbackStatus | InspectionFindingStatus | null;
 
 type StreamSource = "app_feedback" | "inspection";
 
@@ -83,6 +80,10 @@ type OrgLite = {
 
 function cls(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
+}
+
+function itemKey(source: StreamSource, id: string) {
+  return `${source}:${id}`;
 }
 
 function fmtDDMMYYYY(iso?: string | null) {
@@ -238,7 +239,7 @@ export default function ManagerFeedbackPage() {
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [q, setQ] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   const [teamByUserId, setTeamByUserId] = useState<Record<string, TeamMemberLite>>(
     {}
@@ -255,8 +256,8 @@ export default function ManagerFeedbackPage() {
   const [saving, setSaving] = useState(false);
 
   const selected = useMemo(
-    () => items.find((i) => i.id === selectedId) ?? null,
-    [items, selectedId]
+    () => items.find((i) => itemKey(i.source, i.id) === selectedKey) ?? null,
+    [items, selectedKey]
   );
 
   useEffect(() => {
@@ -470,19 +471,19 @@ export default function ManagerFeedbackPage() {
       setItems(list);
 
       if (list.length > 0) {
-        setSelectedId((prev) => {
-          if (prev && list.some((x) => x.id === prev)) return prev;
-          return list[0].id;
+        setSelectedKey((prev) => {
+          if (prev && list.some((x) => itemKey(x.source, x.id) === prev)) return prev;
+          return itemKey(list[0].source, list[0].id);
         });
       } else {
-        setSelectedId(null);
+        setSelectedKey(null);
       }
     } catch (e: any) {
       setError(e?.message ?? "Failed to load feedback.");
       setItems([]);
       setTeamByUserId({});
       setOrgById({});
-      setSelectedId(null);
+      setSelectedKey(null);
     } finally {
       setLoading(false);
     }
@@ -572,7 +573,7 @@ export default function ManagerFeedbackPage() {
         if (error) throw error;
 
         await load();
-        setSelectedId(selected.id);
+        setSelectedKey(itemKey(selected.source, selected.id));
         return;
       }
 
@@ -601,7 +602,7 @@ export default function ManagerFeedbackPage() {
       if (error) throw error;
 
       await load();
-      setSelectedId(selected.id);
+      setSelectedKey(itemKey(selected.source, selected.id));
     } catch (e: any) {
       alert(e?.message ?? "Could not save update.");
     } finally {
@@ -637,8 +638,10 @@ export default function ManagerFeedbackPage() {
         if (error) throw error;
       }
 
-      setItems((prev) => prev.filter((x) => x.id !== selected.id));
-      setSelectedId(null);
+      setItems((prev) =>
+        prev.filter((x) => itemKey(x.source, x.id) !== itemKey(selected.source, selected.id))
+      );
+      setSelectedKey(null);
     } catch (e: any) {
       alert(e?.message ?? "Could not delete item.");
     }
@@ -724,16 +727,16 @@ export default function ManagerFeedbackPage() {
             <div className="max-h-[70vh] overflow-y-auto">
               <ul className="divide-y divide-slate-100">
                 {filtered.map((i) => {
-                  const active = i.id === selectedId;
+                  const active = itemKey(i.source, i.id) === selectedKey;
                   const tm = i.actor_user_id ? teamByUserId[i.actor_user_id] ?? null : null;
                   const org = orgById[i.org_id] ?? null;
                   const u = displayUser(i.actor_user_id, tm);
 
                   return (
-                    <li key={`${i.source}-${i.id}`}>
+                    <li key={itemKey(i.source, i.id)}>
                       <button
                         type="button"
-                        onClick={() => setSelectedId(i.id)}
+                        onClick={() => setSelectedKey(itemKey(i.source, i.id))}
                         className={cls(
                           "w-full px-4 py-3 text-left",
                           active ? "bg-slate-50" : "hover:bg-slate-50"
@@ -1000,18 +1003,14 @@ export default function ManagerFeedbackPage() {
                     </div>
 
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                      <div className="text-xs font-semibold text-slate-600">
-                        Authority
-                      </div>
+                      <div className="text-xs font-semibold text-slate-600">Authority</div>
                       <div className="mt-1 text-xs text-slate-900">
                         {selected.inspection_authority ?? "—"}
                       </div>
                     </div>
 
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                      <div className="text-xs font-semibold text-slate-600">
-                        Officer
-                      </div>
+                      <div className="text-xs font-semibold text-slate-600">Officer</div>
                       <div className="mt-1 text-xs text-slate-900">
                         {selected.inspection_officer_name ?? "—"}
                       </div>
