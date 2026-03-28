@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { createPortal } from "react-dom";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
@@ -11,6 +12,8 @@ import { inviteTeamMemberServer } from "@/app/actions/team";
 import {
   createTrainingServer,
   uploadTrainingCertificateServer,
+  type TrainingStatus,
+  type LicenceState,
 } from "@/app/actions/training";
 
 /* -------------------- Types -------------------- */
@@ -31,12 +34,20 @@ const TRAINING_AREAS: { key: TrainingArea; label: string; short: string }[] = [
   { key: "management", label: "Management", short: "Management" },
 ];
 
+const HIGHFIELD_COURSES = [
+  { key: "food_safety_level_2", label: "Food Safety Level 2" },
+  { key: "food_safety_level_1", label: "Food Safety Level 1" },
+  { key: "introduction_to_allergens", label: "Introduction to Allergens" },
+] as const;
+
+type HighfieldCourseKey = (typeof HIGHFIELD_COURSES)[number]["key"];
+
 type Member = {
   id: string;
   org_id?: string;
   location_id: string | null;
 
-  user_id: string | null; // linked auth user
+  user_id: string | null;
   login_enabled: boolean;
 
   initials: string | null;
@@ -48,7 +59,6 @@ type Member = {
   notes?: string | null;
   training_areas?: TrainingArea[] | null;
 
-  // ✅ derived at runtime (not stored in team_members)
   pin_set?: boolean;
 };
 
@@ -62,6 +72,47 @@ type TrainingCert = {
 
   provider_name?: "Highfield" | "Other" | null;
   course_key?: string | null;
+
+  status?: TrainingStatus | null;
+  assigned_on?: string | null;
+  started_on?: string | null;
+  completed_on?: string | null;
+
+  learner_email?: string | null;
+  learner_first_name?: string | null;
+  learner_last_name?: string | null;
+
+  certificate_issue_date?: string | null;
+  certificate_expiry_date?: string | null;
+
+  external_learner_id?: string | null;
+  external_enrolment_id?: string | null;
+
+  licence_state?: LicenceState | null;
+  sync_source?: "manual" | "highfield" | "csv" | null;
+  last_synced_at?: string | null;
+};
+
+type MemberTrainingSummary = {
+  valid: number;
+  expiring: number;
+  expired: number;
+  inProgress: number;
+  assigned: number;
+};
+
+type TrainingFormState = {
+  id?: string;
+  course: string;
+  courseKey: string;
+  provider: "Highfield" | "Other";
+  providerName: string;
+  status: TrainingStatus;
+  assigned_on: string;
+  awarded_on: string;
+  expires_on: string;
+  certificate_url: string;
+  notes: string;
 };
 
 /* -------------------- Helpers -------------------- */
@@ -114,7 +165,6 @@ function todayISODate() {
 }
 
 function addYearsISO(isoDate: string, years: number) {
-  // isoDate: "YYYY-MM-DD"
   if (!isoDate) return "";
   const [y, m, d] = isoDate.split("-").map(Number);
   if (!y || !m || !d) return "";
@@ -126,7 +176,6 @@ function addYearsISO(isoDate: string, years: number) {
 
   const candidate = new Date(Date.UTC(targetYear, targetMonth, targetDay));
 
-  // Handle Feb 29 -> Feb 28 on non-leap years
   if (candidate.getUTCMonth() !== targetMonth) {
     const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0));
     return lastDay.toISOString().slice(0, 10);
@@ -135,7 +184,6 @@ function addYearsISO(isoDate: string, years: number) {
   return candidate.toISOString().slice(0, 10);
 }
 
-/** Global rule: render as DD/MM/YYYY */
 function formatDate(d: string | null | undefined) {
   if (!d) return "—";
   const dt = new Date(d);
@@ -157,7 +205,9 @@ function certTitle(c: TrainingCert) {
   const providerEnum = c.provider_name ?? null;
   const providerLabel =
     providerEnum === "Other"
-      ? (c.course_key ? `Provider: ${c.course_key}` : "Provider: Other")
+      ? c.course_key
+        ? `Provider: ${c.course_key}`
+        : "Provider: Other"
       : "Provider: Highfield";
 
   const courseLabel = c.type ?? "—";
@@ -181,6 +231,129 @@ function onlyDigits(s: string) {
   return s.replace(/\D+/g, "").slice(0, 8);
 }
 
+function prettyTrainingStatus(status?: TrainingStatus | null) {
+  switch (status) {
+    case "assigned":
+      return "Assigned";
+    case "invited":
+      return "Invited";
+    case "in_progress":
+      return "In progress";
+    case "completed":
+      return "Completed";
+    case "expired":
+      return "Expired";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return "—";
+  }
+}
+
+function trainingStatusPillClass(status?: TrainingStatus | null) {
+  switch (status) {
+    case "completed":
+      return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    case "expired":
+      return "border-rose-200 bg-rose-50 text-rose-800";
+    case "in_progress":
+      return "border-sky-200 bg-sky-50 text-sky-800";
+    case "assigned":
+    case "invited":
+      return "border-amber-200 bg-amber-50 text-amber-800";
+    case "cancelled":
+      return "border-slate-200 bg-slate-100 text-slate-700";
+    default:
+      return "border-slate-200 bg-slate-50 text-slate-600";
+  }
+}
+
+function defaultTrainingForm(): TrainingFormState {
+  return {
+    course: "Food Safety Level 2",
+    courseKey: "food_safety_level_2",
+    provider: "Highfield",
+    providerName: "",
+    status: "assigned",
+    assigned_on: todayISODate(),
+    awarded_on: "",
+    expires_on: "",
+    certificate_url: "",
+    notes: "",
+  };
+}
+
+function trainingSummaryForRecords(records: TrainingCert[]): MemberTrainingSummary {
+  const today = todayISODate();
+
+  let valid = 0;
+  let expiring = 0;
+  let expired = 0;
+  let inProgress = 0;
+  let assigned = 0;
+
+  for (const r of records) {
+    const status = r.status ?? "completed";
+
+    if (status === "assigned" || status === "invited") {
+      assigned += 1;
+      continue;
+    }
+    if (status === "in_progress") {
+      inProgress += 1;
+      continue;
+    }
+    if (status === "expired") {
+      expired += 1;
+      continue;
+    }
+    if (status === "cancelled") continue;
+
+    const expiry = r.certificate_expiry_date || r.expires_on;
+    if (!expiry) {
+      valid += 1;
+      continue;
+    }
+
+    if (expiry < today) {
+      expired += 1;
+      continue;
+    }
+
+    const in30 = addDaysLocal(today, 30);
+    if (expiry <= in30) {
+      expiring += 1;
+      continue;
+    }
+
+    valid += 1;
+  }
+
+  return { valid, expiring, expired, inProgress, assigned };
+}
+
+function addDaysLocal(baseISO: string, days: number) {
+  const d = new Date(`${baseISO}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function isTrainingStillActive(c: TrainingCert) {
+  const today = todayISODate();
+  const expiry = c.certificate_expiry_date || c.expires_on;
+
+  if (c.status === "assigned" || c.status === "invited" || c.status === "in_progress") {
+    return true;
+  }
+
+  if (c.status === "completed") {
+    if (!expiry) return true;
+    return expiry >= today;
+  }
+
+  return false;
+}
+
 /* ================================================= */
 export default function TeamManager() {
   const searchParams = useSearchParams();
@@ -198,11 +371,8 @@ export default function TeamManager() {
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
 
-  // Add-member login toggle
   const [allowLogin, setAllowLogin] = useState<boolean>(false);
   const [sendingInviteOnSave, setSendingInviteOnSave] = useState(false);
-
-  // Edit-modal invite button state
   const [sendingInviteFromEdit, setSendingInviteFromEdit] = useState(false);
 
   const [viewOpen, setViewOpen] = useState(false);
@@ -210,58 +380,51 @@ export default function TeamManager() {
 
   const [highlightId, setHighlightId] = useState<string | null>(null);
 
-  // Current signed-in auth user
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState<string | null>(null);
 
-  /* ---------- PIN management state (EDIT modal) ---------- */
   const [pinLoading, setPinLoading] = useState(false);
   const [pinSet, setPinSet] = useState<boolean>(false);
   const [pinInput, setPinInput] = useState("");
   const [pinSaving, setPinSaving] = useState(false);
   const [pinMsg, setPinMsg] = useState<string | null>(null);
 
-  /* ---------- Certificates state (VIEW modal) ---------- */
   const [certsLoading, setCertsLoading] = useState(false);
   const [certs, setCerts] = useState<TrainingCert[]>([]);
 
-  /* ---------- Certificates state (EDIT modal) ---------- */
   const [editCertsLoading, setEditCertsLoading] = useState(false);
   const [editCerts, setEditCerts] = useState<TrainingCert[]>([]);
-  const [editCertForm, setEditCertForm] = useState({
-    course: "Food Safety Level 2",
-    provider: "Highfield" as "Highfield" | "Other",
-    providerName: "",
-    awarded_on: "",
-    expires_on: "",
-    certificate_url: "",
-    notes: "",
-  });
 
+  const [editTrainingForm, setEditTrainingForm] = useState<TrainingFormState>(
+    defaultTrainingForm()
+  );
   const [editCertFile, setEditCertFile] = useState<File | null>(null);
   const [editCertSaving, setEditCertSaving] = useState(false);
+  const [assigningCourseKey, setAssigningCourseKey] = useState<string | null>(null);
 
-  /* -------------------- Load PIN status for list -------------------- */
- async function loadPinStatusForMembers(oid: string, memberIds: string[]) {
-  if (!oid || memberIds.length === 0) return new Set<string>();
+  const [memberTrainingSummary, setMemberTrainingSummary] = useState<
+    Record<string, MemberTrainingSummary>
+  >({});
 
-  const res = await fetch("/api/workstation/pin-status", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ orgId: oid, memberIds }),
-    cache: "no-store",
-  });
+  async function loadPinStatusForMembers(oid: string, memberIds: string[]) {
+    if (!oid || memberIds.length === 0) return new Set<string>();
 
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || !json?.ok) {
-    console.warn("[team] pin status api failed:", json?.detail ?? res.statusText);
-    return new Set<string>();
+    const res = await fetch("/api/workstation/pin-status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ orgId: oid, memberIds }),
+      cache: "no-store",
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json?.ok) {
+      console.warn("[team] pin status api failed:", json?.detail ?? res.statusText);
+      return new Set<string>();
+    }
+
+    return new Set<string>((json.pinSetIds ?? []).map(String));
   }
 
-  return new Set<string>((json.pinSetIds ?? []).map(String));
-}
-
-  /* -------------------- Load PIN status for edit modal -------------------- */
   async function loadPinStatusForMember(oid: string, memberId: string) {
     if (!oid || !memberId) {
       setPinSet(false);
@@ -278,7 +441,6 @@ export default function TeamManager() {
         .maybeSingle();
 
       if (error && (error as any).code !== "PGRST116") {
-        // PGRST116 is "Results contain 0 rows" sometimes, depends on config
         console.warn("[team] load pin status error:", error.message);
       }
 
@@ -293,6 +455,7 @@ export default function TeamManager() {
     if (!orgId) return alert("No organisation found.");
     if (!locationId) return alert("Pick a location first.");
     if (!isOwner) return alert("Only owner/admin can set PINs.");
+    if (!editing.id) return;
     if (!editing.id) return;
 
     const pin = onlyDigits(pinInput);
@@ -326,7 +489,6 @@ export default function TeamManager() {
       setPinInput("");
       setPinMsg("PIN saved.");
 
-      // Refresh list badge without full reload
       setRows((prev) =>
         prev.map((m) => (m.id === editing.id ? { ...m, pin_set: true } : m))
       );
@@ -336,7 +498,49 @@ export default function TeamManager() {
     }
   }
 
-  /* -------------------- Load team + determine owner -------------------- */
+  async function loadTrainingSummaryForMembers(oid: string, memberIds: string[]) {
+    if (!oid || !memberIds.length) {
+      setMemberTrainingSummary({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("trainings")
+      .select("id,team_member_id,status,expires_on,certificate_expiry_date")
+      .eq("org_id", oid)
+      .in("team_member_id", memberIds)
+      .is("archived_at", null);
+
+    if (error) {
+      console.warn("[team] training summary load failed:", error.message);
+      setMemberTrainingSummary({});
+      return;
+    }
+
+    const grouped: Record<string, TrainingCert[]> = {};
+    for (const row of data ?? []) {
+      const memberId = String((row as any).team_member_id);
+      if (!grouped[memberId]) grouped[memberId] = [];
+      grouped[memberId].push({
+        id: String((row as any).id),
+        type: null,
+        awarded_on: null,
+        expires_on: (row as any).expires_on ?? null,
+        certificate_url: null,
+        notes: null,
+        status: (row as any).status ?? null,
+        certificate_expiry_date: (row as any).certificate_expiry_date ?? null,
+      });
+    }
+
+    const summaries: Record<string, MemberTrainingSummary> = {};
+    for (const id of memberIds) {
+      summaries[id] = trainingSummaryForRecords(grouped[id] ?? []);
+    }
+
+    setMemberTrainingSummary(summaries);
+  }
+
   async function load() {
     setLoading(true);
     setIsOwner(false);
@@ -352,8 +556,7 @@ export default function TeamManager() {
       const userEmail = u?.email?.toLowerCase() ?? null;
       const userId = u?.id ?? null;
 
-      const userName =
-        (u?.user_metadata as any)?.full_name ?? u?.email ?? "Owner";
+      const userName = (u?.user_metadata as any)?.full_name ?? u?.email ?? "Owner";
 
       setAuthUserId(userId);
       setAuthEmail(userEmail);
@@ -397,7 +600,6 @@ export default function TeamManager() {
           training_areas: normalizeAreas(m.training_areas),
         })) ?? [];
 
-      // Auto-create owner row for this org+location if empty
       if (members.length === 0 && oid && userEmail) {
         const derivedInitials = requireInitialsOrDerive({
           id: "",
@@ -444,7 +646,9 @@ export default function TeamManager() {
               location_id: (inserted as any).location_id
                 ? String((inserted as any).location_id)
                 : null,
-              user_id: (inserted as any).user_id ? String((inserted as any).user_id) : null,
+              user_id: (inserted as any).user_id
+                ? String((inserted as any).user_id)
+                : null,
               login_enabled: !!(inserted as any).login_enabled,
               initials: (inserted as any).initials ?? null,
               name: (inserted as any).name ?? "",
@@ -459,7 +663,6 @@ export default function TeamManager() {
         }
       }
 
-      // ✅ Auto-link logged in user to their team_members row
       if (oid && lid && userEmail && userId) {
         const { data: myRow } = await supabase
           .from("team_members")
@@ -478,21 +681,21 @@ export default function TeamManager() {
         }
       }
 
-      // Determine owner/admin from the current location list
       let ownerFlag = false;
       if (userEmail && members.length) {
         const me = members.find((m) => m.email && m.email.toLowerCase() === userEmail);
         const role = (me?.role ?? "").toLowerCase();
-        ownerFlag = role === "owner" || role === "admin";
+        ownerFlag = role === "owner" || role === "admin" || role === "manager";
       }
 
-      // ✅ Load pin status for members and attach
       const memberIds = members.map((m) => m.id);
       const pinSetIds = await loadPinStatusForMembers(oid, memberIds);
       members = members.map((m) => ({ ...m, pin_set: pinSetIds.has(m.id) }));
 
       setRows(members);
       setIsOwner(ownerFlag);
+
+      await loadTrainingSummaryForMembers(oid, memberIds);
     } catch (e: any) {
       alert(e?.message ?? "Failed to load team.");
       setRows([]);
@@ -503,10 +706,9 @@ export default function TeamManager() {
   }
 
   useEffect(() => {
-    load();
+    void load();
   }, []);
 
-  /* -------------------- Deep-link handling (?staff=...) -------------------- */
   useEffect(() => {
     const staffParam = searchParams.get("staff");
     if (!staffParam || !rows.length) return;
@@ -522,6 +724,7 @@ export default function TeamManager() {
     setViewFor(match);
     setViewOpen(true);
     setHighlightId(match.id);
+    void loadCertsForMember(match);
 
     router.replace("/team");
   }, [searchParams, rows, router]);
@@ -532,7 +735,6 @@ export default function TeamManager() {
     return () => clearTimeout(timer);
   }, [highlightId]);
 
-  /* -------------------- Filtering -------------------- */
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return rows;
@@ -543,7 +745,13 @@ export default function TeamManager() {
     );
   }, [rows, q]);
 
-  /* -------------------- Member CRUD -------------------- */
+  function closeViewCard() {
+    setViewOpen(false);
+    setViewFor(null);
+    setCerts([]);
+    setCertsLoading(false);
+  }
+
   function openAdd() {
     setEditing({
       id: "",
@@ -569,22 +777,14 @@ export default function TeamManager() {
     setEditCertsLoading(false);
     setEditCertSaving(false);
     setEditCertFile(null);
-    setEditCertForm({
-      course: "Food Safety Level 2",
-      provider: "Highfield",
-      providerName: "",
-      awarded_on: "",
-      expires_on: "",
-      certificate_url: "",
-      notes: "",
-    });
+    setEditTrainingForm(defaultTrainingForm());
 
-    // PIN state
     setPinInput("");
     setPinMsg(null);
     setPinSet(false);
     setPinLoading(false);
     setPinSaving(false);
+    setAssigningCourseKey(null);
 
     setEditOpen(true);
   }
@@ -600,12 +800,15 @@ export default function TeamManager() {
     setSendingInviteOnSave(false);
     setSendingInviteFromEdit(false);
 
-    // PIN state
     setPinInput("");
     setPinMsg(null);
     setPinSet(!!m.pin_set);
     setPinLoading(false);
     setPinSaving(false);
+
+    setEditTrainingForm(defaultTrainingForm());
+    setEditCertFile(null);
+    setAssigningCourseKey(null);
 
     await Promise.all([
       loadEditCertsForMember(m),
@@ -893,22 +1096,24 @@ export default function TeamManager() {
     }
   }
 
-  /* -------------------- Certificates / Education -------------------- */
   async function loadCertsForMember(m: Member) {
     setCerts([]);
     setCertsLoading(true);
     try {
       const { data, error } = await supabase
         .from("trainings")
-        .select("id,type,awarded_on,expires_on,certificate_url,notes,provider_name,course_key")
+        .select(
+          "id,type,awarded_on,expires_on,certificate_url,notes,provider_name,course_key,status,assigned_on,started_on,completed_on,learner_email,learner_first_name,learner_last_name,certificate_issue_date,certificate_expiry_date,external_learner_id,external_enrolment_id,licence_state,sync_source,last_synced_at"
+        )
         .eq("team_member_id", m.id)
-        .order("awarded_on", { ascending: false })
-        .limit(10);
+        .is("archived_at", null)
+        .order("created_at", { ascending: false })
+        .limit(20);
 
       if (error) throw error;
       setCerts((data ?? []) as TrainingCert[]);
     } catch (e: any) {
-      alert(e?.message ?? "Failed to load education/certificates.");
+      alert(e?.message ?? "Failed to load training.");
       setCerts([]);
     } finally {
       setCertsLoading(false);
@@ -921,41 +1126,47 @@ export default function TeamManager() {
     try {
       const { data, error } = await supabase
         .from("trainings")
-        .select("id,type,awarded_on,expires_on,certificate_url,notes,provider_name,course_key")
+        .select(
+          "id,type,awarded_on,expires_on,certificate_url,notes,provider_name,course_key,status,assigned_on,started_on,completed_on,learner_email,learner_first_name,learner_last_name,certificate_issue_date,certificate_expiry_date,external_learner_id,external_enrolment_id,licence_state,sync_source,last_synced_at"
+        )
         .eq("team_member_id", m.id)
-        .order("awarded_on", { ascending: false })
-        .limit(10);
+        .is("archived_at", null)
+        .order("created_at", { ascending: false })
+        .limit(20);
 
       if (error) throw error;
       setEditCerts((data ?? []) as TrainingCert[]);
     } catch (e: any) {
-      alert(e?.message ?? "Failed to load education/certificates.");
+      alert(e?.message ?? "Failed to load training.");
       setEditCerts([]);
     } finally {
       setEditCertsLoading(false);
     }
   }
 
-  async function addEditCertificate() {
+  async function saveTrainingRecord() {
     if (!editing) return;
     if (!orgId) return alert("No organisation found.");
 
-    const course = (editCertForm.course ?? "").trim();
+    const course = (editTrainingForm.course ?? "").trim();
     if (!course) return alert("Course is required.");
 
     const provider_name: "Highfield" | "Other" =
-      editCertForm.provider === "Other" ? "Other" : "Highfield";
+      editTrainingForm.provider === "Other" ? "Other" : "Highfield";
 
     const course_key =
       provider_name === "Highfield"
-        ? course
-        : ((editCertForm.providerName ?? "").trim() || null);
+        ? editTrainingForm.courseKey
+        : (editTrainingForm.providerName ?? "").trim() || null;
+
+    const status = editTrainingForm.status;
+    const assigned_on = (editTrainingForm.assigned_on ?? "").trim() || todayISODate();
 
     setEditCertSaving(true);
 
     try {
       let certificate_url: string | null =
-        (editCertForm.certificate_url ?? "").trim() || null;
+        (editTrainingForm.certificate_url ?? "").trim() || null;
 
       if (editCertFile) {
         const up = await uploadTrainingCertificateServer({ file: editCertFile });
@@ -966,43 +1177,124 @@ export default function TeamManager() {
       }
 
       const awarded_on =
-        (editCertForm.awarded_on ?? "").trim() || new Date().toISOString().slice(0, 10);
+        status === "completed" || status === "expired"
+          ? (editTrainingForm.awarded_on ?? "").trim() || todayISODate()
+          : null;
 
-      const expires_on_raw = (editCertForm.expires_on ?? "").trim();
+      const expires_on =
+        status === "completed" || status === "expired"
+          ? (editTrainingForm.expires_on ?? "").trim() ||
+            (awarded_on ? addYearsISO(awarded_on, 2) : null)
+          : null;
 
-      const expires_on = expires_on_raw
-        ? expires_on_raw
-        : awarded_on
-        ? addYearsISO(awarded_on, 2)
-        : null;
+      const nameParts = editing.name.trim().split(/\s+/).filter(Boolean);
+      const learner_first_name = nameParts[0] ?? null;
+      const learner_last_name =
+        nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
 
       await createTrainingServer({
+        id: editTrainingForm.id,
         teamMemberId: editing.id,
         type: course,
         course_key,
         provider_name,
+        status,
+        assigned_on,
+        completed_on: awarded_on,
         awarded_on,
         expires_on,
+        certificate_issue_date: awarded_on,
+        certificate_expiry_date: expires_on,
         certificate_url,
-        notes: (editCertForm.notes ?? "").trim() || null,
+        learner_email: cleanEmail(editing.email) || null,
+        learner_first_name,
+        learner_last_name,
+        licence_state:
+          status === "completed"
+            ? "consumed"
+            : status === "cancelled"
+            ? "cancelled"
+            : "assigned",
+        sync_source: provider_name === "Highfield" ? "highfield" : "manual",
+        notes: (editTrainingForm.notes ?? "").trim() || null,
       });
 
-      setEditCertForm({
-        course: "Food Safety Level 2",
-        provider: "Highfield",
-        providerName: "",
-        awarded_on: "",
-        expires_on: "",
-        certificate_url: "",
-        notes: "",
-      });
+      setEditTrainingForm(defaultTrainingForm());
       setEditCertFile(null);
 
       await loadEditCertsForMember(editing);
+      await load();
     } catch (e: any) {
-      alert(e?.message ?? "Failed to add education/certificate.");
+      alert(e?.message ?? "Failed to save training.");
     } finally {
       setEditCertSaving(false);
+    }
+  }
+
+  function loadTrainingIntoForm(c: TrainingCert) {
+    setEditTrainingForm({
+      id: c.id,
+      course: c.type ?? "",
+      courseKey: c.course_key ?? "",
+      provider: c.provider_name === "Other" ? "Other" : "Highfield",
+      providerName: c.provider_name === "Other" ? c.course_key ?? "" : "",
+      status: c.status ?? "completed",
+      assigned_on: c.assigned_on ?? todayISODate(),
+      awarded_on: c.awarded_on ?? c.completed_on ?? "",
+      expires_on: c.expires_on ?? c.certificate_expiry_date ?? "",
+      certificate_url: c.certificate_url ?? "",
+      notes: c.notes ?? "",
+    });
+    setEditCertFile(null);
+  }
+
+  async function quickAssignTraining(
+    member: Member,
+    courseKey: HighfieldCourseKey,
+    label: string
+  ) {
+    if (!orgId) return alert("No organisation found.");
+
+    const hasExisting = editCerts.some(
+      (c) =>
+        c.provider_name === "Highfield" &&
+        c.course_key === courseKey &&
+        isTrainingStillActive(c)
+    );
+
+    if (hasExisting) {
+      alert(`${label} is already assigned or active for this team member.`);
+      return;
+    }
+
+    setAssigningCourseKey(courseKey);
+
+    try {
+      const nameParts = member.name.trim().split(/\s+/).filter(Boolean);
+      const learner_first_name = nameParts[0] ?? null;
+      const learner_last_name = nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
+
+      await createTrainingServer({
+        teamMemberId: member.id,
+        type: label,
+        course_key: courseKey,
+        provider_name: "Highfield",
+        status: "assigned",
+        assigned_on: todayISODate(),
+        learner_email: cleanEmail(member.email) || null,
+        learner_first_name,
+        learner_last_name,
+        licence_state: "assigned",
+        sync_source: "highfield",
+        notes: null,
+      });
+
+      await Promise.all([loadEditCertsForMember(member), load()]);
+      alert(`${label} assigned.`);
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to assign training.");
+    } finally {
+      setAssigningCourseKey(null);
     }
   }
 
@@ -1019,15 +1311,25 @@ export default function TeamManager() {
     !!cleanEmail(editing.email) &&
     !(authEmail && cleanEmail(editing.email) === authEmail);
 
-  /* -------------------- Render -------------------- */
   return (
     <div className="mx-auto w-full max-w-6xl px-0 sm:px-4">
-      <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
-        {/* Toolbar */}
+      <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-semibold text-slate-900">Team</h1>
+          <div>
+            <h1 className="text-lg font-semibold text-slate-900">Team</h1>
+            <div className="mt-1 text-xs text-slate-500">
+              Add team members, set access, and keep a quick view of training health.
+            </div>
+          </div>
 
-          <div className="ml-auto flex min-w-0 items-center gap-2">
+          <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+            <Link
+              href="/team/absences"
+              className="whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Staff absences
+            </Link>
+
             <input
               className="h-9 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900 placeholder:text-slate-400 md:w-64"
               placeholder="Search…"
@@ -1045,12 +1347,8 @@ export default function TeamManager() {
             )}
           </div>
         </div>
-         <div className="mt-4 text-xs text-slate-500">
-          Add team members - set each members access to the app none/email login/pin login
-        </div>
       </div>
 
-      {/* Card grid */}
       {loading ? (
         <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
           Loading…
@@ -1062,6 +1360,13 @@ export default function TeamManager() {
             const roleLabel = prettyRole(m.role);
             const activeLabel = m.active ? "Active" : "Inactive";
             const areas = normalizeAreas(m.training_areas);
+            const trainingSummary = memberTrainingSummary[m.id] ?? {
+              valid: 0,
+              expiring: 0,
+              expired: 0,
+              inProgress: 0,
+              assigned: 0,
+            };
 
             const hasLinkedLogin = !!m.user_id;
             const loginLabel = hasLinkedLogin
@@ -1079,11 +1384,10 @@ export default function TeamManager() {
                 key={m.id}
                 className={`flex h-full flex-col rounded-2xl border border-slate-200 bg-white/90 p-3 text-sm text-slate-900 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
                   highlightId === m.id
-                    ? "bg-emerald-50/80 ring-1 ring-emerald-300/60 animate-pulse"
+                    ? "animate-pulse bg-emerald-50/80 ring-1 ring-emerald-300/60"
                     : ""
                 }`}
               >
-                {/* Header */}
                 <div className="mb-2 flex items-start justify-between gap-2">
                   <div className="flex items-start gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
@@ -1104,8 +1408,8 @@ export default function TeamManager() {
                         <span
                           className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
                             m.active
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
-                              : "bg-slate-50 text-slate-500 border border-slate-100"
+                              ? "border border-emerald-100 bg-emerald-50 text-emerald-700"
+                              : "border border-slate-100 bg-slate-50 text-slate-500"
                           }`}
                         >
                           {activeLabel}
@@ -1124,6 +1428,17 @@ export default function TeamManager() {
                         >
                           {pinLabel.text}
                         </span>
+
+                        {trainingSummary.inProgress > 0 && (
+                          <span
+                            className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-800"
+                            title={`${trainingSummary.inProgress} training record${
+                              trainingSummary.inProgress === 1 ? "" : "s"
+                            } currently in progress`}
+                          >
+                            Training in progress {trainingSummary.inProgress > 1 ? `· ${trainingSummary.inProgress}` : ""}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1145,7 +1460,6 @@ export default function TeamManager() {
                   />
                 </div>
 
-                {/* Training pills row */}
                 <div className="mb-2 flex flex-wrap gap-1.5">
                   {areas.length ? (
                     areas.map((a) => {
@@ -1162,11 +1476,10 @@ export default function TeamManager() {
                       );
                     })
                   ) : (
-                    <span className="text-[11px] text-slate-400">No training selected</span>
+                    <span className="text-[11px] text-slate-400">No training areas selected</span>
                   )}
                 </div>
 
-                {/* Body */}
                 <div className="space-y-3 text-xs text-slate-800">
                   <div className="flex justify-between gap-2">
                     <span className="text-slate-500">Email</span>
@@ -1188,7 +1501,6 @@ export default function TeamManager() {
                   </div>
                 )}
 
-                {/* Footer */}
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   <button
                     className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
@@ -1196,6 +1508,7 @@ export default function TeamManager() {
                   >
                     Edit profile
                   </button>
+
                   <button
                     className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
                     onClick={() => void openCard(m)}
@@ -1214,43 +1527,40 @@ export default function TeamManager() {
       )}
 
       {editOpen && editing && (
-  <ModalPortal>
-    <div
-      className="fixed inset-0 z-50 bg-black/30 overflow-y-auto p-4 sm:p-6"
-      onClick={() => setEditOpen(false)}
-    >
-      <div
-        className="
-          mx-auto w-[min(1100px,calc(100vw-2rem))]
-          rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur
-          max-h-[calc(100dvh-2rem)] overflow-y-auto
-        "
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-3 px-4 pt-4 pb-3 bg-white/90 backdrop-blur border-b border-slate-200">
-          <div className="flex items-center justify-between">
-            <div className="text-base font-semibold">
-              {editing.id ? "Edit member" : "Add member"}
-            </div>
-            <button
-              onClick={() => setEditOpen(false)}
-              className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+        <ModalPortal>
+          <div
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/30 p-4 sm:p-6"
+            onClick={() => setEditOpen(false)}
+          >
+            <div
+              className="
+                mx-auto w-[min(1100px,calc(100vw-2rem))]
+                max-h-[calc(100dvh-2rem)] overflow-y-auto
+                rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur
+              "
+              onClick={(e) => e.stopPropagation()}
             >
-              ✕
-            </button>
-          </div>
-        </div>
+              <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-3 border-b border-slate-200 bg-white/90 px-4 pb-3 pt-4 backdrop-blur">
+                <div className="flex items-center justify-between">
+                  <div className="text-base font-semibold">
+                    {editing.id ? "Edit member" : "Add member"}
+                  </div>
+                  <button
+                    onClick={() => setEditOpen(false)}
+                    className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
 
-        {!locationId ? (
-          <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            No active location selected. Pick a location at the top of the app first.
-          </div>
-        ) : null}
+              {!locationId ? (
+                <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  No active location selected. Pick a location at the top of the app first.
+                </div>
+              ) : null}
 
-
-              {/* TWO-COLUMN LAYOUT ON DESKTOP */}
               <div className="grid gap-4 lg:grid-cols-2">
-                {/* LEFT COLUMN: MEMBER PROFILE */}
                 <div className="space-y-3">
                   <div className="grid grid-cols-3 gap-3">
                     <div>
@@ -1276,7 +1586,6 @@ export default function TeamManager() {
                     </div>
                   </div>
 
-                  {/* Add-only: Allow login */}
                   {!editing.id && (
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
                       <label className="flex items-start gap-3 text-sm text-slate-800">
@@ -1290,7 +1599,7 @@ export default function TeamManager() {
                           <span className="font-semibold">Allow user to log in</span>
                           <div className="mt-0.5 text-[11px] text-slate-600">
                             If enabled, we’ll send them an invite email on Save. If disabled, this is a
-                            staff record only (no login).
+                            staff record only.
                           </div>
                         </span>
                       </label>
@@ -1356,14 +1665,37 @@ export default function TeamManager() {
                     </label>
                   </div>
 
-                  {/* ✅ Workstation PIN (edit only) */}
+                  {editing.id ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">Absences</div>
+                          <div className="mt-0.5 text-[11px] text-slate-600">
+                            View and log holiday, sickness and other leave for this team member.
+                          </div>
+                        </div>
+
+                        <Link
+                          href={`/team/absences?teamMemberId=${editing.id}`}
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Open absences
+                        </Link>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-500">
+                      Save the member first to manage absences.
+                    </div>
+                  )}
+
                   {editing.id ? (
                     <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
                       <div className="flex items-center justify-between gap-2">
                         <div>
                           <div className="text-sm font-semibold text-slate-900">Workstation PIN</div>
                           <div className="mt-0.5 text-[11px] text-slate-600">
-                            Used on shared devices to select operator. Not the same as full login.
+                            Used on shared devices to select operator.
                           </div>
                         </div>
 
@@ -1435,13 +1767,11 @@ export default function TeamManager() {
                     </div>
                   )}
 
-                  {/* Edit-only: enable login + invite button */}
                   {canInviteInEdit && (
                     <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
                       <div className="text-sm font-semibold text-slate-900">Login access</div>
                       <div className="mt-0.5 text-[11px] text-slate-700">
-                        This staff member doesn’t currently have a linked login. You can send an invite so
-                        they can create a password and sign in.
+                        This staff member doesn’t currently have a linked login.
                       </div>
 
                       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
@@ -1464,7 +1794,6 @@ export default function TeamManager() {
                     </div>
                   )}
 
-                  {/* Training areas selector */}
                   <div>
                     <label className="mb-1 block text-xs text-slate-500">Training areas</label>
                     <div className="flex flex-wrap gap-2">
@@ -1487,8 +1816,7 @@ export default function TeamManager() {
                       })}
                     </div>
                     <p className="mt-1 text-[11px] text-slate-500">
-                      Tap to toggle. Each selected area is recorded as trained today and given a due date
-                      in 12 months.
+                      Tap to toggle. This is separate from purchased courses.
                     </p>
                   </div>
 
@@ -1501,7 +1829,6 @@ export default function TeamManager() {
                     />
                   </div>
 
-                  {/* ACTION BUTTONS */}
                   <div className="flex justify-end gap-2 pt-1">
                     <button
                       className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
@@ -1521,11 +1848,10 @@ export default function TeamManager() {
                   </div>
                 </div>
 
-                {/* RIGHT COLUMN: TRAINING */}
                 <div className="space-y-3">
                   {editing.id ? (
                     <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
-                      <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="mb-3 flex items-center justify-between gap-2">
                         <div className="text-sm font-semibold text-slate-900">Training</div>
                         <button
                           onClick={() => void loadEditCertsForMember(editing)}
@@ -1534,6 +1860,29 @@ export default function TeamManager() {
                         >
                           Refresh
                         </button>
+                      </div>
+
+                      <div className="mb-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                        <div className="mb-2 text-xs font-semibold text-slate-800">
+                          Quick assign Highfield
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {HIGHFIELD_COURSES.map((course) => (
+                            <button
+                              key={course.key}
+                              type="button"
+                              onClick={() =>
+                                void quickAssignTraining(editing, course.key, course.label)
+                              }
+                              disabled={assigningCourseKey === course.key}
+                              className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
+                            >
+                              {assigningCourseKey === course.key
+                                ? "Assigning…"
+                                : course.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
 
                       {editCertsLoading ? (
@@ -1546,21 +1895,59 @@ export default function TeamManager() {
                               className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
                             >
                               <div className="flex items-start justify-between gap-2">
-                                <div className="text-xs font-semibold text-slate-900">{certTitle(c)}</div>
-                                {c.certificate_url ? (
-                                  <a
-                                    href={c.certificate_url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                                <div>
+                                  <div className="text-xs font-semibold text-slate-900">
+                                    {certTitle(c)}
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                                    <span
+                                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${trainingStatusPillClass(
+                                        c.status
+                                      )}`}
+                                    >
+                                      {prettyTrainingStatus(c.status)}
+                                    </span>
+                                    {c.licence_state ? (
+                                      <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-700">
+                                        Licence: {c.licence_state}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    className="text-[11px] font-medium text-slate-700 hover:text-slate-900"
+                                    onClick={() => loadTrainingIntoForm(c)}
                                   >
-                                    View →
-                                  </a>
-                                ) : null}
+                                    Edit
+                                  </button>
+                                  {c.certificate_url ? (
+                                    <a
+                                      href={c.certificate_url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                                    >
+                                      View →
+                                    </a>
+                                  ) : null}
+                                </div>
                               </div>
+
                               <div className="mt-1 text-[11px] text-slate-600">
-                                Passed: {formatDate(c.awarded_on)} · Expires: {formatDate(c.expires_on)}
+                                Assigned: {formatDate(c.assigned_on)} · Completed:{" "}
+                                {formatDate(c.completed_on || c.awarded_on)} · Expires:{" "}
+                                {formatDate(c.certificate_expiry_date || c.expires_on)}
                               </div>
+
+                              {c.learner_email ? (
+                                <div className="mt-1 text-[11px] text-slate-600">
+                                  Learner: {c.learner_email}
+                                </div>
+                              ) : null}
+
                               {c.notes ? (
                                 <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
                               ) : null}
@@ -1571,7 +1958,6 @@ export default function TeamManager() {
                         <div className="text-xs text-slate-500">No training recorded.</div>
                       )}
 
-                      {/* Add course form */}
                       <div className="mt-3 grid gap-2 lg:grid-cols-2">
                         <div className="lg:col-span-2 grid grid-cols-2 gap-2">
                           <label className="block">
@@ -1580,37 +1966,49 @@ export default function TeamManager() {
                             </span>
                             <select
                               className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                              value={editCertForm.provider}
-                              onChange={(e) =>
-                                setEditCertForm((p) => ({
+                              value={editTrainingForm.provider}
+                              onChange={(e) => {
+                                const provider = e.target.value as "Highfield" | "Other";
+                                setEditTrainingForm((p) => ({
                                   ...p,
-                                  provider: e.target.value as any,
-                                  course: e.target.value === "Highfield" ? "Food Safety Level 2" : p.course,
-                                  providerName: e.target.value === "Highfield" ? "" : p.providerName,
-                                }))
-                              }
+                                  provider,
+                                  course:
+                                    provider === "Highfield" ? "Food Safety Level 2" : p.course,
+                                  courseKey:
+                                    provider === "Highfield" ? "food_safety_level_2" : "",
+                                  providerName: provider === "Highfield" ? "" : p.providerName,
+                                }));
+                              }}
                             >
                               <option value="Highfield">Highfield</option>
                               <option value="Other">Other</option>
                             </select>
                           </label>
 
-                          {editCertForm.provider === "Highfield" ? (
+                          {editTrainingForm.provider === "Highfield" ? (
                             <label className="block">
                               <span className="mb-1 block text-[11px] font-medium text-slate-600">
                                 Course
                               </span>
                               <select
                                 className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                                value={editCertForm.course}
-                                onChange={(e) =>
-                                  setEditCertForm((p) => ({ ...p, course: e.target.value }))
-                                }
+                                value={editTrainingForm.courseKey}
+                                onChange={(e) => {
+                                  const selected = HIGHFIELD_COURSES.find(
+                                    (c) => c.key === e.target.value
+                                  );
+                                  setEditTrainingForm((p) => ({
+                                    ...p,
+                                    courseKey: e.target.value,
+                                    course: selected?.label ?? p.course,
+                                  }));
+                                }}
                               >
-                                <option value="Food Safety Level 2">Food Safety Level 2</option>
-                                <option value="Food Safety Level 1">Food Safety Level 1</option>
-                                <option value="Introduction to Allergens">Introduction to Allergens</option>
-                                <option value="Food Hygiene Level 2">Food Hygiene Level 2</option>
+                                {HIGHFIELD_COURSES.map((c) => (
+                                  <option key={c.key} value={c.key}>
+                                    {c.label}
+                                  </option>
+                                ))}
                               </select>
                             </label>
                           ) : (
@@ -1620,9 +2018,9 @@ export default function TeamManager() {
                               </span>
                               <input
                                 className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                                value={editCertForm.course}
+                                value={editTrainingForm.course}
                                 onChange={(e) =>
-                                  setEditCertForm((p) => ({ ...p, course: e.target.value }))
+                                  setEditTrainingForm((p) => ({ ...p, course: e.target.value }))
                                 }
                                 placeholder="e.g. CIEH Level 2 Food Safety"
                               />
@@ -1630,34 +2028,94 @@ export default function TeamManager() {
                           )}
                         </div>
 
-                        {editCertForm.provider === "Other" ? (
+                        {editTrainingForm.provider === "Other" ? (
                           <input
                             className="lg:col-span-2 h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                            value={editCertForm.providerName}
+                            value={editTrainingForm.providerName}
                             onChange={(e) =>
-                              setEditCertForm((p) => ({ ...p, providerName: e.target.value }))
+                              setEditTrainingForm((p) => ({
+                                ...p,
+                                providerName: e.target.value,
+                              }))
                             }
-                            placeholder="Provider name (e.g. CIEH)"
+                            placeholder="Provider name"
                           />
                         ) : null}
 
-                        <div className="space-y-1">
-                          <label className="block text-[11px] font-medium text-slate-600">
-                            Date passed
-                          </label>
+                        <label className="block">
+                          <span className="mb-1 block text-[11px] font-medium text-slate-600">
+                            Status
+                          </span>
+                          <select
+                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+                            value={editTrainingForm.status}
+                            onChange={(e) => {
+                              const status = e.target.value as TrainingStatus;
+                              setEditTrainingForm((p) => ({
+                                ...p,
+                                status,
+                                awarded_on:
+                                  status === "completed" || status === "expired"
+                                    ? p.awarded_on || todayISODate()
+                                    : "",
+                                expires_on:
+                                  status === "completed" || status === "expired"
+                                    ? p.expires_on ||
+                                      (p.awarded_on
+                                        ? addYearsISO(p.awarded_on, 2)
+                                        : addYearsISO(todayISODate(), 2))
+                                    : "",
+                              }));
+                            }}
+                          >
+                            <option value="assigned">Assigned</option>
+                            <option value="invited">Invited</option>
+                            <option value="in_progress">In progress</option>
+                            <option value="completed">Completed</option>
+                            <option value="expired">Expired</option>
+                            <option value="cancelled">Cancelled</option>
+                          </select>
+                        </label>
+
+                        <label className="block">
+                          <span className="mb-1 block text-[11px] font-medium text-slate-600">
+                            Assigned date
+                          </span>
                           <input
                             type="date"
                             className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                            value={editCertForm.awarded_on}
+                            value={editTrainingForm.assigned_on}
+                            onChange={(e) =>
+                              setEditTrainingForm((p) => ({
+                                ...p,
+                                assigned_on: e.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-medium text-slate-600">
+                            Completion date
+                          </label>
+                          <input
+                            type="date"
+                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs disabled:bg-slate-50"
+                            value={editTrainingForm.awarded_on}
+                            disabled={
+                              !(
+                                editTrainingForm.status === "completed" ||
+                                editTrainingForm.status === "expired"
+                              )
+                            }
                             onChange={(e) => {
                               const awarded = e.target.value;
-                              setEditCertForm((p) => ({
+                              setEditTrainingForm((p) => ({
                                 ...p,
                                 awarded_on: awarded,
                                 expires_on: awarded ? addYearsISO(awarded, 2) : "",
                               }));
                             }}
-                            aria-label="Date passed"
                           />
                         </div>
 
@@ -1667,18 +2125,31 @@ export default function TeamManager() {
                           </label>
                           <input
                             type="date"
-                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                            value={editCertForm.expires_on}
-                            readOnly
-                            aria-label="Expiry date"
+                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs disabled:bg-slate-50"
+                            value={editTrainingForm.expires_on}
+                            disabled={
+                              !(
+                                editTrainingForm.status === "completed" ||
+                                editTrainingForm.status === "expired"
+                              )
+                            }
+                            onChange={(e) =>
+                              setEditTrainingForm((p) => ({
+                                ...p,
+                                expires_on: e.target.value,
+                              }))
+                            }
                           />
                         </div>
 
                         <input
                           className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                          value={editCertForm.certificate_url}
+                          value={editTrainingForm.certificate_url}
                           onChange={(e) =>
-                            setEditCertForm((p) => ({ ...p, certificate_url: e.target.value }))
+                            setEditTrainingForm((p) => ({
+                              ...p,
+                              certificate_url: e.target.value,
+                            }))
                           }
                           placeholder="Certificate URL (optional)"
                         />
@@ -1691,7 +2162,7 @@ export default function TeamManager() {
                             <input
                               type="file"
                               accept=".pdf,image/*"
-                              className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs pt-1"
+                              className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 pt-1 text-xs"
                               onChange={(e) => {
                                 const f = e.target.files?.[0] ?? null;
                                 setEditCertFile(f);
@@ -1703,7 +2174,7 @@ export default function TeamManager() {
                               </span>
                             ) : (
                               <span className="mt-1 block text-[10px] text-slate-500">
-                                PDF preferred. Stored for inspections.
+                                PDF preferred.
                               </span>
                             )}
                           </label>
@@ -1711,19 +2182,21 @@ export default function TeamManager() {
 
                         <input
                           className="lg:col-span-2 h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                          value={editCertForm.notes}
-                          onChange={(e) => setEditCertForm((p) => ({ ...p, notes: e.target.value }))}
+                          value={editTrainingForm.notes}
+                          onChange={(e) =>
+                            setEditTrainingForm((p) => ({ ...p, notes: e.target.value }))
+                          }
                           placeholder="Notes (optional)"
                         />
 
                         <div className="lg:col-span-2 flex justify-end">
                           <button
-                            onClick={() => void addEditCertificate()}
+                            onClick={() => void saveTrainingRecord()}
                             disabled={editCertSaving}
                             className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                             type="button"
                           >
-                            {editCertSaving ? "Saving…" : "Add training"}
+                            {editCertSaving ? "Saving…" : "Save training"}
                           </button>
                         </div>
                       </div>
@@ -1740,12 +2213,11 @@ export default function TeamManager() {
         </ModalPortal>
       )}
 
-      {/* View modal */}
       {viewOpen && viewFor && (
         <ModalPortal>
-          <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setViewOpen(false)}>
+          <div className="fixed inset-0 z-50 bg-black/30" onClick={closeViewCard}>
             <div
-              className="mx-auto mt-16 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur max-h-[calc(100dvh-6rem)] overflow-y-auto"
+              className="mx-auto mt-16 max-h-[calc(100dvh-6rem)] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="bg-slate-900 px-4 py-3 text-white">
@@ -1788,11 +2260,27 @@ export default function TeamManager() {
                   <span className="font-medium">Notes:</span> {viewFor.notes ?? "—"}
                 </div>
 
+                <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">Absences</div>
+                      <div className="mt-0.5 text-[11px] text-slate-600">
+                        Open this staff member’s absence log.
+                      </div>
+                    </div>
+
+                    <Link
+                      href={`/team/absences?teamMemberId=${viewFor.id}`}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Open absences
+                    </Link>
+                  </div>
+                </div>
+
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <div className="text-sm font-semibold text-slate-900">
-                      Education / Courses
-                    </div>
+                    <div className="text-sm font-semibold text-slate-900">Training</div>
                     <button
                       onClick={() => void loadCertsForMember(viewFor)}
                       className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
@@ -1812,9 +2300,21 @@ export default function TeamManager() {
                           className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <div className="text-xs font-semibold text-slate-900">
-                              {certTitle(c)}
+                            <div>
+                              <div className="text-xs font-semibold text-slate-900">
+                                {certTitle(c)}
+                              </div>
+                              <div className="mt-1 flex flex-wrap items-center gap-1">
+                                <span
+                                  className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${trainingStatusPillClass(
+                                    c.status
+                                  )}`}
+                                >
+                                  {prettyTrainingStatus(c.status)}
+                                </span>
+                              </div>
                             </div>
+
                             {c.certificate_url ? (
                               <a
                                 href={c.certificate_url}
@@ -1827,9 +2327,15 @@ export default function TeamManager() {
                             ) : null}
                           </div>
                           <div className="mt-1 text-[11px] text-slate-600">
-                            Passed: {formatDate(c.awarded_on)} · Expires:{" "}
-                            {formatDate(c.expires_on)}
+                            Assigned: {formatDate(c.assigned_on)} · Completed:{" "}
+                            {formatDate(c.completed_on || c.awarded_on)} · Expires:{" "}
+                            {formatDate(c.certificate_expiry_date || c.expires_on)}
                           </div>
+                          {c.learner_email ? (
+                            <div className="mt-1 text-[11px] text-slate-600">
+                              Learner: {c.learner_email}
+                            </div>
+                          ) : null}
                           {c.notes ? (
                             <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
                           ) : null}
@@ -1845,7 +2351,7 @@ export default function TeamManager() {
               <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
                 <button
                   onClick={() => {
-                    setViewOpen(false);
+                    closeViewCard();
                     void openEdit(viewFor);
                   }}
                   className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
@@ -1854,7 +2360,7 @@ export default function TeamManager() {
                   Edit
                 </button>
                 <button
-                  onClick={() => setViewOpen(false)}
+                  onClick={closeViewCard}
                   className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
                   type="button"
                 >

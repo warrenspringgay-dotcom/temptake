@@ -134,7 +134,7 @@ export default function LaunchPage() {
         </div>
 
         {/* Top bar */}
-        <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-4 pt-4">
+        <header className="relative z-10 mx-auto flex w-full max-w-[1400px] items-center justify-between px-4 pt-4 xl:px-6">
           <div className="flex items-center gap-3 text-sm font-semibold text-slate-100">
             <Link href="/launch" className="flex items-center gap-3">
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 shadow-lg shadow-black/20 backdrop-blur">
@@ -174,8 +174,8 @@ export default function LaunchPage() {
         </header>
 
         {/* HERO */}
-        <section className="relative z-10 mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pb-16 pt-10 md:flex-row md:items-center md:pb-24 md:pt-16">
-          <div className="md:w-1/2">
+        <section className="relative z-10 mx-auto grid w-full max-w-[1400px] gap-10 px-4 pb-16 pt-10 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] md:items-center md:pb-24 md:pt-16 xl:px-6">
+          <div className="max-w-[560px]">
             <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3 shadow-lg shadow-black/20 backdrop-blur">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/95 shadow-md">
                 <Image src="/logo.png" width={30} height={30} alt="TempTake logo" />
@@ -284,7 +284,7 @@ export default function LaunchPage() {
           </div>
 
           {/* HERO SCREENSHOTS */}
-          <div className="md:w-1/2">
+          <div className="md:justify-self-end">
             <div className="mx-auto max-w-2xl">
               <div className="mb-3 flex items-center justify-between">
                 <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 shadow-lg shadow-black/20 backdrop-blur">
@@ -341,7 +341,7 @@ export default function LaunchPage() {
 
         {/* PRICE STRIP */}
         <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
-          <div className="mx-auto w-full max-w-6xl px-4 py-8">
+          <div className="mx-auto w-full max-w-[1400px] px-4 py-8 xl:px-6">
             <div className="grid gap-4 rounded-3xl border border-emerald-500/25 bg-emerald-500/5 p-5 shadow-lg shadow-emerald-500/5 md:grid-cols-[1.1fr_1fr] md:items-center">
               <div>
                 <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
@@ -383,7 +383,7 @@ export default function LaunchPage() {
 
         {/* PROOF / OUTCOME */}
         <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
-          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
+          <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
             <div className="grid gap-6 md:grid-cols-2 md:items-center">
               <div>
                 <h2 className="text-2xl font-semibold sm:text-3xl">
@@ -444,7 +444,7 @@ export default function LaunchPage() {
 
         {/* HOW IT WORKS */}
         <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
-          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
+          <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
             <div className="max-w-2xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
                 Simple for staff.
@@ -478,7 +478,7 @@ export default function LaunchPage() {
 
         {/* SCREENSHOT GALLERY */}
         <section className="relative z-10 border-t border-white/10 bg-slate-950/80">
-          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
+          <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
             <div className="max-w-3xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
                 What the product actually looks like.
@@ -526,7 +526,7 @@ export default function LaunchPage() {
 
         {/* FEATURE GRID */}
         <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
-          <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-12 md:py-16">
+          <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-8 px-4 py-12 md:py-16 xl:px-6">
             <div className="max-w-2xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
                 Inspection-ready records,
@@ -565,7 +565,7 @@ export default function LaunchPage() {
 
         {/* GUIDES */}
         <section id="guides" className="relative z-10 border-t border-white/10 bg-slate-950">
-          <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
+          <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
             <div className="mb-6 max-w-3xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
                 Practical guides your team can actually use.
@@ -620,7 +620,7 @@ export default function LaunchPage() {
 
         {/* OPTIONAL CONTACT / HUMAN HELP */}
         <section className="relative z-10 border-t border-white/10 bg-slate-950/80">
-          <div className="mx-auto w-full max-w-6xl px-4 py-10">
+          <div className="mx-auto w-full max-w-[1400px] px-4 py-10 xl:px-6">
             <div className="flex flex-col items-start justify-between gap-4 rounded-3xl border border-slate-800 bg-slate-900/60 p-6 shadow-lg shadow-black/30 md:flex-row md:items-center">
               <div className="max-w-2xl">
                 <h2 className="text-xl font-semibold text-white sm:text-2xl">
@@ -693,7 +693,7 @@ export default function LaunchPage() {
 
         {/* FOOTER */}
         <footer className="relative z-10 border-t border-white/10 bg-slate-950">
-          <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-6 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-4 px-4 py-6 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:justify-between xl:px-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5">
                 <Image src="/logo.png" width={22} height={22} alt="TempTake logo" />
@@ -769,7 +769,7 @@ function FAQSection() {
 
   return (
     <section id="faq" className="relative z-10 border-t border-white/10 bg-slate-950/90">
-      <div className="mx-auto w-full max-w-6xl px-4 py-12 md:py-16">
+      <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
         <div className="mb-6 max-w-3xl">
           <h2 className="text-2xl font-semibold sm:text-3xl">
             FAQs kitchens actually ask.

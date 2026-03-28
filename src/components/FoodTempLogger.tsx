@@ -11,15 +11,13 @@ import { getActiveLocationIdClient } from "@/lib/locationClient";
 import OnboardingBanner from "@/components/OnboardingBanner";
 import WelcomeGate from "@/components/WelcomeGate";
 
-
-
 /* ---------- CONFIG ---------- */
 
 const WALL_TABLE = "kitchen_wall";
 
 // KPI incident counting window for performance.
 // Incidents still show in modal by range selector (7/14/30).
-// KPI counts OPEN incidents only (so once resolved, it drops off immediately).
+// KPI counts OPEN incidents only.
 const INCIDENT_KPI_LOOKBACK_DAYS = 365;
 
 /* ---------- Types ---------- */
@@ -29,8 +27,12 @@ type KpiState = {
   tempFails7d: number;
   cleaningDueToday: number;
   cleaningDoneToday: number;
+
   trainingDueSoon: number;
   trainingOver: number;
+  trainingAssigned: number;
+  trainingInProgress: number;
+
   allergenDueSoon: number;
   allergenOver: number;
 };
@@ -67,12 +69,10 @@ type CleanRun = {
   done_by: string | null;
 };
 
-// Optional: only used if you have deferrals in your rota.
-// If table doesn't exist, code ignores it.
 type Deferral = {
   task_id: string;
-  from_on: string; // yyyy-mm-dd
-  to_on: string; // yyyy-mm-dd
+  from_on: string;
+  to_on: string;
 };
 
 type FourWeekBannerState =
@@ -87,14 +87,13 @@ type FourWeekBannerState =
 
 type IncidentRow = {
   id: string;
-  happened_on: string; // date
+  happened_on: string;
   type: string | null;
   details: string | null;
   immediate_action: string | null;
   preventive_action: string | null;
   created_by: string | null;
   created_at: string | null;
-
   resolved_at?: string | null;
   resolved_by?: string | null;
 };
@@ -154,7 +153,6 @@ function toISODate(val: any): string | null {
   return d.toISOString().slice(0, 10);
 }
 
-// DD/MM/YYYY (local date parts)
 function formatDDMMYYYY(val: any): string | null {
   if (!val) return null;
   const d = new Date(val);
@@ -167,15 +165,14 @@ function formatDDMMYYYY(val: any): string | null {
   return `${dd}/${mm}/${yyyy}`;
 }
 
-// yyyy-mm-dd from Date
 function isoDate(d: Date) {
   return d.toISOString().slice(0, 10);
 }
 
 function startOfWeekMonday(d: Date) {
   const x = new Date(d);
-  const day = x.getDay(); // 0=Sun..6=Sat
-  const diff = (day === 0 ? -6 : 1) - day; // Monday start
+  const day = x.getDay();
+  const diff = (day === 0 ? -6 : 1) - day;
   x.setDate(x.getDate() + diff);
   x.setHours(0, 0, 0, 0);
   return x;
@@ -191,13 +188,13 @@ function endOfWeekSunday(d: Date) {
 
 function getDow1to7(ymd: string) {
   const date = new Date(ymd);
-  return ((date.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
+  return ((date.getDay() + 6) % 7) + 1;
 }
+
 function getDom(ymd: string) {
   return new Date(ymd).getDate();
 }
 
-// Robust: supports weekday stored as 0..6 or 1..7
 function isDueOn(t: CleanTask, ymd: string) {
   switch (t.frequency) {
     case "daily":
@@ -205,8 +202,8 @@ function isDueOn(t: CleanTask, ymd: string) {
 
     case "weekly": {
       if (t.weekday == null) return false;
-      const d0to6 = new Date(ymd).getDay(); // Sun=0..Sat=6
-      const d1to7 = getDow1to7(ymd); // Mon=1..Sun=7
+      const d0to6 = new Date(ymd).getDay();
+      const d1to7 = getDow1to7(ymd);
       return t.weekday === d0to6 || t.weekday === d1to7;
     }
 
@@ -235,7 +232,6 @@ function daysBetween(aISO: string, bISO: string) {
 }
 
 function isLikelyMonthEnd(d = new Date()) {
-  // If it's within first 3 days of the month, treat as month end review time.
   return d.getDate() <= 3;
 }
 
@@ -810,6 +806,8 @@ export default function DashboardPage() {
     cleaningDoneToday: 0,
     trainingDueSoon: 0,
     trainingOver: 0,
+    trainingAssigned: 0,
+    trainingInProgress: 0,
     allergenDueSoon: 0,
     allergenOver: 0,
   });
@@ -876,7 +874,6 @@ export default function DashboardPage() {
     return () => mq?.removeEventListener?.("change", update);
   }, []);
 
-  // Keep org/location in sync
   useEffect(() => {
     let cancelled = false;
 
@@ -906,7 +903,6 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // Load data (re-run when org/location changes)
   useEffect(() => {
     let cancelled = false;
 
@@ -932,9 +928,9 @@ export default function DashboardPage() {
         await Promise.all([
           loadTempsKpi(orgId, locationId, today, cancelled),
           loadCleaningKpi(orgId, locationId, today, cancelled),
-          loadTrainingAndAllergenKpi(orgId, cancelled),
+          loadTrainingAndAllergenKpi(orgId, locationId, cancelled),
           loadLeaderBoard(orgId, locationId, cancelled),
-          loadWallPosts(orgId, locationId, cancelled), // ✅ fixed fallback logic
+          loadWallPosts(orgId, locationId, cancelled),
           loadFourWeekBanner(orgId, locationId, today, cancelled),
           loadOpenIncidentCount(orgId, locationId, cancelled),
         ]);
@@ -948,7 +944,6 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId, activeLocationId]);
 
   /* ---------- loaders ---------- */
@@ -1115,28 +1110,104 @@ export default function DashboardPage() {
     }));
   }
 
-  async function loadTrainingAndAllergenKpi(orgId: string, cancelled: boolean) {
+  async function loadTrainingAndAllergenKpi(
+    orgId: string,
+    locationId: string | null,
+    cancelled: boolean
+  ) {
     const soon = new Date();
     soon.setDate(soon.getDate() + 14);
     const todayD = new Date();
+    todayD.setHours(0, 0, 0, 0);
 
     let trainingDueSoon = 0;
     let trainingOver = 0;
+    let trainingAssigned = 0;
+    let trainingInProgress = 0;
     let allergenDueSoon = 0;
     let allergenOver = 0;
 
     try {
-      const { data } = await supabase.from("team_members").select("*").eq("org_id", orgId);
+     let memberIdsForLocation: string[] | null = null;
 
-      (data ?? []).forEach((r: any) => {
-        const raw = r.training_expires_at ?? r.training_expiry ?? r.expires_at ?? null;
-        if (!raw) return;
-        const d = new Date(raw);
-        if (Number.isNaN(d.getTime())) return;
-        if (d < todayD) trainingOver++;
-        else if (d <= soon) trainingDueSoon++;
+if (locationId) {
+  const { data: membersForLocation, error: membersErr } = await supabase
+    .from("team_members")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("location_id", locationId);
+
+  if (membersErr) throw membersErr;
+
+  const memberIds = (membersForLocation ?? []).map((m: any) => String(m.id));
+  memberIdsForLocation = memberIds;
+}
+
+      let trainingQuery = supabase
+        .from("trainings")
+        .select(
+          "id,team_member_id,status,expires_on,certificate_expiry_date,archived_at"
+        )
+        .eq("org_id", orgId)
+        .is("archived_at", null);
+
+      if (memberIdsForLocation) {
+        if (memberIdsForLocation.length === 0) {
+          if (!cancelled) {
+            setKpi((prev) => ({
+              ...prev,
+              trainingDueSoon: 0,
+              trainingOver: 0,
+              trainingAssigned: 0,
+              trainingInProgress: 0,
+            }));
+          }
+        } else {
+          trainingQuery = trainingQuery.in("team_member_id", memberIdsForLocation);
+        }
+      }
+
+      const { data: trainingRows, error: trainingErr } = await trainingQuery;
+      if (trainingErr) throw trainingErr;
+
+      (trainingRows ?? []).forEach((r: any) => {
+        const status = String(r.status ?? "").toLowerCase();
+
+        if (status === "assigned" || status === "invited") {
+          trainingAssigned += 1;
+          return;
+        }
+
+        if (status === "in_progress") {
+          trainingInProgress += 1;
+          return;
+        }
+
+        if (status === "cancelled") return;
+
+        const expiryRaw = r.certificate_expiry_date ?? r.expires_on ?? null;
+
+        if (status === "expired") {
+          trainingOver += 1;
+          return;
+        }
+
+        if (!expiryRaw) return;
+
+        const expiry = new Date(expiryRaw);
+        if (Number.isNaN(expiry.getTime())) return;
+
+        expiry.setHours(0, 0, 0, 0);
+
+        if (expiry < todayD) {
+          trainingOver += 1;
+        } else if (expiry <= soon) {
+          trainingDueSoon += 1;
+        }
       });
-    } catch {}
+    } catch (e) {
+      console.warn("[training kpi] failed:", e);
+    }
 
     try {
       const { data } = await supabase
@@ -1161,6 +1232,8 @@ export default function DashboardPage() {
       ...prev,
       trainingDueSoon,
       trainingOver,
+      trainingAssigned,
+      trainingInProgress,
       allergenDueSoon,
       allergenOver,
     }));
@@ -1199,10 +1272,8 @@ export default function DashboardPage() {
     }
   }
 
-  // ✅ FIXED: wall posts now attempt location filter, but safely fallback to org-only
   async function loadWallPosts(orgId: string, locationId: string | null, cancelled: boolean) {
     try {
-      // Attempt location-aware query first (only if we have a location)
       if (locationId) {
         const { data, error } = await supabase
           .from(WALL_TABLE)
@@ -1228,11 +1299,9 @@ export default function DashboardPage() {
           return;
         }
 
-        // If location column doesn't exist or filter fails, fall through to org-only.
         console.warn("[wall] location filter failed, falling back to org-only:", error.message);
       }
 
-      // Fallback: org-only (no location_id column required)
       const { data: data2, error: err2 } = await supabase
         .from(WALL_TABLE)
         .select("id, org_id, author_initials, message, color, created_at")
@@ -1560,12 +1629,19 @@ export default function DashboardPage() {
     kpi.tempFails7d > 0 ||
     kpi.trainingOver > 0 ||
     kpi.trainingDueSoon > 0 ||
+    kpi.trainingAssigned > 0 ||
+    kpi.trainingInProgress > 0 ||
     kpi.allergenOver > 0 ||
     kpi.allergenDueSoon > 0 ||
     openIncidentCount > 0;
 
   const alertsCount =
-    kpi.trainingOver + kpi.allergenOver + (kpi.tempFails7d > 0 ? 1 : 0) + openIncidentCount;
+    kpi.trainingOver +
+    kpi.allergenOver +
+    (kpi.tempFails7d > 0 ? 1 : 0) +
+    openIncidentCount +
+    (kpi.trainingAssigned > 0 ? 1 : 0) +
+    (kpi.trainingInProgress > 0 ? 1 : 0);
 
   const openTempModal = () => {
     if (typeof window === "undefined") return;
@@ -1596,14 +1672,32 @@ export default function DashboardPage() {
         id: "training_over",
         label: `${kpi.trainingOver} training overdue`,
         tone: "danger",
-        href: "/team",
+        href: "/training",
       });
     } else if (kpi.trainingDueSoon > 0) {
       items.push({
         id: "training_soon",
         label: `${kpi.trainingDueSoon} training due soon`,
         tone: "warn",
-        href: "/team",
+        href: "/training",
+      });
+    }
+
+    if (kpi.trainingAssigned > 0) {
+      items.push({
+        id: "training_assigned",
+        label: `${kpi.trainingAssigned} training assigned`,
+        tone: "warn",
+        href: "/training",
+      });
+    }
+
+    if (kpi.trainingInProgress > 0) {
+      items.push({
+        id: "training_progress",
+        label: `${kpi.trainingInProgress} training in progress`,
+        tone: "warn",
+        href: "/training",
       });
     }
 
@@ -1626,6 +1720,9 @@ export default function DashboardPage() {
       bits.push(`${openIncidentCount} open incident${openIncidentCount === 1 ? "" : "s"}`);
     if (kpi.tempFails7d > 0) bits.push(`${kpi.tempFails7d} failed temps (7d)`);
     if (kpi.trainingOver > 0) bits.push(`${kpi.trainingOver} training overdue`);
+    if (kpi.trainingDueSoon > 0) bits.push(`${kpi.trainingDueSoon} training due soon`);
+    if (kpi.trainingAssigned > 0) bits.push(`${kpi.trainingAssigned} assigned training`);
+    if (kpi.trainingInProgress > 0) bits.push(`${kpi.trainingInProgress} training in progress`);
     if (kpi.allergenOver > 0) bits.push(`${kpi.allergenOver} allergen review overdue`);
 
     if (!bits.length) return "No incidents, training, allergen or temperature issues flagged.";
@@ -1667,7 +1764,6 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!alertsOpen) return;
     void loadIncidentsForAlerts(incidentRangeDays);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incidentRangeDays, alertsOpen]);
 
   async function resolveIncident(incidentId: string) {
@@ -1704,6 +1800,7 @@ export default function DashboardPage() {
   }
 
   /* ---------- render ---------- */
+
   return (
     <>
       <WelcomeGate />
