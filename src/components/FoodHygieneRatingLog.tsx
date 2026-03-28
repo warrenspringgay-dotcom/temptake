@@ -134,7 +134,7 @@ export default function FoodHygieneRatingLog() {
 
   const [officerName, setOfficerName] = useState("");
   const [inspectionSummary, setInspectionSummary] = useState("");
-  const [showFindings, setShowFindings] = useState(false);
+  const [showFindings, setShowFindings] = useState(true);
   const [findings, setFindings] = useState<FindingDraft[]>([emptyFinding()]);
 
   async function loadRows() {
@@ -197,7 +197,7 @@ export default function FoodHygieneRatingLog() {
     setNotes("");
     setOfficerName("");
     setInspectionSummary("");
-    setShowFindings(false);
+    setShowFindings(true);
     setFindings([emptyFinding()]);
     setErr(null);
   }
