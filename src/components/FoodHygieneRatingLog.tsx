@@ -20,7 +20,45 @@ type RatingRow = {
   created_at: string;
 };
 
+type FindingCategory =
+  | "cleaning"
+  | "structure"
+  | "cross_contamination"
+  | "allergens"
+  | "documentation"
+  | "training"
+  | "pest_control"
+  | "management"
+  | "other";
+
+type FindingPriority = "low" | "medium" | "high";
+
+type FindingDraft = {
+  category: FindingCategory;
+  priority: FindingPriority;
+  finding_text: string;
+  due_date: string;
+};
+
 const MAX_FHR_RATING = 5;
+
+const FINDING_CATEGORIES: { value: FindingCategory; label: string }[] = [
+  { value: "cleaning", label: "Cleaning" },
+  { value: "structure", label: "Structure / maintenance" },
+  { value: "cross_contamination", label: "Cross-contamination" },
+  { value: "allergens", label: "Allergens" },
+  { value: "documentation", label: "Documentation / records" },
+  { value: "training", label: "Training" },
+  { value: "pest_control", label: "Pest control" },
+  { value: "management", label: "Management / supervision" },
+  { value: "other", label: "Other" },
+];
+
+const FINDING_PRIORITIES: { value: FindingPriority; label: string }[] = [
+  { value: "high", label: "High" },
+  { value: "medium", label: "Medium" },
+  { value: "low", label: "Low" },
+];
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
@@ -32,16 +70,14 @@ const GLASS =
 const SUBTLE =
   "rounded-2xl border border-slate-200 bg-white/90 shadow-sm";
 
-// UK-ish friendly formatting (but safe everywhere)
 function formatDate(iso: string | null | undefined) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
 }
 
 function startOfYearISO() {
@@ -75,19 +111,34 @@ function RatingStars({ value }: { value: number | null }) {
   );
 }
 
+function emptyFinding(): FindingDraft {
+  return {
+    category: "other",
+    priority: "medium",
+    finding_text: "",
+    due_date: "",
+  };
+}
+
 export default function FoodHygieneRatingLog() {
   const [rows, setRows] = useState<RatingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // form state
+  // rating form state
   const [rating, setRating] = useState<number | "">("");
   const [visitDate, setVisitDate] = useState("");
   const [expiresDate, setExpiresDate] = useState("");
   const [authority, setAuthority] = useState("");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
+
+  // inspection feedback state
+  const [officerName, setOfficerName] = useState("");
+  const [inspectionSummary, setInspectionSummary] = useState("");
+  const [showFindings, setShowFindings] = useState(false);
+  const [findings, setFindings] = useState<FindingDraft[]>([emptyFinding()]);
 
   async function loadRows() {
     setLoading(true);
@@ -135,8 +186,50 @@ export default function FoodHygieneRatingLog() {
   }
 
   useEffect(() => {
-    loadRows();
+    void loadRows();
   }, []);
+
+  function resetForm() {
+    setRating("");
+    setVisitDate("");
+    setExpiresDate("");
+    setAuthority("");
+    setReference("");
+    setNotes("");
+    setOfficerName("");
+    setInspectionSummary("");
+    setShowFindings(false);
+    setFindings([emptyFinding()]);
+    setErr(null);
+  }
+
+  function updateFinding(index: number, patch: Partial<FindingDraft>) {
+    setFindings((current) =>
+      current.map((item, i) => (i === index ? { ...item, ...patch } : item))
+    );
+  }
+
+  function addFinding() {
+    setFindings((current) => [...current, emptyFinding()]);
+  }
+
+  function removeFinding(index: number) {
+    setFindings((current) =>
+      current.length <= 1 ? [emptyFinding()] : current.filter((_, i) => i !== index)
+    );
+  }
+
+  const preparedFindings = useMemo(
+    () =>
+      findings
+        .map((f) => ({
+          ...f,
+          finding_text: f.finding_text.trim(),
+          due_date: f.due_date.trim(),
+        }))
+        .filter((f) => f.finding_text.length > 0),
+    [findings]
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -150,7 +243,7 @@ export default function FoodHygieneRatingLog() {
       if (!orgId) throw new Error("No organisation selected.");
       const locationId = await getActiveLocationIdClient();
 
-      const payload = {
+      const ratingPayload = {
         org_id: orgId,
         location_id: locationId ?? null,
         rating: Number(rating),
@@ -161,21 +254,65 @@ export default function FoodHygieneRatingLog() {
         notes: notes.trim() || null,
       };
 
-      const { error } = await supabase.from("food_hygiene_ratings").insert(payload);
-      if (error) throw error;
+      const { error: ratingError } = await supabase
+        .from("food_hygiene_ratings")
+        .insert(ratingPayload);
 
-      // reset form
-      setRating("");
-      setVisitDate("");
-      setExpiresDate("");
-      setAuthority("");
-      setReference("");
-      setNotes("");
+      if (ratingError) throw ratingError;
 
+      const shouldCreateInspection =
+        preparedFindings.length > 0 ||
+        officerName.trim().length > 0 ||
+        inspectionSummary.trim().length > 0 ||
+        authority.trim().length > 0 ||
+        reference.trim().length > 0 ||
+        notes.trim().length > 0;
+
+      if (shouldCreateInspection) {
+        const inspectionPayload = {
+          org_id: orgId,
+          location_id: locationId ?? null,
+          inspection_date: visitDate,
+          food_hygiene_rating: Number(rating),
+          inspecting_authority: authority.trim() || null,
+          officer_name: officerName.trim() || null,
+          reference: reference.trim() || null,
+          summary: inspectionSummary.trim() || notes.trim() || null,
+        };
+
+        const { data: inspectionRow, error: inspectionError } = await supabase
+          .from("food_hygiene_inspections")
+          .insert(inspectionPayload)
+          .select("id")
+          .single();
+
+        if (inspectionError) throw inspectionError;
+
+        if (preparedFindings.length > 0) {
+          const findingRows = preparedFindings.map((f) => ({
+            inspection_id: inspectionRow.id,
+            org_id: orgId,
+            location_id: locationId ?? null,
+            category: f.category,
+            priority: f.priority,
+            status: "open",
+            finding_text: f.finding_text,
+            due_date: f.due_date || null,
+          }));
+
+          const { error: findingsError } = await supabase
+            .from("food_hygiene_inspection_findings")
+            .insert(findingRows);
+
+          if (findingsError) throw findingsError;
+        }
+      }
+
+      resetForm();
       await loadRows();
     } catch (e: any) {
       console.error("Food hygiene save error", e);
-      setErr(e?.message || "Failed to save rating.");
+      setErr(e?.message || "Failed to save food hygiene record.");
     } finally {
       setSaving(false);
     }
@@ -205,7 +342,6 @@ export default function FoodHygieneRatingLog() {
 
   return (
     <div className={PAGE}>
-      {/* Header */}
       <header className="text-center space-y-1">
         <h1 className="text-xl sm:text-2xl font-semibold text-slate-900">
           Food hygiene rating log
@@ -215,10 +351,8 @@ export default function FoodHygieneRatingLog() {
         </p>
       </header>
 
-      {/* Top summary row (dashboard-style KPI cards) */}
       <section className={cls(GLASS, "p-4 space-y-3")}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {/* Current rating */}
           <motion.div
             initial={{ opacity: 0, y: 10, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -259,7 +393,6 @@ export default function FoodHygieneRatingLog() {
             )}
           </motion.div>
 
-          {/* Certificate / expiry */}
           <motion.div
             initial={{ opacity: 0, y: 10, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -302,7 +435,6 @@ export default function FoodHygieneRatingLog() {
             )}
           </motion.div>
 
-          {/* Entries this year */}
           <motion.div
             initial={{ opacity: 0, y: 10, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -332,9 +464,7 @@ export default function FoodHygieneRatingLog() {
         )}
       </section>
 
-      {/* Form + history */}
       <section className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-        {/* Form */}
         <div className={cls(GLASS, "p-4")}>
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -345,7 +475,7 @@ export default function FoodHygieneRatingLog() {
             </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="mt-4 space-y-3 text-sm">
+          <form onSubmit={handleSubmit} className="mt-4 space-y-4 text-sm">
             <div className="grid gap-3 sm:grid-cols-3">
               <div>
                 <label className="block text-xs font-medium text-slate-700">Rating (0–5)</label>
@@ -367,7 +497,9 @@ export default function FoodHygieneRatingLog() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700">Inspection date</label>
+                <label className="block text-xs font-medium text-slate-700">
+                  Inspection date
+                </label>
                 <input
                   type="date"
                   className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
@@ -403,8 +535,11 @@ export default function FoodHygieneRatingLog() {
                   onChange={(e) => setAuthority(e.target.value)}
                 />
               </div>
+
               <div>
-                <label className="block text-xs font-medium text-slate-700">Reference (optional)</label>
+                <label className="block text-xs font-medium text-slate-700">
+                  Reference (optional)
+                </label>
                 <input
                   type="text"
                   className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
@@ -412,6 +547,33 @@ export default function FoodHygieneRatingLog() {
                   value={reference}
                   onChange={(e) => setReference(e.target.value)}
                 />
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-xs font-medium text-slate-700">
+                  Inspector / officer name (optional)
+                </label>
+                <input
+                  type="text"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
+                  placeholder="Officer name"
+                  value={officerName}
+                  onChange={(e) => setOfficerName(e.target.value)}
+                />
+              </div>
+
+              <div className="flex items-end">
+                <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm">
+                  <input
+                    type="checkbox"
+                    checked={showFindings}
+                    onChange={(e) => setShowFindings(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  <span className="text-slate-700">Add inspection findings</span>
+                </label>
               </div>
             </div>
 
@@ -425,6 +587,137 @@ export default function FoodHygieneRatingLog() {
                 onChange={(e) => setNotes(e.target.value)}
               />
             </div>
+
+            {showFindings && (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 space-y-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Inspection feedback / findings
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Capture the actual pointers from the inspection so they can flow into manager
+                    review instead of rotting inside a generic notes box like forgotten lettuce.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-700">
+                    Inspection summary (optional)
+                  </label>
+                  <textarea
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
+                    rows={3}
+                    placeholder="Overall inspection summary or key takeaways..."
+                    value={inspectionSummary}
+                    onChange={(e) => setInspectionSummary(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  {findings.map((finding, index) => (
+                    <div
+                      key={index}
+                      className="rounded-2xl border border-slate-200 bg-white p-3 space-y-3 shadow-sm"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                          Finding {index + 1}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => removeFinding(index)}
+                          className="rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div>
+                          <label className="block text-xs font-medium text-slate-700">
+                            Category
+                          </label>
+                          <select
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
+                            value={finding.category}
+                            onChange={(e) =>
+                              updateFinding(index, {
+                                category: e.target.value as FindingCategory,
+                              })
+                            }
+                          >
+                            {FINDING_CATEGORIES.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-slate-700">
+                            Priority
+                          </label>
+                          <select
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
+                            value={finding.priority}
+                            onChange={(e) =>
+                              updateFinding(index, {
+                                priority: e.target.value as FindingPriority,
+                              })
+                            }
+                          >
+                            {FINDING_PRIORITIES.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-slate-700">
+                            Due date (optional)
+                          </label>
+                          <input
+                            type="date"
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
+                            value={finding.due_date}
+                            onChange={(e) =>
+                              updateFinding(index, { due_date: e.target.value })
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700">
+                          Finding text
+                        </label>
+                        <textarea
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
+                          rows={3}
+                          placeholder="e.g. Probe calibration records were not up to date and staff could not show recent checks."
+                          value={finding.finding_text}
+                          onChange={(e) =>
+                            updateFinding(index, { finding_text: e.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={addFinding}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                >
+                  Add another finding
+                </button>
+              </div>
+            )}
 
             <div className="pt-1 flex items-center gap-2">
               <button
@@ -442,15 +735,7 @@ export default function FoodHygieneRatingLog() {
               <button
                 type="button"
                 disabled={saving}
-                onClick={() => {
-                  setRating("");
-                  setVisitDate("");
-                  setExpiresDate("");
-                  setAuthority("");
-                  setReference("");
-                  setNotes("");
-                  setErr(null);
-                }}
+                onClick={resetForm}
                 className={cls(
                   "rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50",
                   saving && "opacity-70 cursor-not-allowed"
@@ -461,12 +746,12 @@ export default function FoodHygieneRatingLog() {
             </div>
 
             <div className="text-[11px] text-slate-500">
-              Tip: if you only know the rating and visit date, that’s enough. Everything else is optional.
+              Tip: if you only know the rating and visit date, that’s enough. Add findings when you
+              want inspection points tracked properly.
             </div>
           </form>
         </div>
 
-        {/* History */}
         <div className={cls(GLASS, "p-4")}>
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -478,7 +763,7 @@ export default function FoodHygieneRatingLog() {
 
             <button
               type="button"
-              onClick={loadRows}
+              onClick={() => void loadRows()}
               disabled={loading}
               className={cls(
                 "rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50",
@@ -513,7 +798,12 @@ export default function FoodHygieneRatingLog() {
                     key={r.id}
                     initial={{ opacity: 0, y: 8, scale: 0.98 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{ type: "spring", stiffness: 260, damping: 22, delay: Math.min(idx * 0.03, 0.15) }}
+                    transition={{
+                      type: "spring",
+                      stiffness: 260,
+                      damping: 22,
+                      delay: Math.min(idx * 0.03, 0.15),
+                    }}
                     className={cls(
                       "rounded-2xl border bg-white/90 px-3 py-2 shadow-sm",
                       isCurrent ? "border-slate-300" : "border-slate-200"
@@ -556,11 +846,7 @@ export default function FoodHygieneRatingLog() {
                           </div>
                         </div>
 
-                        {r.notes && (
-                          <div className="mt-2 text-xs text-slate-700">
-                            {r.notes}
-                          </div>
-                        )}
+                        {r.notes && <div className="mt-2 text-xs text-slate-700">{r.notes}</div>}
                       </div>
 
                       {r.certificate_expires_at && (
