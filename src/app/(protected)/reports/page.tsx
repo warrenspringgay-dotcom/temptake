@@ -1,4 +1,3 @@
-// src/app/(protected)/reports/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -10,6 +9,7 @@ import Button from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Download, Printer } from "lucide-react";
 import EmailReportButton from "@/components/reports/EmailReportButton";
+
 /* ===================== Types ===================== */
 
 type TempRow = {
@@ -58,6 +58,22 @@ type StaffReviewRow = {
   reviewer: string | null;
   rating: number;
   notes: string | null;
+};
+
+type StaffAbsenceRow = {
+  id: string;
+  team_member_name: string;
+  team_member_initials: string | null;
+  absence_type: string | null;
+  start_date: string;
+  end_date: string;
+  is_half_day: boolean;
+  half_day_period: string | null;
+  location_name: string | null;
+  status: string | null;
+  notes: string | null;
+  operational_impact: string | null;
+  created_at: string | null;
 };
 
 type EducationRow = {
@@ -212,6 +228,60 @@ function addDays(date: Date, days: number) {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
+}
+
+function daysInclusive(startISO: string, endISO: string, isHalfDay: boolean) {
+  if (isHalfDay) return 0.5;
+  const start = safeDate(startISO);
+  const end = safeDate(endISO);
+  if (!start || !end) return "—";
+  const s = new Date(start);
+  const e = new Date(end);
+  s.setHours(0, 0, 0, 0);
+  e.setHours(0, 0, 0, 0);
+  return Math.floor((e.getTime() - s.getTime()) / 86400000) + 1;
+}
+
+function prettyAbsenceType(type: string | null) {
+  if (!type) return "—";
+  switch (type) {
+    case "holiday":
+      return "Holiday";
+    case "sickness":
+      return "Sickness";
+    case "unpaid_leave":
+      return "Unpaid leave";
+    case "compassionate":
+      return "Compassionate";
+    case "medical":
+      return "Medical";
+    case "unauthorised":
+      return "Unauthorised";
+    case "other":
+      return "Other";
+    default:
+      return type.replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase());
+  }
+}
+
+function prettyAbsenceStatus(status: string | null) {
+  if (!status) return "—";
+  return status.replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function absenceStatusPill(status: string | null) {
+  switch (status) {
+    case "approved":
+      return "bg-emerald-100 text-emerald-800";
+    case "pending":
+      return "bg-amber-100 text-amber-800";
+    case "rejected":
+      return "bg-red-100 text-red-800";
+    case "cancelled":
+      return "bg-slate-100 text-slate-700";
+    default:
+      return "bg-slate-100 text-slate-700";
+  }
 }
 
 /* ===================== Type guards ===================== */
@@ -464,7 +534,6 @@ async function fetchTrainingAreasReport(
   const rows: TrainingAreaRow[] = [];
 
   async function fetchFromTeamMembers(): Promise<any[] | null> {
-    // 1) location-scoped (if possible)
     if (locationId) {
       const { data: d1, error: e1 } = await supabase
         .from("team_members")
@@ -479,10 +548,8 @@ async function fetchTrainingAreasReport(
       } else if ((d1?.length ?? 0) > 0) {
         return d1 as any[];
       }
-      // ✅ zero rows => fall back to org-wide below
     }
 
-    // 2) org-wide team_members
     const { data: d2, error: e2 } = await supabase
       .from("team_members")
       .select("id,name,initials,email,active,training_areas")
@@ -496,7 +563,6 @@ async function fetchTrainingAreasReport(
   }
 
   async function fetchFromStaff(): Promise<any[] | null> {
-    // Some builds store training coverage on staff not team_members.
     if (locationId) {
       const { data: d1, error: e1 } = await supabase
         .from("staff")
@@ -524,7 +590,6 @@ async function fetchTrainingAreasReport(
     return (d2 ?? []) as any[];
   }
 
-  // Try team_members first (preferred), then staff if it’s empty.
   let data = await fetchFromTeamMembers();
   if (!data || data.length === 0) data = await fetchFromStaff();
   if (!data || data.length === 0) return [];
@@ -585,7 +650,7 @@ async function fetchLatestHygieneByLocation(orgId: string): Promise<Record<strin
   for (const r of (data ?? []) as any[]) {
     const locId = r.location_id ? String(r.location_id) : null;
     if (!locId) continue;
-    if (map[locId]) continue; // keep first (latest) per location
+    if (map[locId]) continue;
 
     map[locId] = {
       rating: r.rating != null ? Number(r.rating) : null,
@@ -938,7 +1003,6 @@ async function fetchCalibrationChecksTrail(
   orgId: string,
   locationId: string | null
 ): Promise<CalibrationRow[]> {
-  // Location-specific only means: if no location selected, we return nothing.
   if (!locationId) return [];
 
   const { data, error } = await supabase
@@ -969,10 +1033,6 @@ async function fetchCalibrationChecksTrail(
   }));
 }
 
-/**
- * Team due is now location-aware when possible.
- * If trainings table doesn't have location_id, we fallback to org-wide.
- */
 async function fetchTeamDue(
   withinDays: number,
   orgId: string,
@@ -1061,12 +1121,8 @@ async function fetchTeamDue(
     .sort((a: any, b: any) => (a.expires_on || "").localeCompare(b.expires_on || ""));
 }
 
-/**
- * Allergen review schedule now location-aware when possible.
- * If allergen_review_log has no location_id, fallback to org-wide.
- */
 async function fetchAllergenLog(
-  _withinDays: number, // ignored: we want history
+  _withinDays: number,
   orgId: string,
   locationId: string | null
 ): Promise<AllergenRow[]> {
@@ -1102,7 +1158,6 @@ async function fetchAllergenLog(
       } as AllergenRow;
     });
 
-  // 1) Try location-scoped (if locationId exists)
   if (locationId) {
     const { data: d1, error: e1 } = await supabase
       .from("allergen_review_log")
@@ -1113,16 +1168,10 @@ async function fetchAllergenLog(
       .order("created_at", { ascending: false })
       .limit(500);
 
-    // If table doesn't have location_id, fall through to org-wide
     if (e1 && !isMissingLocationColumnError(e1)) throw e1;
-
-    // ✅ If location query returns rows, use them.
     if (!e1 && (d1?.length ?? 0) > 0) return mapRows(d1 ?? []);
-
-    // ✅ If location query returns ZERO rows, fall back to org-wide (data might not be location-tagged)
   }
 
-  // 2) Org-wide fallback
   const { data: d2, error: e2 } = await supabase
     .from("allergen_review_log")
     .select("id, reviewed_on, interval_days, reviewer, created_at")
@@ -1209,6 +1258,67 @@ async function fetchStaffReviews(
     reviewer: r.manager?.initials ?? r.manager?.name ?? "—",
     rating: Number(r.rating),
     notes: r.notes ?? null,
+  }));
+}
+
+async function fetchStaffAbsences(
+  fromISO: string,
+  toISO: string,
+  orgId: string,
+  locationId: string | null
+): Promise<StaffAbsenceRow[]> {
+  let query = supabase
+    .from("staff_absences")
+    .select(
+      `
+      id,
+      absence_type,
+      start_date,
+      end_date,
+      is_half_day,
+      half_day_period,
+      status,
+      notes,
+      operational_impact,
+      created_at,
+      location_id,
+      team_members:team_member_id (
+        name,
+        initials
+      ),
+      locations:location_id (
+        name
+      )
+    `
+    )
+    .eq("org_id", orgId)
+    .lte("start_date", toISO)
+    .gte("end_date", fromISO)
+    .order("start_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(3000);
+
+  if (locationId) {
+    query = query.or(`location_id.eq.${locationId},location_id.is.null`);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  return (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    team_member_name: r.team_members?.name ?? "—",
+    team_member_initials: r.team_members?.initials ?? null,
+    absence_type: r.absence_type ? String(r.absence_type) : null,
+    start_date: String(r.start_date),
+    end_date: String(r.end_date),
+    is_half_day: Boolean(r.is_half_day),
+    half_day_period: r.half_day_period ? String(r.half_day_period) : null,
+    location_name: r.locations?.name ?? null,
+    status: r.status ? String(r.status) : null,
+    notes: r.notes ? String(r.notes) : null,
+    operational_impact: r.operational_impact ? String(r.operational_impact) : null,
+    created_at: r.created_at ? String(r.created_at) : null,
   }));
 }
 
@@ -1333,12 +1443,9 @@ export default function ReportsPage() {
   const [locationFilter, setLocationFilter] = useState<string | "all">("all");
   const [locations, setLocations] = useState<LocationOption[]>([]);
 
-  // Boot gate: ensures active location loaded before initial report run
   const [bootReady, setBootReady] = useState(false);
 
-  // Food hygiene rating per location (latest per location)
   const [hygieneByLocation, setHygieneByLocation] = useState<Record<string, HygieneMeta>>({});
-  // Food hygiene rating history for selected location
   const [hygieneHistory, setHygieneHistory] = useState<HygieneHistoryRow[] | null>(null);
 
   const [temps, setTemps] = useState<TempRow[] | null>(null);
@@ -1346,6 +1453,7 @@ export default function ReportsPage() {
   const [allergenLog, setAllergenLog] = useState<AllergenRow[] | null>(null);
   const [allergenChanges, setAllergenChanges] = useState<AllergenChangeRow[] | null>(null);
   const [staffReviews, setStaffReviews] = useState<StaffReviewRow[] | null>(null);
+  const [staffAbsences, setStaffAbsences] = useState<StaffAbsenceRow[] | null>(null);
   const [education, setEducation] = useState<EducationRow[] | null>(null);
   const [cleaningCount, setCleaningCount] = useState(0);
 
@@ -1358,7 +1466,6 @@ export default function ReportsPage() {
   const [trainingAreas, setTrainingAreas] = useState<TrainingAreaRow[] | null>(null);
   const [showAllTrainingAreas, setShowAllTrainingAreas] = useState(false);
 
-  // Calibration checks (location-specific only)
   const [calibrationChecks, setCalibrationChecks] = useState<CalibrationRow[] | null>(null);
   const [showAllCalibration, setShowAllCalibration] = useState(false);
 
@@ -1369,6 +1476,7 @@ export default function ReportsPage() {
   const [showAllSignoffs, setShowAllSignoffs] = useState(false);
   const [showAllCleaningRuns, setShowAllCleaningRuns] = useState(false);
   const [showAllStaffReviews, setShowAllStaffReviews] = useState(false);
+  const [showAllStaffAbsences, setShowAllStaffAbsences] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1412,6 +1520,11 @@ export default function ReportsPage() {
     return showAllStaffReviews ? staffReviews : staffReviews.slice(0, 10);
   }, [staffReviews, showAllStaffReviews]);
 
+  const visibleStaffAbsences = useMemo(() => {
+    if (!staffAbsences) return null;
+    return showAllStaffAbsences ? staffAbsences : staffAbsences.slice(0, 10);
+  }, [staffAbsences, showAllStaffAbsences]);
+
   const visibleCalibrationChecks = useMemo(() => {
     if (!calibrationChecks) return null;
     return showAllCalibration ? calibrationChecks : calibrationChecks.slice(0, 10);
@@ -1442,7 +1555,6 @@ export default function ReportsPage() {
     return rows;
   }, [trainingAreas]);
 
-  // Hygiene display for selected / all (label-only used for "all locations" path)
   const hygieneDisplay = useMemo(() => {
     if (locationFilter !== "all") {
       const meta = hygieneByLocation[String(locationFilter)];
@@ -1476,7 +1588,6 @@ export default function ReportsPage() {
         setOrgId(id ?? null);
         if (!id) return;
 
-        // locations
         const { data: locData, error: locErr } = await supabase
           .from("locations")
           .select("id,name")
@@ -1487,7 +1598,6 @@ export default function ReportsPage() {
           setLocations(locData.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })));
         }
 
-        // hygiene ratings (latest per location)
         try {
           const map = await fetchLatestHygieneByLocation(id);
           setHygieneByLocation(map);
@@ -1495,7 +1605,6 @@ export default function ReportsPage() {
           setHygieneByLocation({});
         }
 
-        // set active location from header switcher (if any)
         const activeLoc = await getActiveLocationIdClient();
         if (activeLoc) setLocationFilter(activeLoc);
       } finally {
@@ -1521,6 +1630,7 @@ export default function ReportsPage() {
         t,
         cleanCount,
         reviews,
+        absences,
         loggedInc,
         incForUnified,
         tempFails,
@@ -1532,6 +1642,7 @@ export default function ReportsPage() {
         fetchTemps(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningCount(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchStaffReviews(rangeFrom, rangeTo, orgIdValue, locationId),
+        fetchStaffAbsences(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchLoggedIncidentsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchIncidentsTrailAsUnifiedIncidentShape(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchTempFailuresUnified(rangeFrom, rangeTo, orgIdValue, locationId),
@@ -1544,6 +1655,7 @@ export default function ReportsPage() {
       setTemps(t);
       setCleaningCount(cleanCount);
       setStaffReviews(reviews);
+      setStaffAbsences(absences);
 
       setLoggedIncidents(loggedInc);
       setAllergenChanges(allergenEditRows);
@@ -1579,9 +1691,9 @@ export default function ReportsPage() {
       setShowAllSignoffs(false);
       setShowAllCleaningRuns(false);
       setShowAllStaffReviews(false);
+      setShowAllStaffAbsences(false);
       setShowAllCalibration(false);
 
-      // Hygiene history for selected location (small list)
       if (locationId) {
         try {
           const hist = await fetchHygieneHistoryForLocation(orgIdValue, locationId);
@@ -1618,6 +1730,7 @@ export default function ReportsPage() {
       setAllergenLog(null);
       setAllergenChanges(null);
       setStaffReviews(null);
+      setStaffAbsences(null);
       setEducation(null);
       setTrainingAreas(null);
       setCleaningCount(0);
@@ -1657,7 +1770,6 @@ export default function ReportsPage() {
     await runRange(fromISO, toISO, orgId, locId, true);
   }
 
-  // Initial run: wait for bootReady so locationFilter can be set from header switcher
   useEffect(() => {
     if (!orgId) return;
     if (!bootReady) return;
@@ -1670,7 +1782,6 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, bootReady, initialRunDone]);
 
-  // Location change: re-run everything INCLUDING ancillary so the page stays consistent
   useEffect(() => {
     if (!orgId) return;
     if (!bootReady) return;
@@ -1726,7 +1837,6 @@ export default function ReportsPage() {
       id="tt-reports-root"
       className="mx-auto max-w-6xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6"
     >
-      {/* Top controls */}
       <Card className="border-none bg-transparent p-0 shadow-none">
         <CardHeader className="flex flex-row items-center justify-between px-0 pb-3 pt-0">
           <CardTitle className="text-xl font-semibold text-slate-900">Reports</CardTitle>
@@ -1763,43 +1873,43 @@ export default function ReportsPage() {
           </div>
 
           <div className="flex flex-col justify-end gap-2 sm:col-span-2 lg:col-span-2">
-  <Button
-    onClick={runInstantAudit90}
-    disabled={loading || !orgId}
-    className="w-full rounded-xl bg-emerald-600 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-  >
-    Instant Audit (last 90 days)
-  </Button>
+            <Button
+              onClick={runInstantAudit90}
+              disabled={loading || !orgId}
+              className="w-full rounded-xl bg-emerald-600 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              Instant Audit (last 90 days)
+            </Button>
 
-  <Button
-    variant="outline"
-    onClick={downloadCSV}
-    disabled={!temps?.length}
-    className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-  >
-    <Download className="mr-2 h-4 w-4" /> Export CSV
-  </Button>
+            <Button
+              variant="outline"
+              onClick={downloadCSV}
+              disabled={!temps?.length}
+              className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Download className="mr-2 h-4 w-4" /> Export CSV
+            </Button>
 
-  <Button
-    variant="outline"
-    onClick={printReport}
-    disabled={!temps?.length}
-    className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-  >
-    <Printer className="mr-2 h-4 w-4" /> Print
-  </Button>
+            <Button
+              variant="outline"
+              onClick={printReport}
+              disabled={!temps?.length}
+              className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Printer className="mr-2 h-4 w-4" /> Print
+            </Button>
 
-  <EmailReportButton
-    orgId={orgId}
-    from={from}
-    to={to}
-    locationId={locationFilter !== "all" ? locationFilter : null}
-    locationLabel={currentLocationLabel}
-    disabled={loading || !orgId}
-  />
-</div>
-</div>
-        {/* Location on its own row */}
+            <EmailReportButton
+              orgId={orgId}
+              from={from}
+              to={to}
+              locationId={locationFilter !== "all" ? locationFilter : null}
+              locationLabel={currentLocationLabel}
+              disabled={loading || !orgId}
+            />
+          </div>
+        </div>
+
         <div className="mt-3 rounded-2xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm">
           <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
             <div className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -1820,9 +1930,8 @@ export default function ReportsPage() {
 
             <div className="mt-1 text-[11px] text-slate-500">Current: {currentLocationLabel}</div>
 
-            {/* Food hygiene rating + history */}
             <div className="mt-3">
-              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">
+              <div className="mb-1 text-xs uppercase tracking-wide text-slate-500">
                 Food hygiene rating
               </div>
 
@@ -1867,7 +1976,7 @@ export default function ReportsPage() {
                               )}
 
                               {row.notes && (
-                                <div className="mt-1 text-[11px] text-slate-600 line-clamp-2">
+                                <div className="mt-1 line-clamp-2 text-[11px] text-slate-600">
                                   {row.notes}
                                 </div>
                               )}
@@ -1915,9 +2024,7 @@ export default function ReportsPage() {
         )}
       </Card>
 
-      {/* Printable content root */}
       <div ref={printRef} id="audit-print-root" className="space-y-6">
-        {/* Four-weekly review card */}
         <Card
           data-hide-on-print
           className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm"
@@ -1953,7 +2060,6 @@ export default function ReportsPage() {
           </div>
         </Card>
 
-        {/* Temperature Logs */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Temperature Logs {temps ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
@@ -2036,7 +2142,6 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Calibration checks */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-2 text-base font-semibold">
             Calibration checks{" "}
@@ -2096,7 +2201,7 @@ export default function ReportsPage() {
 
                     return (
                       <tr key={r.id} className="border-t border-slate-100">
-                        <td className="py-2 pr-3 whitespace-nowrap">{formatISOToUK(r.checked_on)}</td>
+                        <td className="whitespace-nowrap py-2 pr-3">{formatISOToUK(r.checked_on)}</td>
                         <td className="py-2 pr-3 font-semibold">
                           {r.staff_initials ? r.staff_initials.toUpperCase() : "—"}
                         </td>
@@ -2110,7 +2215,7 @@ export default function ReportsPage() {
                             {r.all_equipment_calibrated ? "Yes" : "No"}
                           </span>
                         </td>
-                        <td className="py-2 pr-3 max-w-xl">
+                        <td className="max-w-xl py-2 pr-3">
                           {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
                         </td>
                       </tr>
@@ -2144,7 +2249,6 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Logged incidents */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Incidents (logged){" "}
@@ -2188,17 +2292,17 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3">
                         {r.created_by ? r.created_by.toUpperCase() : "—"}
                       </td>
-                      <td className="py-2 pr-3 max-w-xs">
+                      <td className="max-w-xs py-2 pr-3">
                         {r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}
                       </td>
-                      <td className="py-2 pr-3 max-w-xs">
+                      <td className="max-w-xs py-2 pr-3">
                         {r.immediate_action ? (
                           <span className="line-clamp-2">{r.immediate_action}</span>
                         ) : (
                           "—"
                         )}
                       </td>
-                      <td className="py-2 pr-3 max-w-xs">
+                      <td className="max-w-xs py-2 pr-3">
                         {r.preventive_action ? (
                           <span className="line-clamp-2">{r.preventive_action}</span>
                         ) : (
@@ -2235,7 +2339,6 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Failures & corrective actions */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Failures & corrective actions{" "}
@@ -2285,10 +2388,10 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3">
                         {r.created_by ? r.created_by.toUpperCase() : "—"}
                       </td>
-                      <td className="py-2 pr-3 max-w-xs">
+                      <td className="max-w-xs py-2 pr-3">
                         {r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}
                       </td>
-                      <td className="py-2 pr-3 max-w-xs">
+                      <td className="max-w-xs py-2 pr-3">
                         {r.corrective_action ? (
                           <span className="line-clamp-2">{r.corrective_action}</span>
                         ) : r.source === "temp_fail" ? (
@@ -2324,7 +2427,6 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Cleaning runs trail */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-1 text-base font-semibold">
             Cleaning runs {cleaningRuns ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
@@ -2364,7 +2466,7 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3">{formatISOToUK(r.run_on)}</td>
                       <td className="py-2 pr-3">{formatTimeHM(r.done_at)}</td>
                       <td className="py-2 pr-3">{r.category}</td>
-                      <td className="py-2 pr-3 max-w-xs">{r.task}</td>
+                      <td className="max-w-xs py-2 pr-3">{r.task}</td>
                       <td className="py-2 pr-3">{r.done_by ?? "—"}</td>
                     </tr>
                   ))
@@ -2394,7 +2496,6 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Day sign-offs trail */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Day sign-offs {signoffs ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
@@ -2431,7 +2532,7 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3 font-semibold">
                         {r.signed_by ? r.signed_by.toUpperCase() : "—"}
                       </td>
-                      <td className="py-2 pr-3 max-w-xl">
+                      <td className="max-w-xl py-2 pr-3">
                         {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
                       </td>
                     </tr>
@@ -2461,7 +2562,6 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Manager QC reviews */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Manager QC reviews{" "}
@@ -2508,12 +2608,12 @@ export default function ReportsPage() {
 
                     return (
                       <tr key={r.id} className="border-t border-slate-100">
-                        <td className="py-2 pr-3 whitespace-nowrap">
+                        <td className="whitespace-nowrap py-2 pr-3">
                           {formatISOToUK(r.reviewed_on)}
                         </td>
-                        <td className="py-2 pr-3 whitespace-nowrap">{staffLabel}</td>
-                        <td className="py-2 pr-3 whitespace-nowrap">{r.reviewer ?? "—"}</td>
-                        <td className="py-2 pr-3 whitespace-nowrap">{r.location_name ?? "—"}</td>
+                        <td className="whitespace-nowrap py-2 pr-3">{staffLabel}</td>
+                        <td className="whitespace-nowrap py-2 pr-3">{r.reviewer ?? "—"}</td>
+                        <td className="whitespace-nowrap py-2 pr-3">{r.location_name ?? "—"}</td>
                         <td className="py-2 pr-3">
                           <span
                             className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${pill}`}
@@ -2521,7 +2621,7 @@ export default function ReportsPage() {
                             {r.rating}/5
                           </span>
                         </td>
-                        <td className="py-2 pr-3 max-w-xl">
+                        <td className="max-w-xl py-2 pr-3">
                           {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
                         </td>
                       </tr>
@@ -2553,7 +2653,117 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Education / training */}
+        <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
+          <h3 className="mb-3 text-base font-semibold">
+            Staff absences {staffAbsences ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+          </h3>
+          <p className="mb-2 text-xs text-slate-500">
+            Holiday, sickness and other leave overlapping the selected date range.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50/80">
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-3">Staff</th>
+                  <th className="py-2 pr-3">Type</th>
+                  <th className="py-2 pr-3">Start</th>
+                  <th className="py-2 pr-3">End</th>
+                  <th className="py-2 pr-3">Days</th>
+                  <th className="py-2 pr-3">Location</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Notes</th>
+                  <th className="py-2 pr-3">Operational impact</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!staffAbsences ? (
+                  <tr>
+                    <td colSpan={9} className="py-6 text-center text-slate-500">
+                      Run a report to see results
+                    </td>
+                  </tr>
+                ) : staffAbsences.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="py-6 text-center text-slate-500">
+                      No staff absences for this range / location
+                    </td>
+                  </tr>
+                ) : (
+                  visibleStaffAbsences!.map((r) => {
+                    const staffLabel = r.team_member_initials
+                      ? `${r.team_member_initials.toUpperCase()} · ${r.team_member_name}`
+                      : r.team_member_name;
+
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="whitespace-nowrap py-2 pr-3">{staffLabel}</td>
+                        <td className="py-2 pr-3">
+                          <div>{prettyAbsenceType(r.absence_type)}</div>
+                          {r.is_half_day && (
+                            <div className="text-xs text-slate-500">
+                              Half day{r.half_day_period ? ` (${String(r.half_day_period).toUpperCase()})` : ""}
+                            </div>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap py-2 pr-3">
+                          {formatISOToUK(r.start_date)}
+                        </td>
+                        <td className="whitespace-nowrap py-2 pr-3">
+                          {formatISOToUK(r.end_date)}
+                        </td>
+                        <td className="py-2 pr-3">{daysInclusive(r.start_date, r.end_date, r.is_half_day)}</td>
+                        <td className="py-2 pr-3">{r.location_name ?? "All / org-wide"}</td>
+                        <td className="py-2 pr-3">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${absenceStatusPill(
+                              r.status
+                            )}`}
+                          >
+                            {prettyAbsenceStatus(r.status)}
+                          </span>
+                        </td>
+                        <td className="max-w-xs py-2 pr-3">
+                          {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
+                        </td>
+                        <td className="max-w-xs py-2 pr-3">
+                          {r.operational_impact ? (
+                            <span className="line-clamp-2">{r.operational_impact}</span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {staffAbsences && staffAbsences.length > 10 && (
+            <div
+              className="mt-2 flex items-center justify-between text-xs text-slate-600"
+              data-hide-on-print
+            >
+              <div>
+                Showing{" "}
+                {showAllStaffAbsences
+                  ? staffAbsences.length
+                  : Math.min(10, staffAbsences.length)}{" "}
+                of {staffAbsences.length} entries
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllStaffAbsences((v) => !v)}
+                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                {showAllStaffAbsences ? "Show first 10" : "View all"}
+              </button>
+            </div>
+          )}
+        </Card>
+
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">Training & certificates</h3>
 
@@ -2617,7 +2827,7 @@ export default function ReportsPage() {
                               : "Valid"}
                           </span>
                         </td>
-                        <td className="py-2 pr-3 max-w-xs">
+                        <td className="max-w-xs py-2 pr-3">
                           {r.notes ? <span className="line-clamp-2">{r.notes}</span> : "—"}
                         </td>
                         <td className="py-2 pr-3">
@@ -2662,7 +2872,6 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* SFBB training areas matrix */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-2 text-base font-semibold">Training areas (SFBB coverage)</h3>
           <p className="mb-3 text-xs text-slate-500">
@@ -2675,7 +2884,7 @@ export default function ReportsPage() {
                 <tr className="text-left text-slate-500">
                   <th className="py-2 pr-3">Team member</th>
                   {SFBB_AREAS.map((area) => (
-                    <th key={area} className="py-2 px-2 text-center">
+                    <th key={area} className="px-2 py-2 text-center">
                       {area}
                     </th>
                   ))}
@@ -2698,7 +2907,7 @@ export default function ReportsPage() {
                   (showAllTrainingAreas ? trainingMatrix : trainingMatrix.slice(0, 12)).map(
                     (row) => (
                       <tr key={row.member_id} className="border-t border-slate-100">
-                        <td className="py-2 pr-3 whitespace-nowrap text-sm font-medium">
+                        <td className="whitespace-nowrap py-2 pr-3 text-sm font-medium">
                           {row.name}
                         </td>
                         {SFBB_AREAS.map((area) => {
@@ -2707,14 +2916,14 @@ export default function ReportsPage() {
                             return (
                               <td
                                 key={area}
-                                className="py-2 px-2 text-center text-slate-400 align-top"
+                                className="px-2 py-2 text-center align-top text-slate-400"
                               >
                                 —
                               </td>
                             );
                           }
                           return (
-                            <td key={area} className="py-2 px-2 text-center align-top">
+                            <td key={area} className="px-2 py-2 text-center align-top">
                               <div className="inline-flex flex-col items-center gap-1">
                                 <span className="text-base leading-none">✓</span>
                                 {meta.awarded_on && (
@@ -2757,7 +2966,6 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Allergen review table */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-2 text-base font-semibold">Allergen reviews (history)</h3>
           <p className="mb-3 text-xs text-slate-500">
@@ -2804,7 +3012,6 @@ export default function ReportsPage() {
           </div>
         </Card>
 
-        {/* Allergen edits table */}
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
             Allergen edits {allergenChanges ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
@@ -2856,7 +3063,7 @@ export default function ReportsPage() {
                         <td className="py-2 pr-3">
                           {r.created_at ? formatTimeHM(r.created_at) : "—"}
                         </td>
-                        <td className="py-2 pr-3 max-w-xs">
+                        <td className="max-w-xs py-2 pr-3">
                           {r.item_name ?? <span className="text-slate-400">Unnamed item</span>}
                         </td>
                         <td className="py-2 pr-3">{actionLabel}</td>
@@ -2874,7 +3081,6 @@ export default function ReportsPage() {
       </div>
 
       <style jsx global>{`
-        /* ------------------ PRINT FIXES ------------------ */
         @media print {
           @page {
             size: A4;
@@ -2916,7 +3122,6 @@ export default function ReportsPage() {
             overflow: visible !important;
           }
 
-          /* Kill the "app shell" constraints in print */
           #tt-reports-root {
             max-width: none !important;
             width: 100% !important;
@@ -2928,18 +3133,15 @@ export default function ReportsPage() {
             box-shadow: none !important;
           }
 
-          /* Stop overflow containers clipping content */
           .overflow-x-auto {
             overflow: visible !important;
           }
 
-          /* Tables should actually lay out like tables, not scroll snapshots */
           table {
             width: 100% !important;
             border-collapse: collapse !important;
           }
 
-          /* Remove effects that can confuse print layout engines */
           .shadow-sm,
           .shadow,
           .shadow-md,
@@ -2958,13 +3160,11 @@ export default function ReportsPage() {
             border-radius: 0 !important;
           }
 
-          /* Avoid cards splitting weirdly across pages */
           #audit-print-root > * {
             break-inside: avoid;
             page-break-inside: avoid;
           }
 
-          /* Give the print engine a sane baseline */
           #audit-print-root {
             width: 100% !important;
           }
