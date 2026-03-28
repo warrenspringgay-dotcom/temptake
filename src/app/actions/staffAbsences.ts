@@ -76,6 +76,46 @@ function validateHalfDay(
   }
 }
 
+async function getScope() {
+  const supabase = await getServerSupabase();
+
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError) {
+    throw new Error(authError.message || "Failed to resolve user.");
+  }
+
+  if (!user?.id) {
+    throw new Error("User not authenticated.");
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("org_id, active_location_id")
+    .eq("id", user.id)
+    .single();
+
+  if (profileError) {
+    throw new Error(profileError.message || "Failed to resolve profile scope.");
+  }
+
+  if (!profile?.org_id) {
+    throw new Error("No active organisation found.");
+  }
+
+  return {
+    supabase,
+    userId: user.id,
+    orgId: String(profile.org_id),
+    activeLocationId: profile.active_location_id
+      ? String(profile.active_location_id)
+      : null,
+  };
+}
+
 export async function listStaffAbsencesServer(params?: {
   from?: string;
   to?: string;
@@ -83,7 +123,7 @@ export async function listStaffAbsencesServer(params?: {
   locationId?: string;
   status?: StaffAbsenceStatus | "all";
 }) {
-  const supabase = await getServerSupabase();
+  const { supabase, orgId, activeLocationId } = await getScope();
 
   let query = supabase
     .from("staff_absences")
@@ -118,6 +158,7 @@ export async function listStaffAbsencesServer(params?: {
       )
     `
     )
+    .eq("org_id", orgId)
     .order("start_date", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -134,7 +175,13 @@ export async function listStaffAbsencesServer(params?: {
   }
 
   if (params?.locationId) {
-    query = query.eq("location_id", params.locationId);
+    if (params.locationId === "__orgwide__") {
+      query = query.is("location_id", null);
+    } else {
+      query = query.eq("location_id", params.locationId);
+    }
+  } else if (activeLocationId) {
+    query = query.or(`location_id.eq.${activeLocationId},location_id.is.null`);
   }
 
   if (params?.status && params.status !== "all") {
@@ -161,7 +208,7 @@ export async function createStaffAbsenceServer(
     input.halfDayPeriod
   );
 
-  const supabase = await getServerSupabase();
+  const { supabase } = await getScope();
 
   const payload = {
     team_member_id: input.teamMemberId,
@@ -203,7 +250,7 @@ export async function updateStaffAbsenceServer(
     input.halfDayPeriod
   );
 
-  const supabase = await getServerSupabase();
+  const { supabase, orgId } = await getScope();
 
   const payload = {
     team_member_id: input.teamMemberId,
@@ -221,7 +268,8 @@ export async function updateStaffAbsenceServer(
   const { error } = await supabase
     .from("staff_absences")
     .update(payload)
-    .eq("id", input.id);
+    .eq("id", input.id)
+    .eq("org_id", orgId);
 
   if (error) {
     throw new Error(error.message || "Failed to update absence.");
@@ -236,9 +284,13 @@ export async function deleteStaffAbsenceServer(id: string) {
     throw new Error("Absence id is required.");
   }
 
-  const supabase = await getServerSupabase();
+  const { supabase, orgId } = await getScope();
 
-  const { error } = await supabase.from("staff_absences").delete().eq("id", id);
+  const { error } = await supabase
+    .from("staff_absences")
+    .delete()
+    .eq("id", id)
+    .eq("org_id", orgId);
 
   if (error) {
     throw new Error(error.message || "Failed to delete absence.");
@@ -256,25 +308,17 @@ export async function setStaffAbsenceStatusServer(
     throw new Error("Absence id is required.");
   }
 
-  const supabase = await getServerSupabase();
-
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
-
-  if (authError) {
-    throw new Error(authError.message || "Failed to resolve user.");
-  }
+  const { supabase, userId, orgId } = await getScope();
 
   const { error } = await supabase
     .from("staff_absences")
     .update({
       status,
       approved_by:
-        status === "approved" || status === "rejected" ? user?.id ?? null : null,
+        status === "approved" || status === "rejected" ? userId : null,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", orgId);
 
   if (error) {
     throw new Error(error.message || "Failed to update absence status.");
@@ -285,19 +329,34 @@ export async function setStaffAbsenceStatusServer(
 }
 
 export async function listStaffAbsenceReferenceDataServer() {
-  const supabase = await getServerSupabase();
+  const { supabase, orgId, activeLocationId } = await getScope();
 
-  const [{ data: teamMembers, error: teamError }, { data: locations, error: locationError }] =
-    await Promise.all([
-      supabase
-        .from("team_members")
-        .select("id, name, initials, location_id")
-        .order("name", { ascending: true }),
-      supabase
-        .from("locations")
-        .select("id, name")
-        .order("name", { ascending: true }),
-    ]);
+  let teamQuery = supabase
+    .from("team_members")
+    .select("id, name, initials, location_id")
+    .eq("org_id", orgId)
+    .order("name", { ascending: true });
+
+  if (activeLocationId) {
+    teamQuery = teamQuery.or(
+      `location_id.eq.${activeLocationId},location_id.is.null`
+    );
+  }
+
+  let locationQuery = supabase
+    .from("locations")
+    .select("id, name")
+    .eq("org_id", orgId)
+    .order("name", { ascending: true });
+
+  if (activeLocationId) {
+    locationQuery = locationQuery.eq("id", activeLocationId);
+  }
+
+  const [
+    { data: teamMembers, error: teamError },
+    { data: locations, error: locationError },
+  ] = await Promise.all([teamQuery, locationQuery]);
 
   if (teamError) {
     throw new Error(teamError.message || "Failed to load team members.");
@@ -307,8 +366,15 @@ export async function listStaffAbsenceReferenceDataServer() {
     throw new Error(locationError.message || "Failed to load locations.");
   }
 
+  const dedupedTeamMembers = Array.from(
+    new Map(
+      (teamMembers ?? []).map((member: any) => [String(member.id), member])
+    ).values()
+  );
+
   return {
-    teamMembers: teamMembers ?? [],
+    teamMembers: dedupedTeamMembers,
     locations: locations ?? [],
+    activeLocationId,
   };
 }

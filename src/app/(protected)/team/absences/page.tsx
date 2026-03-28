@@ -63,18 +63,18 @@ export default async function TeamAbsencesPage({
   const endDefault = new Date(today);
   endDefault.setMonth(endDefault.getMonth() + 1, 0);
 
+  const preselectedTeamMemberId = params.teamMemberId || "";
   const from = params.from || toDateInputValue(startDefault);
   const to = params.to || toDateInputValue(endDefault);
-  const teamMemberId = params.teamMemberId || "";
   const locationId = params.locationId || "";
   const status = params.status || "all";
 
-  const [{ teamMembers, locations }, absences] = await Promise.all([
+  const [{ teamMembers, locations, activeLocationId }, absences] = await Promise.all([
     listStaffAbsenceReferenceDataServer(),
     listStaffAbsencesServer({
       from,
       to,
-      teamMemberId: teamMemberId || undefined,
+      teamMemberId: preselectedTeamMemberId || undefined,
       locationId: locationId || undefined,
       status,
     }),
@@ -82,8 +82,14 @@ export default async function TeamAbsencesPage({
 
   const todayStr = toDateInputValue(today);
 
+  const defaultLocationForNewAbsence =
+    locationId || activeLocationId || "";
+
   const offToday = absences.filter(
-    (row) => row.start_date <= todayStr && row.end_date >= todayStr && row.status === "approved"
+    (row: any) =>
+      row.start_date <= todayStr &&
+      row.end_date >= todayStr &&
+      row.status === "approved"
   );
 
   return (
@@ -149,7 +155,7 @@ export default async function TeamAbsencesPage({
                   name="teamMemberId"
                   required
                   className="h-11 rounded-xl border border-gray-300 px-3 text-sm outline-none focus:border-gray-900"
-                  defaultValue=""
+                  defaultValue={preselectedTeamMemberId}
                 >
                   <option value="" disabled>
                     Select team member
@@ -168,7 +174,7 @@ export default async function TeamAbsencesPage({
                 <select
                   name="locationId"
                   className="h-11 rounded-xl border border-gray-300 px-3 text-sm outline-none focus:border-gray-900"
-                  defaultValue=""
+                  defaultValue={defaultLocationForNewAbsence}
                 >
                   <option value="">All / org-wide</option>
                   {locations.map((location: any) => (
@@ -353,7 +359,7 @@ export default async function TeamAbsencesPage({
               <span className="text-xs font-medium text-gray-600">Team member</span>
               <select
                 name="teamMemberId"
-                defaultValue={teamMemberId}
+                defaultValue={preselectedTeamMemberId}
                 className="h-10 rounded-xl border border-gray-300 px-3 text-sm"
               >
                 <option value="">All</option>
@@ -374,6 +380,7 @@ export default async function TeamAbsencesPage({
                 className="h-10 rounded-xl border border-gray-300 px-3 text-sm"
               >
                 <option value="">All</option>
+                <option value="__orgwide__">Org-wide only</option>
                 {locations.map((location: any) => (
                   <option key={location.id} value={location.id}>
                     {location.name}
