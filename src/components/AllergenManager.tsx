@@ -549,132 +549,141 @@ export default function AllergenManager() {
   }, [review, hydrated]);
 
   /* ---------- CRUD ---------- */
-  async function upsertItem(d: {
-    id?: string;
-    item: string;
-    category?: Category;
-    notes?: string;
-    ingredientsText?: string;
-    ingredientsLabelImageUrl?: string;
-    flags: Flags;
-  }) {
-    if (!canManage) {
-      alert("Only managers / owners can edit the allergen matrix.");
-      return;
-    }
+ async function upsertItem(d: {
+  id?: string;
+  item: string;
+  category?: Category;
+  notes?: string;
+  ingredientsText?: string;
+  ingredientsLabelImageUrl?: string;
+  flags: Flags;
+}): Promise<boolean> {
+  if (!canManage) {
+    alert("Only managers / owners can edit the allergen matrix.");
+    return false;
+  }
 
-    const currentOrgId = orgId ?? (await getActiveOrgIdClient().catch(() => null));
-    const beforeRow = d.id ? rows.find((r) => r.id === d.id) ?? null : null;
+  const currentOrgId = orgId ?? (await getActiveOrgIdClient().catch(() => null));
+  const beforeRow = d.id ? rows.find((r) => r.id === d.id) ?? null : null;
+  const isExistingRow = !!beforeRow;
 
-    const applyLocal = (forcedId?: string) => {
-      setRows((rs) => {
-        const idToUse = forcedId ?? d.id ?? uid();
-        const patch: MatrixRow = {
-          id: idToUse,
+  const applyLocal = (forcedId?: string) => {
+    setRows((rs) => {
+      const idToUse = forcedId ?? d.id ?? uid();
+      const patch: MatrixRow = {
+        id: idToUse,
+        item: d.item,
+        category: d.category,
+        flags: d.flags,
+        notes: d.notes,
+        ingredientsText: d.ingredientsText ?? "",
+        ingredientsLabelImageUrl: d.ingredientsLabelImageUrl ?? "",
+        locked: true,
+      };
+      const exists = rs.some((r) => r.id === idToUse);
+      return exists ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r)) : [...rs, patch];
+    });
+  };
+
+  if (!currentOrgId) {
+    applyLocal();
+    return true;
+  }
+
+  let rowId = isExistingRow ? d.id : undefined;
+
+  try {
+    if (isExistingRow && rowId) {
+      const { data: updated, error } = await supabase
+        .from("allergen_items")
+        .update({
           item: d.item,
-          category: d.category,
-          flags: d.flags,
-          notes: d.notes,
-          ingredientsText: d.ingredientsText ?? "",
-          ingredientsLabelImageUrl: d.ingredientsLabelImageUrl ?? "",
+          category: d.category ?? null,
+          notes: d.notes ?? null,
+          ingredients_text: d.ingredientsText ?? null,
+          ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
           locked: true,
-        };
-        const exists = rs.some((r) => r.id === idToUse);
-        return exists ? rs.map((r) => (r.id === idToUse ? { ...r, ...patch } : r)) : [...rs, patch];
-      });
-    };
+          org_id: currentOrgId,
+          organisation_id: currentOrgId,
+        })
+        .eq("id", rowId)
+        .select("id")
+        .single();
 
-    if (!currentOrgId) {
-      applyLocal();
-      return;
+      if (error) throw error;
+      rowId = String(updated.id);
+    } else {
+      const { data, error } = await supabase
+        .from("allergen_items")
+        .insert({
+          item: d.item,
+          category: d.category ?? null,
+          notes: d.notes ?? null,
+          ingredients_text: d.ingredientsText ?? null,
+          ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
+          locked: true,
+          org_id: currentOrgId,
+          organisation_id: currentOrgId,
+        })
+        .select("id")
+        .single();
+
+      if (error) throw error;
+      rowId = String(data.id);
     }
 
-    let rowId = d.id as string | undefined;
+    if (rowId) {
+      const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
+        item_id: rowId!,
+        key: k,
+        value: !!d.flags[k],
+        org_id: currentOrgId,
+      }));
 
-    try {
-      if (rowId) {
-        const { error } = await supabase
-          .from("allergen_items")
-          .update({
-            item: d.item,
-            category: d.category ?? null,
-            notes: d.notes ?? null,
-            ingredients_text: d.ingredientsText ?? null,
-            ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
-            locked: true,
-            org_id: currentOrgId,
-            organisation_id: currentOrgId,
-          })
-          .eq("id", rowId);
+      if (payload.length) {
+        const { error: flagsErr } = await supabase
+          .from("allergen_flags")
+          .upsert(payload, { onConflict: "item_id,key" });
 
-        if (error) throw error;
-      } else {
-        const { data, error } = await supabase
-          .from("allergen_items")
-          .insert({
-            item: d.item,
-            category: d.category ?? null,
-            notes: d.notes ?? null,
-            ingredients_text: d.ingredientsText ?? null,
-            ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
-            locked: true,
-            org_id: currentOrgId,
-            organisation_id: currentOrgId,
-          })
-          .select("id")
-          .single();
-
-        if (error) throw error;
-        rowId = String(data!.id);
-      }
-
-      if (rowId) {
-        const payload = (Object.keys(d.flags) as AllergenKey[]).map((k) => ({
-          item_id: rowId!,
-          key: k,
-          value: !!d.flags[k],
-          org_id: currentOrgId,
-        }));
-
-        if (payload.length) {
-          const { error: flagsErr } = await supabase
-            .from("allergen_flags")
-            .upsert(payload, { onConflict: "item_id,key" });
-
-          if (flagsErr) console.warn("Saving allergen flags failed (ignored):", flagsErr.message);
+        if (flagsErr) {
+          console.warn("Saving allergen flags failed:", flagsErr.message);
+          throw flagsErr;
         }
       }
-
-      if (currentOrgId && rowId) {
-        const afterRow: MatrixRow = {
-          id: rowId,
-          item: d.item,
-          category: d.category,
-          flags: d.flags,
-          notes: d.notes,
-          ingredientsText: d.ingredientsText ?? "",
-          ingredientsLabelImageUrl: d.ingredientsLabelImageUrl ?? "",
-          locked: true,
-        };
-
-        await logAllergenChange({
-          orgId: currentOrgId,
-          action: d.id ? "update" : "create",
-          itemId: rowId,
-          before: beforeRow,
-          after: afterRow,
-          staffInitials: operatorInitials,
-        });
-
-        setChangeLogRefreshKey((n) => n + 1);
-      }
-
-      applyLocal(rowId);
-    } catch (error: any) {
-      console.error("Saving allergen item failed:", error);
-      alert(`Save failed: ${error?.message ?? "Unknown error"}`);
     }
+
+    if (currentOrgId && rowId) {
+      const afterRow: MatrixRow = {
+        id: rowId,
+        item: d.item,
+        category: d.category,
+        flags: d.flags,
+        notes: d.notes,
+        ingredientsText: d.ingredientsText ?? "",
+        ingredientsLabelImageUrl: d.ingredientsLabelImageUrl ?? "",
+        locked: true,
+      };
+
+      await logAllergenChange({
+        orgId: currentOrgId,
+        action: isExistingRow ? "update" : "create",
+        itemId: rowId,
+        before: beforeRow,
+        after: afterRow,
+        staffInitials: operatorInitials,
+      });
+
+      setChangeLogRefreshKey((n) => n + 1);
+    }
+
+    applyLocal(rowId);
+    return true;
+  } catch (error: any) {
+    console.error("Saving allergen item failed:", error);
+    alert(`Save failed: ${error?.message ?? "Unknown error"}`);
+    return false;
   }
+}
 
   async function deleteItem(idToDelete: string) {
     if (!canManage) {
@@ -911,20 +920,24 @@ export default function AllergenManager() {
     }
   }
 
-  const saveDraft = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!draft || !draft.item.trim()) return;
-    await upsertItem({
-      id: draft.id,
-      item: draft.item.trim(),
-      category: draft.category,
-      flags: draft.flags,
-      notes: (draft.notes ?? "").trim(),
-      ingredientsText: (draft.ingredientsText ?? "").trim(),
-      ingredientsLabelImageUrl: (draft.ingredientsLabelImageUrl ?? "").trim(),
-    });
+const saveDraft = async (e?: React.FormEvent) => {
+  e?.preventDefault();
+  if (!draft || !draft.item.trim()) return;
+
+  const ok = await upsertItem({
+    id: draft.id,
+    item: draft.item.trim(),
+    category: draft.category,
+    flags: draft.flags,
+    notes: (draft.notes ?? "").trim(),
+    ingredientsText: (draft.ingredientsText ?? "").trim(),
+    ingredientsLabelImageUrl: (draft.ingredientsLabelImageUrl ?? "").trim(),
+  });
+
+  if (ok) {
     setModalOpen(false);
-  };
+  }
+};
 
   const reviewPanelTone = hydrated
     ? overdue(review)
