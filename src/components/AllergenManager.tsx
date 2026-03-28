@@ -1,4 +1,3 @@
-
 // src/components/AllergenManager.tsx
 "use client";
 
@@ -58,6 +57,8 @@ export type MatrixRow = {
   category?: Category;
   flags: Flags;
   notes?: string;
+  ingredientsText?: string;
+  ingredientsLabelImageUrl?: string;
   locked: boolean;
 };
 
@@ -69,6 +70,7 @@ type ReviewInfo = {
 
 const LS_ROWS = "tt_allergens_rows_v3";
 const LS_REVIEW = "tt_allergens_review_v2";
+const ALLERGEN_LABEL_BUCKET = "allergen-labels";
 
 /* ---------- Helpers ---------- */
 const emptyFlags = (): Flags =>
@@ -119,6 +121,22 @@ function initialsFromName(name: string | null | undefined) {
     .map((p) => (p[0] ? p[0].toUpperCase() : ""))
     .join("");
   return out || null;
+}
+
+function fileExtFromName(filename: string | null | undefined) {
+  const name = String(filename ?? "").trim();
+  const parts = name.split(".");
+  if (parts.length < 2) return "jpg";
+  return parts.pop()?.toLowerCase() || "jpg";
+}
+
+function buildAllergenLabelPath(params: {
+  orgId: string;
+  itemId: string;
+  filename: string;
+}) {
+  const ext = fileExtFromName(params.filename);
+  return `${params.orgId}/${params.itemId}/ingredients-label.${ext}`;
 }
 
 /** Write an audit row when allergen items change */
@@ -227,6 +245,14 @@ export default function AllergenManager() {
   const [qCat, setQCat] = useState<"All" | Category>("All");
   const [qFlags, setQFlags] = useState<Flags>(emptyFlags());
 
+  // Modals
+  type Draft = Omit<MatrixRow, "id" | "locked"> & { id?: string; locked?: boolean };
+  const [modalOpen, setModalOpen] = useState(false);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [viewRow, setViewRow] = useState<MatrixRow | null>(null);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+
   const operatorInitials =
     (operator?.initials ?? "").trim().toUpperCase() ||
     initialsFromName(operator?.name) ||
@@ -234,7 +260,6 @@ export default function AllergenManager() {
 
   /* ---------- Reviewer resolution (operator-first, click-time safe) ---------- */
   async function getReviewerLabel(): Promise<string> {
-    // 1) Workstation operator wins
     const opIni =
       (operator?.initials ?? "").trim().toUpperCase() ||
       initialsFromName(operator?.name) ||
@@ -244,11 +269,9 @@ export default function AllergenManager() {
     const opName = (operator?.name ?? "").trim();
     if (opName) return opName;
 
-    // 2) Fallback: auth user's initials if we have them
     const authIni = (authUserInitials ?? "").trim().toUpperCase();
     if (authIni) return authIni;
 
-    // 3) Fallback: auth email (better than lying)
     try {
       const { data } = await supabase.auth.getUser();
       const email = (data.user?.email ?? "").trim();
@@ -283,7 +306,6 @@ export default function AllergenManager() {
           await loadAuthUserInitials(org);
         }
 
-        // ✅ Operator wins for permissions (PIN/operator mode)
         if (operator?.role) {
           setCanManage(isManagerRole(operator.role));
         } else {
@@ -299,7 +321,6 @@ export default function AllergenManager() {
           if (!cancelled) setCanManage(allowed);
         }
 
-        // If we have an org, load cloud data (overwrites local shadow)
         if (org) {
           await Promise.all([loadFromSupabase(org), loadReviewFromSupabase(org)]);
         }
@@ -323,6 +344,8 @@ export default function AllergenManager() {
           parsed.map((r) => ({
             ...r,
             flags: { ...emptyFlags(), ...r.flags },
+            ingredientsText: r.ingredientsText ?? "",
+            ingredientsLabelImageUrl: r.ingredientsLabelImageUrl ?? "",
             locked: r.locked ?? true,
           }))
         );
@@ -334,6 +357,8 @@ export default function AllergenManager() {
             category: "Side",
             flags: { ...emptyFlags(), gluten: true },
             notes: "",
+            ingredientsText: "",
+            ingredientsLabelImageUrl: "",
             locked: true,
           },
           {
@@ -342,6 +367,8 @@ export default function AllergenManager() {
             category: "Starter",
             flags: { ...emptyFlags(), crustaceans: true },
             notes: "",
+            ingredientsText: "",
+            ingredientsLabelImageUrl: "",
             locked: true,
           },
           {
@@ -350,6 +377,8 @@ export default function AllergenManager() {
             category: "Dessert",
             flags: { ...emptyFlags() },
             notes: "",
+            ingredientsText: "",
+            ingredientsLabelImageUrl: "",
             locked: true,
           },
         ]);
@@ -414,7 +443,9 @@ export default function AllergenManager() {
 
     const { data: items, error: itemsErr } = await supabase
       .from("allergen_items")
-      .select("id,item,category,notes,locked,org_id")
+      .select(
+        "id,item,category,notes,ingredients_text,ingredients_label_image_url,locked,org_id"
+      )
       .or(`organisation_id.eq.${id},org_id.eq.${id}`)
       .order("item", { ascending: true });
 
@@ -454,6 +485,8 @@ export default function AllergenManager() {
       category: (r.category ?? undefined) as Category | undefined,
       flags: flagsByItem[r.id] ?? emptyFlags(),
       notes: r.notes ?? undefined,
+      ingredientsText: r.ingredients_text ?? "",
+      ingredientsLabelImageUrl: r.ingredients_label_image_url ?? "",
       locked: !!r.locked,
     }));
 
@@ -524,11 +557,13 @@ export default function AllergenManager() {
     item: string;
     category?: Category;
     notes?: string;
+    ingredientsText?: string;
+    ingredientsLabelImageUrl?: string;
     flags: Flags;
-  }) {
+  }): Promise<boolean> {
     if (!canManage) {
       alert("Only managers / owners can edit the allergen matrix.");
-      return;
+      return false;
     }
 
     const currentOrgId = orgId ?? (await getActiveOrgIdClient().catch(() => null));
@@ -543,6 +578,8 @@ export default function AllergenManager() {
           category: d.category,
           flags: d.flags,
           notes: d.notes,
+          ingredientsText: d.ingredientsText ?? "",
+          ingredientsLabelImageUrl: d.ingredientsLabelImageUrl ?? "",
           locked: true,
         };
         const exists = rs.some((r) => r.id === idToUse);
@@ -552,7 +589,7 @@ export default function AllergenManager() {
 
     if (!currentOrgId) {
       applyLocal();
-      return;
+      return true;
     }
 
     let rowId = d.id as string | undefined;
@@ -565,6 +602,8 @@ export default function AllergenManager() {
             item: d.item,
             category: d.category ?? null,
             notes: d.notes ?? null,
+            ingredients_text: d.ingredientsText ?? null,
+            ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
             locked: true,
             org_id: currentOrgId,
             organisation_id: currentOrgId,
@@ -579,6 +618,8 @@ export default function AllergenManager() {
             item: d.item,
             category: d.category ?? null,
             notes: d.notes ?? null,
+            ingredients_text: d.ingredientsText ?? null,
+            ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
             locked: true,
             org_id: currentOrgId,
             organisation_id: currentOrgId,
@@ -614,6 +655,8 @@ export default function AllergenManager() {
           category: d.category,
           flags: d.flags,
           notes: d.notes,
+          ingredientsText: d.ingredientsText ?? "",
+          ingredientsLabelImageUrl: d.ingredientsLabelImageUrl ?? "",
           locked: true,
         };
 
@@ -630,9 +673,11 @@ export default function AllergenManager() {
       }
 
       applyLocal(rowId);
+      return true;
     } catch (error: any) {
       console.error("Saving allergen item failed:", error);
       alert(`Save failed: ${error?.message ?? "Unknown error"}`);
+      return false;
     }
   }
 
@@ -686,7 +731,6 @@ export default function AllergenManager() {
     const id = orgId ?? (await getActiveOrgIdClient().catch(() => null));
     const today = todayISO();
 
-    // ✅ Operator-first, click-time computed (no stale render values)
     const reviewer = await getReviewerLabel();
     const newInterval = review.intervalDays || 30;
 
@@ -759,6 +803,57 @@ export default function AllergenManager() {
     bumpVibrate(15);
   }
 
+  async function uploadIngredientsLabel(file: File) {
+    if (!draft?.id) {
+      alert("Save the item first, then reopen it to upload the ingredients label photo.");
+      return;
+    }
+
+    if (!orgId) {
+      alert("No organisation found. Please refresh and try again.");
+      return;
+    }
+
+    setUploadingImage(true);
+
+    try {
+      const path = buildAllergenLabelPath({
+        orgId,
+        itemId: draft.id,
+        filename: file.name,
+      });
+
+      const { error: uploadErr } = await supabase.storage
+        .from(ALLERGEN_LABEL_BUCKET)
+        .upload(path, file, {
+          cacheControl: "3600",
+          upsert: true,
+        });
+
+      if (uploadErr) throw uploadErr;
+
+      const { data: publicUrlData } = supabase.storage
+        .from(ALLERGEN_LABEL_BUCKET)
+        .getPublicUrl(path);
+
+      const url = publicUrlData?.publicUrl ?? "";
+      if (!url) throw new Error("Image uploaded but URL could not be created.");
+
+      setDraft((d) =>
+        d
+          ? {
+              ...d,
+              ingredientsLabelImageUrl: url,
+            }
+          : d
+      );
+    } catch (e: any) {
+      alert(`Image upload failed: ${e?.message ?? "Unknown error"}`);
+    } finally {
+      setUploadingImage(false);
+    }
+  }
+
   /* ===== Query (SAFE FOODS) ===== */
   const selectedAllergenKeys = useMemo(
     () => (ALLERGENS.map((a) => a.key) as AllergenKey[]).filter((k) => qFlags[k]),
@@ -773,17 +868,20 @@ export default function AllergenManager() {
     });
   }, [hydrated, rows, qCat, selectedAllergenKeys]);
 
-  /* ===== Add/Edit modal ===== */
-  type Draft = Omit<MatrixRow, "id" | "locked"> & { id?: string; locked?: boolean };
-  const [modalOpen, setModalOpen] = useState(false);
-  const [draft, setDraft] = useState<Draft | null>(null);
-
+  /* ===== Modal actions ===== */
   const openAdd = () => {
     if (!canManage) {
       alert("Only managers / owners can add allergen items.");
       return;
     }
-    setDraft({ item: "", category: "Starter", flags: emptyFlags(), notes: "" });
+    setDraft({
+      item: "",
+      category: "Starter",
+      flags: emptyFlags(),
+      notes: "",
+      ingredientsText: "",
+      ingredientsLabelImageUrl: "",
+    });
     setModalOpen(true);
   };
 
@@ -798,23 +896,37 @@ export default function AllergenManager() {
       category: row.category,
       flags: { ...row.flags },
       notes: row.notes,
+      ingredientsText: row.ingredientsText ?? "",
+      ingredientsLabelImageUrl: row.ingredientsLabelImageUrl ?? "",
     });
     setModalOpen(true);
   };
 
+  const openView = (row: MatrixRow) => {
+    setViewRow(row);
+    setViewOpen(true);
+  };
+
   const closeModal = () => setModalOpen(false);
+  const closeViewModal = () => setViewOpen(false);
 
   const saveDraft = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!draft || !draft.item.trim()) return;
-    await upsertItem({
+
+    const ok = await upsertItem({
       id: draft.id,
       item: draft.item.trim(),
       category: draft.category,
       flags: draft.flags,
       notes: (draft.notes ?? "").trim(),
+      ingredientsText: (draft.ingredientsText ?? "").trim(),
+      ingredientsLabelImageUrl: (draft.ingredientsLabelImageUrl ?? "").trim(),
     });
-    setModalOpen(false);
+
+    if (ok) {
+      setModalOpen(false);
+    }
   };
 
   const reviewPanelTone = hydrated
@@ -983,7 +1095,7 @@ export default function AllergenManager() {
 
       <div className="mb-2 hidden text-sm font-semibold text-slate-900 md:block">Allergen matrix</div>
 
-      {/* Desktop: scrollable grid with sticky header */}
+      {/* Desktop */}
       <div className="hidden md:block">
         <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm">
           <div className="max-h-[70vh] overflow-auto rounded-2xl">
@@ -1011,7 +1123,16 @@ export default function AllergenManager() {
                 ) : (
                   rows.map((row) => (
                     <tr key={row.id} className="border-t border-slate-100 align-top">
-                      <td className="px-3 py-2 text-slate-900">{row.item}</td>
+                      <td className="px-3 py-2 text-slate-900">
+                        <div className="flex items-center gap-2">
+                          <span>{row.item}</span>
+                          {(row.ingredientsText || row.ingredientsLabelImageUrl) && (
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
+                              extra info
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-3 py-2 text-slate-900">{row.category ?? ""}</td>
                       {ALLERGENS.map((a) => {
                         const yes = row.flags[a.key];
@@ -1028,14 +1149,21 @@ export default function AllergenManager() {
                         );
                       })}
                       <td className="px-3 py-2 text-right">
-                        {canManage && (
-                          <ActionMenu
-                            items={[
-                              { label: "Edit", onClick: () => openEdit(row) },
-                              { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
-                            ]}
-                          />
-                        )}
+                        <ActionMenu
+                          items={[
+                            { label: "View", onClick: () => openView(row) },
+                            ...(canManage
+                              ? [
+                                  { label: "Edit", onClick: () => openEdit(row) },
+                                  {
+                                    label: "Delete",
+                                    onClick: () => void deleteItem(row.id),
+                                    variant: "danger" as const,
+                                  },
+                                ]
+                              : []),
+                          ]}
+                        />
                       </td>
                     </tr>
                   ))
@@ -1046,7 +1174,7 @@ export default function AllergenManager() {
         </div>
       </div>
 
-      {/* Mobile cards */}
+      {/* Mobile */}
       <div className="md:hidden">
         {rows.length === 0 ? (
           <div className="rounded-xl border border-slate-200 bg-white/80 p-4 text-center text-slate-500">
@@ -1060,15 +1188,29 @@ export default function AllergenManager() {
                   <div>
                     <div className="font-medium text-slate-900">{row.item}</div>
                     {row.category ? <div className="text-xs text-slate-500">{row.category}</div> : null}
+                    {(row.ingredientsText || row.ingredientsLabelImageUrl) && (
+                      <div className="mt-1">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
+                          extra info
+                        </span>
+                      </div>
+                    )}
                   </div>
-                  {canManage && (
-                    <ActionMenu
-                      items={[
-                        { label: "Edit", onClick: () => openEdit(row) },
-                        { label: "Delete", onClick: () => void deleteItem(row.id), variant: "danger" },
-                      ]}
-                    />
-                  )}
+                  <ActionMenu
+                    items={[
+                      { label: "View", onClick: () => openView(row) },
+                      ...(canManage
+                        ? [
+                            { label: "Edit", onClick: () => openEdit(row) },
+                            {
+                              label: "Delete",
+                              onClick: () => void deleteItem(row.id),
+                              variant: "danger" as const,
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
                 </div>
 
                 <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
@@ -1190,17 +1332,93 @@ export default function AllergenManager() {
                 })}
               </div>
 
-              <label className="mt-2 block text-sm">
-                <div className="mb-1 text-slate-600">Notes</div>
+              <label className="mt-3 block text-sm">
+                <div className="mb-1 text-slate-600">Ingredients</div>
+                <textarea
+                  className="w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5"
+                  rows={5}
+                  value={draft.ingredientsText ?? ""}
+                  onChange={(e) => setDraft((d) => ({ ...d!, ingredientsText: e.target.value }))}
+                  placeholder="Add the full ingredient list from the packaging"
+                />
+              </label>
+
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                <div className="mb-2 text-sm font-medium text-slate-900">Ingredients label photo</div>
+
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="block w-full text-sm text-slate-700"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    await uploadIngredientsLabel(file);
+                    e.currentTarget.value = "";
+                  }}
+                  disabled={uploadingImage || !draft.id}
+                />
+
+                <div className="mt-2 text-xs text-slate-500">
+                  {uploadingImage
+                    ? "Uploading image…"
+                    : !draft.id
+                    ? "Save the item first, then reopen it to upload a packaging label photo."
+                    : "Upload a photo of the packaging ingredient label."}
+                </div>
+
+                {draft.ingredientsLabelImageUrl ? (
+                  <div className="mt-3 space-y-2">
+                    <img
+                      src={draft.ingredientsLabelImageUrl}
+                      alt="Ingredients label"
+                      className="max-h-64 rounded-xl border border-slate-200 object-contain"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <a
+                        href={draft.ingredientsLabelImageUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                      >
+                        Open image
+                      </a>
+                      <button
+                        type="button"
+                        className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                        onClick={() =>
+                          setDraft((d) =>
+                            d
+                              ? {
+                                  ...d,
+                                  ingredientsLabelImageUrl: "",
+                                }
+                              : d
+                          )
+                        }
+                      >
+                        Remove image
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <label className="mt-3 block text-sm">
+                <div className="mb-1 text-slate-600">Prep / cross-contamination notes</div>
                 <textarea
                   className="w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5"
                   rows={3}
                   value={draft.notes ?? ""}
                   onChange={(e) => setDraft((d) => ({ ...d!, notes: e.target.value }))}
+                  placeholder="Example: Cooked in shared fryer with gluten items, or may contain traces from shared prep surfaces."
                 />
+                <p className="mt-1 text-xs text-slate-500">
+                  Add anything important about shared equipment, frying oil, prep areas, or trace contamination risk.
+                </p>
               </label>
 
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-3 text-xs text-slate-500">
                 Press <kbd>Enter</kbd> to save, or <kbd>Esc</kbd> to cancel.
               </p>
             </div>
@@ -1213,11 +1431,122 @@ export default function AllergenManager() {
               >
                 Cancel
               </button>
-              <button className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
+              <button
+                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                disabled={uploadingImage}
+              >
                 Save &amp; lock
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {viewOpen && viewRow && (
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={closeViewModal}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="mx-auto mt-6 flex h-[75vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white/90 shadow-lg backdrop-blur sm:mt-16 sm:h-[70vh] sm:rounded-2xl"
+          >
+            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 px-4 py-3 text-base font-semibold text-slate-900 backdrop-blur">
+              {viewRow.item}
+            </div>
+
+            <div className="grow overflow-y-auto px-4 py-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Category</div>
+                  <div className="mt-1 text-sm font-medium text-slate-900">
+                    {viewRow.category ?? "—"}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Notes</div>
+                  <div className="mt-1 whitespace-pre-wrap text-sm text-slate-900">
+                    {viewRow.notes?.trim() ? viewRow.notes : "—"}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-white/80 p-3">
+                <div className="mb-2 text-sm font-semibold text-slate-900">Allergens</div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {ALLERGENS.map((a) => {
+                    const yes = viewRow.flags[a.key];
+                    return (
+                      <div
+                        key={a.key}
+                        className={`flex items-center justify-between rounded border px-3 py-2 text-sm ${
+                          yes
+                            ? "border-red-200 bg-red-50 text-red-800"
+                            : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        }`}
+                      >
+                        <span>
+                          {a.icon} {a.label}
+                        </span>
+                        <span className="font-medium">{yes ? "Yes" : "No"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-white/80 p-3">
+                <div className="mb-2 text-sm font-semibold text-slate-900">Ingredients</div>
+                <div className="whitespace-pre-wrap text-sm text-slate-800">
+                  {viewRow.ingredientsText?.trim() ? viewRow.ingredientsText : "No ingredients added."}
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-white/80 p-3">
+                <div className="mb-2 text-sm font-semibold text-slate-900">Ingredients label photo</div>
+
+                {viewRow.ingredientsLabelImageUrl ? (
+                  <div className="space-y-3">
+                    <img
+                      src={viewRow.ingredientsLabelImageUrl}
+                      alt="Ingredients label"
+                      className="max-h-[420px] rounded-xl border border-slate-200 object-contain"
+                    />
+                    <a
+                      href={viewRow.ingredientsLabelImageUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      Open image
+                    </a>
+                  </div>
+                ) : (
+                  <div className="text-sm text-slate-500">No image uploaded.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t border-slate-200 bg-white/90 px-4 py-3 backdrop-blur">
+              <button
+                type="button"
+                className="rounded-md px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                onClick={closeViewModal}
+              >
+                Close
+              </button>
+              {canManage && (
+                <button
+                  type="button"
+                  className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+                  onClick={() => {
+                    closeViewModal();
+                    openEdit(viewRow);
+                  }}
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
