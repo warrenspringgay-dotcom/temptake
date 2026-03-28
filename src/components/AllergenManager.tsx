@@ -594,25 +594,22 @@ export default function AllergenManager() {
 
   try {
     if (isExistingRow && rowId) {
-      const { data: updated, error } = await supabase
-        .from("allergen_items")
-        .update({
-          item: d.item,
-          category: d.category ?? null,
-          notes: d.notes ?? null,
-          ingredients_text: d.ingredientsText ?? null,
-          ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
-          locked: true,
-          org_id: currentOrgId,
-          organisation_id: currentOrgId,
-        })
-        .eq("id", rowId)
-        .select("id")
-        .single();
+  const { error } = await supabase
+    .from("allergen_items")
+    .update({
+      item: d.item,
+      category: d.category ?? null,
+      notes: d.notes ?? null,
+      ingredients_text: d.ingredientsText ?? null,
+      ingredients_label_image_url: d.ingredientsLabelImageUrl ?? null,
+      locked: true,
+      org_id: currentOrgId,
+      organisation_id: currentOrgId,
+    })
+    .eq("id", rowId);
 
-      if (error) throw error;
-      rowId = String(updated.id);
-    } else {
+  if (error) throw error;
+} else {
       const { data, error } = await supabase
         .from("allergen_items")
         .insert({
