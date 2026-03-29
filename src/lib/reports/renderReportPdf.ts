@@ -1,3 +1,4 @@
+// src/lib/reports/renderReportPdf.ts
 import jsPDF from "jspdf";
 import autoTableImport from "jspdf-autotable";
 import type { ReportData } from "@/lib/reports/buildReportData";
@@ -34,6 +35,23 @@ const autoTable = autoTableImport as unknown as (
   options: AutoTableOptions
 ) => void;
 
+const ALLERGEN_LABELS: Record<string, string> = {
+  gluten: "Gluten",
+  crustaceans: "Crustaceans",
+  eggs: "Eggs",
+  fish: "Fish",
+  peanuts: "Peanuts",
+  soybeans: "Soy",
+  milk: "Milk",
+  nuts: "Tree nuts",
+  celery: "Celery",
+  mustard: "Mustard",
+  sesame: "Sesame",
+  sulphites: "Sulphites",
+  lupin: "Lupin",
+  molluscs: "Molluscs",
+};
+
 function safeDate(val: any): Date | null {
   if (!val) return null;
   const d = new Date(val);
@@ -59,6 +77,15 @@ function formatTimeHM(iso: string | null | undefined): string {
 
 function normalText(value: string | number | null | undefined) {
   return String(value ?? "—");
+}
+
+function presentAllergens(flags: Record<string, boolean> | null | undefined) {
+  if (!flags) return "No allergens marked";
+  const present = Object.entries(flags)
+    .filter(([, value]) => Boolean(value))
+    .map(([key]) => ALLERGEN_LABELS[key] ?? key);
+
+  return present.length ? present.join(", ") : "No allergens marked";
 }
 
 function addTitle(doc: JsPDFWithAutoTable, title: string, subtitle?: string) {
@@ -270,6 +297,26 @@ export async function renderReportPdf(report: ReportData): Promise<Buffer> {
         formatISOToUK(r.expires_on),
         r.status === "valid" ? "Valid" : r.status === "expired" ? "Expired" : "No expiry",
         r.notes ?? "—",
+      ]),
+      landscape: true,
+    },
+    {
+      title: "Allergen register",
+      head: [
+        "Item",
+        "Category",
+        "Allergens present",
+        "Ingredients",
+        "Prep / cross-contamination notes",
+        "Label photo",
+      ],
+      body: report.allergenRegister.map((r) => [
+        r.item,
+        r.category ?? "—",
+        presentAllergens(r.flags),
+        r.ingredients_text ?? "No ingredients added.",
+        r.notes ?? "—",
+        r.ingredients_label_image_url ? "Uploaded" : "No image",
       ]),
       landscape: true,
     },

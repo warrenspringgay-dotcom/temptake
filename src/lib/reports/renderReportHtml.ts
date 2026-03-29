@@ -1,4 +1,22 @@
+// src/lib/reports/renderReportHtml.ts
 import type { ReportData } from "@/lib/reports/buildReportData";
+
+const ALLERGEN_LABELS: Record<string, string> = {
+  gluten: "Gluten",
+  crustaceans: "Crustaceans",
+  eggs: "Eggs",
+  fish: "Fish",
+  peanuts: "Peanuts",
+  soybeans: "Soy",
+  milk: "Milk",
+  nuts: "Tree nuts",
+  celery: "Celery",
+  mustard: "Mustard",
+  sesame: "Sesame",
+  sulphites: "Sulphites",
+  lupin: "Lupin",
+  molluscs: "Molluscs",
+};
 
 function escapeHtml(value: string | number | null | undefined) {
   return String(value ?? "")
@@ -98,6 +116,75 @@ function section(title: string, content: string, subtitle?: string) {
       ${content}
     </div>
   `;
+}
+
+function presentAllergens(flags: Record<string, boolean> | null | undefined) {
+  if (!flags) return [];
+  return Object.entries(flags)
+    .filter(([, value]) => Boolean(value))
+    .map(([key]) => ALLERGEN_LABELS[key] ?? key);
+}
+
+function renderAllergenRegister(report: ReportData) {
+  if (!report.allergenRegister.length) {
+    return `<div style="padding:14px;border:1px solid #e2e8f0;border-radius:12px;background:#ffffff;color:#64748b;font-size:13px;">No allergen register items found.</div>`;
+  }
+
+  return report.allergenRegister
+    .map((row) => {
+      const present = presentAllergens(row.flags);
+      const allergenBadges = present.length
+        ? present.map((a) => badge(a, "red")).join(" ")
+        : badge("No allergens marked", "green");
+
+      const imageBlock = row.ingredients_label_image_url
+        ? `
+          <div style="margin-top:8px;font-size:13px;line-height:20px;">
+            <a href="${escapeHtml(row.ingredients_label_image_url)}" target="_blank" rel="noreferrer" style="color:#0f766e;text-decoration:underline;">
+              Open packaging label photo
+            </a>
+          </div>
+        `
+        : `<div style="margin-top:8px;font-size:13px;color:#64748b;">No packaging label photo uploaded.</div>`;
+
+      return `
+        <div style="border:1px solid #e2e8f0;border-radius:16px;background:#ffffff;padding:16px;margin-bottom:12px;">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:16px;font-weight:700;color:#0f172a;">${escapeHtml(row.item)}</div>
+              <div style="margin-top:6px;">${badge(row.category ?? "Uncategorised", "slate")}</div>
+            </div>
+          </div>
+
+          <div style="margin-top:14px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Allergens present</div>
+            <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+              ${allergenBadges}
+            </div>
+          </div>
+
+          <div style="margin-top:14px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Ingredients</div>
+            <div style="margin-top:6px;font-size:13px;line-height:20px;color:#0f172a;white-space:pre-wrap;">
+              ${escapeHtml(row.ingredients_text ?? "No ingredients added.")}
+            </div>
+          </div>
+
+          <div style="margin-top:14px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Prep / cross-contamination notes</div>
+            <div style="margin-top:6px;font-size:13px;line-height:20px;color:#0f172a;white-space:pre-wrap;">
+              ${escapeHtml(row.notes ?? "—")}
+            </div>
+          </div>
+
+          <div style="margin-top:14px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Packaging label photo</div>
+            ${imageBlock}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
 }
 
 export function renderReportHtml(report: ReportData) {
@@ -213,6 +300,8 @@ export function renderReportHtml(report: ReportData) {
     ])
   );
 
+  const allergenRegisterHtml = renderAllergenRegister(report);
+
   const allergenReviewsTable = table(
     ["Last review", "Next due", "Days", "Reviewer"],
     report.allergenLog.slice(0, 20).map((r) => [
@@ -315,6 +404,11 @@ export function renderReportHtml(report: ReportData) {
           ${section("Day sign-offs", signoffsTable, "First 20 records included in the email body.")}
           ${section("Manager QC reviews", staffReviewsTable, "First 20 records included in the email body.")}
           ${section("Training and certificates", trainingTable, "First 20 records included in the email body.")}
+          ${section(
+            "Allergen register",
+            allergenRegisterHtml,
+            "Live allergen item register including ingredients, notes, and packaging label photo links where available."
+          )}
           ${section("Allergen reviews", allergenReviewsTable, "First 20 records included in the email body.")}
           ${section("Allergen edits", allergenEditsTable, "First 20 records included in the email body.")}
           ${section(

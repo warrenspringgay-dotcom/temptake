@@ -1,3 +1,4 @@
+// src/lib/reports/buildReportData.ts
 import { createClient } from "@supabase/supabase-js";
 
 type TempRow = {
@@ -79,6 +80,35 @@ type AllergenChangeRow = {
   item_name: string | null;
   action: string | null;
   staff_initials: string | null;
+};
+
+const REPORT_ALLERGENS = [
+  "gluten",
+  "crustaceans",
+  "eggs",
+  "fish",
+  "peanuts",
+  "soybeans",
+  "milk",
+  "nuts",
+  "celery",
+  "mustard",
+  "sesame",
+  "sulphites",
+  "lupin",
+  "molluscs",
+] as const;
+
+type ReportAllergenKey = (typeof REPORT_ALLERGENS)[number];
+
+type AllergenRegisterItemRow = {
+  id: string;
+  item: string;
+  category: string | null;
+  notes: string | null;
+  ingredients_text: string | null;
+  ingredients_label_image_url: string | null;
+  flags: Record<ReportAllergenKey, boolean>;
 };
 
 type CalibrationRow = {
@@ -184,6 +214,7 @@ export type ReportData = {
   education: EducationRow[];
   allergenLog: AllergenRow[];
   allergenChanges: AllergenChangeRow[];
+  allergenRegister: AllergenRegisterItemRow[];
   calibrationChecks: CalibrationRow[];
   trainingAreas: TrainingAreaRow[];
 };
@@ -862,6 +893,69 @@ async function fetchAllergenChanges(
   }));
 }
 
+async function fetchAllergenRegister(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  orgId: string
+): Promise<AllergenRegisterItemRow[]> {
+  const { data: items, error: itemsErr } = await supabase
+    .from("allergen_items")
+    .select(
+      "id,item,category,notes,ingredients_text,ingredients_label_image_url,org_id,organisation_id"
+    )
+    .or(`organisation_id.eq.${orgId},org_id.eq.${orgId}`)
+    .order("category", { ascending: true })
+    .order("item", { ascending: true })
+    .limit(5000);
+
+  if (itemsErr) throw itemsErr;
+
+  const itemRows = (items ?? []) as any[];
+  if (!itemRows.length) return [];
+
+  const itemIds = itemRows.map((r) => String(r.id));
+
+  const { data: flags, error: flagsErr } = await supabase
+    .from("allergen_flags")
+    .select("item_id,key,value")
+    .in("item_id", itemIds)
+    .limit(20000);
+
+  if (flagsErr) throw flagsErr;
+
+  const emptyFlags = (): Record<ReportAllergenKey, boolean> =>
+    Object.fromEntries(REPORT_ALLERGENS.map((key) => [key, false])) as Record<
+      ReportAllergenKey,
+      boolean
+    >;
+
+  const flagsByItem = new Map<string, Record<ReportAllergenKey, boolean>>();
+  for (const itemId of itemIds) {
+    flagsByItem.set(String(itemId), emptyFlags());
+  }
+
+  for (const row of (flags ?? []) as any[]) {
+    const itemId = String(row.item_id ?? "");
+    const key = String(row.key ?? "") as ReportAllergenKey;
+    if (!itemId || !REPORT_ALLERGENS.includes(key)) continue;
+
+    const current = flagsByItem.get(itemId) ?? emptyFlags();
+    current[key] = Boolean(row.value);
+    flagsByItem.set(itemId, current);
+  }
+
+  return itemRows.map((r) => ({
+    id: String(r.id),
+    item: String(r.item ?? "Unnamed item"),
+    category: r.category ? String(r.category) : null,
+    notes: r.notes ? String(r.notes) : null,
+    ingredients_text: r.ingredients_text ? String(r.ingredients_text) : null,
+    ingredients_label_image_url: r.ingredients_label_image_url
+      ? String(r.ingredients_label_image_url)
+      : null,
+    flags: flagsByItem.get(String(r.id)) ?? emptyFlags(),
+  }));
+}
+
 async function fetchCalibrationChecksTrail(
   supabase: ReturnType<typeof getAdminSupabase>,
   fromISO: string,
@@ -1088,6 +1182,7 @@ export async function buildReportData(args: BuildReportDataArgs): Promise<Report
     education,
     allergenLog,
     allergenChanges,
+    allergenRegister,
     calibrationChecks,
     hygieneByLocation,
     trainingAreas,
@@ -1101,6 +1196,7 @@ export async function buildReportData(args: BuildReportDataArgs): Promise<Report
     fetchEducation(supabase, orgId, locationId),
     fetchAllergenLog(supabase, orgId, locationId),
     fetchAllergenChanges(supabase, from, to, orgId, locationId),
+    fetchAllergenRegister(supabase, orgId),
     fetchCalibrationChecksTrail(supabase, from, to, orgId, locationId),
     fetchLatestHygieneByLocation(supabase, orgId),
     fetchTrainingAreasReport(supabase, orgId, locationId),
@@ -1165,6 +1261,7 @@ export async function buildReportData(args: BuildReportDataArgs): Promise<Report
     education,
     allergenLog,
     allergenChanges,
+    allergenRegister,
     calibrationChecks,
     trainingAreas,
   };
