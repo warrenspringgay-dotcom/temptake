@@ -41,7 +41,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
         <ClientProviders>
           <Pwa />
-<ProtectedAppChrome />
+
           {/* Cookie consent + PostHog opt-in/out */}
           <ConsentBootstrap />
           <CookieBanner />
@@ -59,7 +59,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <ServiceWorkerRegister />
           </Suspense>
         </ClientProviders>
-
+<ProtectedAppChrome />
         <Analytics />
       </body>
     </html>
