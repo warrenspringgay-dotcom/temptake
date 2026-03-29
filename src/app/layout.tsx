@@ -15,7 +15,7 @@ import CookieBanner from "@/components/CookieBanner";
 import ConsentBootstrap from "@/components/ConsentBootstrap";
 
 import ClientProviders from "@/app/ClientProviders";
-import ProtectedAppChrome from "@/components/ProtectedAppChrome";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -59,7 +59,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <ServiceWorkerRegister />
           </Suspense>
         </ClientProviders>
-<ProtectedAppChrome />
+
         <Analytics />
       </body>
     </html>
