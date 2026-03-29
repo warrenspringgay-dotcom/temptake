@@ -15,7 +15,7 @@ import CookieBanner from "@/components/CookieBanner";
 import ConsentBootstrap from "@/components/ConsentBootstrap";
 
 import ClientProviders from "@/app/ClientProviders";
-
+import ProtectedAppChrome from "@/components/ProtectedAppChrome";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -41,7 +41,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
         <ClientProviders>
           <Pwa />
-
+<ProtectedAppChrome />
           {/* Cookie consent + PostHog opt-in/out */}
           <ConsentBootstrap />
           <CookieBanner />
