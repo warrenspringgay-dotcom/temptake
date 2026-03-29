@@ -143,10 +143,11 @@ async function readOrgAndLocation() {
 export function WorkstationLockProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  /** 🔥 Only run lock system inside app */
-  const isAppPage =
-    pathname?.startsWith("/app") ||
-    pathname?.startsWith("/manager");
+ const APP_ROUTE_PREFIXES = ["/app", "/dashboard", "/manager"];
+
+const isAppPage = APP_ROUTE_PREFIXES.some((prefix) =>
+  pathname?.startsWith(prefix)
+);
 
   const [hasSession, setHasSession] = useState(false);
   const [locked, setLocked] = useState(false);
