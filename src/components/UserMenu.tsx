@@ -243,6 +243,10 @@ export default function UserMenu() {
                 Locations
               </Link>
 
+              <Link href="/haccp-procedures" className={itemCls()} role="menuitem">
+                HACCP procedures
+              </Link>
+
               <Link href="/billing" className={itemCls()} role="menuitem">
                 Billing &amp; subscription
               </Link>
@@ -250,8 +254,6 @@ export default function UserMenu() {
               <Link href="/templates" className={itemCls()} role="menuitem">
                 Templates
               </Link>
-
-          
 
               <Link href="/guides" className={itemCls()} role="menuitem">
                 Guides

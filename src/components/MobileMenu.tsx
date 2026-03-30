@@ -46,6 +46,7 @@ const APP_NAV: Tab[] = [
 
 const ACCOUNT_LINKS: { href: string; label: string }[] = [
   { href: "/locations", label: "Locations" },
+  { href: "/haccp-procedures", label: "HACCP procedures" },
   { href: "/templates", label: "Templates" },
   { href: "/feedback", label: "Feedback" },
   { href: "/guides", label: "Guides" },
