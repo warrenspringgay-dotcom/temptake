@@ -1,4 +1,3 @@
-// src/lib/reports/renderReportPdf.ts
 import jsPDF from "jspdf";
 import autoTableImport from "jspdf-autotable";
 import type { ReportData } from "@/lib/reports/buildReportData";
@@ -116,6 +115,54 @@ function ensurePage(doc: JsPDFWithAutoTable, y: number, minRemaining = 120) {
     doc.addPage();
     return 40;
   }
+  return y;
+}
+
+function addWrappedBlock(
+  doc: JsPDFWithAutoTable,
+  label: string,
+  content: string,
+  y: number,
+  width = 515
+) {
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text(label, 40, y);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  const lines = doc.splitTextToSize(content || "—", width);
+  doc.text(lines, 40, y + 12);
+
+  return y + 12 + lines.length * 11;
+}
+
+function addBulletListBlock(
+  doc: JsPDFWithAutoTable,
+  label: string,
+  items: string[],
+  y: number,
+  width = 500
+) {
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text(label, 40, y);
+  y += 12;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+
+  if (!items.length) {
+    doc.text("—", 50, y);
+    return y + 12;
+  }
+
+  for (const item of items) {
+    const lines = doc.splitTextToSize(`• ${item}`, width);
+    doc.text(lines, 50, y);
+    y += lines.length * 11 + 4;
+  }
+
   return y;
 }
 
@@ -452,6 +499,85 @@ export async function renderReportPdf(report: ReportData): Promise<Buffer> {
     theme: "grid",
     margin: { left: 30, right: 30 },
   });
+
+  doc.addPage("portrait");
+  addTitle(
+    doc,
+    "HACCP Procedures",
+    `${report.meta.locationLabel} • ${formatISOToUK(report.meta.from)} to ${formatISOToUK(
+      report.meta.to
+    )}`
+  );
+
+  autoTable(doc, {
+    startY: 72,
+    head: [["Field", "Value"]],
+    body: [
+      ["Document title", report.haccp.meta.title],
+      ["Version", report.haccp.meta.version],
+      ["Status", report.haccp.meta.status === "published" ? "Published" : "Draft"],
+      ["Site / address", report.haccp.meta.siteAddress || report.meta.locationLabel],
+      ["Reviewed by", report.haccp.meta.reviewedBy ?? "—"],
+      ["Last reviewed", formatISOToUK(report.haccp.meta.lastReviewedAt)],
+      ["Next review due", formatISOToUK(report.haccp.meta.nextReviewDue)],
+      ["Published by", report.haccp.meta.publishedBy ?? "—"],
+      ["Published at", `${formatISOToUK(report.haccp.meta.publishedAt)} ${formatTimeHM(report.haccp.meta.publishedAt)}`],
+      ["Notes", report.haccp.meta.notes || "—"],
+    ],
+    styles: { fontSize: 9, cellPadding: 4, overflow: "linebreak" },
+    headStyles: { fillColor: [15, 23, 42] },
+    theme: "grid",
+    margin: { left: 30, right: 30 },
+  });
+
+  for (const [index, procedure] of report.haccp.procedures.entries()) {
+    doc.addPage("portrait");
+
+    addTitle(
+      doc,
+      `HACCP Procedure ${index + 1}`,
+      `${procedure.title} • ${report.meta.locationLabel}`
+    );
+
+    let procedureY = 78;
+
+    procedureY = addWrappedBlock(
+      doc,
+      "Category / Type",
+      `${procedure.category.replaceAll("_", " ")}${procedure.isCcp ? " • CCP" : " • Control procedure"}`,
+      procedureY
+    );
+    procedureY += 8;
+
+    procedureY = addWrappedBlock(doc, "Summary", procedure.summary, procedureY);
+    procedureY += 8;
+
+    procedureY = addWrappedBlock(doc, "Scope", procedure.scope, procedureY);
+    procedureY += 10;
+
+    procedureY = ensurePage(doc, procedureY, 280);
+    procedureY = addBulletListBlock(doc, "Hazards", procedure.hazards, procedureY);
+    procedureY += 6;
+
+    procedureY = ensurePage(doc, procedureY, 240);
+    procedureY = addBulletListBlock(doc, "Control measures", procedure.controlMeasures, procedureY);
+    procedureY += 6;
+
+    procedureY = ensurePage(doc, procedureY, 240);
+    procedureY = addBulletListBlock(doc, "Critical limits", procedure.criticalLimits, procedureY);
+    procedureY += 6;
+
+    procedureY = ensurePage(doc, procedureY, 240);
+    procedureY = addBulletListBlock(doc, "Monitoring", procedure.monitoring, procedureY);
+    procedureY += 6;
+
+    procedureY = ensurePage(doc, procedureY, 240);
+    procedureY = addBulletListBlock(doc, "Corrective actions", procedure.correctiveActions, procedureY);
+    procedureY += 6;
+
+    procedureY = ensurePage(doc, procedureY, 240);
+    addBulletListBlock(doc, "Verification / review", procedure.verification, procedureY);
+  }
 
   const buffer = Buffer.from(doc.output("arraybuffer"));
   return buffer;

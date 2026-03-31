@@ -429,7 +429,7 @@ function normaliseTrainingAreas(
   return out;
 }
 
-/* ===================== Hygiene stars (big >=3, small <3, history small) ===================== */
+/* ===================== Hygiene stars ===================== */
 
 function HygieneStars({
   rating,
@@ -995,7 +995,7 @@ async function fetchIncidentsTrailAsUnifiedIncidentShape(
   }));
 }
 
-/* ===================== Calibration fetch (LOCATION SPECIFIC ONLY) ===================== */
+/* ===================== Calibration fetch ===================== */
 
 async function fetchCalibrationChecksTrail(
   fromISO: string,
@@ -1324,7 +1324,6 @@ async function fetchStaffAbsences(
 
 /**
  * Education/trainings table now location-aware when possible.
- * If trainings has no location_id, fallback to org-wide.
  */
 async function fetchEducation(orgId: string, locationId: string | null): Promise<EducationRow[]> {
   let data: any[] | null = null;
@@ -1577,7 +1576,7 @@ export default function ReportsPage() {
     return { label: "Varies", visit: null as string | null };
   }, [locationFilter, hygieneByLocation]);
 
-  /* ---------- boot: org + locations + hygiene + active location ---------- */
+  /* ---------- boot ---------- */
 
   useEffect(() => {
     (async () => {
@@ -1779,7 +1778,6 @@ export default function ReportsPage() {
       await runInstantAudit90();
       setInitialRunDone(true);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, bootReady, initialRunDone]);
 
   useEffect(() => {
@@ -1790,7 +1788,6 @@ export default function ReportsPage() {
 
     const locId = locationFilter !== "all" ? locationFilter : null;
     runRange(from, to, orgId, locId, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationFilter, orgId, bootReady, initialRunDone]);
 
   function downloadCSV() {
@@ -1804,8 +1801,31 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url);
   }
 
-  function printReport() {
-    window.print();
+  function buildReportQueryString() {
+    if (!orgId) return null;
+
+    const params = new URLSearchParams();
+    params.set("orgId", orgId);
+    params.set("from", from);
+    params.set("to", to);
+
+    if (locationFilter !== "all") {
+      params.set("locationId", locationFilter);
+    }
+
+    return params.toString();
+  }
+
+  function openPrintableReport() {
+    const query = buildReportQueryString();
+    if (!query) return;
+    window.open(`/api/reports/print?${query}`, "_blank", "noopener,noreferrer");
+  }
+
+  function downloadGeneratedPdf() {
+    const query = buildReportQueryString();
+    if (!query) return;
+    window.open(`/api/reports/pdf?${query}`, "_blank", "noopener,noreferrer");
   }
 
   function downloadFourWeekPDF() {
@@ -1892,11 +1912,20 @@ export default function ReportsPage() {
 
             <Button
               variant="outline"
-              onClick={printReport}
-              disabled={!temps?.length}
+              onClick={downloadGeneratedPdf}
+              disabled={!orgId || loading}
               className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
             >
-              <Printer className="mr-2 h-4 w-4" /> Print
+              <Download className="mr-2 h-4 w-4" /> Download PDF report
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={openPrintableReport}
+              disabled={!orgId || loading}
+              className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Printer className="mr-2 h-4 w-4" /> Print generated report
             </Button>
 
             <EmailReportButton
@@ -2148,7 +2177,7 @@ export default function ReportsPage() {
             {calibrationChecks ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
           <p className="mb-3 text-xs text-slate-500">
-            Systimatic calibrations carried out on cold stores, probes and thermometers.
+            Systematic calibrations carried out on cold stores, probes and thermometers.
           </p>
 
           <div className="overflow-x-auto">

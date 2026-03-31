@@ -1,4 +1,3 @@
-// src/lib/reports/renderReportHtml.ts
 import type { ReportData } from "@/lib/reports/buildReportData";
 
 const ALLERGEN_LABELS: Record<string, string> = {
@@ -187,6 +186,156 @@ function renderAllergenRegister(report: ReportData) {
     .join("");
 }
 
+function renderHaccpSection(report: ReportData) {
+  const { meta, procedures } = report.haccp;
+
+  const topMeta = `
+    <div style="border:1px solid #e2e8f0;border-radius:16px;background:#ffffff;padding:16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:18px;font-weight:700;color:#0f172a;">${escapeHtml(meta.title)}</div>
+          <div style="margin-top:6px;font-size:13px;color:#64748b;">
+            Version ${escapeHtml(meta.version)} · ${escapeHtml(meta.status === "published" ? "Published" : "Draft")}
+          </div>
+        </div>
+        <div>
+          ${
+            meta.status === "published"
+              ? badge("Published", "green")
+              : badge("Draft", "amber")
+          }
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px;">
+        <div>
+          <div style="font-size:12px;color:#64748b;">Site / address</div>
+          <div style="margin-top:4px;font-size:13px;color:#0f172a;">${escapeHtml(meta.siteAddress || report.meta.locationLabel)}</div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#64748b;">Reviewed by</div>
+          <div style="margin-top:4px;font-size:13px;color:#0f172a;">${escapeHtml(meta.reviewedBy ?? "—")}</div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#64748b;">Last reviewed</div>
+          <div style="margin-top:4px;font-size:13px;color:#0f172a;">${escapeHtml(formatISOToUK(meta.lastReviewedAt))}</div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#64748b;">Next review due</div>
+          <div style="margin-top:4px;font-size:13px;color:#0f172a;">${escapeHtml(formatISOToUK(meta.nextReviewDue))}</div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#64748b;">Published by</div>
+          <div style="margin-top:4px;font-size:13px;color:#0f172a;">${escapeHtml(meta.publishedBy ?? "—")}</div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#64748b;">Published at</div>
+          <div style="margin-top:4px;font-size:13px;color:#0f172a;">${escapeHtml(formatISOToUK(meta.publishedAt))} ${escapeHtml(
+    formatTimeHM(meta.publishedAt)
+  )}</div>
+        </div>
+      </div>
+
+      ${
+        meta.notes
+          ? `
+            <div style="margin-top:14px;">
+              <div style="font-size:12px;color:#64748b;">Document notes</div>
+              <div style="margin-top:6px;font-size:13px;line-height:20px;color:#0f172a;white-space:pre-wrap;">
+                ${escapeHtml(meta.notes)}
+              </div>
+            </div>
+          `
+          : ""
+      }
+    </div>
+  `;
+
+  if (!procedures.length) {
+    return `
+      ${topMeta}
+      <div style="padding:14px;border:1px solid #e2e8f0;border-radius:12px;background:#ffffff;color:#64748b;font-size:13px;">
+        No HACCP procedures found.
+      </div>
+    `;
+  }
+
+  const procedureBlocks = procedures
+    .map((p, index) => {
+      const list = (items: string[]) =>
+        items.length
+          ? `<ul style="margin:8px 0 0 18px;padding:0;">${items
+              .map(
+                (item) =>
+                  `<li style="margin:0 0 6px;font-size:13px;line-height:20px;color:#0f172a;">${escapeHtml(
+                    item
+                  )}</li>`
+              )
+              .join("")}</ul>`
+          : `<div style="margin-top:8px;font-size:13px;color:#64748b;">—</div>`;
+
+      return `
+        <div style="border:1px solid #e2e8f0;border-radius:16px;background:#ffffff;padding:16px;margin-bottom:12px;">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:16px;font-weight:700;color:#0f172a;">
+                ${escapeHtml(index + 1)}. ${escapeHtml(p.title)}
+              </div>
+              <div style="margin-top:6px;">
+                ${badge(p.category.replaceAll("_", " "), "slate")}
+                ${p.isCcp ? ` ${badge("CCP", "red")}` : ` ${badge("Control procedure", "slate")}`}
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:12px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Summary</div>
+            <div style="margin-top:6px;font-size:13px;line-height:20px;color:#0f172a;">
+              ${escapeHtml(p.summary)}
+            </div>
+          </div>
+
+          <div style="margin-top:12px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Scope</div>
+            <div style="margin-top:6px;font-size:13px;line-height:20px;color:#0f172a;">
+              ${escapeHtml(p.scope)}
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px;">
+            <div>
+              <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Hazards</div>
+              ${list(p.hazards)}
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Control measures</div>
+              ${list(p.controlMeasures)}
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Critical limits</div>
+              ${list(p.criticalLimits)}
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Monitoring</div>
+              ${list(p.monitoring)}
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Corrective actions</div>
+              ${list(p.correctiveActions)}
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Verification / review</div>
+              ${list(p.verification)}
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `${topMeta}${procedureBlocks}`;
+}
+
 export function renderReportHtml(report: ReportData) {
   const latestRating =
     report.hygiene.latest?.rating != null
@@ -351,6 +500,8 @@ export function renderReportHtml(report: ReportData) {
         )
       : `<div style="padding:14px;border:1px solid #e2e8f0;border-radius:12px;background:#ffffff;color:#64748b;font-size:13px;">No previous hygiene rating history for this location.</div>`;
 
+  const haccpHtml = renderHaccpSection(report);
+
   return `
 <!doctype html>
 <html lang="en">
@@ -415,6 +566,11 @@ export function renderReportHtml(report: ReportData) {
             "Calibration checks",
             calibrationChecksTable,
             report.meta.locationId ? "First 20 records included in the email body." : "No location selected means calibration data may be empty."
+          )}
+          ${section(
+            "HACCP procedures",
+            haccpHtml,
+            "Documented food safety controls, critical limits, monitoring, corrective actions, and verification."
           )}
           ${section("Previous hygiene ratings", hygieneHistory)}
 

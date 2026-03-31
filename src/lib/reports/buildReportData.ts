@@ -1,6 +1,14 @@
 // src/lib/reports/buildReportData.ts
 import { createClient } from "@supabase/supabase-js";
 
+import {
+  cloneDefaultHaccpProcedures,
+  mergeProcedureOverrides,
+  type HaccpDocumentMeta,
+  type HaccpProcedure,
+  type HaccpProcedureOverrideRow,
+} from "@/lib/haccpProcedures";
+
 type TempRow = {
   id: string;
   date: string;
@@ -178,6 +186,20 @@ type BuildReportDataArgs = {
   reportUrl?: string | null;
 };
 
+type ReportHaccpDocumentRow = {
+  title: string;
+  version: string;
+  reviewed_by: string | null;
+  last_reviewed_at: string | null;
+  next_review_due: string | null;
+  review_interval_months: number | null;
+  site_address: string | null;
+  notes: string | null;
+  status: "draft" | "published" | null;
+  published_at: string | null;
+  published_by: string | null;
+};
+
 export type ReportData = {
   meta: {
     orgId: string;
@@ -204,6 +226,14 @@ export type ReportData = {
   hygiene: {
     latest: HygieneMeta | null;
     history: HygieneHistoryRow[];
+  };
+  haccp: {
+    meta: HaccpDocumentMeta & {
+      status: "draft" | "published";
+      publishedAt: string | null;
+      publishedBy: string | null;
+    };
+    procedures: HaccpProcedure[];
   };
   temps: TempRow[];
   incidents: UnifiedIncidentRow[];
@@ -263,6 +293,12 @@ function addDays(date: Date, days: number) {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
+}
+
+function addMonthsToIsoDate(baseIso: string | null, months: number) {
+  const d = baseIso ? new Date(baseIso) : new Date();
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0, 10);
 }
 
 function isMissingLocationColumnError(err: any) {
@@ -1159,6 +1195,95 @@ async function fetchTrainingAreasReport(
   return rows;
 }
 
+async function fetchHaccpData(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  orgId: string,
+  locationId: string | null,
+  locationLabel: string
+): Promise<ReportData["haccp"]> {
+  const defaults = cloneDefaultHaccpProcedures();
+
+  if (!locationId) {
+    return {
+      meta: {
+        title: `${locationLabel} HACCP Procedures`,
+        version: "1.0",
+        reviewedBy: null,
+        lastReviewedAt: null,
+        nextReviewDue: addMonthsToIsoDate(null, 12),
+        reviewIntervalMonths: 12,
+        siteAddress: locationLabel,
+        notes: "",
+        status: "draft",
+        publishedAt: null,
+        publishedBy: null,
+      },
+      procedures: defaults,
+    };
+  }
+
+  const [docRes, overrideRes] = await Promise.all([
+    supabase
+      .from("haccp_documents")
+      .select(
+        "title,version,reviewed_by,last_reviewed_at,next_review_due,review_interval_months,site_address,notes,status,published_at,published_by"
+      )
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .maybeSingle(),
+    supabase
+      .from("haccp_procedure_overrides")
+      .select(
+        "procedure_key,title,summary,scope,hazards,control_measures,critical_limits,monitoring,corrective_actions,verification,is_ccp"
+      )
+      .eq("org_id", orgId)
+      .eq("location_id", locationId),
+  ]);
+
+  if (docRes.error) throw docRes.error;
+  if (overrideRes.error) throw overrideRes.error;
+
+  const docRow = (docRes.data ?? null) as ReportHaccpDocumentRow | null;
+
+  const procedures = mergeProcedureOverrides(
+    defaults,
+    (overrideRes.data ?? []) as HaccpProcedureOverrideRow[]
+  );
+
+  const meta: ReportData["haccp"]["meta"] = docRow
+    ? {
+        title: docRow.title,
+        version: docRow.version,
+        reviewedBy: docRow.reviewed_by,
+        lastReviewedAt: docRow.last_reviewed_at,
+        nextReviewDue: docRow.next_review_due,
+        reviewIntervalMonths: docRow.review_interval_months ?? 12,
+        siteAddress: docRow.site_address?.trim() || locationLabel,
+        notes: docRow.notes ?? "",
+        status: docRow.status ?? "draft",
+        publishedAt: docRow.published_at,
+        publishedBy: docRow.published_by,
+      }
+    : {
+        title: `${locationLabel} HACCP Procedures`,
+        version: "1.0",
+        reviewedBy: null,
+        lastReviewedAt: null,
+        nextReviewDue: addMonthsToIsoDate(null, 12),
+        reviewIntervalMonths: 12,
+        siteAddress: locationLabel,
+        notes: "",
+        status: "draft",
+        publishedAt: null,
+        publishedBy: null,
+      };
+
+  return {
+    meta,
+    procedures,
+  };
+}
+
 export async function buildReportData(args: BuildReportDataArgs): Promise<ReportData> {
   const {
     orgId,
@@ -1186,6 +1311,7 @@ export async function buildReportData(args: BuildReportDataArgs): Promise<Report
     calibrationChecks,
     hygieneByLocation,
     trainingAreas,
+    haccp,
   ] = await Promise.all([
     fetchTemps(supabase, from, to, orgId, locationId),
     fetchLoggedIncidentsTrail(supabase, from, to, orgId, locationId),
@@ -1200,6 +1326,7 @@ export async function buildReportData(args: BuildReportDataArgs): Promise<Report
     fetchCalibrationChecksTrail(supabase, from, to, orgId, locationId),
     fetchLatestHygieneByLocation(supabase, orgId),
     fetchTrainingAreasReport(supabase, orgId, locationId),
+    fetchHaccpData(supabase, orgId, locationId, locationLabel),
   ]);
 
   const incidentRows: UnifiedIncidentRow[] = [
@@ -1252,6 +1379,7 @@ export async function buildReportData(args: BuildReportDataArgs): Promise<Report
       latest: hygieneLatest,
       history: hygieneHistory,
     },
+    haccp,
     temps,
     incidents: incidentRows,
     loggedIncidents,

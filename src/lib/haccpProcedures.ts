@@ -30,13 +30,14 @@ export type HaccpProcedure = {
   verification: string[];
   records: HaccpRecordLink[];
 };
-
 export type HaccpDocumentMeta = {
   title: string;
   version: string;
   reviewedBy: string | null;
   lastReviewedAt: string | null;
   nextReviewDue: string | null;
+  reviewIntervalMonths: number;
+  siteAddress: string;
   notes: string;
 };
 
