@@ -1576,6 +1576,11 @@ export default function ReportsPage() {
     return { label: "Varies", visit: null as string | null };
   }, [locationFilter, hygieneByLocation]);
 
+  const currentLocationLabel =
+    locationFilter === "all"
+      ? "All locations"
+      : locations.find((l) => l.id === locationFilter)?.name ?? "This location";
+
   /* ---------- boot ---------- */
 
   useEffect(() => {
@@ -1801,16 +1806,23 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url);
   }
 
-  function buildReportQueryString() {
+  function buildReportQueryString(extra?: Record<string, string>) {
     if (!orgId) return null;
 
     const params = new URLSearchParams();
     params.set("orgId", orgId);
     params.set("from", from);
     params.set("to", to);
+    params.set("locationLabel", currentLocationLabel);
 
     if (locationFilter !== "all") {
       params.set("locationId", locationFilter);
+    }
+
+    if (extra) {
+      Object.entries(extra).forEach(([key, value]) => {
+        params.set(key, value);
+      });
     }
 
     return params.toString();
@@ -1823,9 +1835,15 @@ export default function ReportsPage() {
   }
 
   function downloadGeneratedPdf() {
-    const query = buildReportQueryString();
+    const query = buildReportQueryString({ download: "1" });
     if (!query) return;
-    window.open(`/api/reports/pdf?${query}`, "_blank", "noopener,noreferrer");
+
+    const link = document.createElement("a");
+    link.href = `/api/reports/pdf?${query}`;
+    link.download = `food-safety-report_${from}_${to}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 
   function downloadFourWeekPDF() {
@@ -1835,11 +1853,6 @@ export default function ReportsPage() {
 
   const fourWeekTo = toISODate(to);
   const fourWeekFrom = addDaysISO(fourWeekTo, -27);
-
-  const currentLocationLabel =
-    locationFilter === "all"
-      ? "All locations"
-      : locations.find((l) => l.id === locationFilter)?.name ?? "This location";
 
   const selectedLatestRating =
     locationFilter !== "all" ? hygieneByLocation[String(locationFilter)]?.rating ?? null : null;
