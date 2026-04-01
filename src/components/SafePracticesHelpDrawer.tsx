@@ -149,7 +149,7 @@ function SelectedGuidePanel({
   if (!item) {
     return (
       <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-600">
-        Select a guide above. Somehow modern software still relies on that.
+        Select a guide to view it.
       </div>
     );
   }
@@ -166,7 +166,7 @@ function SelectedGuidePanel({
             <span
               className={classNames(
                 "rounded-full border px-3 py-1 text-xs font-semibold",
-                severityTone(item.severity),
+                severityTone(item.severity)
               )}
             >
               {severityLabel(item.severity)}
@@ -185,7 +185,7 @@ function SelectedGuidePanel({
               onClick={onSelectPrev}
               disabled={!hasPrev}
               className={classNames(
-                "rounded-xl border px-3 py-2 text-xs font-semibold transition",
+                "rounded-xl border px-3 py-2 text-xs font-semibold transition sm:text-sm",
                 hasPrev
                   ? "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
                   : "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
@@ -199,7 +199,7 @@ function SelectedGuidePanel({
               onClick={onSelectNext}
               disabled={!hasNext}
               className={classNames(
-                "rounded-xl border px-3 py-2 text-xs font-semibold transition",
+                "rounded-xl border px-3 py-2 text-xs font-semibold transition sm:text-sm",
                 hasNext
                   ? "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
                   : "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
@@ -211,17 +211,21 @@ function SelectedGuidePanel({
         </div>
 
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
             {item.title}
           </h2>
-          <p className="mt-3 text-base leading-7 text-slate-600">{item.summary}</p>
+          <p className="mt-3 text-base leading-7 text-slate-600">
+            {item.summary}
+          </p>
         </div>
 
         <div className="rounded-3xl border border-slate-200 bg-white p-5">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
             Why this matters
           </div>
-          <p className="mt-2 text-sm leading-7 text-slate-700">{item.whyItMatters}</p>
+          <p className="mt-2 text-sm leading-7 text-slate-700">
+            {item.whyItMatters}
+          </p>
         </div>
 
         <Section title="Safety points" items={item.safetyPoints} />
@@ -241,11 +245,15 @@ function SelectedGuidePanel({
                   key={related.id}
                   className="rounded-2xl border border-slate-200 bg-white p-4"
                 >
-                  <div className="text-sm font-semibold text-slate-900">{related.title}</div>
+                  <div className="text-sm font-semibold text-slate-900">
+                    {related.title}
+                  </div>
                   <div className="mt-1 text-xs text-slate-500">
                     {SAFE_PRACTICE_CATEGORY_LABELS[related.category]}
                   </div>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">{related.summary}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    {related.summary}
+                  </p>
                 </div>
               ))}
             </div>
@@ -264,7 +272,8 @@ export default function SafePracticesHelpDrawer({
   title = "Safe practices help",
 }: SafePracticesHelpDrawerProps) {
   const [query, setQuery] = useState(initialQuery);
-  const [selectedCategory, setSelectedCategory] = useState<SafePracticeCategory | "all">("all");
+  const [selectedCategory, setSelectedCategory] =
+    useState<SafePracticeCategory | "all">("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [browseAll, setBrowseAll] = useState(false);
   const detailScrollRef = useRef<HTMLDivElement | null>(null);
@@ -295,7 +304,7 @@ export default function SafePracticesHelpDrawer({
 
   const suggestedForPath = useMemo(
     () => getSuggestedSafePracticesForPath(pathname),
-    [pathname],
+    [pathname]
   );
 
   const filteredItems = useMemo(() => {
@@ -325,6 +334,10 @@ export default function SafePracticesHelpDrawer({
     }
     return filteredItems;
   }, [browseAll, filteredItems, query, selectedCategory, suggestedForPath]);
+
+  const allMobileGuides = useMemo(() => {
+    return SAFE_PRACTICES;
+  }, []);
 
   const visibleGuideCards = useMemo(() => {
     return guidePool.slice(0, 3);
@@ -388,6 +401,8 @@ export default function SafePracticesHelpDrawer({
     }
   };
 
+  const selectedMobileGuideId = selectedItem?.id ?? "";
+
   return (
     <AnimatePresence>
       {open ? (
@@ -417,7 +432,9 @@ export default function SafePracticesHelpDrawer({
                     <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                       Help guide
                     </div>
-                    <h2 className="mt-1 text-lg font-semibold text-slate-900">{title}</h2>
+                    <h2 className="mt-1 text-lg font-semibold text-slate-900">
+                      {title}
+                    </h2>
                     <p className="mt-1 text-sm text-slate-600">
                       Practical food safety guidance, without the paperwork mountain.
                     </p>
@@ -432,7 +449,29 @@ export default function SafePracticesHelpDrawer({
                   </button>
                 </div>
 
-                <div className="mt-3">
+                {/* Mobile-only: one dropdown only */}
+                <div className="mt-3 sm:hidden">
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Guide
+                  </label>
+                  <select
+                    value={selectedMobileGuideId}
+                    onChange={(e) => {
+                      const next = getSafePracticeById(e.target.value);
+                      if (next) handleSelectItem(next);
+                    }}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-slate-900"
+                  >
+                    {allMobileGuides.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Desktop kept as before */}
+                <div className="mt-3 hidden sm:block">
                   <label htmlFor="safe-practices-search" className="sr-only">
                     Search safe practices
                   </label>
@@ -448,7 +487,7 @@ export default function SafePracticesHelpDrawer({
                   />
                 </div>
 
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-3 hidden flex-wrap gap-2 sm:flex">
                   {KEY_SUBJECTS.map((chip) => (
                     <button
                       key={chip}
@@ -461,7 +500,7 @@ export default function SafePracticesHelpDrawer({
                   ))}
                 </div>
 
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-3 hidden flex-wrap gap-2 sm:flex">
                   <button
                     type="button"
                     onClick={() => {
@@ -472,7 +511,7 @@ export default function SafePracticesHelpDrawer({
                       "rounded-full px-3 py-1 text-xs font-semibold transition",
                       selectedCategory === "all" && !browseAll
                         ? "bg-slate-900 text-white"
-                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                     )}
                   >
                     Suggested
@@ -488,7 +527,7 @@ export default function SafePracticesHelpDrawer({
                       "rounded-full px-3 py-1 text-xs font-semibold transition",
                       selectedCategory === "all" && browseAll
                         ? "bg-slate-900 text-white"
-                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                     )}
                   >
                     Browse all
@@ -504,7 +543,7 @@ export default function SafePracticesHelpDrawer({
                       "rounded-full px-3 py-1 text-xs font-semibold transition",
                       selectedCategory === "personal_hygiene"
                         ? "bg-slate-900 text-white"
-                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                     )}
                   >
                     Hygiene
@@ -520,7 +559,7 @@ export default function SafePracticesHelpDrawer({
                       "rounded-full px-3 py-1 text-xs font-semibold transition",
                       selectedCategory === "cleaning"
                         ? "bg-slate-900 text-white"
-                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                     )}
                   >
                     Cleaning
@@ -536,7 +575,7 @@ export default function SafePracticesHelpDrawer({
                       "rounded-full px-3 py-1 text-xs font-semibold transition",
                       selectedCategory === "allergens"
                         ? "bg-slate-900 text-white"
-                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                     )}
                   >
                     Allergens
@@ -552,7 +591,7 @@ export default function SafePracticesHelpDrawer({
                       "rounded-full px-3 py-1 text-xs font-semibold transition",
                       selectedCategory === "cooking"
                         ? "bg-slate-900 text-white"
-                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                     )}
                   >
                     Cooking
@@ -568,7 +607,7 @@ export default function SafePracticesHelpDrawer({
                       "rounded-full px-3 py-1 text-xs font-semibold transition",
                       selectedCategory === "pest_control"
                         ? "bg-slate-900 text-white"
-                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                     )}
                   >
                     Pests
@@ -576,7 +615,8 @@ export default function SafePracticesHelpDrawer({
                 </div>
               </div>
 
-              <div className="flex min-h-0 flex-1 flex-col">
+              {/* Desktop-only guide chooser section */}
+              <div className="hidden min-h-0 flex-1 flex-col sm:flex">
                 <div className="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -628,7 +668,7 @@ export default function SafePracticesHelpDrawer({
 
                 <div
                   ref={detailScrollRef}
-                  className="min-h-0 flex-1 overflow-y-auto bg-white px-4 py-2 sm:px-6"
+                  className="min-h-0 flex-1 overflow-y-auto bg-white px-4 py-3 sm:px-6"
                 >
                   <div className="space-y-2">
                     <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -644,6 +684,20 @@ export default function SafePracticesHelpDrawer({
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Mobile-only: maximise guide content area */}
+              <div
+                ref={detailScrollRef}
+                className="min-h-0 flex-1 overflow-y-auto bg-white px-4 py-3 sm:hidden"
+              >
+                <SelectedGuidePanel
+                  item={selectedItem}
+                  onSelectPrev={handleSelectPrev}
+                  onSelectNext={handleSelectNext}
+                  hasPrev={hasPrev}
+                  hasNext={hasNext}
+                />
               </div>
             </div>
           </motion.aside>
