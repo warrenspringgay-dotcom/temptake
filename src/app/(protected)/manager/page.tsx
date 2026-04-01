@@ -87,6 +87,21 @@ type StaffAssessment = {
   qcCount30d: number;
 };
 
+type StaffAbsenceRow = {
+  id: string;
+  start_date: string;
+  end_date: string;
+  created_at: string | null;
+  absence_type: string;
+  is_half_day: boolean;
+  half_day_period: string | null;
+  notes: string | null;
+  operational_impact: string | null;
+  status: string;
+  team_member_id: string | null;
+  staff: { initials: string | null; name: string | null; role: string | null } | null;
+};
+
 type AllergenChangeLogRow = {
   id: string;
   created_at: string | null;
@@ -211,6 +226,21 @@ function formatDDMMYYYY(val: any): string {
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = d.getFullYear();
   return `${dd}/${mm}/${yyyy}`;
+}
+
+function formatAbsenceType(val: string | null | undefined): string {
+  if (!val) return "—";
+  return String(val)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function formatAbsenceRange(r: Pick<StaffAbsenceRow, "start_date" | "end_date" | "is_half_day" | "half_day_period">): string {
+  const start = formatDDMMYYYY(r.start_date);
+  const end = formatDDMMYYYY(r.end_date);
+  const suffix = r.is_half_day ? ` (${String(r.half_day_period ?? "").toUpperCase() || "HALF DAY"})` : "";
+  if (r.start_date === r.end_date) return `${start}${suffix}`;
+  return `${start} → ${end}${suffix}`;
 }
 
 const cls = (...p: Array<string | false | null | undefined>) => p.filter(Boolean).join(" ");
@@ -436,6 +466,8 @@ export default function ManagerDashboardPage() {
   const [cleaningDoneTotal, setCleaningDoneTotal] = useState(0);
   const [incidentsToday, setIncidentsToday] = useState(0);
   const [incidents7d, setIncidents7d] = useState(0);
+  const [staffOffToday, setStaffOffToday] = useState(0);
+  const [staffAbsences30d, setStaffAbsences30d] = useState(0);
   const [trainingExpired, setTrainingExpired] = useState(0);
   const [trainingDueSoon, setTrainingDueSoon] = useState(0);
 
@@ -445,11 +477,13 @@ export default function ManagerDashboardPage() {
   const [cleaningCategoryProgress, setCleaningCategoryProgress] = useState<CleaningCategoryProgress[]>([]);
   const [tempFailsToday, setTempFailsToday] = useState<UnifiedIncidentRow[]>([]);
   const [incidentsHistory, setIncidentsHistory] = useState<UnifiedIncidentRow[]>([]);
+  const [staffAbsences, setStaffAbsences] = useState<StaffAbsenceRow[]>([]);
 
   const [showAllTemps, setShowAllTemps] = useState(false);
   const [showAllTempFails, setShowAllTempFails] = useState(false);
   const [showAllCleaning, setShowAllCleaning] = useState(false);
   const [showAllIncidents, setShowAllIncidents] = useState(false);
+  const [showAllStaffAbsences, setShowAllStaffAbsences] = useState(false);
 
   /* ===== Day sign-offs ===== */
   const [signoffsToday, setSignoffsToday] = useState<SignoffRow[]>([]);
@@ -1000,6 +1034,7 @@ async function loadQcReviews() {
         incidentsListRes,
         incidentsTodayRes,
         incidents7dRes,
+        staffAbsencesRes,
         trainingsForKpiRes,
         trainingRecordsRes,
         trainingAreasRes,
@@ -1076,6 +1111,32 @@ async function loadQcReviews() {
           .eq("location_id", locationId)
           .gte("happened_on", isoDate(sevenDaysAgo))
           .lte("happened_on", selectedDateISO),
+
+        supabase
+          .from("staff_absences")
+          .select(
+            `
+            id,
+            start_date,
+            end_date,
+            absence_type,
+            is_half_day,
+            half_day_period,
+            notes,
+            operational_impact,
+            status,
+            created_at,
+            team_member_id,
+            staff:team_members!staff_absences_team_member_id_fkey(initials,name,role)
+          `
+          )
+          .eq("org_id", orgId)
+          .or(`location_id.eq.${locationId},location_id.is.null`)
+          .gte("end_date", isoDate(ninetyDaysAgo))
+          .lte("start_date", selectedDateISO)
+          .order("start_date", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(500),
 
         supabase
           .from("trainings")
@@ -1166,6 +1227,7 @@ async function loadQcReviews() {
         incidentsListRes.error ||
         incidentsTodayRes.error ||
         incidents7dRes.error ||
+        staffAbsencesRes.error ||
         trainingsForKpiRes.error ||
         trainingRecordsRes.error ||
         trainingAreasRes.error ||
@@ -1298,6 +1360,43 @@ async function loadQcReviews() {
       setIncidentsToday(incidentsTodayRes.count ?? 0);
       setIncidents7d(incidents7dRes.count ?? 0);
 
+      const absenceRows: any[] = (staffAbsencesRes.data as any[]) ?? [];
+      const mappedAbsences: StaffAbsenceRow[] = absenceRows.map((r) => ({
+        id: String(r.id),
+        start_date: String(r.start_date),
+        end_date: String(r.end_date),
+        created_at: r.created_at ? String(r.created_at) : null,
+        absence_type: String(r.absence_type ?? "other"),
+        is_half_day: !!r.is_half_day,
+        half_day_period: r.half_day_period ? String(r.half_day_period) : null,
+        notes: r.notes ?? null,
+        operational_impact: r.operational_impact ?? null,
+        status: String(r.status ?? "approved"),
+        team_member_id: r.team_member_id ? String(r.team_member_id) : null,
+        staff: r.staff
+          ? {
+              initials: r.staff.initials ?? null,
+              name: r.staff.name ?? null,
+              role: r.staff.role ?? null,
+            }
+          : null,
+      }));
+      setStaffAbsences(mappedAbsences);
+      setShowAllStaffAbsences(false);
+
+      const thirtyDaysAgo = new Date(selectedDateISO);
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
+      const thirtyDaysAgoIso = isoDate(thirtyDaysAgo);
+
+      const offToday = mappedAbsences.filter((r) => r.status === "approved" && r.start_date <= selectedDateISO && r.end_date >= selectedDateISO).length;
+
+      const absences30d = mappedAbsences.filter(
+        (r) => r.status === "approved" && r.end_date >= thirtyDaysAgoIso && r.start_date <= selectedDateISO
+      ).length;
+
+      setStaffOffToday(offToday);
+      setStaffAbsences30d(absences30d);
+
       const todayRows: any[] = (todayTempLogsRes.data as any[]) ?? [];
       setTodayTemps(
         todayRows.map((r) => {
@@ -1405,10 +1504,14 @@ async function loadQcReviews() {
   const trainingTone: "neutral" | "ok" | "warn" | "danger" =
     trainingExpired > 0 ? "danger" : trainingDueSoon > 0 ? "warn" : "ok";
 
+  const staffOffTone: "neutral" | "ok" | "warn" | "danger" =
+    staffOffToday > 2 ? "danger" : staffOffToday > 0 ? "warn" : "ok";
+
   const tempsToRender = showAllTemps ? todayTemps : todayTemps.slice(0, 10);
   const tempFailsToRender = showAllTempFails ? tempFailsToday : tempFailsToday.slice(0, 10);
   const cleaningToRender = showAllCleaning ? cleaningActivity : cleaningActivity.slice(0, 10);
   const incidentsToRender = showAllIncidents ? incidentsHistory : incidentsHistory.slice(0, 10);
+  const staffAbsencesToRender = showAllStaffAbsences ? staffAbsences : staffAbsences.slice(0, 10);
   const qcToRender = showAllQc ? qcReviews : qcReviews.slice(0, 10);
   const signoffsToRender = showAllSignoffs ? signoffsToday : signoffsToday.slice(0, 10);
 
@@ -1602,7 +1705,7 @@ async function openQcFromActions() {
       )}
 
       <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <KpiTile
             title="Temps"
             icon="🌡"
@@ -1621,6 +1724,7 @@ async function openQcFromActions() {
 
           <KpiTile title="Cleaning" icon="🧼" tone={cleaningTone} value={`${cleaningDoneTotal}/${cleaningTotal}`} sub="Tasks completed today" />
           <KpiTile title="Incidents" icon="⚠️" tone={incidentsTone} value={incidentsToday} sub={`Last 7d: ${incidents7d}`} />
+          <KpiTile title="Staff off" icon="🧑‍🍳" tone={staffOffTone} value={staffOffToday} sub={`Approved in last 30d: ${staffAbsences30d}`} />
           <KpiTile title="Training" icon="🎓" tone={trainingTone} value={`${trainingExpired} expired`} sub={`${trainingDueSoon} due in 30d`} />
          
         </div>
@@ -2072,6 +2176,80 @@ async function openQcFromActions() {
         </div>
 
         <TableFooterToggle total={signoffsToday.length} showingAll={showAllSignoffs} onToggle={() => setShowAllSignoffs((v) => !v)} />
+      </section>
+
+      {/* Staff absences */}
+      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
+        <div className="mb-3">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Staff absences</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Recent absence history (last 90 days)</div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <th className="px-3 py-2">Staff</th>
+                <th className="px-3 py-2">Type</th>
+                <th className="px-3 py-2">Dates</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Impact</th>
+                <th className="px-3 py-2">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {staffAbsencesToRender.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                    No staff absences logged.
+                  </td>
+                </tr>
+              ) : (
+                staffAbsencesToRender.map((r) => {
+                  const isOffToday = r.status === "approved" && r.start_date <= selectedDateISO && r.end_date >= selectedDateISO;
+                  const statusPill =
+                    r.status === "approved"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : r.status === "pending"
+                      ? "bg-amber-100 text-amber-800"
+                      : r.status === "rejected"
+                      ? "bg-red-100 text-red-800"
+                      : "bg-slate-100 text-slate-800";
+
+                  return (
+                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
+                      <td className="px-3 py-2 whitespace-nowrap font-semibold">
+                        <div className="flex items-center gap-2">
+                          <span>{tmLabel(r.staff ?? { initials: null, name: "—" })}</span>
+                          {isOffToday ? (
+                            <span className="inline-flex rounded-full bg-amber-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-amber-800">
+                              Off today
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">{formatAbsenceType(r.absence_type)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{formatAbsenceRange(r)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", statusPill)}>
+                          {r.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 max-w-[14rem] truncate">{r.operational_impact ?? "—"}</td>
+                      <td className="px-3 py-2 max-w-[18rem] truncate">{r.notes ?? "—"}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <TableFooterToggle
+          total={staffAbsences.length}
+          showingAll={showAllStaffAbsences}
+          onToggle={() => setShowAllStaffAbsences((v) => !v)}
+        />
       </section>
 
       {/* Manager QC Summary table */}

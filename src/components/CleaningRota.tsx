@@ -58,7 +58,12 @@ type TeamMemberOption = {
   name: string | null;
 };
 
-const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+function isoDate(d: Date) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 function startOfWeekMonday(d: Date) {
   const x = new Date(d);
