@@ -460,7 +460,7 @@ export default function SafePracticesHelpDrawer({
                       const next = getSafePracticeById(e.target.value);
                       if (next) handleSelectItem(next);
                     }}
-                    className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-slate-900"
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-4 text-sm text-slate-900 outline-none focus:border-slate-900"
                   >
                     {allMobileGuides.map((item) => (
                       <option key={item.id} value={item.id}>
