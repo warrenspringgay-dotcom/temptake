@@ -27,7 +27,7 @@ export default function HeaderShell() {
       p.startsWith("/pricing") ||
       p.startsWith("/guides") ||
       p.startsWith("/templates") ||
-      p.startsWith("/tools") ||
+      p.startsWith("/demo") ||
       p.startsWith("/demo-wall") ||
       p.startsWith("/app")
     );

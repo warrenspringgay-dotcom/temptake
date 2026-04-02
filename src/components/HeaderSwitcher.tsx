@@ -26,7 +26,7 @@ export default function HeaderSwitcher() {
       p.startsWith("/demo-wall") ||
       p.startsWith("/login") ||
       p.startsWith("/signup") ||
-      p.startsWith("/app") // public demo dashboard
+      p.startsWith("/demo") // public demo dashboard
     ) {
       return true;
     }

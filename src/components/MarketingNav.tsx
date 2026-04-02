@@ -9,10 +9,11 @@ type Tab = { href: string; label: string };
 
 const MARKETING_TABS: Tab[] = [
   { href: "/", label: "Home" },
-  { href: "/app", label: "Demo" },
+  { href: "/demo", label: "Demo App" },
   { href: "/guides", label: "Guides" },
   { href: "/pricing", label: "Pricing" },
   { href: "/templates", label: "Templates" },
+  
 ];
 
 function cls(...parts: Array<string | false | undefined>) {
