@@ -338,7 +338,6 @@ async function fetchTempFailuresUnifiedForDay(
     };
   });
 }
-
 async function resolveLatestDemoDate(orgId: string, locationId: string): Promise<string> {
   const [tempRes, cleaningRes, signoffRes, incidentRes, absRes, calRes] =
     await Promise.all([
@@ -349,6 +348,7 @@ async function resolveLatestDemoDate(orgId: string, locationId: string): Promise
         .eq("location_id", locationId)
         .order("at", { ascending: false })
         .limit(1),
+
       supabaseAdmin
         .from("cleaning_task_runs")
         .select("run_on")
@@ -356,6 +356,7 @@ async function resolveLatestDemoDate(orgId: string, locationId: string): Promise
         .eq("location_id", locationId)
         .order("run_on", { ascending: false })
         .limit(1),
+
       supabaseAdmin
         .from("daily_signoffs")
         .select("signoff_on")
@@ -363,6 +364,7 @@ async function resolveLatestDemoDate(orgId: string, locationId: string): Promise
         .eq("location_id", locationId)
         .order("signoff_on", { ascending: false })
         .limit(1),
+
       supabaseAdmin
         .from("incidents")
         .select("happened_on")
@@ -370,6 +372,7 @@ async function resolveLatestDemoDate(orgId: string, locationId: string): Promise
         .eq("location_id", locationId)
         .order("happened_on", { ascending: false })
         .limit(1),
+
       supabaseAdmin
         .from("staff_absences")
         .select("end_date")
@@ -377,6 +380,7 @@ async function resolveLatestDemoDate(orgId: string, locationId: string): Promise
         .or(`location_id.eq.${locationId},location_id.is.null`)
         .order("end_date", { ascending: false })
         .limit(1),
+
       supabaseAdmin
         .from("calibration_checks")
         .select("checked_on")
@@ -386,30 +390,49 @@ async function resolveLatestDemoDate(orgId: string, locationId: string): Promise
         .limit(1),
     ]);
 
-  const candidates: string[] = [];
+  const firstErr =
+    tempRes.error ||
+    cleaningRes.error ||
+    signoffRes.error ||
+    incidentRes.error ||
+    absRes.error ||
+    calRes.error;
 
-  const tempAt = tempRes.data?.[0]?.at;
-  if (tempAt) candidates.push(isoDate(new Date(tempAt)));
+  if (firstErr) throw firstErr;
 
-  const runOn = cleaningRes.data?.[0]?.run_on;
-  if (runOn) candidates.push(String(runOn));
+  const latestTemp = tempRes.data?.[0]?.at
+    ? isoDate(new Date(tempRes.data[0].at))
+    : null;
 
-  const signoffOn = signoffRes.data?.[0]?.signoff_on;
-  if (signoffOn) candidates.push(String(signoffOn));
+  const latestCleaning = cleaningRes.data?.[0]?.run_on
+    ? String(cleaningRes.data[0].run_on)
+    : null;
 
-  const happenedOn = incidentRes.data?.[0]?.happened_on;
-  if (happenedOn) candidates.push(String(happenedOn));
+  const latestSignoff = signoffRes.data?.[0]?.signoff_on
+    ? String(signoffRes.data[0].signoff_on)
+    : null;
 
-  const endDate = absRes.data?.[0]?.end_date;
-  if (endDate) candidates.push(String(endDate));
+  const latestIncident = incidentRes.data?.[0]?.happened_on
+    ? String(incidentRes.data[0].happened_on)
+    : null;
 
-  const checkedOn = calRes.data?.[0]?.checked_on;
-  if (checkedOn) candidates.push(String(checkedOn));
+  const latestAbsence = absRes.data?.[0]?.end_date
+    ? String(absRes.data[0].end_date)
+    : null;
 
-  if (candidates.length === 0) return isoDate(new Date());
+  const latestCalibration = calRes.data?.[0]?.checked_on
+    ? String(calRes.data[0].checked_on)
+    : null;
 
-  candidates.sort((a, b) => (a < b ? 1 : -1));
-  return candidates[0];
+  return (
+    latestTemp ||
+    latestCleaning ||
+    latestSignoff ||
+    latestIncident ||
+    latestAbsence ||
+    latestCalibration ||
+    isoDate(new Date())
+  );
 }
 
 export async function getDemoDashboardData(
