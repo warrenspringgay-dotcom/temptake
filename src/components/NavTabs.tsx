@@ -42,7 +42,7 @@ const PUBLIC_TABS: Tab[] = [
   { href: "/", label: "Home" },
   { href: "/templates", label: "Templates" },
   { href: "/guides", label: "Guides" },
-  { href: "/tools", label: "Tools" },
+  { href: "/demo", label: "Demo App" },
   { href: "/pricing", label: "Pricing" },
 
 ];
