@@ -398,7 +398,7 @@ export default function SFBBLogsGuide() {
           </p>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link href="/app" className={ctaPrimary}>
+            <Link href="/demo" className={ctaPrimary}>
               See compliance at a glance
             </Link>
             <Link href="/launch" className={ctaSecondary}>

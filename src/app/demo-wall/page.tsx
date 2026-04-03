@@ -45,7 +45,7 @@ export default function DemoWallPage() {
         {/* CTA strip on the right */}
         <div className="flex flex-col items-center justify-center gap-2 text-xs md:items-end">
           <Link
-            href="/app"
+            href="/demo"
             className="inline-flex items-center rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
           >
             View demo dashboard

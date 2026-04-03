@@ -199,7 +199,7 @@ export default function PricingPage() {
                     Start free trial
                   </Link>
                   <Link
-                    href="/app"
+                    href="/demo"
                     className="rounded-2xl border border-slate-600 bg-transparent px-4 py-2 text-xs font-medium text-slate-100 hover:bg-slate-900"
                   >
                     View demo dashboard
@@ -308,7 +308,7 @@ export default function PricingPage() {
                   Start free trial
                 </Link>
                 <Link
-                  href="/app"
+                  href="/demo"
                   className="rounded-2xl border border-emerald-400/50 bg-transparent px-4 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-500/10"
                 >
                   View demo dashboard
