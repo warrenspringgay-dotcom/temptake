@@ -143,7 +143,7 @@ export default function LaunchPage() {
               <div className="leading-tight">
                 <div className="font-semibold text-white">TempTake</div>
                 <div className="text-[11px] font-medium text-slate-400">
-                  Food safety that gets done
+                  Digital food safety for real kitchens
                 </div>
               </div>
             </Link>
@@ -183,33 +183,31 @@ export default function LaunchPage() {
               <div className="leading-tight">
                 <div className="text-lg font-semibold text-white">TempTake</div>
                 <div className="text-xs text-slate-400">
-                  Digital food safety records for real kitchens
+                  Built for UK food businesses
                 </div>
               </div>
             </div>
 
             <div className="mt-5 inline-flex flex-wrap items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Built for UK food businesses
+              FSA / SFBB-aligned workflows
               <span className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
                 Free trial available
               </span>
             </div>
 
             <h1 className="mt-5 text-3xl font-semibold leading-tight sm:text-4xl lg:text-5xl">
-              Food safety records
-              <span className="block text-emerald-300">
-                your team will actually keep up to date.
-              </span>
+              Pass food safety inspections
+              <span className="block text-emerald-300">without paperwork.</span>
             </h1>
 
             <p className="mt-4 max-w-xl text-sm text-slate-200 sm:text-base">
-              TempTake replaces paper logs with fast, inspection-ready records for{" "}
+              TempTake replaces paper logs with a live kitchen dashboard for{" "}
               <span className="font-semibold">
-                temperatures, cleaning, allergens and training
+                temperatures, cleaning, sign-offs, allergens and staff checks
               </span>
-              . Log checks during service, track what is missing, and keep a proper
-              audit trail without chasing half-filled sheets.
+              . Staff are prompted to complete compliance tasks, managers can check in remotely
+              anytime, and records stay inspection-ready every day.
             </p>
 
             <div className="mt-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-4 shadow-lg shadow-emerald-500/10">
@@ -229,31 +227,31 @@ export default function LaunchPage() {
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <Link
-                href="/signup"
+                href="/demo"
                 className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 transition hover:brightness-105"
+              >
+                View live demo
+              </Link>
+
+              <Link
+                href="/signup"
+                className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
               >
                 Start free trial
               </Link>
 
               <Link
                 href="/pricing"
-                className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
-              >
-                View pricing
-              </Link>
-
-              <Link
-                href="/demo"
                 className="inline-flex items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20"
               >
-                View demo
+                View pricing
               </Link>
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] text-slate-300">
               <span>✓ Mobile-friendly</span>
-              <span>✓ Multi-site ready</span>
-              <span>✓ Exportable records</span>
+              <span>✓ Remote manager visibility</span>
+              <span>✓ One-click reports</span>
               <span>✓ UK-focused workflows</span>
             </div>
 
@@ -273,12 +271,12 @@ export default function LaunchPage() {
               <div>
                 <dt className="text-slate-400">Manager visibility</dt>
                 <dd className="mt-0.5 font-semibold">
-                  See what is done, missed or overdue
+                  Check in on your business remotely anytime
                 </dd>
               </div>
               <div>
                 <dt className="text-slate-400">Designed for</dt>
-                <dd className="mt-0.5 font-semibold">Mobile use during service</dd>
+                <dd className="mt-0.5 font-semibold">Fast logging during service</dd>
               </div>
             </dl>
           </div>
@@ -333,7 +331,52 @@ export default function LaunchPage() {
               </div>
 
               <div className="mt-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-[12px] text-emerald-200">
-                Real screens from the product, not made-up marketing wallpaper.
+                Real product screens, not made-up marketing wallpaper.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* REPLACE PAPER */}
+        <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
+          <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
+            <div className="max-w-3xl">
+              <h2 className="text-2xl font-semibold sm:text-3xl">
+                Replace paper logs and missed checks
+                <span className="text-emerald-300"> with one live dashboard.</span>
+              </h2>
+              <p className="mt-3 text-sm text-slate-300 sm:text-base">
+                TempTake is built to replace the messy part of daily food safety:
+                half-filled sheets, missed signatures, last-minute scrambles and
+                managers chasing people for records.
+              </p>
+            </div>
+
+            <div className="mt-8 grid gap-4 md:grid-cols-2">
+              <div className="rounded-3xl border border-rose-500/20 bg-rose-500/5 p-5 shadow-lg shadow-black/30">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-rose-200">
+                  What you are replacing
+                </div>
+                <ul className="mt-4 space-y-3 text-sm text-slate-200">
+                  <li>❌ Paper temperature sheets</li>
+                  <li>❌ Missed cleaning tasks</li>
+                  <li>❌ Incomplete sign-offs</li>
+                  <li>❌ Scrambling during inspections</li>
+                  <li>❌ Guesswork about what staff actually did</li>
+                </ul>
+              </div>
+
+              <div className="rounded-3xl border border-emerald-500/20 bg-emerald-500/5 p-5 shadow-lg shadow-black/30">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
+                  What you get instead
+                </div>
+                <ul className="mt-4 space-y-3 text-sm text-slate-100">
+                  <li>✅ Staff prompted to complete compliance tasks</li>
+                  <li>✅ Faster logging during service</li>
+                  <li>✅ Daily sign-offs in one place</li>
+                  <li>✅ One-click reports ready to send</li>
+                  <li>✅ Clear manager visibility from anywhere</li>
+                </ul>
               </div>
             </div>
           </div>
@@ -352,8 +395,8 @@ export default function LaunchPage() {
                   From just <span className="text-emerald-300">£9.99/month</span>
                 </h2>
                 <p className="mt-2 max-w-2xl text-sm text-slate-300 sm:text-base">
-                  1 site gets full core access. Unlimited staff logins. Unlimited devices.
-                  Scale up by site count, not by being charged for every little thing.
+                  Save time logging, keep managers in control remotely, and generate
+                  inspection-ready reports without the paper chase.
                 </p>
               </div>
 
@@ -387,34 +430,34 @@ export default function LaunchPage() {
             <div className="grid gap-6 md:grid-cols-2 md:items-center">
               <div>
                 <h2 className="text-2xl font-semibold sm:text-3xl">
-                  What your EHO cares about
-                  <span className="text-emerald-300"> is what TempTake helps you show.</span>
+                  Show the records inspectors expect
+                  <span className="text-emerald-300"> without the paperwork mess.</span>
                 </h2>
                 <p className="mt-3 text-sm text-slate-300 sm:text-base">
                   Clear logs. Consistent checks. Proof of corrective action. Visibility for
-                  managers. Not a folder full of paperwork nobody kept up properly.
+                  managers. One-click reports you can generate and email when needed.
                 </p>
 
                 <ul className="mt-4 space-y-2 text-sm text-slate-200">
                   <li>• Initials and timestamps on every record</li>
                   <li>• Failed temps recorded with corrective action</li>
-                  <li>• Cleaning tasks visible by day and location</li>
-                  <li>• Training expiry easier to stay ahead of</li>
+                  <li>• Staff prompted to complete required tasks</li>
+                  <li>• Reports ready to generate or email to your EHO inspector</li>
                 </ul>
 
                 <div className="mt-6 flex flex-wrap items-center gap-3">
                   <Link
-                    href="/signup"
+                    href="/demo"
                     className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
                   >
-                    Start free trial
+                    View live demo
                   </Link>
 
                   <Link
-                    href="/demo"
+                    href="/signup"
                     className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
                   >
-                    View demo
+                    Start free trial
                   </Link>
                 </div>
               </div>
@@ -434,7 +477,7 @@ export default function LaunchPage() {
                     </div>
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    When someone asks how your system works, you can actually show it.
+                    The point is not pretty records. The point is records you can actually show.
                   </div>
                 </div>
               </div>
@@ -460,18 +503,56 @@ export default function LaunchPage() {
               <StepCard
                 number="01"
                 title="Set up your locations and checks"
-                description="Create your routines, cleaning tasks, allergen controls, and training records around how your business already works."
+                description="Create your routines, cleaning tasks, allergen controls and training records around how your business already works."
               />
               <StepCard
                 number="02"
-                title="Staff log checks on mobile"
-                description="Temperatures, cleaning, and daily records can be completed quickly during service instead of being left for later."
+                title="Staff are prompted to complete tasks"
+                description="Temperatures, cleaning and daily compliance checks stay visible so records are completed on time instead of being left until later."
               />
               <StepCard
                 number="03"
-                title="Managers see what needs attention"
-                description="Spot misses, review failures, and show proper records when inspection time comes around."
+                title="Managers check in remotely anytime"
+                description="See what is done, what is overdue and what needs attention without being on site to chase people."
               />
+            </div>
+          </div>
+        </section>
+
+        {/* DEMO PUSH */}
+        <section className="relative z-10 border-t border-white/10 bg-slate-950/80">
+          <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
+            <div className="grid gap-6 rounded-3xl border border-emerald-500/25 bg-emerald-500/5 p-6 shadow-lg shadow-emerald-500/5 md:grid-cols-[1.1fr_0.9fr] md:items-center">
+              <div>
+                <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
+                  <Image src="/logo.png" width={16} height={16} alt="TempTake" />
+                  Live product demo
+                </div>
+                <h2 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">
+                  See a real kitchen dashboard
+                </h2>
+                <p className="mt-3 max-w-2xl text-sm text-slate-300 sm:text-base">
+                  No sign-up. No fake walkthrough. Just open the demo and explore a working
+                  system with temperatures, cleaning, incidents, sign-offs, training and manager
+                  visibility.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-3 md:justify-end">
+                <Link
+                  href="/demo"
+                  className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
+                >
+                  Open demo dashboard
+                </Link>
+
+                <Link
+                  href="/signup"
+                  className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
+                >
+                  Start free trial
+                </Link>
+              </div>
             </div>
           </div>
         </section>
@@ -486,7 +567,7 @@ export default function LaunchPage() {
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
                 Real screens from TempTake showing temperature logs, cleaning workflows, allergen
-                controls, training records, and site visibility.
+                controls, training records and site visibility.
               </p>
             </div>
 
@@ -529,35 +610,35 @@ export default function LaunchPage() {
           <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-8 px-4 py-12 md:py-16 xl:px-6">
             <div className="max-w-2xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
-                Inspection-ready records,
-                <span className="text-emerald-300"> without clipboard chaos.</span>
+                Everything your kitchen needs
+                <span className="text-emerald-300"> to stay compliant.</span>
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                Daily checks stay simple and fast. No more missing initials, unreadable sheets, or
-                “we’ll do it later” becoming “we never did it”.
+                Keep daily records fast for staff and useful for managers. No more unreadable
+                sheets, missing initials or “we’ll do it later” turning into “we never did it”.
               </p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-4">
               <FeatureCard
-                title="Temperature logging"
+                title="Faster temperature logging"
                 pill="Fridges, freezers & hot hold"
-                description="One-tap routines. Cleaner records, less staff time, fewer missed checks."
+                description="Save time logging checks during service with fast entries, clear pass/fail status and corrective actions."
               />
               <FeatureCard
-                title="Cleaning rota"
+                title="Staff task prompting"
                 pill="Front & back of house"
-                description="Daily, weekly and monthly tasks on mobile. See what is done and what is still open."
+                description="Staff are prompted to complete and record compliance tasks so less gets missed and less gets chased."
               />
               <FeatureCard
-                title="Allergen & training"
-                pill="Matrix & certificates"
-                description="Keep allergen information current and stop staff training quietly expiring."
+                title="Remote business visibility"
+                pill="Manager dashboard"
+                description="Check in on your business remotely anytime and see what is complete, overdue or falling behind."
               />
               <FeatureCard
-                title="Voice entry"
-                pill="Built for busy shifts"
-                description="Speak checks during service when hands are full and speed matters."
+                title="One-click reports"
+                pill="Inspection-ready"
+                description="Generate a report quickly and email records when an EHO inspector needs to see them."
               />
             </div>
           </div>
@@ -601,10 +682,10 @@ export default function LaunchPage() {
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
-                href="/signup"
+                href="/demo"
                 className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
               >
-                Start free trial
+                View live demo
               </Link>
               <Link
                 href="/pricing"
@@ -657,12 +738,12 @@ export default function LaunchPage() {
             </div>
 
             <h2 className="text-3xl font-semibold text-white sm:text-4xl">
-              Paper logs do not become reliable
-              <span className="block text-emerald-300">just because everyone is busy.</span>
+              Save time logging.
+              <span className="block text-emerald-300">Stay ready when inspection day comes.</span>
             </h2>
             <p className="mx-auto mt-4 max-w-2xl text-sm text-slate-300 sm:text-base">
-              TempTake is built to make food safety records easier to complete, easier to review,
-              and easier to show when someone asks.
+              TempTake makes food safety records easier to complete, easier to review and easier to
+              send when someone asks. Staff get prompted, managers stay informed, and reports are ready fast.
             </p>
 
             <div className="mt-5 text-sm text-slate-300">
@@ -671,22 +752,22 @@ export default function LaunchPage() {
 
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
               <Link
-                href="/signup"
+                href="/demo"
                 className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-md shadow-emerald-500/40 hover:brightness-105"
               >
-                Start free trial
+                View live demo
               </Link>
 
               <Link
-                href="/pricing"
+                href="/signup"
                 className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
               >
-                View pricing
+                Start free trial
               </Link>
             </div>
 
             <p className="mt-4 text-[12px] text-slate-500">
-              Start now, or book a walkthrough if you want to see it first.
+              View the demo now, or book a walkthrough if you want to see it with your workflow in mind.
             </p>
           </div>
         </section>
@@ -701,7 +782,7 @@ export default function LaunchPage() {
               <div className="leading-tight">
                 <div className="text-sm font-semibold text-white">TempTake</div>
                 <div className="text-[11px] text-slate-500">
-                  © {new Date().getFullYear()} · Food safety that gets done
+                  © {new Date().getFullYear()} · Digital food safety for real kitchens
                 </div>
               </div>
             </div>
@@ -712,6 +793,10 @@ export default function LaunchPage() {
               <a href="#guides" className="text-slate-300 hover:text-emerald-300">
                 Guides
               </a>
+
+              <Link href="/demo" className="text-slate-300 hover:text-emerald-300">
+                Demo
+              </Link>
 
               <Link href="/signup" className="text-slate-300 hover:text-emerald-300">
                 Free trial
