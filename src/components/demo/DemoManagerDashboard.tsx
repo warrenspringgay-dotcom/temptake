@@ -507,7 +507,25 @@ export default function DemoManagerDashboard({
           onToggle={() => setShowAllIncidents((v) => !v)}
         />
       </section>
-
+<script
+  type="application/ld+json"
+  dangerouslySetInnerHTML={{
+    __html: JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      name: "TempTake",
+      applicationCategory: "BusinessApplication",
+      operatingSystem: "Web",
+      description:
+        "TempTake is a food hygiene app for UK kitchens. Log temperatures, cleaning and compliance records, and generate reports for EHO inspections.",
+      offers: {
+        "@type": "Offer",
+        price: "0",
+        priceCurrency: "GBP",
+      },
+    }),
+  }}
+/>
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">

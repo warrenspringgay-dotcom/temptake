@@ -362,7 +362,18 @@ export default function LaunchPage() {
             </div>
           </div>
         </section>
-
+<script
+  type="application/ld+json"
+  dangerouslySetInnerHTML={{
+    __html: JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: "TempTake",
+      url: "https://temptake.com",
+      logo: "https://temptake.com/logo.png",
+    }),
+  }}
+/>
         {/* REPLACE PAPER */}
         <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
           <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
