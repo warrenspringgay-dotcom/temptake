@@ -26,7 +26,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "TempTake",
+  title: "TempTake - Food Hygiene App",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [{ url: "/favicon.ico" }, { url: "/favicon.png", type: "image/png" }],

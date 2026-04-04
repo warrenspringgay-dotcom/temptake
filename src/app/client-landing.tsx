@@ -1,9 +1,33 @@
 // src/app/launch/page.tsx
 import React from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
 
 import LaunchClient from "./launch/LauncgClient";
+
+export const metadata: Metadata = {
+  title: "Food Hygiene App for UK Kitchens | TempTake",
+  description:
+    "TempTake is a food hygiene app for UK kitchens. Log temperatures, cleaning, sign-offs, allergens and training in one place. Save time logging, stay inspection-ready, and generate reports fast.",
+  alternates: {
+    canonical: "https://temptake.com/",
+  },
+  openGraph: {
+    title: "Food Hygiene App for UK Kitchens | TempTake",
+    description:
+      "TempTake is a food hygiene app for UK kitchens. Replace paper logs with faster daily records, remote manager visibility and inspection-ready reports.",
+    url: "https://temptake.com/",
+    siteName: "TempTake",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Food Hygiene App for UK Kitchens | TempTake",
+    description:
+      "TempTake is a food hygiene app for UK kitchens. Save time logging and stay ready for inspection.",
+  },
+};
 
 const GUIDES = [
   {
@@ -54,42 +78,42 @@ type Screen = {
 const SCREENSHOTS: Screen[] = [
   {
     src: "/dashboard.jpg",
-    alt: "TempTake dashboard screen",
+    alt: "TempTake food hygiene app dashboard screen",
     title: "Dashboard overview",
     description: "See alerts, completion, checks and site activity in one place.",
     orientation: "landscape",
   },
   {
     src: "/wall.jpg",
-    alt: "TempTake dashboard wall screen",
+    alt: "TempTake food hygiene app dashboard wall screen",
     title: "Team visibility",
     description: "Keep site communication and task visibility front and centre.",
     orientation: "portrait",
   },
   {
     src: "/training.jpg",
-    alt: "TempTake training records screen",
+    alt: "TempTake food hygiene app training records screen",
     title: "Training records",
     description: "Track certificates, progress and expiry in one place.",
     orientation: "portrait",
   },
   {
     src: "/temp_log.jpg",
-    alt: "TempTake temperature logging screen",
+    alt: "TempTake food hygiene app temperature logging screen",
     title: "Temperature logging",
     description: "Fast checks with clear pass and fail records.",
     orientation: "portrait",
   },
   {
     src: "/cleaning_rota.jpg",
-    alt: "TempTake cleaning rota screen",
+    alt: "TempTake food hygiene app cleaning rota screen",
     title: "Cleaning rota",
     description: "Daily tasks kept visible and easy to complete.",
     orientation: "portrait",
   },
   {
     src: "/allergens.jpg",
-    alt: "TempTake allergen matrix screen",
+    alt: "TempTake food hygiene app allergen matrix screen",
     title: "Allergen controls",
     description: "Keep allergen information clear and current.",
     orientation: "portrait",
@@ -143,7 +167,7 @@ export default function LaunchPage() {
               <div className="leading-tight">
                 <div className="font-semibold text-white">TempTake</div>
                 <div className="text-[11px] font-medium text-slate-400">
-                  Digital food safety for real kitchens
+                  Food hygiene app for UK kitchens
                 </div>
               </div>
             </Link>
@@ -197,12 +221,14 @@ export default function LaunchPage() {
             </div>
 
             <h1 className="mt-5 text-3xl font-semibold leading-tight sm:text-4xl lg:text-5xl">
-              Pass food safety inspections
-              <span className="block text-emerald-300">without paperwork.</span>
+              Food hygiene app for UK kitchens
+              <span className="block text-emerald-300">sack the paperwork.</span>
             </h1>
 
             <p className="mt-4 max-w-xl text-sm text-slate-200 sm:text-base">
-              TempTake replaces paper logs with a live kitchen dashboard for{" "}
+              TempTake is a{" "}
+              <span className="font-semibold">food hygiene app</span> built for UK food
+              businesses. Replace paper logs with one live system for{" "}
               <span className="font-semibold">
                 temperatures, cleaning, sign-offs, allergens and staff checks
               </span>
@@ -331,7 +357,7 @@ export default function LaunchPage() {
               </div>
 
               <div className="mt-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-[12px] text-emerald-200">
-                Real product screens, not made-up marketing wallpaper.
+                Real product screens from our food hygiene app, not made-up marketing wallpaper.
               </div>
             </div>
           </div>
@@ -342,12 +368,12 @@ export default function LaunchPage() {
           <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
             <div className="max-w-3xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
-                Replace paper logs and missed checks
+                A food hygiene app that replaces paper logs
                 <span className="text-emerald-300"> with one live dashboard.</span>
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                TempTake is built to replace the messy part of daily food safety:
-                half-filled sheets, missed signatures, last-minute scrambles and
+                TempTake is a food hygiene app built to replace the messy part of daily food
+                safety: half-filled sheets, missed signatures, last-minute scrambles and
                 managers chasing people for records.
               </p>
             </div>
@@ -396,7 +422,7 @@ export default function LaunchPage() {
                 </h2>
                 <p className="mt-2 max-w-2xl text-sm text-slate-300 sm:text-base">
                   Save time logging, keep managers in control remotely, and generate
-                  inspection-ready reports without the paper chase.
+                  inspection-ready reports without the paper chase using one food hygiene app.
                 </p>
               </div>
 
@@ -435,7 +461,8 @@ export default function LaunchPage() {
                 </h2>
                 <p className="mt-3 text-sm text-slate-300 sm:text-base">
                   Clear logs. Consistent checks. Proof of corrective action. Visibility for
-                  managers. One-click reports you can generate and email when needed.
+                  managers. One-click reports you can generate and email when needed from a
+                  single food hygiene app.
                 </p>
 
                 <ul className="mt-4 space-y-2 text-sm text-slate-200">
@@ -494,8 +521,9 @@ export default function LaunchPage() {
                 <span className="text-emerald-300"> Useful for managers.</span>
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                TempTake is built around what actually happens in kitchens: quick checks, busy
-                shifts, missed paperwork, and managers needing visibility without chasing everyone.
+                TempTake is a food hygiene app built around what actually happens in kitchens:
+                quick checks, busy shifts, missed paperwork, and managers needing visibility
+                without chasing everyone.
               </p>
             </div>
 
@@ -533,8 +561,8 @@ export default function LaunchPage() {
                 </h2>
                 <p className="mt-3 max-w-2xl text-sm text-slate-300 sm:text-base">
                   No sign-up. No fake walkthrough. Just open the demo and explore a working
-                  system with temperatures, cleaning, incidents, sign-offs, training and manager
-                  visibility.
+                  food hygiene app with temperatures, cleaning, incidents, sign-offs, training
+                  and manager visibility.
                 </p>
               </div>
 
@@ -562,7 +590,7 @@ export default function LaunchPage() {
           <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
             <div className="max-w-3xl">
               <h2 className="text-2xl font-semibold sm:text-3xl">
-                What the product actually looks like.
+                What the food hygiene app actually looks like.
                 <span className="text-emerald-300"> Imagine that.</span>
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
@@ -614,8 +642,9 @@ export default function LaunchPage() {
                 <span className="text-emerald-300"> to stay compliant.</span>
               </h2>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                Keep daily records fast for staff and useful for managers. No more unreadable
-                sheets, missing initials or “we’ll do it later” turning into “we never did it”.
+                This food hygiene app keeps daily records fast for staff and useful for managers.
+                No more unreadable sheets, missing initials or “we’ll do it later” turning into
+                “we never did it”.
               </p>
             </div>
 
@@ -742,8 +771,9 @@ export default function LaunchPage() {
               <span className="block text-emerald-300">Stay ready when inspection day comes.</span>
             </h2>
             <p className="mx-auto mt-4 max-w-2xl text-sm text-slate-300 sm:text-base">
-              TempTake makes food safety records easier to complete, easier to review and easier to
-              send when someone asks. Staff get prompted, managers stay informed, and reports are ready fast.
+              TempTake is a food hygiene app that makes records easier to complete, easier to review
+              and easier to send when someone asks. Staff get prompted, managers stay informed, and
+              reports are ready fast.
             </p>
 
             <div className="mt-5 text-sm text-slate-300">
@@ -782,7 +812,7 @@ export default function LaunchPage() {
               <div className="leading-tight">
                 <div className="text-sm font-semibold text-white">TempTake</div>
                 <div className="text-[11px] text-slate-500">
-                  © {new Date().getFullYear()} · Digital food safety for real kitchens
+                  © {new Date().getFullYear()} · Food hygiene app for UK kitchens
                 </div>
               </div>
             </div>

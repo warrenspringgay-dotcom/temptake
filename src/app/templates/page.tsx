@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 export const metadata = {
-  title: "Free Food Safety Templates | TempTake",
+  title: "TempTake · Free Food Safety Templates",
   description:
     "Download free food safety templates for restaurants, takeaways and commercial kitchens, including cleaning rotas, temperature logs and compliance checklists.",
 };

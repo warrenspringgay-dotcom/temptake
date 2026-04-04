@@ -4,7 +4,7 @@ import GuidesAnalytics from "@/components/GuidesAnalytics";
 import BackToGuides from "@/components/BackToGuides";
 
 export const metadata: Metadata = {
-  title: "Guides · TempTake",
+  title: "TempTake ·  Guides",
   description:
     "Practical guides for food safety logging, kitchen compliance, cleaning rotas, allergens, and staff training. Built for busy kitchens using TempTake.",
   alternates: { canonical: "/guides" },
