@@ -10,6 +10,7 @@ type Tab = { href: string; label: string };
 const MARKETING_TABS: Tab[] = [
   { href: "/", label: "Home" },
   { href: "/demo", label: "Demo App" },
+  { href: "/food-hygiene-app", label: "The App" },
   { href: "/pricing", label: "Pricing" },
   { href: "/guides", label: "Guides" },
   { href: "/templates", label: "Templates" },
