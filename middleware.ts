@@ -14,6 +14,7 @@ const PUBLIC_PATHS = new Set<string>([
   "/privacy",
   "/terms",
   "/cookies",
+  "/food-hygiene-app",
   "/templates",
 ]);
 
