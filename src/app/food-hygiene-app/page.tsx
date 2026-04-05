@@ -225,7 +225,7 @@ export default function FoodHygieneAppPage() {
 
           <h1 className="mt-5 text-4xl font-semibold leading-tight sm:text-5xl">
             A food hygiene app
-            <span className="block text-emerald-300">built by owners</span>
+            <span className="text-8xl block text-emerald-300">Built by owners</span>
           </h1>
 
           <p className="mt-5 max-w-2xl text-sm text-slate-200 sm:text-base">
@@ -239,7 +239,7 @@ export default function FoodHygieneAppPage() {
             remotely anytime.
           </p>
 
-          <p className="mt-4 max-w-2xl text-lg text-emerald-300 sm:text-base">
+          <p className="mt-4 text-3xl text-emerald-300">
             The business is harmoniously compliant.
           </p>
 
