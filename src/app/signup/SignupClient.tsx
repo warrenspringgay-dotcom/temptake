@@ -220,7 +220,11 @@ export default function SignupClient() {
           {error}
         </div>
       )}
-
+<div className="text-[22px] font-large text-400">
+          Create an account and get two weeks </div>
+          <div className="text-[22px] font-semibold text-emerald-400">
+          FREE trial!
+          </div>
       <input
         className="w-full rounded-xl border p-3"
         type="text"
