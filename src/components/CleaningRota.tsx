@@ -4,12 +4,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
 import ManageCleaningTasksModal, {
   CLEANING_CATEGORIES,
 } from "@/components/ManageCleaningTasksModal";
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 
 const PAGE = "w-full px-3 sm:px-4 md:mx-auto max-w-screen-2xl";
 const CARD =
@@ -58,6 +57,12 @@ type TeamMemberOption = {
   name: string | null;
 };
 
+type LocationDayStatus = {
+  isOpen: boolean;
+  source: "default" | "weekly_schedule" | "closure_override";
+  note: string | null;
+};
+
 function isoDate(d: Date) {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, "0");
@@ -88,12 +93,19 @@ function addDays(d: Date, days: number) {
   return x;
 }
 
+function getDow1to7(ymd: string) {
+  const date = new Date(ymd);
+  return ((date.getDay() + 6) % 7) + 1;
+}
+
 function isDueOn(task: Task, date: Date) {
   if (task.frequency === "daily") return true;
 
   if (task.frequency === "weekly") {
     if (task.weekday === null || task.weekday === undefined) return false;
-    return date.getDay() === task.weekday;
+    const d0to6 = date.getDay();
+    const d1to7 = getDow1to7(isoDate(date));
+    return task.weekday === d0to6 || task.weekday === d1to7;
   }
 
   if (task.frequency === "monthly") {
@@ -124,6 +136,82 @@ function normalizeInitials(value?: string | null) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 6);
+}
+
+async function getLocationDayStatus(
+  locationId: string | null,
+  dateISO: string
+): Promise<LocationDayStatus> {
+  if (!locationId) {
+    return {
+      isOpen: true,
+      source: "default",
+      note: null,
+    };
+  }
+
+  try {
+    const { data: closure, error: closureErr } = await supabase
+      .from("location_closures")
+      .select("id, reason")
+      .eq("location_id", locationId)
+      .eq("date", dateISO)
+      .maybeSingle();
+
+    if (!closureErr && closure) {
+      return {
+        isOpen: false,
+        source: "closure_override",
+        note: closure.reason ? String(closure.reason) : "Marked closed for today.",
+      };
+    }
+  } catch {
+    // ignore and continue
+  }
+
+  const weekday0to6 = new Date(dateISO).getDay();
+  const weekday1to7 = getDow1to7(dateISO);
+
+  try {
+    const { data: scheduleRows, error: scheduleErr } = await supabase
+      .from("location_opening_days")
+      .select("weekday, is_open, opens_at, closes_at")
+      .eq("location_id", locationId)
+      .in("weekday", [weekday0to6, weekday1to7]);
+
+    if (!scheduleErr && Array.isArray(scheduleRows) && scheduleRows.length > 0) {
+      const exact0to6 = scheduleRows.find(
+        (r: any) => Number(r.weekday) === weekday0to6
+      );
+      const exact1to7 = scheduleRows.find(
+        (r: any) => Number(r.weekday) === weekday1to7
+      );
+      const row = exact0to6 ?? exact1to7 ?? scheduleRows[0];
+
+      const isOpen = row?.is_open !== false;
+
+      let note: string | null = null;
+      if (!isOpen) {
+        note = "Closed by weekly opening days.";
+      } else if (row?.opens_at && row?.closes_at) {
+        note = `${String(row.opens_at).slice(0, 5)}–${String(row.closes_at).slice(0, 5)}`;
+      }
+
+      return {
+        isOpen,
+        source: "weekly_schedule",
+        note,
+      };
+    }
+  } catch {
+    // ignore and continue
+  }
+
+  return {
+    isOpen: true,
+    source: "default",
+    note: null,
+  };
 }
 
 function ClassicConfetti({ show }: { show: boolean }) {
@@ -181,6 +269,11 @@ function ClassicConfetti({ show }: { show: boolean }) {
 
 export default function CleaningRotaPage() {
   const { operator } = useWorkstation();
+  const {
+    orgId,
+    locationId,
+    loading: activeLocationLoading,
+  } = useActiveLocation();
 
   const today = useMemo(() => {
     const d = new Date();
@@ -191,24 +284,25 @@ export default function CleaningRotaPage() {
   const todayIso = useMemo(() => isoDate(today), [today]);
   const tomorrowIso = useMemo(() => isoDate(addDays(today, 1)), [today]);
 
-  const [orgId, setOrgId] = useState<string | null>(null);
-  const [locationId, setLocationId] = useState<string | null>(null);
-
   const [tasks, setTasks] = useState<Task[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [deferrals, setDeferrals] = useState<Deferral[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMemberOption[]>([]);
+
+  const [dayStatus, setDayStatus] = useState<LocationDayStatus>({
+    isOpen: true,
+    source: "default",
+    note: null,
+  });
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const [manageOpen, setManageOpen] = useState(false);
 
-  // Header initials box still acts as the default for new task rows
   const [initials, setInitials] = useState<string>("");
   const [initialsDirty, setInitialsDirty] = useState(false);
 
-  // Per-task selected initials
   const [taskInitials, setTaskInitials] = useState<Record<string, string>>({});
 
   const operatorInitials = useMemo(() => {
@@ -456,14 +550,14 @@ export default function CleaningRotaPage() {
   }
 
   async function loadAll() {
+    if (activeLocationLoading) return;
+
     setLoading(true);
     setErr(null);
 
     try {
-      const oid = await getActiveOrgIdClient();
-      const lid = await getActiveLocationIdClient();
-      setOrgId(oid);
-      setLocationId(lid);
+      const oid = orgId;
+      const lid = locationId;
 
       await loadAuthUserIdOnly();
 
@@ -473,9 +567,13 @@ export default function CleaningRotaPage() {
         setDeferrals([]);
         setTeamMembers([]);
         setSignoff(null);
+        setDayStatus({ isOpen: true, source: "default", note: null });
         setLoading(false);
         return;
       }
+
+      const status = await getLocationDayStatus(lid, todayIso);
+      setDayStatus(status);
 
       const { data: tData, error: tErr } = await supabase
         .from("cleaning_tasks")
@@ -505,7 +603,7 @@ export default function CleaningRotaPage() {
         .eq("org_id", oid)
         .eq("location_id", lid)
         .gte("from_on", weekStart)
-        .lte("to_on", weekEnd);
+        .lte("from_on", weekEnd);
 
       if (dErr) console.warn("[cleaning] deferrals fetch failed:", dErr.message);
 
@@ -522,13 +620,14 @@ export default function CleaningRotaPage() {
   }
 
   useEffect(() => {
-    loadAll();
+    void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [orgId, locationId, activeLocationLoading]);
 
   const dueToday = useMemo(() => {
+    if (!dayStatus.isOpen) return [];
     return tasks.filter((t) => isDueEffective(t, today));
-  }, [tasks, today, deferralsFromMap, deferralsToMap]);
+  }, [tasks, today, deferralsFromMap, deferralsToMap, dayStatus.isOpen]);
 
   const doneCount = useMemo(() => {
     let done = 0;
@@ -539,8 +638,8 @@ export default function CleaningRotaPage() {
   }, [dueToday, runsByTask]);
 
   const allDone = useMemo(() => {
-    return dueToday.length > 0 && doneCount === dueToday.length;
-  }, [dueToday.length, doneCount]);
+    return dayStatus.isOpen && dueToday.length > 0 && doneCount === dueToday.length;
+  }, [dayStatus.isOpen, dueToday.length, doneCount]);
 
   useEffect(() => {
     if (!initializedRef.current) {
@@ -602,7 +701,7 @@ export default function CleaningRotaPage() {
   }
 
   async function tickTask(taskId: string) {
-    if (!orgId || !locationId) return;
+    if (!orgId || !locationId || !dayStatus.isOpen) return;
 
     userActionRef.current = true;
 
@@ -651,7 +750,7 @@ export default function CleaningRotaPage() {
   }
 
   async function undoTask(taskId: string) {
-    if (!orgId || !locationId) return;
+    if (!orgId || !locationId || !dayStatus.isOpen) return;
 
     userActionRef.current = true;
 
@@ -672,7 +771,7 @@ export default function CleaningRotaPage() {
   }
 
   async function deferToTomorrow(taskId: string) {
-    if (!orgId || !locationId) return;
+    if (!orgId || !locationId || !dayStatus.isOpen) return;
     if (runsByTask.has(taskId)) return;
 
     const weekEnd = endOfWeekSunday(today);
@@ -703,7 +802,7 @@ export default function CleaningRotaPage() {
   }
 
   async function completeAllInCategory(taskIds: string[]) {
-    if (!orgId || !locationId) return;
+    if (!orgId || !locationId || !dayStatus.isOpen) return;
 
     const idsToDo = taskIds.filter((id) => !runsByTask.has(id));
     if (idsToDo.length === 0) return;
@@ -778,6 +877,11 @@ export default function CleaningRotaPage() {
   async function createSignoff() {
     if (!orgId || !locationId) return;
 
+    if (!dayStatus.isOpen) {
+      alert("This location is marked closed today, so sign-off is not required.");
+      return;
+    }
+
     if (!allDone) {
       alert("Complete all cleaning tasks due today before signing off.");
       return;
@@ -849,7 +953,7 @@ export default function CleaningRotaPage() {
     setSignoffInitials((prev) => (prev.trim() ? prev : best));
   }, [signoffOpen, signoffInitialsDirty, operatorInitials, initials]);
 
-  if (loading) {
+  if (loading || activeLocationLoading) {
     return (
       <div className={PAGE}>
         <div className={`${CARD} p-5`}>Loading…</div>
@@ -865,7 +969,9 @@ export default function CleaningRotaPage() {
     );
   }
 
-  const doneCountDisplay = `${runsByTask.size}/${dueToday.length}`;
+  const doneCountDisplay = dayStatus.isOpen
+    ? `${doneCount}/${dueToday.length}`
+    : "Closed";
 
   return (
     <div className={PAGE}>
@@ -888,6 +994,7 @@ export default function CleaningRotaPage() {
 
             <button
               onClick={() => {
+                if (!dayStatus.isOpen) return;
                 const best = bestInitials(operatorInitials, initials);
                 if (!signoffInitialsDirty) {
                   setSignoffInitials((prev) => (prev.trim() ? prev : best));
@@ -895,17 +1002,23 @@ export default function CleaningRotaPage() {
                 setSignoffNotes("");
                 setSignoffOpen(true);
               }}
-              disabled={!allDone || !!signoff}
+              disabled={!dayStatus.isOpen || !allDone || !!signoff}
               className={[
                 "h-9 whitespace-nowrap rounded-full px-3 text-xs font-semibold leading-none",
                 signoff
                   ? "bg-slate-200 text-slate-700"
-                  : !allDone
+                  : !dayStatus.isOpen || !allDone
                   ? "bg-slate-200 text-slate-700 opacity-70"
                   : "bg-emerald-600 text-white hover:bg-emerald-700",
               ].join(" ")}
               title={
-                signoff ? "Day signed off" : allDone ? "Sign off the day" : "Complete all tasks first"
+                signoff
+                  ? "Day signed off"
+                  : !dayStatus.isOpen
+                  ? "Location is closed today"
+                  : allDone
+                  ? "Sign off the day"
+                  : "Complete all tasks first"
               }
             >
               {signoff ? "Day signed off" : "Sign off day"}
@@ -930,7 +1043,13 @@ export default function CleaningRotaPage() {
 
             <button
               onClick={() => completeAllInCategory(dueToday.map((t) => t.id))}
-              className="h-9 whitespace-nowrap rounded-full bg-emerald-500 px-3 text-xs font-semibold leading-none text-white hover:bg-emerald-600"
+              disabled={!dayStatus.isOpen || dueToday.length === 0}
+              className={[
+                "h-9 whitespace-nowrap rounded-full px-3 text-xs font-semibold leading-none",
+                !dayStatus.isOpen || dueToday.length === 0
+                  ? "bg-slate-200 text-slate-700 opacity-70"
+                  : "bg-emerald-500 text-white hover:bg-emerald-600",
+              ].join(" ")}
             >
               Complete all today
             </button>
@@ -938,12 +1057,27 @@ export default function CleaningRotaPage() {
         </div>
 
         <div className="mt-4 text-xs text-slate-500">
-          Log tasks completed or defer if not completed today.
+          {dayStatus.isOpen
+            ? "Log tasks completed or defer if not completed today."
+            : "This location is marked closed today, so no cleaning tasks are required."}
         </div>
 
-        {allDone && !signoff && (
+        {!dayStatus.isOpen && (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700">
+            Location marked closed today
+            {dayStatus.note ? ` · ${dayStatus.note}` : ""}
+          </div>
+        )}
+
+        {dayStatus.isOpen && allDone && !signoff && (
           <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
             All cleaning tasks are complete. Sign off the day to lock it in.
+          </div>
+        )}
+
+        {dayStatus.isOpen && dueToday.length === 0 && (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+            No cleaning tasks are due today.
           </div>
         )}
 
@@ -1086,7 +1220,7 @@ export default function CleaningRotaPage() {
         onSaved={loadAll}
       />
 
-      {signoffOpen && (
+      {signoffOpen && dayStatus.isOpen && (
         <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
           <div
             className="mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"

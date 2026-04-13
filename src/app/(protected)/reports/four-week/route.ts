@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFourWeeklyReview } from "@/app/actions/reports";
 import { fourWeekSummaryToLines } from "@/lib/fourWeekReport";
+import { requireUser } from "@/lib/requireUser";
 
 function pdfEscape(s: string) {
   return s.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
@@ -23,8 +24,9 @@ function buildSimplePdf(lines: string[]) {
 
   for (let i = 0; i < clipped.length; i++) {
     const text = pdfEscape(clipped[i] ?? "");
-    if (i === 0) contentParts.push(`(${text}) Tj`);
-    else {
+    if (i === 0) {
+      contentParts.push(`(${text}) Tj`);
+    } else {
       contentParts.push(`0 -${leading} Td`);
       contentParts.push(`(${text}) Tj`);
     }
@@ -84,20 +86,40 @@ ${xrefOffset}
 }
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const to = searchParams.get("to") ?? undefined;
+  try {
+    const { searchParams } = new URL(req.url);
 
-  const summary = await getFourWeeklyReview({ to });
-  const lines = fourWeekSummaryToLines(summary);
-  const pdfBytes = buildSimplePdf(lines);
+    const to = searchParams.get("to") ?? undefined;
+    const locationId = searchParams.get("locationId") ?? undefined;
 
-  const filename = `four-weekly-review_${summary.period.from}_to_${summary.period.to}.pdf`;
+    const user = await requireUser();
 
-  return new NextResponse(pdfBytes, {
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "Cache-Control": "no-store",
-    },
-  });
+    const summary = await getFourWeeklyReview({
+      
+      to,
+      locationId,
+    });
+
+    const lines = fourWeekSummaryToLines(summary);
+    const pdfBytes = buildSimplePdf(lines);
+
+    const filename = `four-weekly-review_${summary.period.from}_to_${summary.period.to}.pdf`;
+
+    return new NextResponse(pdfBytes, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch (error: any) {
+    console.error("four-week pdf route error", error);
+
+    return NextResponse.json(
+      {
+        error: error?.message ?? "Failed to generate four-week review PDF.",
+      },
+      { status: 500 }
+    );
+  }
 }

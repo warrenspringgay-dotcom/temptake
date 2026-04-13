@@ -5,9 +5,9 @@ import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 import IncidentModal from "@/components/IncidentModal";
-
+import Link from "next/link";
 /* ===================== Types ===================== */
 
 type LocationOption = { id: string; name: string };
@@ -448,8 +448,12 @@ function TableFooterToggle({
 /* ===================== Page ===================== */
 
 export default function ManagerDashboardPage() {
-  const [orgId, setOrgId] = useState<string | null>(null);
-  const [locationId, setLocationId] = useState<string | null>(null);
+const {
+  orgId,
+  locationId,
+  loading: activeLocationLoading,
+  setLocationId,
+} = useActiveLocation();
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [locationLoading, setLocationLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -943,42 +947,51 @@ async function loadQcReviews() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staffAssessOpen, staffAssessStaffId, staffAssessDays, selectedDateISO, orgId, locationId]);
 
-  useEffect(() => {
-    (async () => {
-      const oId = await getActiveOrgIdClient();
-      setOrgId(oId ?? null);
-      if (!oId) return;
+ useEffect(() => {
+  if (!orgId) {
+    setLocations([]);
+    return;
+  }
 
-      setLocationLoading(true);
-      try {
-        const { data, error } = await supabase.from("locations").select("id,name").eq("org_id", oId).order("name");
-        if (error) throw error;
+  (async () => {
+    setLocationLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("locations")
+        .select("id,name")
+        .eq("org_id", orgId)
+        .order("name");
 
-        const locs =
-          data?.map((r: any) => ({
-            id: String(r.id),
-            name: r.name ?? "Unnamed",
-          })) ?? [];
-        setLocations(locs);
+      if (error) throw error;
 
-        const activeLoc = await getActiveLocationIdClient();
-        if (activeLoc) setLocationId(activeLoc);
-        else if (locs[0]) setLocationId(locs[0].id);
-      } catch (e: any) {
-        console.error(e);
-        setErr(e?.message ?? "Failed to load locations.");
-      } finally {
-        setLocationLoading(false);
+      const locs =
+        data?.map((r: any) => ({
+          id: String(r.id),
+          name: r.name ?? "Unnamed",
+        })) ?? [];
+
+      setLocations(locs);
+
+      if (!locationId && locs[0]) {
+        await setLocationId(locs[0].id);
       }
-    })();
-  }, []);
+    } catch (e: any) {
+      console.error(e);
+      setErr(e?.message ?? "Failed to load locations.");
+    } finally {
+      setLocationLoading(false);
+    }
+  })();
+}, [orgId, locationId, setLocationId]);
 
-  useEffect(() => {
-    if (!orgId) return;
-    void loadLoggedInManager();
-    if (locationId) void loadTeamOptions(locationId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, locationId]);
+useEffect(() => {
+  if (activeLocationLoading) return;
+  if (!orgId) return;
+
+  void loadLoggedInManager();
+  if (locationId) void loadTeamOptions(locationId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [orgId, locationId, activeLocationLoading]);
 
   useEffect(() => {
     if (!signoffOpen) return;
@@ -996,13 +1009,14 @@ async function loadQcReviews() {
     if (ini) setCalibrationForm((f) => ({ ...f, staff_initials: ini }));
   }, [calibrationOpen, managerTeamMember, calibrationForm.staff_initials]);
 
-  useEffect(() => {
-    if (!orgId || !locationId) return;
-    void refreshAll();
-    void loadQcReviews();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, locationId, selectedDateISO]);
+ useEffect(() => {
+  if (activeLocationLoading) return;
+  if (!orgId || !locationId) return;
 
+  void refreshAll();
+  void loadQcReviews();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [orgId, locationId, selectedDateISO, activeLocationLoading]);
   async function refreshAll() {
     if (!orgId || !locationId) return;
     setLoading(true);
@@ -1728,13 +1742,38 @@ async function openQcFromActions() {
           <KpiTile title="Training" icon="🎓" tone={trainingTone} value={`${trainingExpired} expired`} sub={`${trainingDueSoon} due in 30d`} />
          
         </div>
+<div className="mt-4">
+  <Link
+    href="/four-week-review"
+    className="flex w-full items-center justify-between gap-3 rounded-2xl border border-indigo-200 bg-indigo-50/80 px-4 py-4 shadow-sm transition hover:bg-indigo-100/80"
+  >
+    <div className="min-w-0">
+      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-indigo-700">
+        Review
+      </div>
+      <div className="mt-0.5 text-base font-extrabold text-slate-900">
+        Open 4-Week Review
+      </div>
+      <div className="mt-1 text-sm text-slate-600">
+        View trends, missed tasks, training drift, incidents and compliance over the last 4 weeks.
+      </div>
+    </div>
 
+    <div className="shrink-0 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm">
+      Open
+    </div>
+  </Link>
+</div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold text-slate-600">Location</label>
             <select
-              value={locationId ?? ""}
-              onChange={(e) => setLocationId(e.target.value || null)}
+  value={locationId ?? ""}
+  onChange={async (e) => {
+    const next = e.target.value || "";
+    if (!next) return;
+    await setLocationId(next);
+  }}
               className="h-9 rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
               disabled={locationLoading || locations.length === 0}
             >

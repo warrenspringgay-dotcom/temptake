@@ -1,4 +1,3 @@
-// src/app/(protected)/dashboard/page.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -7,9 +6,9 @@ import { motion } from "framer-motion";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
-import OnboardingBanner from "@/components/OnboardingBanner";
+import  OnboardingBanner  from "@/components/OnboardingBanner";
 import WelcomeGate from "@/components/WelcomeGate";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 
 /* ---------- CONFIG ---------- */
 
@@ -104,6 +103,12 @@ type AlertItem = {
   tone: "danger" | "warn" | "ok";
   href?: string;
   onClick?: () => void;
+};
+
+type LocationDayStatus = {
+  isOpen: boolean;
+  source: "default" | "weekly_schedule" | "closure_override";
+  note: string | null;
 };
 
 /* ---------- helpers ---------- */
@@ -239,6 +244,85 @@ function daysBetween(aISO: string, bISO: string) {
 
 function isLikelyMonthEnd(d = new Date()) {
   return d.getDate() <= 3;
+}
+
+async function getLocationDayStatus(
+  orgId: string,
+  locationId: string | null,
+  dateISO: string
+): Promise<LocationDayStatus> {
+  if (!locationId) {
+    return {
+      isOpen: true,
+      source: "default",
+      note: null,
+    };
+  }
+
+  try {
+    const { data: closure, error: closureErr } = await supabase
+      .from("location_closures")
+      .select("id, reason")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .eq("date", dateISO)
+      .maybeSingle();
+
+    if (!closureErr && closure) {
+      return {
+        isOpen: false,
+        source: "closure_override",
+        note: closure.reason ? String(closure.reason) : "Marked closed for today.",
+      };
+    }
+  } catch {
+    // ignore and fall through
+  }
+
+  const weekday0to6 = new Date(dateISO).getDay();
+  const weekday1to7 = getDow1to7(dateISO);
+
+  try {
+    const { data: scheduleRows, error: scheduleErr } = await supabase
+      .from("location_opening_days")
+      .select("weekday, is_open, opens_at, closes_at")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .in("weekday", [weekday1to7, weekday0to6]);
+
+    if (!scheduleErr && Array.isArray(scheduleRows) && scheduleRows.length > 0) {
+      const exact1to7 = scheduleRows.find(
+        (r: any) => Number(r.weekday) === weekday1to7
+      );
+      const exact0to6 = scheduleRows.find(
+        (r: any) => Number(r.weekday) === weekday0to6
+      );
+      const row = exact1to7 ?? exact0to6 ?? scheduleRows[0];
+
+      const isOpen = row?.is_open !== false;
+
+      let note: string | null = null;
+      if (!isOpen) {
+        note = "Closed by weekly opening days.";
+      } else if (row?.opens_at && row?.closes_at) {
+        note = `${String(row.opens_at).slice(0, 5)}–${String(row.closes_at).slice(0, 5)}`;
+      }
+
+      return {
+        isOpen,
+        source: "weekly_schedule",
+        note,
+      };
+    }
+  } catch {
+    // ignore and fall through
+  }
+
+  return {
+    isOpen: true,
+    source: "default",
+    note: null,
+  };
 }
 
 /* ---------- Four-week dismiss helpers ---------- */
@@ -805,6 +889,12 @@ function AlertsModal({
 /* ---------- Component ---------- */
 
 export default function DashboardPage() {
+  const {
+    orgId: activeOrgId,
+    locationId: activeLocationId,
+    loading: locationLoading,
+  } = useActiveLocation();
+
   const [kpi, setKpi] = useState<KpiState>({
     tempLogsToday: 0,
     tempFails7d: 0,
@@ -826,13 +916,16 @@ export default function DashboardPage() {
   const headerDate = formatPrettyDate(new Date());
 
   const [user, setUser] = React.useState<User | null>(null);
-  const [authReady, setAuthReady] = React.useState(false);
-
-  const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
-  const [activeLocationId, setActiveLocationId] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
   const [orgLabel, setOrgLabel] = useState<string | null>(null);
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
+
+  const [todayStatus, setTodayStatus] = useState<LocationDayStatus>({
+    isOpen: true,
+    source: "default",
+    note: null,
+  });
 
   const [fourWeekBanner, setFourWeekBanner] = useState<FourWeekBannerState>({
     kind: "none",
@@ -883,42 +976,15 @@ export default function DashboardPage() {
   useEffect(() => {
     let cancelled = false;
 
-    const syncOrgLoc = async () => {
-      const orgId = await getActiveOrgIdClient();
-      const locationId = await getActiveLocationIdClient();
-      if (cancelled) return;
-
-      setActiveOrgId(orgId);
-      setActiveLocationId(locationId);
-    };
-
-    const onStorage = () => void syncOrgLoc();
-    const onFocus = () => void syncOrgLoc();
-    const onCustom = () => void syncOrgLoc();
-
-    void syncOrgLoc();
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("tt-location-changed" as any, onCustom);
-
-    return () => {
-      cancelled = true;
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("tt-location-changed" as any, onCustom);
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
     (async () => {
+      if (locationLoading) return;
+
       setLoading(true);
       setErr(null);
 
       try {
-        const orgId = await getActiveOrgIdClient();
-        const locationId = await getActiveLocationIdClient();
+        const orgId = activeOrgId;
+        const locationId = activeLocationId;
         const today = isoToday();
 
         if (!orgId) {
@@ -928,12 +994,13 @@ export default function DashboardPage() {
 
         if (cancelled) return;
 
-        setActiveOrgId(orgId);
-        setActiveLocationId(locationId);
+        const dayStatus = await getLocationDayStatus(orgId, locationId, today);
+        if (cancelled) return;
+        setTodayStatus(dayStatus);
 
         await Promise.all([
-          loadTempsKpi(orgId, locationId, today, cancelled),
-          loadCleaningKpi(orgId, locationId, today, cancelled),
+          loadTempsKpi(orgId, locationId, today, dayStatus, cancelled),
+          loadCleaningKpi(orgId, locationId, today, dayStatus, cancelled),
           loadTrainingAndAllergenKpi(orgId, locationId, cancelled),
           loadLeaderBoard(orgId, locationId, cancelled),
           loadWallPosts(orgId, locationId, cancelled),
@@ -950,7 +1017,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeOrgId, activeLocationId]);
+  }, [activeOrgId, activeLocationId, locationLoading]);
 
   /* ---------- loaders ---------- */
 
@@ -958,6 +1025,7 @@ export default function DashboardPage() {
     orgId: string,
     locationId: string | null,
     todayISO: string,
+    dayStatus: LocationDayStatus,
     cancelled: boolean
   ) {
     const since = new Date();
@@ -995,7 +1063,7 @@ export default function DashboardPage() {
 
     setKpi((prev) => ({
       ...prev,
-      tempLogsToday,
+      tempLogsToday: dayStatus.isOpen ? tempLogsToday : 0,
       tempFails7d,
     }));
   }
@@ -1004,9 +1072,10 @@ export default function DashboardPage() {
     orgId: string,
     locationId: string | null,
     todayISO: string,
+    dayStatus: LocationDayStatus,
     cancelled: boolean
   ) {
-    if (!locationId) {
+    if (!locationId || !dayStatus.isOpen) {
       setKpi((prev) => ({
         ...prev,
         cleaningDueToday: 0,
@@ -1134,20 +1203,20 @@ export default function DashboardPage() {
     let allergenOver = 0;
 
     try {
-     let memberIdsForLocation: string[] | null = null;
+      let memberIdsForLocation: string[] | null = null;
 
-if (locationId) {
-  const { data: membersForLocation, error: membersErr } = await supabase
-    .from("team_members")
-    .select("id")
-    .eq("org_id", orgId)
-    .eq("location_id", locationId);
+      if (locationId) {
+        const { data: membersForLocation, error: membersErr } = await supabase
+          .from("team_members")
+          .select("id")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId);
 
-  if (membersErr) throw membersErr;
+        if (membersErr) throw membersErr;
 
-  const memberIds = (membersForLocation ?? []).map((m: any) => String(m.id));
-  memberIdsForLocation = memberIds;
-}
+        const memberIds = (membersForLocation ?? []).map((m: any) => String(m.id));
+        memberIdsForLocation = memberIds;
+      }
 
       let trainingQuery = supabase
         .from("trainings")
@@ -1363,10 +1432,13 @@ if (locationId) {
       const reviewedAtRaw = localStorage.getItem("tt_four_week_reviewed_at");
       const lastReviewedISO = reviewedAtRaw ? toISODate(reviewedAtRaw) : null;
 
-      const res = await fetch(
-        `/four-week-review/summary?to=${encodeURIComponent(todayISO)}`,
-        { cache: "no-store" }
-      );
+      const params = new URLSearchParams();
+      params.set("to", todayISO);
+      if (locationId) params.set("locationId", locationId);
+
+      const res = await fetch(`/four-week-review/summary?${params.toString()}`, {
+        cache: "no-store",
+      });
 
       if (!res.ok) return;
       const payload = await res.json();
@@ -1378,7 +1450,11 @@ if (locationId) {
       const reviewKey = makeReviewKey(periodFrom, periodTo);
 
       const dismissKeyScoped = makeDismissStorageKey({ orgId, locationId, reviewKey });
-      const dismissKeyFallback = makeDismissStorageKey({ orgId, locationId: null, reviewKey });
+      const dismissKeyFallback = makeDismissStorageKey({
+        orgId,
+        locationId: null,
+        reviewKey,
+      });
 
       const dismissUntilRaw =
         localStorage.getItem(dismissKeyScoped) ?? localStorage.getItem(dismissKeyFallback);
@@ -1534,8 +1610,8 @@ if (locationId) {
   }
 
   async function loadIncidentsForAlerts(rangeDays: number) {
-    const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
-    const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
+    const orgId = activeOrgId;
+    const locationId = activeLocationId;
 
     if (!orgId) {
       setIncidents([]);
@@ -1738,16 +1814,22 @@ if (locationId) {
   const cleaningPct =
     kpi.cleaningDueToday > 0 ? (kpi.cleaningDoneToday / kpi.cleaningDueToday) * 100 : 0;
 
-  const cleaningTone: "danger" | "warn" | "ok" | "neutral" =
-    kpi.cleaningDueToday === 0
-      ? "neutral"
-      : kpi.cleaningDoneToday === kpi.cleaningDueToday
-      ? "ok"
-      : kpi.cleaningDoneToday === 0
-      ? "danger"
-      : "warn";
+  const cleaningTone: "danger" | "warn" | "ok" | "neutral" = !todayStatus.isOpen
+    ? "neutral"
+    : kpi.cleaningDueToday === 0
+    ? "neutral"
+    : kpi.cleaningDoneToday === kpi.cleaningDueToday
+    ? "ok"
+    : kpi.cleaningDoneToday === 0
+    ? "danger"
+    : "warn";
 
-  const tempTone: "danger" | "warn" | "ok" | "neutral" = kpi.tempLogsToday === 0 ? "danger" : "ok";
+  const tempTone: "danger" | "warn" | "ok" | "neutral" = !todayStatus.isOpen
+    ? "neutral"
+    : kpi.tempLogsToday === 0
+    ? "danger"
+    : "ok";
+
   const alertsTone: "danger" | "warn" | "ok" | "neutral" = hasAnyKpiAlert ? "danger" : "ok";
 
   const fourWeekBannerTone =
@@ -1759,18 +1841,14 @@ if (locationId) {
 
   const openAlertsModal = async () => {
     setAlertsOpen(true);
-
-    const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
-    const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
-
-    await resolveOrgLocationLabels(orgId, locationId);
+    await resolveOrgLocationLabels(activeOrgId, activeLocationId);
     await loadIncidentsForAlerts(incidentRangeDays);
   };
 
   useEffect(() => {
     if (!alertsOpen) return;
     void loadIncidentsForAlerts(incidentRangeDays);
-  }, [incidentRangeDays, alertsOpen]);
+  }, [incidentRangeDays, alertsOpen, activeOrgId, activeLocationId]);
 
   async function resolveIncident(incidentId: string) {
     try {
@@ -1791,9 +1869,9 @@ if (locationId) {
 
       await loadIncidentsForAlerts(incidentRangeDays);
 
-      const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
-      const locationId = (await getActiveLocationIdClient()) ?? activeLocationId;
-      if (orgId) await loadOpenIncidentCount(orgId, locationId, false);
+      if (activeOrgId) {
+        await loadOpenIncidentCount(activeOrgId, activeLocationId, false);
+      }
     } catch (e: any) {
       console.error(e);
       setIncidentsError(
@@ -1871,9 +1949,8 @@ if (locationId) {
                   type="button"
                   onClick={async () => {
                     try {
-                      const orgId = (await getActiveOrgIdClient()) ?? activeOrgId;
-                      const locationId =
-                        (await getActiveLocationIdClient()) ?? activeLocationId;
+                      const orgId = activeOrgId;
+                      const locationId = activeLocationId;
 
                       const reviewKey = makeReviewKey(
                         fourWeekBanner.periodFrom,
@@ -1928,6 +2005,13 @@ if (locationId) {
           <p className="mt-0.5 text-xs sm:text-sm font-medium text-slate-500">
             Safety, cleaning and compliance at a glance.
           </p>
+
+          {!todayStatus.isOpen && (
+            <div className="mt-3 inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-[11px] font-extrabold uppercase tracking-wide text-slate-700">
+              Location marked closed today
+              {todayStatus.note ? ` · ${todayStatus.note}` : ""}
+            </div>
+          )}
         </header>
 
         <section className="mt-3 rounded-3xl border border-white/50 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur space-y-3">
@@ -1935,18 +2019,20 @@ if (locationId) {
             <KpiTile
               canHover={canHover}
               title="Temperature logs"
-              icon={kpi.tempLogsToday === 0 ? "❌" : "✅"}
+              icon={!todayStatus.isOpen ? "🏠" : kpi.tempLogsToday === 0 ? "❌" : "✅"}
               tone={tempTone}
               big={kpi.tempLogsToday}
               sub={
-                kpi.tempLogsToday === 0
+                !todayStatus.isOpen
+                  ? "Location is marked closed today, so no temp logs are expected."
+                  : kpi.tempLogsToday === 0
                   ? "No temperatures logged yet today."
                   : "At least one temperature check recorded."
               }
               onClick={openTempModal}
               footer={
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
-                  <span>Tap to log</span>
+                  <span>{!todayStatus.isOpen ? "Closed day" : "Tap to log"}</span>
                   <span className="opacity-80">Today</span>
                 </div>
               }
@@ -1955,7 +2041,7 @@ if (locationId) {
             <KpiTile
               canHover={canHover}
               title="Cleaning (today)"
-              icon="🧽"
+              icon={!todayStatus.isOpen ? "🏠" : "🧽"}
               tone={cleaningTone}
               big={
                 <span>
@@ -1963,7 +2049,9 @@ if (locationId) {
                 </span>
               }
               sub={
-                kpi.cleaningDueToday === 0
+                !todayStatus.isOpen
+                  ? "Location is marked closed today, so cleaning is not counted as missed."
+                  : kpi.cleaningDueToday === 0
                   ? "No cleaning tasks scheduled for today."
                   : kpi.cleaningDoneToday === kpi.cleaningDueToday
                   ? "All scheduled cleaning tasks completed."
@@ -1971,7 +2059,7 @@ if (locationId) {
               }
               href="/cleaning-rota"
               footer={
-                kpi.cleaningDueToday > 0 ? (
+                todayStatus.isOpen && kpi.cleaningDueToday > 0 ? (
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
                       <span>Progress</span>
@@ -1981,8 +2069,8 @@ if (locationId) {
                   </div>
                 ) : (
                   <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
-                    <span>Progress</span>
-                    <span>0%</span>
+                    <span>{!todayStatus.isOpen ? "Closed day" : "Progress"}</span>
+                    <span>{!todayStatus.isOpen ? "Not required" : "0%"}</span>
                   </div>
                 )
               }
@@ -2140,7 +2228,7 @@ if (locationId) {
           </div>
         </section>
 
-        {loading && (
+        {(loading || locationLoading || !authReady) && (
           <p className="text-center text-[11px] font-medium text-slate-400">
             Loading dashboard…
           </p>

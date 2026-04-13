@@ -1,7 +1,7 @@
-// src/components/LocationSwitcher.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
@@ -18,7 +18,7 @@ type LocationRow = {
 type Props = {
   /** show something even if there is only one location */
   showWhenSingle?: boolean;
-  /** if true, reload the page after switching */
+  /** if true, refresh the page after switching */
   reloadOnChange?: boolean;
   /** optional extra classes for the wrapper */
   className?: string;
@@ -32,9 +32,12 @@ export default function LocationSwitcher({
   reloadOnChange = true,
   className,
 }: Props) {
+  const router = useRouter();
+
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [switching, setSwitching] = useState(false);
 
   const activeName = useMemo(() => {
     return locations.find((l) => l.id === activeId)?.name ?? "";
@@ -76,16 +79,21 @@ export default function LocationSwitcher({
 
     setLocations(locs);
 
-    const stored = await getActiveLocationIdClient();
+    const stored = await getActiveLocationIdClient(orgId);
     const storedIsValid = !!stored && locs.some((l) => l.id === stored);
 
     let chosen = "";
     if (storedIsValid) {
-      chosen = stored as string;
+      chosen = String(stored);
     } else if (locs[0]) {
       chosen = locs[0].id;
-      setActiveLocationIdClient(chosen);
-      window.dispatchEvent(new Event("tt-location-changed"));
+      await setActiveLocationIdClient(chosen, orgId);
+
+      window.dispatchEvent(
+        new CustomEvent("tt-location-changed", {
+          detail: { orgId, locationId: chosen },
+        })
+      );
     }
 
     setActiveId(chosen);
@@ -100,46 +108,68 @@ export default function LocationSwitcher({
       await loadLocations();
     };
 
-    // initial load
     void safeLoad();
 
-    // reload when user returns to tab / window
     const onFocus = () => void safeLoad();
+
     const onVisibility = () => {
       if (document.visibilityState === "visible") void safeLoad();
     };
 
-    // reload when app tells us locations changed
     const onLocationsChanged = () => void safeLoad();
+
+    const onLocationChanged = (event: Event) => {
+      const custom = event as CustomEvent<{ orgId?: string; locationId?: string }>;
+      const nextId = custom.detail?.locationId;
+      if (nextId) setActiveId(String(nextId));
+    };
 
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("tt-locations-changed" as any, onLocationsChanged);
+    window.addEventListener("tt-locations-changed", onLocationsChanged as EventListener);
+    window.addEventListener("tt-location-changed", onLocationChanged as EventListener);
 
     return () => {
       alive = false;
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("tt-locations-changed" as any, onLocationsChanged);
+      window.removeEventListener("tt-locations-changed", onLocationsChanged as EventListener);
+      window.removeEventListener("tt-location-changed", onLocationChanged as EventListener);
     };
   }, []);
 
   async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const id = e.target.value;
-    setActiveId(id);
-    setActiveLocationIdClient(id);
+    if (!id || id === activeId) return;
 
-    window.dispatchEvent(new Event("tt-location-changed"));
+    const orgId = await getActiveOrgIdClient();
+    if (!orgId) return;
 
-    if (reloadOnChange && typeof window !== "undefined") {
-      window.location.reload();
+    setSwitching(true);
+
+    try {
+      setActiveId(id);
+      await setActiveLocationIdClient(id, orgId);
+
+      window.dispatchEvent(
+        new CustomEvent("tt-location-changed", {
+          detail: { orgId, locationId: id },
+        })
+      );
+
+      if (reloadOnChange) {
+        router.refresh();
+      }
+    } catch (error) {
+      console.error("[LocationSwitcher] failed to switch location", error);
+    } finally {
+      setSwitching(false);
     }
   }
 
   if (loading) return null;
   if (locations.length === 0 || !activeId) return null;
 
-  // hide completely if single and caller wants hidden
   if (!multi && !showWhenSingle) return null;
 
   return (
@@ -158,7 +188,8 @@ export default function LocationSwitcher({
           <select
             value={activeId}
             onChange={handleChange}
-            className="h-9 max-w-[220px] cursor-pointer truncate rounded-full border border-emerald-200 bg-emerald-50 py-0 pl-3 pr-9 text-xs font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 appearance-none"
+            disabled={switching}
+            className="h-9 max-w-[220px] cursor-pointer truncate rounded-full border border-emerald-200 bg-emerald-50 py-0 pl-3 pr-9 text-xs font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 appearance-none disabled:cursor-wait disabled:opacity-70"
             title="Switch location"
             aria-label="Switch location"
           >

@@ -3,8 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 import QuickActionsFab from "@/components/QuickActionsFab";
 
 type LeaderboardEntry = {
@@ -15,28 +14,25 @@ type LeaderboardEntry = {
 };
 
 export default function Leaderboard() {
+  const { orgId, locationId, loading: activeLocationLoading } = useActiveLocation();
+
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
 
-    (async () => {
+    async function loadLeaderboard() {
       try {
-        setLoading(true);
+        if (activeLocationLoading) return;
 
-        const [orgId, locationId] = await Promise.all([
-          getActiveOrgIdClient(),
-          getActiveLocationIdClient(),
-        ]);
+        setLoading(true);
 
         if (!orgId) {
           if (!cancelled) setEntries([]);
           return;
         }
 
-        // Try location-specific first (if your leaderboard view/table supports it).
-        // If it doesn't (missing column), we fall back to org-wide.
         const baseSelect = "display_name, points, cleaning_count, temp_logs_count";
 
         const runQuery = async (withLocation: boolean) => {
@@ -47,17 +43,14 @@ export default function Leaderboard() {
             .order("points", { ascending: false });
 
           if (withLocation && locationId) {
-            // If your leaderboard is location-aware, it MUST have a location_id column.
             q = q.eq("location_id", locationId);
           }
 
           return await q;
         };
 
-        // 1) attempt location filter
         let { data, error } = await runQuery(true);
 
-        // 2) if location filter fails (likely missing column on view), retry org-wide
         if (error) {
           console.warn(
             "[leaderboard] location filter failed, falling back to org-wide:",
@@ -88,12 +81,14 @@ export default function Leaderboard() {
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    }
+
+    void loadLeaderboard();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [orgId, locationId, activeLocationLoading]);
 
   const employeeOfMonth = useMemo(() => {
     if (!entries.length) return null;
@@ -116,104 +111,111 @@ export default function Leaderboard() {
     return "border-slate-100 bg-white/90";
   };
 
-return (
-  <>
-    {/* Page content wrapper (narrow) */}
-    <div className="mx-auto w-full max-w-6xl space-y-4 px-3 sm:px-4">
-      {/* Header + Employee of the month card */}
-      <div className="flex flex-wrap items-start gap-4">
-        <div className="min-w-[220px] flex-1">
-          <h1 className="flex items-center gap-2 text-xl font-semibold text-slate-900">
-            <span className="text-2xl text-amber-500">🏆</span>
-            Leaderboard
-          </h1>
-          <p className="mt-1 text-sm text-slate-600">
-            Rewarding your team&rsquo;s effort in keeping the kitchen safe and compliant.
+  return (
+    <>
+      <div className="mx-auto w-full max-w-6xl space-y-4 px-3 sm:px-4">
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="min-w-[220px] flex-1">
+            <h1 className="flex items-center gap-2 text-xl font-semibold text-slate-900">
+              <span className="text-2xl text-amber-500">🏆</span>
+              Leaderboard
+            </h1>
+            <p className="mt-1 text-sm text-slate-600">
+              Rewarding your team&rsquo;s effort in keeping the kitchen safe and compliant.
+            </p>
+          </div>
+
+          {employeeOfMonth && (
+            <div className="min-w-[230px] rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-900 shadow-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-semibold text-amber-900">Employee of the month</div>
+                <span className="text-lg">👑</span>
+              </div>
+              <div className="mt-1 text-base font-bold">{employeeOfMonth.name}</div>
+              <div className="mt-1 text-xs text-amber-800/90">
+                Total points so far:{" "}
+                <span className="font-semibold">{employeeOfMonth.total_points}</span>
+              </div>
+              <div className="mt-1 text-xs text-amber-800/90">
+                Cleaning tasks:{" "}
+                <span className="font-semibold">{employeeOfMonth.cleaning_points}</span>
+                {" • "}
+                Temp logs:{" "}
+                <span className="font-semibold">{employeeOfMonth.temp_points}</span>
+              </div>
+              <div className="mt-2 rounded-xl bg-amber-100/80 px-3 py-1 text-[11px]">
+                Based on completed cleaning tasks and logged food temperatures this month.
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-3xl border border-white/60 bg-white/80 p-4 shadow-lg backdrop-blur-md sm:p-5">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-slate-900">Team standings</div>
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-[11px] font-medium text-slate-600">
+              This month
+            </span>
+          </div>
+
+          {activeLocationLoading || loading ? (
+            <div className="py-10 text-center text-sm text-slate-500">Loading…</div>
+          ) : entries.length === 0 ? (
+            <div className="py-10 text-center text-sm text-slate-500">
+              No points yet. When your team completes cleaning tasks or logs temperatures, they&rsquo;ll appear here.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {entries.map((e, idx) => (
+                <div
+                  key={`${e.name}_${idx}`}
+                  className={`flex items-center gap-3 rounded-2xl px-3 py-2 shadow-sm ${rowHighlight(idx)}`}
+                >
+                  <div
+                    className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${rankBadge(idx)}`}
+                  >
+                    {idx + 1}
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="truncate text-sm font-semibold text-slate-900">
+                        {e.name}
+                      </div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        {e.total_points} pts
+                      </div>
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                      <span>
+                        🧽 Cleaning:{" "}
+                        <span className="font-medium">{e.cleaning_points}</span>
+                      </span>
+                      <span>
+                        🌡️ Temps logged:{" "}
+                        <span className="font-medium">{e.temp_points}</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-3 inline-flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-white/80 px-4 py-2 text-xs text-slate-700">
+            <span className="mr-2 font-semibold">Points key:</span>
+            <span>✅ 1 point per completed cleaning task</span>
+            <span className="mx-1 text-slate-400">•</span>
+            <span>🌡️ 1 point per food temperature logged</span>
+          </div>
+
+          <p className="mt-4 text-center text-xs text-slate-500">
+            Points are updated automatically when staff complete cleaning tasks or log food temperatures.
           </p>
         </div>
-
-        {employeeOfMonth && (
-          <div className="min-w-[230px] rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-900 shadow-sm">
-            <div className="flex items-center justify-between gap-2">
-              <div className="font-semibold text-amber-900">Employee of the month</div>
-              <span className="text-lg">👑</span>
-            </div>
-            <div className="mt-1 text-base font-bold">{employeeOfMonth.name}</div>
-            <div className="mt-1 text-xs text-amber-800/90">
-              Total points so far: <span className="font-semibold">{employeeOfMonth.total_points}</span>
-            </div>
-            <div className="mt-1 text-xs text-amber-800/90">
-              Cleaning tasks: <span className="font-semibold">{employeeOfMonth.cleaning_points}</span>
-              {" • "}
-              Temp logs: <span className="font-semibold">{employeeOfMonth.temp_points}</span>
-            </div>
-            <div className="mt-2 rounded-xl bg-amber-100/80 px-3 py-1 text-[11px]">
-              Based on completed cleaning tasks and logged food temperatures this month.
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Main leaderboard card */}
-      <div className="rounded-3xl border border-white/60 bg-white/80 p-4 shadow-lg backdrop-blur-md sm:p-5">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-slate-900">Team standings</div>
-          <span className="inline-flex items-center rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-[11px] font-medium text-slate-600">
-            This month
-          </span>
-        </div>
-
-        {loading ? (
-          <div className="py-10 text-center text-sm text-slate-500">Loading…</div>
-        ) : entries.length === 0 ? (
-          <div className="py-10 text-center text-sm text-slate-500">
-            No points yet. When your team completes cleaning tasks or logs temperatures, they&rsquo;ll appear here.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {entries.map((e, idx) => (
-              <div
-                key={e.name + idx}
-                className={`flex items-center gap-3 rounded-2xl px-3 py-2 shadow-sm ${rowHighlight(idx)}`}
-              >
-                <div className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${rankBadge(idx)}`}>
-                  {idx + 1}
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="truncate text-sm font-semibold text-slate-900">{e.name}</div>
-                    <div className="text-sm font-semibold text-slate-900">{e.total_points} pts</div>
-                  </div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                    <span>
-                      🧽 Cleaning: <span className="font-medium">{e.cleaning_points}</span>
-                    </span>
-                    <span>
-                      🌡️ Temps logged: <span className="font-medium">{e.temp_points}</span>
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="mt-3 inline-flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-white/80 px-4 py-2 text-xs text-slate-700">
-          <span className="mr-2 font-semibold">Points key:</span>
-          <span>✅ 1 point per completed cleaning task</span>
-          <span className="mx-1 text-slate-400">•</span>
-          <span>🌡️ 1 point per food temperature logged</span>
-        </div>
-
-        <p className="mt-4 text-center text-xs text-slate-500">
-          Points are updated automatically when staff complete cleaning tasks or log food temperatures.
-        </p>
-      </div>
-    </div>
-
-    {/* FAB fixed bottom-right on this page too */}
-    <QuickActionsFab />
-  </>
-)};
-
+      <QuickActionsFab />
+    </>
+  );
+}

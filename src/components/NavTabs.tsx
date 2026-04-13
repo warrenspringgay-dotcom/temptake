@@ -32,8 +32,7 @@ const APP_TABS: Tab[] = [
   { href: "/manager", label: "Manager Dashboard", requiresManager: true, requiresPlan: true },
   { href: "/team", label: "Team", requiresManager: true, requiresPlan: true },
   { href: "/suppliers", label: "Suppliers", requiresManager: true, requiresPlan: true },
-  { href: "/billing", label: "Billing", requiresManager: true, requiresPlan: true },
-
+ 
   { href: "/leaderboard", label: "Leaderboard", requiresPlan: true },
   { href: "/reports", label: "Reports", requiresPlan: true },
 ];

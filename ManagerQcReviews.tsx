@@ -2,8 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 
 type StaffRow = {
   id: string;
@@ -37,8 +36,7 @@ function cls(...parts: Array<string | false | undefined>) {
 }
 
 export default function ManagerQcReviews() {
-  const [orgId, setOrgId] = useState<string | null>(null);
-  const [locationId, setLocationId] = useState<string | null>(null);
+  const { orgId, locationId, loading: activeLocationLoading } = useActiveLocation();
 
   const [staff, setStaff] = useState<StaffRow[]>([]);
   const [loadingStaff, setLoadingStaff] = useState(true);
@@ -58,22 +56,13 @@ export default function ManagerQcReviews() {
 
   const [saving, setSaving] = useState(false);
 
-  async function boot() {
-    const [oid, lid] = await Promise.all([
-      getActiveOrgIdClient(),
-      getActiveLocationIdClient().catch(() => null),
-    ]);
-    setOrgId(oid ?? null);
-    setLocationId(lid ?? null);
-  }
-
-  async function loadStaff(oid: string) {
+  async function loadStaff(currentOrgId: string) {
     setLoadingStaff(true);
     try {
       const { data, error } = await supabase
         .from("staff")
         .select("id,initials,name")
-        .eq("org_id", oid)
+        .eq("org_id", currentOrgId)
         .order("initials", { ascending: true });
 
       if (error) throw error;
@@ -86,11 +75,10 @@ export default function ManagerQcReviews() {
     }
   }
 
-  async function loadReviews(oid: string) {
+  async function loadReviews(currentOrgId: string, currentLocationId: string | null) {
     setLoadingReviews(true);
     try {
-      // pull staff + manager display via FK joins
-      const { data, error } = await supabase
+      let query = supabase
         .from("staff_qc_reviews")
         .select(
           `
@@ -105,10 +93,16 @@ export default function ManagerQcReviews() {
           manager:staff!staff_qc_reviews_manager_fkey(initials,name)
         `
         )
-        .eq("org_id", oid)
+        .eq("org_id", currentOrgId)
         .order("reviewed_on", { ascending: false })
         .order("created_at", { ascending: false })
         .limit(200);
+
+      if (currentLocationId) {
+        query = query.eq("location_id", currentLocationId);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       setReviews((data ?? []) as QcRow[]);
@@ -121,26 +115,31 @@ export default function ManagerQcReviews() {
   }
 
   useEffect(() => {
-    void (async () => {
-      await boot();
-    })();
-  }, []);
+    if (activeLocationLoading) return;
 
-  useEffect(() => {
-    if (!orgId) return;
+    if (!orgId) {
+      setStaff([]);
+      setReviews([]);
+      setLoadingStaff(false);
+      setLoadingReviews(false);
+      return;
+    }
+
     void (async () => {
-      await Promise.all([loadStaff(orgId), loadReviews(orgId)]);
+      await Promise.all([loadStaff(orgId), loadReviews(orgId, locationId ?? null)]);
     })();
-  }, [orgId]);
+  }, [activeLocationLoading, orgId, locationId]);
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return reviews;
+
     return reviews.filter((r) => {
       const staffText = formatWho(r.staff).toLowerCase();
       const mgrText = formatWho(r.manager).toLowerCase();
       const notesText = (r.notes ?? "").toLowerCase();
       const dateText = (r.reviewed_on ?? "").toLowerCase();
+
       return (
         staffText.includes(term) ||
         mgrText.includes(term) ||
@@ -183,7 +182,7 @@ export default function ManagerQcReviews() {
         notes: "",
       }));
 
-      await loadReviews(orgId);
+      await loadReviews(orgId, locationId ?? null);
     } catch (e: any) {
       alert(e?.message ?? "Failed to save QC review.");
     } finally {
@@ -196,9 +195,15 @@ export default function ManagerQcReviews() {
     if (!orgId) return;
 
     try {
-      const { error } = await supabase.from("staff_qc_reviews").delete().eq("id", id).eq("org_id", orgId);
+      const { error } = await supabase
+        .from("staff_qc_reviews")
+        .delete()
+        .eq("id", id)
+        .eq("org_id", orgId);
+
       if (error) throw error;
-      await loadReviews(orgId);
+
+      await loadReviews(orgId, locationId ?? null);
     } catch (e: any) {
       alert(e?.message ?? "Failed to delete QC review.");
     }
@@ -206,7 +211,6 @@ export default function ManagerQcReviews() {
 
   return (
     <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
-      {/* Header */}
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-semibold text-slate-900">Manager QC</h2>
 
@@ -218,15 +222,15 @@ export default function ManagerQcReviews() {
             onChange={(e) => setQ(e.target.value)}
           />
           <button
-            onClick={() => orgId && loadReviews(orgId)}
+            onClick={() => orgId && loadReviews(orgId, locationId ?? null)}
             className="whitespace-nowrap rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+            disabled={!orgId}
           >
             Refresh
           </button>
         </div>
       </div>
 
-      {/* Add form */}
       <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
         <div className="mb-2 text-sm font-semibold text-slate-900">Add QC review</div>
 
@@ -242,7 +246,8 @@ export default function ManagerQcReviews() {
               <option value="">{loadingStaff ? "Loading…" : "Select staff…"}</option>
               {staff.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {(s.initials ?? "—").toString().toUpperCase()} {s.name ? `· ${s.name}` : ""}
+                  {(s.initials ?? "—").toString().toUpperCase()}
+                  {s.name ? ` · ${s.name}` : ""}
                 </option>
               ))}
             </select>
@@ -259,7 +264,8 @@ export default function ManagerQcReviews() {
               <option value="">{loadingStaff ? "Loading…" : "Select manager…"}</option>
               {staff.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {(s.initials ?? "—").toString().toUpperCase()} {s.name ? `· ${s.name}` : ""}
+                  {(s.initials ?? "—").toString().toUpperCase()}
+                  {s.name ? ` · ${s.name}` : ""}
                 </option>
               ))}
             </select>
@@ -307,10 +313,10 @@ export default function ManagerQcReviews() {
         <div className="mt-3 flex justify-end">
           <button
             onClick={() => void addReview()}
-            disabled={saving}
+            disabled={saving || !orgId}
             className={cls(
               "rounded-xl px-4 py-2 text-sm font-medium text-white",
-              saving ? "bg-slate-400" : "bg-emerald-600 hover:bg-emerald-700"
+              saving || !orgId ? "bg-slate-400" : "bg-emerald-600 hover:bg-emerald-700"
             )}
           >
             {saving ? "Saving…" : "Add review"}
@@ -318,7 +324,6 @@ export default function ManagerQcReviews() {
         </div>
       </div>
 
-      {/* Table */}
       <div className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm">
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
@@ -334,7 +339,7 @@ export default function ManagerQcReviews() {
             </thead>
 
             <tbody>
-              {loadingReviews ? (
+              {activeLocationLoading || loadingReviews ? (
                 <tr>
                   <td colSpan={6} className="py-6 text-center text-sm text-slate-500">
                     Loading…
@@ -384,8 +389,7 @@ export default function ManagerQcReviews() {
       </div>
 
       <div className="text-[11px] text-slate-500">
-        Uses <code className="rounded bg-slate-100 px-1">staff_qc_reviews</code> (org scoped). Location is auto-filled if a
-        location is active.
+        Uses <code className="rounded bg-slate-100 px-1">staff_qc_reviews</code> and reloads when the active location changes.
       </div>
     </div>
   );

@@ -5,8 +5,6 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
 import ActionMenu from "@/components/ActionMenu";
 import { inviteTeamMemberServer } from "@/app/actions/team";
 import {
@@ -15,6 +13,7 @@ import {
   type TrainingStatus,
   type LicenceState,
 } from "@/app/actions/training";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 
 /* -------------------- Types -------------------- */
 type TrainingArea =
@@ -358,12 +357,14 @@ function isTrainingStillActive(c: TrainingCert) {
 export default function TeamManager() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const {
+    orgId,
+    locationId,
+    loading: activeLocationLoading,
+  } = useActiveLocation();
 
   const [rows, setRows] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const [orgId, setOrgId] = useState<string | null>(null);
-  const [locationId, setLocationId] = useState<string | null>(null);
 
   const [isOwner, setIsOwner] = useState(false);
   const [q, setQ] = useState("");
@@ -456,7 +457,6 @@ export default function TeamManager() {
     if (!locationId) return alert("Pick a location first.");
     if (!isOwner) return alert("Only owner/admin can set PINs.");
     if (!editing.id) return;
-    if (!editing.id) return;
 
     const pin = onlyDigits(pinInput);
     if (pin.length < 4) {
@@ -542,15 +542,19 @@ export default function TeamManager() {
   }
 
   async function load() {
+    if (!orgId) {
+      setRows([]);
+      setIsOwner(false);
+      setMemberTrainingSummary({});
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setIsOwner(false);
 
     try {
-      const [oid, lid, userRes] = await Promise.all([
-        getActiveOrgIdClient(),
-        getActiveLocationIdClient(),
-        supabase.auth.getUser(),
-      ]);
+      const userRes = await supabase.auth.getUser();
 
       const u = userRes.data.user ?? null;
       const userEmail = u?.email?.toLowerCase() ?? null;
@@ -561,24 +565,15 @@ export default function TeamManager() {
       setAuthUserId(userId);
       setAuthEmail(userEmail);
 
-      setOrgId(oid ?? null);
-      setLocationId(lid ?? null);
-
-      if (!oid) {
-        setRows([]);
-        setLoading(false);
-        return;
-      }
-
       let qMembers = supabase
         .from("team_members")
         .select(
           "id, org_id, location_id, user_id, login_enabled, initials, name, email, role, phone, active, notes, training_areas"
         )
-        .eq("org_id", oid)
+        .eq("org_id", orgId)
         .order("name", { ascending: true });
 
-      if (lid) qMembers = qMembers.eq("location_id", lid);
+      if (locationId) qMembers = qMembers.eq("location_id", locationId);
 
       const { data, error } = await qMembers;
       if (error) throw error;
@@ -600,11 +595,11 @@ export default function TeamManager() {
           training_areas: normalizeAreas(m.training_areas),
         })) ?? [];
 
-      if (members.length === 0 && oid && userEmail) {
+      if (members.length === 0 && userEmail) {
         const derivedInitials = requireInitialsOrDerive({
           id: "",
-          org_id: oid,
-          location_id: lid ?? null,
+          org_id: orgId,
+          location_id: locationId ?? null,
           user_id: userId,
           login_enabled: true,
           initials: null,
@@ -620,8 +615,8 @@ export default function TeamManager() {
         const { data: inserted, error: insErr } = await supabase
           .from("team_members")
           .insert({
-            org_id: oid,
-            location_id: lid ?? null,
+            org_id: orgId,
+            location_id: locationId ?? null,
             initials: derivedInitials,
             name: userName,
             email: userEmail,
@@ -663,12 +658,12 @@ export default function TeamManager() {
         }
       }
 
-      if (oid && lid && userEmail && userId) {
+      if (locationId && userEmail && userId) {
         const { data: myRow } = await supabase
           .from("team_members")
           .select("id,user_id,login_enabled")
-          .eq("org_id", oid)
-          .eq("location_id", lid)
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
           .ilike("email", userEmail)
           .maybeSingle();
 
@@ -677,7 +672,7 @@ export default function TeamManager() {
             .from("team_members")
             .update({ user_id: userId, login_enabled: true })
             .eq("id", myRow.id)
-            .eq("org_id", oid);
+            .eq("org_id", orgId);
         }
       }
 
@@ -689,13 +684,13 @@ export default function TeamManager() {
       }
 
       const memberIds = members.map((m) => m.id);
-      const pinSetIds = await loadPinStatusForMembers(oid, memberIds);
+      const pinSetIds = await loadPinStatusForMembers(orgId, memberIds);
       members = members.map((m) => ({ ...m, pin_set: pinSetIds.has(m.id) }));
 
       setRows(members);
       setIsOwner(ownerFlag);
 
-      await loadTrainingSummaryForMembers(oid, memberIds);
+      await loadTrainingSummaryForMembers(orgId, memberIds);
     } catch (e: any) {
       alert(e?.message ?? "Failed to load team.");
       setRows([]);
@@ -706,8 +701,9 @@ export default function TeamManager() {
   }
 
   useEffect(() => {
+    if (activeLocationLoading) return;
     void load();
-  }, []);
+  }, [activeLocationLoading, orgId, locationId]);
 
   useEffect(() => {
     const staffParam = searchParams.get("staff");
@@ -1349,7 +1345,7 @@ export default function TeamManager() {
         </div>
       </div>
 
-      {loading ? (
+      {activeLocationLoading || loading ? (
         <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
           Loading…
         </div>

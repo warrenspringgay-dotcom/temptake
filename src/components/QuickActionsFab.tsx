@@ -1,4 +1,4 @@
-// src/components/TempFab.tsx
+// src/components/QuickActionsFab.tsx
 "use client";
 import posthog from "posthog-js";
 
@@ -16,6 +16,7 @@ import { useToast } from "@/components/ui/use-toast";
 import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 import IncidentModal from "@/components/IncidentModal";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 
 import {
   Thermometer,
@@ -48,11 +49,17 @@ const PRESET_AREAS = [
 
 type FormState = {
   date: string;
-  staff_initials: string; // now derived from workstation operator
+  staff_initials: string;
   location: string;
   item: string;
   target_key: string;
   temp_c: string;
+};
+
+type LocationDayStatus = {
+  isOpen: boolean;
+  source: "default" | "weekly_schedule" | "closure_override";
+  note: string | null;
 };
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
@@ -62,7 +69,7 @@ const cls = (...parts: Array<string | false | null | undefined>) =>
 const isoToday = () => new Date().toISOString().slice(0, 10);
 const getDow1to7 = (ymd: string) => {
   const date = new Date(ymd);
-  return ((date.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
+  return ((date.getDay() + 6) % 7) + 1;
 };
 const getDom = (ymd: string) => new Date(ymd).getDate();
 
@@ -93,6 +100,87 @@ function inferStatus(
   if (minC != null && temp < minC) return "fail";
   if (maxC != null && temp > maxC) return "fail";
   return "pass";
+}
+
+/* ---------- location open/closed helpers ---------- */
+
+async function getLocationDayStatus(
+  orgId: string,
+  locationId: string | null,
+  dateISO: string
+): Promise<LocationDayStatus> {
+  if (!locationId) {
+    return {
+      isOpen: true,
+      source: "default",
+      note: null,
+    };
+  }
+
+  try {
+    const { data: closure, error: closureErr } = await supabase
+      .from("location_closures")
+      .select("id, reason")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .eq("date", dateISO)
+      .maybeSingle();
+
+    if (!closureErr && closure) {
+      return {
+        isOpen: false,
+        source: "closure_override",
+        note: closure.reason ? String(closure.reason) : "Marked closed for today.",
+      };
+    }
+  } catch {
+    // ignore and fall through
+  }
+
+  const weekday0to6 = new Date(dateISO).getDay();
+  const weekday1to7 = getDow1to7(dateISO);
+
+  try {
+    const { data: scheduleRows, error: scheduleErr } = await supabase
+      .from("location_opening_days")
+      .select("weekday, is_open, opens_at, closes_at")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .in("weekday", [weekday1to7, weekday0to6]);
+
+    if (!scheduleErr && Array.isArray(scheduleRows) && scheduleRows.length > 0) {
+      const exact1to7 = scheduleRows.find(
+        (r: any) => Number(r.weekday) === weekday1to7
+      );
+      const exact0to6 = scheduleRows.find(
+        (r: any) => Number(r.weekday) === weekday0to6
+      );
+      const row = exact1to7 ?? exact0to6 ?? scheduleRows[0];
+
+      const isOpen = row?.is_open !== false;
+
+      let note: string | null = null;
+      if (!isOpen) {
+        note = "Closed by weekly opening days.";
+      } else if (row?.opens_at && row?.closes_at) {
+        note = `${String(row.opens_at).slice(0, 5)}–${String(row.closes_at).slice(0, 5)}`;
+      }
+
+      return {
+        isOpen,
+        source: "weekly_schedule",
+        note,
+      };
+    }
+  } catch {
+    // ignore and fall through
+  }
+
+  return {
+    isOpen: true,
+    source: "default",
+    note: null,
+  };
 }
 
 /* ---------- temp helpers ---------- */
@@ -126,19 +214,16 @@ function normalizeTempStringForPreset(
 
   if (!preset || !isFrozenPreset(preset)) return value;
 
-  // Do not fight the user mid-typing
   if (value === "-" || value === "." || value === "-." || value === "+") {
     return value;
   }
 
   const compact = value.replace(/\s+/g, "");
 
-  // 18 / +18 / 18.2 => -18 / -18 / -18.2
   if (/^[+]?\d*\.?\d+$/.test(compact)) {
     return `-${compact.replace(/^\+/, "")}`;
   }
 
-  // already negative numeric
   if (/^-\d*\.?\d+$/.test(compact)) {
     return compact;
   }
@@ -161,7 +246,7 @@ function tempPlaceholderForPreset(preset?: TargetPreset) {
   return isFrozenPreset(preset) ? "e.g. 18 = -18°C" : "e.g. 3.4";
 }
 
-/** TS-safe sort comparator (noImplicitAny) */
+/** TS-safe sort comparator */
 type HasPosition = { position: number };
 const byPosition = (a: HasPosition, b: HasPosition) => a.position - b.position;
 
@@ -182,7 +267,7 @@ type DailySignoffRow = {
   id: string;
   org_id: string;
   location_id: string;
-  signoff_on: string; // YYYY-MM-DD
+  signoff_on: string;
   signed_by: string | null;
   notes: string | null;
   created_at: string | null;
@@ -232,11 +317,9 @@ function SignoffModal({
           <div className="text-xl font-extrabold leading-tight">{dateLabel}</div>
         </div>
 
-        <div className="p-5 space-y-4">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 space-y-1">
-            <div className="font-semibold text-slate-900">
-              Daily diary sign-off
-            </div>
+        <div className="space-y-4 p-5">
+          <div className="space-y-1 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+            <div className="font-semibold text-slate-900">Daily diary sign-off</div>
             <div>
               By signing, I confirm today’s food safety checks were completed and
               I have reviewed the records for this site (temps, cleaning,
@@ -278,7 +361,7 @@ function SignoffModal({
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="mt-2 w-full min-h-[120px] rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+              className="mt-2 min-h-[120px] w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
               placeholder="Issues, corrective actions, follow-ups..."
               maxLength={1500}
             />
@@ -325,7 +408,6 @@ type CorrectiveDraft = {
   tempLogId: string | null;
   org_id: string | null;
   location_id: string | null;
-
   staff_initials: string;
   area: string;
   item: string;
@@ -388,8 +470,8 @@ function CorrectiveModal({
           </div>
         </div>
 
-        <div className="p-5 space-y-4">
-          <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-800 space-y-1">
+        <div className="space-y-4 p-5">
+          <div className="space-y-1 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
             <div className="font-semibold text-red-900">Details</div>
             <div>
               <span className="font-semibold">Area:</span> {draft.area || "—"}
@@ -417,7 +499,7 @@ function CorrectiveModal({
             <textarea
               value={action}
               onChange={(e) => setAction(e.target.value)}
-              className="mt-2 w-full min-h-[120px] rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+              className="mt-2 min-h-[120px] w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
               placeholder="e.g. moved food to working fridge, adjusted thermostat, discarded batch, called engineer..."
               maxLength={1500}
             />
@@ -590,7 +672,7 @@ function FeedbackModal({
           </div>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className="space-y-4 p-5">
           <div>
             <div className="text-sm font-semibold text-slate-900">Type</div>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -625,7 +707,7 @@ function FeedbackModal({
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              className="mt-2 w-full min-h-[120px] rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+              className="mt-2 min-h-[120px] w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
               placeholder="What were you trying to do?"
               maxLength={1500}
             />
@@ -677,6 +759,11 @@ function FeedbackModal({
 export default function TempFab() {
   const { addToast } = useToast();
   const router = useRouter();
+  const {
+    orgId: hookOrgId,
+    locationId: hookLocationId,
+    loading: activeLocationLoading,
+  } = useActiveLocation();
 
   // ✅ Workstation operator (PIN user)
   const ws = useWorkstation();
@@ -704,26 +791,6 @@ export default function TempFab() {
     temp_c: "",
   });
 
-  // Keep form.staff_initials synced to operator
-  useEffect(() => {
-    setForm((f) => ({ ...f, staff_initials: operatorInitials }));
-  }, [operatorInitials]);
-
-  const selectedPreset = useMemo(
-    () =>
-      (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[form.target_key],
-    [form.target_key]
-  );
-
-  const canSave =
-    !!form.date &&
-    !!form.location &&
-    !!form.item &&
-    !!form.target_key &&
-    form.temp_c.trim().length > 0 &&
-    !!operatorInitials &&
-    !locked;
-
   // Routine picker / runner
   const [showPicker, setShowPicker] = useState(false);
   const [pickerLoading, setPickerLoading] = useState(false);
@@ -731,15 +798,21 @@ export default function TempFab() {
   const [pickerList, setPickerList] = useState<RoutineRow[]>([]);
   const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
 
-  // local cache for active ids (so realtime can subscribe once)
+  // local cache for active ids
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [activeLocationId, setActiveLocationId] = useState<string | null>(null);
+
+  const [todayStatus, setTodayStatus] = useState<LocationDayStatus>({
+    isOpen: true,
+    source: "default",
+    note: null,
+  });
 
   // Prevent overlapping cleaning refresh calls
   const cleaningRefreshInFlight = useRef(false);
   const cleaningRefreshQueued = useRef(false);
 
-  // Sign-off state (SINGLE source of truth)
+  // Sign-off state
   const [signoffOpen, setSignoffOpen] = useState(false);
   const [signoffSaving, setSignoffSaving] = useState(false);
   const [signoffInitials, setSignoffInitials] = useState("");
@@ -778,6 +851,29 @@ export default function TempFab() {
   const [incidentOpen, setIncidentOpen] = useState(false);
   const [incidentArea, setIncidentArea] = useState<string | null>(null);
 
+  // Keep form.staff_initials synced to operator
+  useEffect(() => {
+    setForm((f) => ({ ...f, staff_initials: operatorInitials }));
+  }, [operatorInitials]);
+
+  const selectedPreset = useMemo(
+    () =>
+      (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[form.target_key],
+    [form.target_key]
+  );
+
+  const dayClosed = !todayStatus.isOpen;
+
+  const canSave =
+    !!form.date &&
+    !!form.location &&
+    !!form.item &&
+    !!form.target_key &&
+    form.temp_c.trim().length > 0 &&
+    !!operatorInitials &&
+    !locked &&
+    !dayClosed;
+
   function openWorkstationLock() {
     ws.openLockModal();
   }
@@ -798,6 +894,90 @@ export default function TempFab() {
       return false;
     }
     return true;
+  }
+
+  function requireOpenDay(actionLabel: string): boolean {
+    if (!dayClosed) return true;
+
+    addToast({
+      title: "Location marked closed today",
+      message:
+        todayStatus.note ??
+        `${actionLabel} is blocked because this site is marked closed today.`,
+      type: "error",
+    });
+
+    return false;
+  }
+
+  async function refreshTodayStatus(force = false) {
+    try {
+      let orgId = activeOrgId;
+      let locationId = activeLocationId;
+
+      if (force || !orgId) {
+        if (hookOrgId !== undefined) {
+          orgId = hookOrgId ?? null;
+          locationId = hookLocationId ?? null;
+        } else {
+          const ctx = await getActiveContext();
+          orgId = ctx.orgId;
+          locationId = ctx.locationId;
+        }
+      }
+
+      if (!orgId) {
+        setTodayStatus({ isOpen: true, source: "default", note: null });
+        return;
+      }
+
+      if (orgId !== activeOrgId) setActiveOrgId(orgId);
+      if ((locationId ?? null) !== (activeLocationId ?? null)) {
+        setActiveLocationId(locationId ?? null);
+      }
+
+      const status = await getLocationDayStatus(orgId, locationId, isoToday());
+      setTodayStatus(status);
+    } catch {
+      setTodayStatus({ isOpen: true, source: "default", note: null });
+    }
+  }
+
+  async function refreshAreaSuggestions(
+    orgId: string | null,
+    locationId: string | null
+  ) {
+    if (!orgId) {
+      setLocations(PRESET_AREAS);
+      return;
+    }
+
+    try {
+      let q = supabase
+        .from("food_temp_logs")
+        .select("area")
+        .eq("org_id", orgId)
+        .order("at", { ascending: false })
+        .limit(200);
+
+      if (locationId) q = q.eq("location_id", locationId);
+
+      type LogRow = { area: string | null };
+      const { data: logsData } = await q;
+
+      const fromAreas: string[] = (logsData ?? [])
+        .map((r: LogRow) => (r.area ?? "").toString().trim())
+        .filter((s: string) => s.length > 0);
+
+      const uniqueDynamic = Array.from(new Set(fromAreas));
+      const finalAreas: string[] = Array.from(
+        new Set([...PRESET_AREAS, ...uniqueDynamic])
+      );
+
+      setLocations(finalAreas);
+    } catch {
+      setLocations(PRESET_AREAS);
+    }
   }
 
   function closeCorrective() {
@@ -869,7 +1049,7 @@ export default function TempFab() {
     }
   }
 
-  // Voice hook (do NOT override operator initials)
+  // Voice hook
   const { supported: voiceSupported, listening, start, stop } = useVoiceTempEntry(
     {
       lang: "en-GB",
@@ -915,7 +1095,14 @@ export default function TempFab() {
 
   async function refreshEntriesToday() {
     try {
-      const { orgId, locationId } = await getActiveContext();
+      let orgId = hookOrgId ?? activeOrgId;
+      let locationId = hookLocationId ?? activeLocationId;
+
+      if (!orgId) {
+        const ctx = await getActiveContext();
+        orgId = ctx.orgId;
+        locationId = ctx.locationId;
+      }
 
       if (!orgId) {
         setEntriesToday(0);
@@ -986,13 +1173,18 @@ export default function TempFab() {
     cleaningRefreshInFlight.current = true;
 
     try {
-      let orgId = activeOrgId;
-      let locationId = activeLocationId;
+      let orgId = hookOrgId ?? activeOrgId;
+      let locationId = hookLocationId ?? activeLocationId;
 
       if (force || !orgId || !locationId) {
-        const ctx = await getActiveContext();
-        orgId = ctx.orgId;
-        locationId = ctx.locationId;
+        if (hookOrgId !== undefined) {
+          orgId = hookOrgId ?? null;
+          locationId = hookLocationId ?? null;
+        } else {
+          const ctx = await getActiveContext();
+          orgId = ctx.orgId;
+          locationId = ctx.locationId;
+        }
       }
 
       if (!orgId || !locationId) {
@@ -1001,7 +1193,9 @@ export default function TempFab() {
       }
 
       if (orgId !== activeOrgId) setActiveOrgId(orgId);
-      if (locationId !== activeLocationId) setActiveLocationId(locationId);
+      if ((locationId ?? null) !== (activeLocationId ?? null)) {
+        setActiveLocationId(locationId);
+      }
 
       const todayISO = isoToday();
 
@@ -1223,53 +1417,26 @@ export default function TempFab() {
   }, []);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const { orgId, locationId } = await getActiveContext();
-        setActiveOrgId(orgId ?? null);
-        setActiveLocationId(locationId ?? null);
+    if (activeLocationLoading) return;
 
-        if (orgId) {
-          let q = supabase
-            .from("food_temp_logs")
-            .select("area")
-            .eq("org_id", orgId)
-            .order("at", { ascending: false })
-            .limit(200);
+    const nextOrgId = hookOrgId ?? null;
+    const nextLocationId = hookLocationId ?? null;
 
-          if (locationId) q = q.eq("location_id", locationId);
+    setActiveOrgId(nextOrgId);
+    setActiveLocationId(nextLocationId);
 
-          type LogRow = { area: string | null };
+    void refreshTodayStatus(true);
+    void refreshCleaningOpen(true);
+    void refreshEntriesToday();
+    void refreshAreaSuggestions(nextOrgId, nextLocationId);
 
-          const { data: logsData } = await q;
-
-          const fromAreas: string[] = (logsData ?? [])
-            .map((r: LogRow) => (r.area ?? "").toString().trim())
-            .filter((s: string) => s.length > 0);
-
-          const uniqueDynamic = Array.from(new Set(fromAreas));
-
-          const finalAreas: string[] = Array.from(
-            new Set([...PRESET_AREAS, ...uniqueDynamic])
-          );
-
-          setLocations(finalAreas);
-
-          setForm((f) => ({
-            ...f,
-            location: f.location || DEFAULT_AREA,
-          }));
-        }
-      } catch {
-        setLocations(PRESET_AREAS);
-        setForm((f) => ({
-          ...f,
-          location: f.location || DEFAULT_AREA,
-        }));
-      }
-    })();
+    setForm((f) => ({
+      ...f,
+      location: DEFAULT_AREA,
+    }));
+    setCustomLocationEnabled(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeLocationLoading, hookOrgId, hookLocationId]);
 
   useEffect(() => {
     if (!open) return;
@@ -1280,12 +1447,6 @@ export default function TempFab() {
     }));
     setCustomLocationEnabled(false);
   }, [open]);
-
-  useEffect(() => {
-    void refreshEntriesToday();
-    void refreshCleaningOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     const onTempsChanged = () => {
@@ -1299,16 +1460,25 @@ export default function TempFab() {
   useEffect(() => {
     const id = setInterval(() => {
       void refreshCleaningOpen(false);
+      void refreshTodayStatus(false);
     }, 6000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeOrgId, activeLocationId]);
+  }, [activeOrgId, activeLocationId, hookOrgId, hookLocationId]);
 
   useEffect(() => {
     const onVis = () => {
-      if (document.visibilityState === "visible") void refreshCleaningOpen(true);
+      if (document.visibilityState === "visible") {
+        void refreshCleaningOpen(true);
+        void refreshTodayStatus(true);
+        void refreshEntriesToday();
+      }
     };
-    const onFocus = () => void refreshCleaningOpen(true);
+    const onFocus = () => {
+      void refreshCleaningOpen(true);
+      void refreshTodayStatus(true);
+      void refreshEntriesToday();
+    };
 
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("focus", onFocus);
@@ -1330,7 +1500,24 @@ export default function TempFab() {
   }, []);
 
   useEffect(() => {
-    if (!activeOrgId || !activeLocationId) return;
+    const onLocationChanged = () => {
+      void refreshTodayStatus(true);
+      void refreshCleaningOpen(true);
+      void refreshEntriesToday();
+      void refreshAreaSuggestions(hookOrgId ?? activeOrgId, hookLocationId ?? activeLocationId);
+    };
+    window.addEventListener("tt-location-changed" as any, onLocationChanged);
+    return () =>
+      window.removeEventListener("tt-location-changed" as any, onLocationChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hookOrgId, hookLocationId, activeOrgId, activeLocationId]);
+
+  useEffect(() => {
+    const subOrgId = hookOrgId ?? activeOrgId;
+    const subLocationId = hookLocationId ?? activeLocationId;
+
+    if (!subOrgId || !subLocationId) return;
+
     const channel = supabase
       .channel("food_temp_logs_changes")
       .on(
@@ -1339,17 +1526,18 @@ export default function TempFab() {
           event: "*",
           schema: "public",
           table: "food_temp_logs",
-          filter: `org_id=eq.${activeOrgId}`,
+          filter: `org_id=eq.${subOrgId}`,
         },
         (payload: any) => {
           const loc =
             (payload.new as any)?.location_id ??
             (payload.old as any)?.location_id ??
             null;
-          if (loc && String(loc) !== String(activeLocationId)) return;
+          if (loc && String(loc) !== String(subLocationId)) return;
 
           void refreshCleaningOpen(true);
           void refreshEntriesToday();
+          void refreshAreaSuggestions(subOrgId, subLocationId);
         }
       )
       .subscribe();
@@ -1358,24 +1546,37 @@ export default function TempFab() {
       void supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeOrgId, activeLocationId]);
+  }, [hookOrgId, hookLocationId, activeOrgId, activeLocationId]);
 
   useEffect(() => {
     const handler = () => {
       setShowMenu(false);
+
+      if (dayClosed) {
+        addToast({
+          title: "Location marked closed today",
+          message:
+            todayStatus.note ??
+            "Quick temp logging is blocked because this site is marked closed today.",
+          type: "error",
+        });
+        return;
+      }
+
       setOpen(true);
       posthog.capture("temp_kpi_card_clicked");
     };
 
     window.addEventListener("tt-open-temp-modal", handler);
     return () => window.removeEventListener("tt-open-temp-modal", handler);
-  }, []);
+  }, [dayClosed, todayStatus.note, addToast]);
 
   /* --------- save entry --------- */
 
   async function handleSave() {
     if (!canSave) return;
     if (!requireOperator()) return;
+    if (!requireOpenDay("Temperature logging")) return;
 
     const preset = (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
       form.target_key
@@ -1400,6 +1601,20 @@ export default function TempFab() {
       addToast({
         title: "No location selected",
         message: "Pick a site/location first.",
+        type: "error",
+      });
+      return;
+    }
+
+    const latestStatus = await getLocationDayStatus(org_id, location_id, isoToday());
+    setTodayStatus(latestStatus);
+
+    if (!latestStatus.isOpen) {
+      addToast({
+        title: "Location marked closed today",
+        message:
+          latestStatus.note ??
+          "Temperature logging is blocked because this site is marked closed today.",
         type: "error",
       });
       return;
@@ -1467,6 +1682,7 @@ export default function TempFab() {
     }));
     setCustomLocationEnabled(false);
     await refreshEntriesToday();
+    await refreshAreaSuggestions(org_id, location_id);
 
     if (status === "fail" && inserted?.id) {
       setCorrective({
@@ -1495,6 +1711,24 @@ export default function TempFab() {
 
   async function openRoutinePicker() {
     if (!requireOperator()) return;
+    if (!requireOpenDay("Routine logging")) return;
+
+    const { orgId, locationId } = await getActiveContext();
+    if (orgId) {
+      const latestStatus = await getLocationDayStatus(orgId, locationId, isoToday());
+      setTodayStatus(latestStatus);
+
+      if (!latestStatus.isOpen) {
+        addToast({
+          title: "Location marked closed today",
+          message:
+            latestStatus.note ??
+            "Routine logging is blocked because this site is marked closed today.",
+          type: "error",
+        });
+        return;
+      }
+    }
 
     setShowPicker(true);
     setPickerLoading(true);
@@ -1605,7 +1839,6 @@ export default function TempFab() {
 
   return (
     <>
-      {/* FAB + orbs wrapper */}
       <div className={cls(wrapperClass, "fixed bottom-6 right-4 z-40")}>
         <button
           type="button"
@@ -1613,7 +1846,7 @@ export default function TempFab() {
             setShowMenu((v) => !v);
             posthog.capture("fab_opened");
           }}
-          className="fab relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 text-3xl font-bold leading-none text-white shadow-lg shadow-emerald-500/40 hover:brightness-110 active:scale-[0.98] transition"
+          className="fab relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 text-3xl font-bold leading-none text-white shadow-lg shadow-emerald-500/40 transition hover:brightness-110 active:scale-[0.98]"
         >
           <span>+</span>
         </button>
@@ -1622,11 +1855,22 @@ export default function TempFab() {
           <button
             type="button"
             onClick={() => {
+              if (dayClosed) {
+                addToast({
+                  title: "Location marked closed today",
+                  message:
+                    todayStatus.note ??
+                    "Quick temp logging is blocked because this site is marked closed today.",
+                  type: "error",
+                });
+                return;
+              }
+
               setShowMenu(false);
               setOpen(true);
               posthog.capture("temp_warning_orb_clicked");
             }}
-            className="absolute -top-2 -right-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white shadow-md shadow-red-500/60 active:scale-90 transition"
+            className="absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white shadow-md shadow-red-500/60 transition active:scale-90"
             title="No temps logged today"
           >
             <Thermometer className="h-4 w-4" />
@@ -1640,7 +1884,7 @@ export default function TempFab() {
               router.push("/cleaning-rota");
               posthog.capture("cleaning_warning_orb_clicked");
             }}
-            className="absolute -top-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white shadow-md shadow-sky-500/60 active:scale-90 transition"
+            className="absolute -left-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white shadow-md shadow-sky-500/60 transition active:scale-90"
             title={`${openCleaning ?? 0} cleaning tasks outstanding`}
           >
             <Brush className="h-4 w-4" />
@@ -1648,7 +1892,6 @@ export default function TempFab() {
         )}
       </div>
 
-      {/* Quick choice menu */}
       {showMenu && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-end"
@@ -1671,6 +1914,13 @@ export default function TempFab() {
                 <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
                   Operator:{" "}
                   <span className="font-semibold">{operatorInitials}</span>
+                </div>
+              )}
+
+              {dayClosed && (
+                <div className="mb-3 rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs text-slate-700">
+                  Location marked closed today
+                  {todayStatus.note ? ` · ${todayStatus.note}` : ""}
                 </div>
               )}
 
@@ -1712,10 +1962,17 @@ export default function TempFab() {
                   onClick={() => {
                     setShowMenu(false);
                     if (!requireOperator()) return;
+                    if (!requireOpenDay("Quick temp logging")) return;
                     setOpen(true);
                     posthog.capture("fab_choose_quick_temp");
                   }}
-                  className="w-full rounded-xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/40 hover:brightness-105"
+                  disabled={dayClosed}
+                  className={cls(
+                    "w-full rounded-xl px-3 py-2.5 text-sm font-semibold text-white shadow-sm",
+                    dayClosed
+                      ? "cursor-not-allowed bg-slate-300"
+                      : "bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 shadow-emerald-500/40 hover:brightness-105"
+                  )}
                 >
                   Quick temp log
                 </button>
@@ -1725,10 +1982,17 @@ export default function TempFab() {
                   onClick={async () => {
                     setShowMenu(false);
                     if (!requireOperator()) return;
+                    if (!requireOpenDay("Routine logging")) return;
                     await openRoutinePicker();
                     posthog.capture("fab_choose_routine");
                   }}
-                  className="w-full rounded-xl bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-black"
+                  disabled={dayClosed}
+                  className={cls(
+                    "w-full rounded-xl px-3 py-2.5 text-sm font-semibold text-white shadow-sm",
+                    dayClosed
+                      ? "cursor-not-allowed bg-slate-300"
+                      : "bg-slate-900 hover:bg-black"
+                  )}
                 >
                   <span className="inline-flex items-center justify-center gap-2">
                     <ClipboardList className="h-4 w-4" />
@@ -1816,15 +2080,15 @@ export default function TempFab() {
       <FeedbackModal
         open={feedbackOpen}
         onClose={() => setFeedbackOpen(false)}
-        locationId={activeLocationId}
+        locationId={hookLocationId ?? activeLocationId}
         area={form.location ? String(form.location) : null}
       />
 
       <IncidentModal
         open={incidentOpen}
         onClose={() => setIncidentOpen(false)}
-        orgId={activeOrgId ?? ""}
-        locationId={activeLocationId ?? ""}
+        orgId={hookOrgId ?? activeOrgId ?? ""}
+        locationId={hookLocationId ?? activeLocationId ?? ""}
         defaultDate={isoToday()}
         defaultInitials={operatorInitials || ""}
         defaultArea={incidentArea || form.location || null}
@@ -2002,6 +2266,13 @@ export default function TempFab() {
                 </div>
               )}
 
+              {dayClosed && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs text-slate-700">
+                  Location marked closed today
+                  {todayStatus.note ? ` · ${todayStatus.note}` : ""}
+                </div>
+              )}
+
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="block text-xs font-medium text-slate-700">
@@ -2158,7 +2429,7 @@ export default function TempFab() {
                     : "cursor-not-allowed bg-slate-300"
                 )}
               >
-                Save temperature
+                {dayClosed ? "Location closed today" : "Save temperature"}
               </button>
             </div>
           </div>
@@ -2175,6 +2446,7 @@ export default function TempFab() {
           setRunRoutine(null);
           await refreshEntriesToday();
           await refreshCleaningOpen(true);
+          await refreshAreaSuggestions(hookOrgId ?? activeOrgId, hookLocationId ?? activeLocationId);
           try {
             window.dispatchEvent(new Event("tt-temps-changed"));
           } catch {}

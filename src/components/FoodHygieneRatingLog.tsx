@@ -4,8 +4,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 
 type RatingRow = {
   id: string;
@@ -102,7 +101,7 @@ function RatingStars({ value }: { value: number | null }) {
       : Math.max(0, Math.min(MAX_FHR_RATING, Math.round(value)));
 
   return (
-    <div className="flex items-center gap-1 text-amber-500 text-base leading-none">
+    <div className="flex items-center gap-1 text-base leading-none text-amber-500">
       {Array.from({ length: MAX_FHR_RATING }).map((_, i) => (
         <span key={i}>{v != null && i < v ? "★" : "☆"}</span>
       ))}
@@ -120,6 +119,8 @@ function emptyFinding(): FindingDraft {
 }
 
 export default function FoodHygieneRatingLog() {
+  const { orgId, locationId, loading: activeLocationLoading } = useActiveLocation();
+
   const [rows, setRows] = useState<RatingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -137,26 +138,20 @@ export default function FoodHygieneRatingLog() {
   const [showFindings, setShowFindings] = useState(true);
   const [findings, setFindings] = useState<FindingDraft[]>([emptyFinding()]);
 
-  async function loadRows() {
+  async function loadRows(currentOrgId: string, currentLocationId: string | null) {
     setLoading(true);
     setErr(null);
 
     try {
-      const orgId = await getActiveOrgIdClient();
-      if (!orgId) {
-        setRows([]);
-        return;
-      }
-
-      const locationId = await getActiveLocationIdClient();
-
       let query = supabase
         .from("food_hygiene_ratings")
         .select("*")
-        .eq("org_id", orgId)
+        .eq("org_id", currentOrgId)
         .order("visit_date", { ascending: false });
 
-      if (locationId) query = query.eq("location_id", locationId);
+      if (currentLocationId) {
+        query = query.eq("location_id", currentLocationId);
+      }
 
       const { data, error } = await query;
       if (error) throw error;
@@ -185,8 +180,17 @@ export default function FoodHygieneRatingLog() {
   }
 
   useEffect(() => {
-    void loadRows();
-  }, []);
+    if (activeLocationLoading) return;
+
+    if (!orgId) {
+      setRows([]);
+      setLoading(false);
+      setErr(null);
+      return;
+    }
+
+    void loadRows(orgId, locationId ?? null);
+  }, [activeLocationLoading, orgId, locationId]);
 
   function resetForm() {
     setRating("");
@@ -235,15 +239,15 @@ export default function FoodHygieneRatingLog() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (rating === "" || !visitDate) return;
+    if (!orgId) {
+      setErr("No organisation selected.");
+      return;
+    }
 
     setSaving(true);
     setErr(null);
 
     try {
-      const orgId = await getActiveOrgIdClient();
-      if (!orgId) throw new Error("No organisation selected.");
-      const locationId = await getActiveLocationIdClient();
-
       const ratingPayload = {
         org_id: orgId,
         location_id: locationId ?? null,
@@ -310,7 +314,7 @@ export default function FoodHygieneRatingLog() {
       }
 
       resetForm();
-      await loadRows();
+      await loadRows(orgId, locationId ?? null);
     } catch (e: any) {
       console.error("Food hygiene save error", e);
       setErr(e?.message || "Failed to save food hygiene record.");
@@ -343,23 +347,23 @@ export default function FoodHygieneRatingLog() {
 
   return (
     <div className={PAGE}>
-      <header className="text-center space-y-1">
-        <h1 className="text-xl sm:text-2xl font-semibold text-slate-900">
+      <header className="space-y-1 text-center">
+        <h1 className="text-xl font-semibold text-slate-900 sm:text-2xl">
           Food hygiene rating log
         </h1>
-        <p className="text-xs sm:text-sm text-slate-500">
+        <p className="text-xs text-slate-500 sm:text-sm">
           Track your inspection rating, certificate expiry, and history in one place.
         </p>
       </header>
 
-      <section className={cls(GLASS, "p-4 space-y-3")}>
+      <section className={cls(GLASS, "space-y-3 p-4")}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <motion.div
             initial={{ opacity: 0, y: 10, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ type: "spring", stiffness: 260, damping: 20 }}
             className={cls(
-              "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[110px]",
+              "flex min-h-[110px] flex-col justify-between rounded-2xl border p-3 text-sm shadow-sm",
               latest
                 ? latest.rating >= 4
                   ? "border-emerald-200 bg-emerald-50/90 text-emerald-900"
@@ -369,7 +373,7 @@ export default function FoodHygieneRatingLog() {
                 : "border-slate-200 bg-white/90 text-slate-900"
             )}
           >
-            <div className="flex items-center justify-between text-slate-600 font-bold tracking-[0.18em] uppercase">
+            <div className="flex items-center justify-between font-bold uppercase tracking-[0.18em] text-slate-600">
               <span>Current rating</span>
               <span className="text-base" aria-hidden="true">
                 🍽️
@@ -399,7 +403,7 @@ export default function FoodHygieneRatingLog() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ type: "spring", stiffness: 260, damping: 20, delay: 0.05 }}
             className={cls(
-              "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[110px]",
+              "flex min-h-[110px] flex-col justify-between rounded-2xl border p-3 text-sm shadow-sm",
               latest?.certificate_expires_at
                 ? expiryStatus?.overdue
                   ? "border-red-200 bg-red-50/90 text-red-800"
@@ -409,7 +413,7 @@ export default function FoodHygieneRatingLog() {
                 : "border-slate-200 bg-white/90 text-slate-900"
             )}
           >
-            <div className="flex items-center justify-between text-slate-600 font-bold tracking-[0.18em] uppercase">
+            <div className="flex items-center justify-between font-bold uppercase tracking-[0.18em] text-slate-600">
               <span>Certificate</span>
               <span className="text-base" aria-hidden="true">
                 🧾
@@ -441,11 +445,10 @@ export default function FoodHygieneRatingLog() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ type: "spring", stiffness: 260, damping: 20, delay: 0.1 }}
             className={cls(
-              "rounded-2xl border p-3 shadow-sm text-sm flex flex-col justify-between min-h-[110px]",
-              "border-slate-200 bg-white/90 text-slate-900"
+              "flex min-h-[110px] flex-col justify-between rounded-2xl border border-slate-200 bg-white/90 p-3 text-sm text-slate-900 shadow-sm"
             )}
           >
-            <div className="flex items-center justify-between text-slate-600 font-bold tracking-[0.18em] uppercase">
+            <div className="flex items-center justify-between font-bold uppercase tracking-[0.18em] text-slate-600">
               <span>Entries (year)</span>
               <span className="text-base" aria-hidden="true">
                 📅
@@ -598,7 +601,7 @@ export default function FoodHygieneRatingLog() {
             </div>
 
             {showFindings && (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 space-y-3">
+              <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900">
                     Inspection feedback / findings
@@ -626,7 +629,7 @@ export default function FoodHygieneRatingLog() {
                   {findings.map((finding, index) => (
                     <div
                       key={index}
-                      className="rounded-2xl border border-slate-200 bg-white p-3 space-y-3 shadow-sm"
+                      className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
@@ -728,14 +731,14 @@ export default function FoodHygieneRatingLog() {
               </div>
             )}
 
-            <div className="pt-1 flex items-center gap-2">
+            <div className="flex items-center gap-2 pt-1">
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || !orgId}
                 className={cls(
                   "inline-flex items-center justify-center rounded-2xl px-4 py-2 text-sm font-semibold text-white shadow-sm",
                   "bg-slate-900 hover:bg-black",
-                  saving && "opacity-70 cursor-not-allowed"
+                  (saving || !orgId) && "cursor-not-allowed opacity-70"
                 )}
               >
                 {saving ? "Saving…" : "Save inspection"}
@@ -747,7 +750,7 @@ export default function FoodHygieneRatingLog() {
                 onClick={resetForm}
                 className={cls(
                   "rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50",
-                  saving && "opacity-70 cursor-not-allowed"
+                  saving && "cursor-not-allowed opacity-70"
                 )}
               >
                 Clear
@@ -772,19 +775,19 @@ export default function FoodHygieneRatingLog() {
 
             <button
               type="button"
-              onClick={() => void loadRows()}
-              disabled={loading}
+              onClick={() => orgId && loadRows(orgId, locationId ?? null)}
+              disabled={loading || !orgId}
               className={cls(
                 "rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50",
-                loading && "opacity-60 cursor-not-allowed"
+                (loading || !orgId) && "cursor-not-allowed opacity-60"
               )}
             >
               {loading ? "Loading…" : "Refresh"}
             </button>
           </div>
 
-          <div className="mt-3 max-h-[460px] space-y-2 overflow-y-auto text-sm pr-1">
-            {loading ? (
+          <div className="mt-3 max-h-[460px] space-y-2 overflow-y-auto pr-1 text-sm">
+            {activeLocationLoading || loading ? (
               <div className={cls(SUBTLE, "p-3 text-center text-sm text-slate-500")}>
                 Loading…
               </div>
@@ -797,10 +800,10 @@ export default function FoodHygieneRatingLog() {
                 const isCurrent = idx === 0;
                 const badge =
                   r.rating >= 4
-                    ? "bg-emerald-100 text-emerald-900 border-emerald-200"
+                    ? "border-emerald-200 bg-emerald-100 text-emerald-900"
                     : r.rating >= 3
-                    ? "bg-amber-100 text-amber-900 border-amber-200"
-                    : "bg-red-100 text-red-900 border-red-200";
+                    ? "border-amber-200 bg-amber-100 text-amber-900"
+                    : "border-red-200 bg-red-100 text-red-900";
 
                 return (
                   <motion.div

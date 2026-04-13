@@ -4,11 +4,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
 import { TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 import { useVoiceRoutineEntry } from "@/lib/useVoiceRoutineEntry";
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 
 type Props = {
   open: boolean;
@@ -17,6 +17,12 @@ type Props = {
   defaultInitials: string;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
+};
+
+type LocationDayStatus = {
+  isOpen: boolean;
+  source: "default" | "weekly_schedule" | "closure_override";
+  note: string | null;
 };
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
@@ -33,13 +39,106 @@ function inferStatus(
   return "pass";
 }
 
+/* ---------- date / location helpers ---------- */
+
+function isoToday() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function getDow1to7(ymd: string) {
+  const date = new Date(ymd);
+  return ((date.getDay() + 6) % 7) + 1;
+}
+
+async function getLocationDayStatus(
+  orgId: string,
+  locationId: string | null,
+  dateISO: string
+): Promise<LocationDayStatus> {
+  if (!locationId) {
+    return {
+      isOpen: true,
+      source: "default",
+      note: null,
+    };
+  }
+
+  try {
+    const { data: closure, error: closureErr } = await supabase
+      .from("location_closures")
+      .select("id, reason")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .eq("date", dateISO)
+      .maybeSingle();
+
+    if (!closureErr && closure) {
+      return {
+        isOpen: false,
+        source: "closure_override",
+        note: closure.reason ? String(closure.reason) : "Marked closed for today.",
+      };
+    }
+  } catch {
+    // ignore and fall through
+  }
+
+  const weekday0to6 = new Date(dateISO).getDay();
+  const weekday1to7 = getDow1to7(dateISO);
+
+  try {
+    const { data: scheduleRows, error: scheduleErr } = await supabase
+      .from("location_opening_days")
+      .select("weekday, is_open, opens_at, closes_at")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .in("weekday", [weekday1to7, weekday0to6]);
+
+    if (!scheduleErr && Array.isArray(scheduleRows) && scheduleRows.length > 0) {
+      const exact1to7 = scheduleRows.find(
+        (r: any) => Number(r.weekday) === weekday1to7
+      );
+      const exact0to6 = scheduleRows.find(
+        (r: any) => Number(r.weekday) === weekday0to6
+      );
+      const row = exact1to7 ?? exact0to6 ?? scheduleRows[0];
+
+      const isOpen = row?.is_open !== false;
+
+      let note: string | null = null;
+      if (!isOpen) {
+        note = "Closed by weekly opening days.";
+      } else if (row?.opens_at && row?.closes_at) {
+        note = `${String(row.opens_at).slice(0, 5)}–${String(row.closes_at).slice(0, 5)}`;
+      }
+
+      return {
+        isOpen,
+        source: "weekly_schedule",
+        note,
+      };
+    }
+  } catch {
+    // ignore and fall through
+  }
+
+  return {
+    isOpen: true,
+    source: "default",
+    note: null,
+  };
+}
+
 /* ---------- temp helpers ---------- */
 function isFrozenPreset(preset?: TargetPreset) {
   if (!preset) return false;
 
   const label = (preset.label ?? "").toLowerCase();
 
-  // Primary rule: both min and max are at or below zero
   if (
     typeof preset.minC === "number" &&
     typeof preset.maxC === "number" &&
@@ -49,7 +148,6 @@ function isFrozenPreset(preset?: TargetPreset) {
     return true;
   }
 
-  // Fallback for label-based presets
   if (label.includes("frozen") || label.includes("freezer")) {
     return true;
   }
@@ -66,20 +164,16 @@ function normalizeTempStringForPreset(
 
   if (!preset || !isFrozenPreset(preset)) return value;
 
-  // Preserve in-progress typing states so the field does not fight the user
   if (value === "-" || value === "." || value === "-." || value === "+") {
     return value;
   }
 
-  // Remove spaces
   const compact = value.replace(/\s+/g, "");
 
-  // If user typed +18, 18, 18.2 -> make it negative
   if (/^[+]?\d*\.?\d+$/.test(compact)) {
     return `-${compact.replace(/^\+/, "")}`;
   }
 
-  // If already negative numeric, keep it
   if (/^-\d*\.?\d+$/.test(compact)) {
     return compact;
   }
@@ -141,7 +235,6 @@ function bestMatchIndex(phrase: string, items: { item?: string | null }[]) {
   return -1;
 }
 
-/** Render modal at document.body level so it isn't "fixed inside a transformed parent" */
 function ModalPortal({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -158,6 +251,11 @@ export default function RoutineRunModal({
   onSaved,
 }: Props) {
   const { operator, locked } = useWorkstation();
+  const {
+    orgId: activeOrgId,
+    locationId: activeLocationId,
+    loading: activeLocationLoading,
+  } = useActiveLocation();
 
   const [date, setDate] = useState(defaultDate);
   const [initials, setInitials] = useState(defaultInitials || "");
@@ -166,6 +264,13 @@ export default function RoutineRunModal({
 
   const [activeIdx, setActiveIdx] = useState(0);
 
+  const [todayStatus, setTodayStatus] = useState<LocationDayStatus>({
+    isOpen: true,
+    source: "default",
+    note: null,
+  });
+  const [checkingDayStatus, setCheckingDayStatus] = useState(false);
+
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const rowRefs = useRef<
     Record<string, HTMLTableRowElement | HTMLDivElement | null>
@@ -173,7 +278,47 @@ export default function RoutineRunModal({
 
   const items = useMemo(() => routine?.items ?? [], [routine]);
 
-  // Reset when opens
+  const selectedDateIsToday = useMemo(() => date === isoToday(), [date]);
+  const saveBlockedByClosedDay = selectedDateIsToday && !todayStatus.isOpen;
+
+  async function refreshDayStatus(targetDate: string) {
+    try {
+      if (targetDate !== isoToday()) {
+        setTodayStatus({
+          isOpen: true,
+          source: "default",
+          note: null,
+        });
+        return;
+      }
+
+      setCheckingDayStatus(true);
+
+      const orgId = activeOrgId ?? (await getActiveOrgIdClient());
+      const locationId = activeLocationId ?? null;
+
+      if (!orgId) {
+        setTodayStatus({
+          isOpen: true,
+          source: "default",
+          note: null,
+        });
+        return;
+      }
+
+      const status = await getLocationDayStatus(orgId, locationId, targetDate);
+      setTodayStatus(status);
+    } catch {
+      setTodayStatus({
+        isOpen: true,
+        source: "default",
+        note: null,
+      });
+    } finally {
+      setCheckingDayStatus(false);
+    }
+  }
+
   useEffect(() => {
     if (!open || !routine) return;
 
@@ -187,13 +332,29 @@ export default function RoutineRunModal({
     });
     setActiveIdx(0);
 
-    // Operator-first initials
     const opIni = (operator?.initials ?? "").toString().trim().toUpperCase();
     if (opIni) setInitials(opIni);
     else setInitials((defaultInitials || "").toUpperCase());
-  }, [open, routine, defaultDate, defaultInitials, operator?.initials]);
 
-  // Voice hook
+    if (!activeLocationLoading) {
+      void refreshDayStatus(defaultDate);
+    }
+  }, [
+    open,
+    routine,
+    defaultDate,
+    defaultInitials,
+    operator?.initials,
+    activeOrgId,
+    activeLocationId,
+    activeLocationLoading,
+  ]);
+
+  useEffect(() => {
+    if (!open || activeLocationLoading) return;
+    void refreshDayStatus(date);
+  }, [date, open, activeOrgId, activeLocationId, activeLocationLoading]);
+
   const { supported: voiceSupported, listening, start, stop } =
     useVoiceRoutineEntry({
       lang: "en-GB",
@@ -207,7 +368,6 @@ export default function RoutineRunModal({
 
         let idx = activeIdx;
 
-        // Match by spoken item phrase (preferred)
         if (r.itemPhrase) {
           const matched = bestMatchIndex(r.itemPhrase, items);
           if (matched >= 0) {
@@ -216,7 +376,6 @@ export default function RoutineRunModal({
           }
         }
 
-        // Apply temp into matched/active row
         if (r.temp_c) {
           const it = items[idx];
           if (!it) return;
@@ -237,7 +396,6 @@ export default function RoutineRunModal({
       },
     });
 
-  // Keep active input focused + row visible (hands-free)
   useEffect(() => {
     if (!open) return;
     const it = items[activeIdx];
@@ -281,15 +439,25 @@ export default function RoutineRunModal({
 
     setSaving(true);
     try {
-      const org_id = await getActiveOrgIdClient();
-      const location_id = await getActiveLocationIdClient();
+      const org_id = activeOrgId ?? (await getActiveOrgIdClient());
+      const location_id = activeLocationId ?? null;
 
       if (!org_id || !location_id) {
         alert("Please select a location first.");
         return;
       }
 
-      // Build timestamp: selected date + current time
+      const latestStatus = await getLocationDayStatus(org_id, location_id, date);
+      setTodayStatus(latestStatus);
+
+      if (date === isoToday() && !latestStatus.isOpen) {
+        alert(
+          latestStatus.note ||
+            "This location is marked closed today, so routine temperatures cannot be logged."
+        );
+        return;
+      }
+
       let atIso = new Date().toISOString();
       try {
         const selected = new Date(date);
@@ -306,7 +474,6 @@ export default function RoutineRunModal({
         atIso = at.toISOString();
       } catch {}
 
-      // Optional: stamp auth user id too (manager piggyback)
       const { data: authData } = await supabase.auth.getUser();
       const authUserId = authData?.user?.id ?? null;
 
@@ -326,7 +493,6 @@ export default function RoutineRunModal({
           const temp = parseTempForPreset(normalizedRaw, preset);
           const status = inferStatus(temp, preset);
 
-          // Base payload (matches your existing schema)
           const base: any = {
             org_id,
             location_id,
@@ -339,10 +505,9 @@ export default function RoutineRunModal({
             status,
           };
 
-          // Optional operator stamping (only works if columns exist)
           if (opAny?.team_member_id) base.done_by_team_member_id = opAny.team_member_id;
           if (opAny?.location_staff_id) base.location_staff_id = opAny.location_staff_id;
-          if (authUserId) base.created_by = authUserId; // if you have a created_by column
+          if (authUserId) base.created_by = authUserId;
 
           return base;
         })
@@ -370,7 +535,6 @@ export default function RoutineRunModal({
 
   return (
     <ModalPortal>
-      {/* Overlay: top aligned with padding so it never sits under navbar */}
       <div
         className="fixed inset-0 z-[999] overflow-y-auto bg-black/40 px-3 pb-6 pt-[88px]"
         onClick={() => {
@@ -383,7 +547,6 @@ export default function RoutineRunModal({
           onClick={(e) => e.stopPropagation()}
           className="mx-auto w-full max-w-5xl overflow-hidden rounded-2xl bg-white text-slate-900 shadow-2xl"
         >
-          {/* Header */}
           <div className="flex items-center justify-between border-b border-emerald-600/30 bg-emerald-600 px-4 py-3 text-white">
             <div className="min-w-0">
               <div className="text-[11px] uppercase tracking-widest text-emerald-100">
@@ -405,7 +568,6 @@ export default function RoutineRunModal({
                       ? "border-red-200 bg-red-50 text-red-700"
                       : "border-white/30 bg-white/15 text-white hover:bg-white/25"
                   )}
-                  title="Voice entry"
                 >
                   {listening ? "🎤 Listening" : "🎤 Voice"}
                 </button>
@@ -424,7 +586,6 @@ export default function RoutineRunModal({
             </div>
           </div>
 
-          {/* Compact top controls */}
           <div className="border-b border-slate-200 bg-white px-4 py-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="text-sm font-medium">
@@ -448,6 +609,25 @@ export default function RoutineRunModal({
               </label>
             </div>
 
+            {selectedDateIsToday && (
+              <div
+                className={cls(
+                  "mt-3 rounded-xl border px-3 py-2 text-xs",
+                  checkingDayStatus || activeLocationLoading
+                    ? "border-slate-200 bg-slate-50 text-slate-600"
+                    : todayStatus.isOpen
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-slate-200 bg-slate-100 text-slate-700"
+                )}
+              >
+                {checkingDayStatus || activeLocationLoading
+                  ? "Checking today’s opening status…"
+                  : todayStatus.isOpen
+                  ? `Location open today${todayStatus.note ? ` · ${todayStatus.note}` : ""}`
+                  : `Location marked closed today${todayStatus.note ? ` · ${todayStatus.note}` : ""}`}
+              </div>
+            )}
+
             {voiceSupported && (
               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
                 Say: <strong>"fish 75.2"</strong> or <strong>"stop"</strong>.
@@ -464,9 +644,7 @@ export default function RoutineRunModal({
             </div>
           </div>
 
-          {/* Body */}
           <div className="max-h-[62vh] overflow-y-auto bg-white px-4 py-3">
-            {/* Table (desktop) */}
             <div className="hidden overflow-hidden rounded-xl border border-slate-200 md:block">
               <table className="w-full text-sm">
                 <thead className="bg-slate-100 text-slate-600">
@@ -543,7 +721,6 @@ export default function RoutineRunModal({
               </table>
             </div>
 
-            {/* Mobile cards */}
             <div className="space-y-2 md:hidden">
               {items.map((it, idx) => {
                 const preset =
@@ -613,7 +790,6 @@ export default function RoutineRunModal({
             </div>
           </div>
 
-          {/* Footer */}
           <div className="flex items-center justify-between gap-2 border-t border-slate-200 bg-white px-4 py-3">
             <button
               type="button"
@@ -628,10 +804,19 @@ export default function RoutineRunModal({
 
             <button
               type="submit"
-              disabled={saving}
-              className="rounded-xl bg-emerald-600 px-5 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
+              disabled={saving || checkingDayStatus || activeLocationLoading || saveBlockedByClosedDay}
+              className={cls(
+                "rounded-xl px-5 py-1.5 text-sm font-semibold text-white shadow-sm",
+                saving || checkingDayStatus || activeLocationLoading || saveBlockedByClosedDay
+                  ? "bg-slate-300"
+                  : "bg-emerald-600 hover:bg-emerald-500"
+              )}
             >
-              {saving ? "Saving…" : "Save all"}
+              {saving
+                ? "Saving…"
+                : saveBlockedByClosedDay
+                ? "Location closed today"
+                : "Save all"}
             </button>
           </div>
         </form>

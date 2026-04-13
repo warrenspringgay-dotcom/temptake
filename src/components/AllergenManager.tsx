@@ -5,10 +5,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { uid } from "@/lib/uid";
 import ActionMenu from "@/components/ActionMenu";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
 import AllergenChangeTimeline from "@/components/AllergenChangeTimeline";
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 
 /* ---------- Types & Constants ---------- */
 type AllergenKey =
@@ -142,6 +141,7 @@ function buildAllergenLabelPath(params: {
 /** Write an audit row when allergen items change */
 async function logAllergenChange(params: {
   orgId: string;
+  locationId: string | null;
   action: "create" | "update" | "delete";
   itemId: string;
   before?: MatrixRow | null;
@@ -149,11 +149,9 @@ async function logAllergenChange(params: {
   staffInitials: string | null;
 }) {
   try {
-    const locationId = await getActiveLocationIdClient().catch(() => null);
-
     const { error } = await supabase.from("allergen_change_logs").insert({
       org_id: params.orgId,
-      location_id: locationId,
+      location_id: params.locationId,
       item_id: params.itemId,
       item_name: params.after?.item ?? params.before?.item ?? null,
       action: params.action,
@@ -197,8 +195,9 @@ async function resolveCanManage(params: {
         .eq("user_id", userId)
         .limit(50);
 
-      if (!error && Array.isArray(data) && data.some((r) => roleAllows((r as any).role)))
+      if (!error && Array.isArray(data) && data.some((r) => roleAllows((r as any).role))) {
         return true;
+      }
     } catch {
       // ignore
     }
@@ -220,11 +219,15 @@ async function resolveCanManage(params: {
 /* ---------- Component ---------- */
 export default function AllergenManager() {
   const { operator } = useWorkstation();
+  const {
+    orgId,
+    locationId,
+    loading: activeLocationLoading,
+  } = useActiveLocation();
 
   const [hydrated, setHydrated] = useState(false);
 
-  // Cloud context
-  const [orgId, setOrgId] = useState<string | null>(null);
+  // Cloud state
   const [cloudBusy, setCloudBusy] = useState(false);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
@@ -285,35 +288,34 @@ export default function AllergenManager() {
 
   /* ---------- boot ---------- */
   useEffect(() => {
-    let cancelled = false;
-
     setHydrated(true);
+    primeLocal();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
 
     (async () => {
       try {
-        primeLocal();
-
-        const [{ data: auth }, org] = await Promise.all([
-          supabase.auth.getUser(),
-          getActiveOrgIdClient().catch(() => null),
-        ]);
-
-        if (cancelled) return;
-
-        setOrgId(org ?? null);
-
-        if (org) {
-          await loadAuthUserInitials(org);
+        if (!orgId) {
+          if (!cancelled) {
+            setCanManage(false);
+          }
+          return;
         }
 
+        await loadAuthUserInitials(orgId, locationId);
+
         if (operator?.role) {
-          setCanManage(isManagerRole(operator.role));
+          if (!cancelled) setCanManage(isManagerRole(operator.role));
         } else {
+          const { data: auth } = await supabase.auth.getUser();
+
           const userId = auth?.user?.id ?? null;
           const email = auth?.user?.email?.toLowerCase().trim() ?? null;
 
           const allowed = await resolveCanManage({
-            orgId: org ?? null,
+            orgId,
             userId,
             email,
           });
@@ -321,9 +323,7 @@ export default function AllergenManager() {
           if (!cancelled) setCanManage(allowed);
         }
 
-        if (org) {
-          await Promise.all([loadFromSupabase(org), loadReviewFromSupabase(org)]);
-        }
+        await Promise.all([loadFromSupabase(orgId), loadReviewFromSupabase(orgId)]);
       } catch (e: any) {
         if (!cancelled) setLoadErr(e?.message ?? "Failed to load allergens.");
       }
@@ -332,8 +332,7 @@ export default function AllergenManager() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [operator?.role]);
+  }, [orgId, locationId, operator?.role]);
 
   function primeLocal() {
     try {
@@ -383,7 +382,9 @@ export default function AllergenManager() {
           },
         ]);
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     try {
       const rawReview = localStorage.getItem(LS_REVIEW);
@@ -391,26 +392,26 @@ export default function AllergenManager() {
         const parsed = JSON.parse(rawReview) as Partial<ReviewInfo>;
         setReview({ intervalDays: 30, ...parsed });
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
   }
 
-  async function loadAuthUserInitials(org: string) {
+  async function loadAuthUserInitials(currentOrgId: string, currentLocationId: string | null) {
     try {
       const { data: auth } = await supabase.auth.getUser();
       const userId = auth.user?.id ?? null;
       if (!userId) return;
 
-      const lid = await getActiveLocationIdClient().catch(() => null);
-
       let row: any = null;
 
-      if (lid) {
+      if (currentLocationId) {
         const byLoc = await supabase
           .from("team_members")
           .select("initials")
-          .eq("org_id", org)
+          .eq("org_id", currentOrgId)
           .eq("user_id", userId)
-          .eq("location_id", lid)
+          .eq("location_id", currentLocationId)
           .maybeSingle();
 
         if (!byLoc.error && byLoc.data) row = byLoc.data;
@@ -420,7 +421,7 @@ export default function AllergenManager() {
         const byOrg = await supabase
           .from("team_members")
           .select("initials")
-          .eq("org_id", org)
+          .eq("org_id", currentOrgId)
           .eq("user_id", userId)
           .is("location_id", null)
           .maybeSingle();
@@ -436,17 +437,18 @@ export default function AllergenManager() {
   }
 
   /** Load items and flags from cloud */
-  async function loadFromSupabase(id = orgId) {
-    if (!id) return;
+  async function loadFromSupabase(currentOrgId = orgId) {
+    if (!currentOrgId) return;
+
     setCloudBusy(true);
     setLoadErr(null);
 
     const { data: items, error: itemsErr } = await supabase
       .from("allergen_items")
       .select(
-        "id,item,category,notes,ingredients_text,ingredients_label_image_url,locked,org_id"
+        "id,item,category,notes,ingredients_text,ingredients_label_image_url,locked,org_id,location_id"
       )
-      .or(`organisation_id.eq.${id},org_id.eq.${id}`)
+      .or(`organisation_id.eq.${currentOrgId},org_id.eq.${currentOrgId}`)
       .order("item", { ascending: true });
 
     if (itemsErr) {
@@ -455,7 +457,12 @@ export default function AllergenManager() {
       return;
     }
 
-    const ids = (items ?? []).map((r: any) => r.id);
+    const filteredItems = (items ?? []).filter((r: any) => {
+      const rowLocationId = r.location_id ? String(r.location_id) : null;
+      return rowLocationId === null || rowLocationId === locationId;
+    });
+
+    const ids = filteredItems.map((r: any) => r.id);
     const flagsByItem: Record<string, Flags> = {};
 
     if (ids.length) {
@@ -479,7 +486,7 @@ export default function AllergenManager() {
       }
     }
 
-    const list: MatrixRow[] = (items ?? []).map((r: any) => ({
+    const list: MatrixRow[] = filteredItems.map((r: any) => ({
       id: String(r.id),
       item: r.item,
       category: (r.category ?? undefined) as Category | undefined,
@@ -495,18 +502,20 @@ export default function AllergenManager() {
 
     try {
       localStorage.setItem(LS_ROWS, JSON.stringify(list));
-    } catch {}
+    } catch {
+      // ignore
+    }
   }
 
-  async function loadReviewFromSupabase(id = orgId) {
-    if (!id) return;
+  async function loadReviewFromSupabase(currentOrgId = orgId) {
+    if (!currentOrgId) return;
 
     const nextState: ReviewInfo = { intervalDays: 30 };
 
     const { data: settings, error: settingsErr } = await supabase
       .from("allergen_review")
       .select("last_reviewed, interval_days, reviewer")
-      .eq("org_id", id)
+      .eq("org_id", currentOrgId)
       .maybeSingle();
 
     if (!settingsErr && settings) {
@@ -518,22 +527,25 @@ export default function AllergenManager() {
     const { data: logRow, error: logErr } = await supabase
       .from("allergen_review_log")
       .select("reviewed_on, reviewer, interval_days")
-      .eq("org_id", id)
+      .eq("org_id", currentOrgId)
       .order("reviewed_on", { ascending: false })
       .limit(1)
       .maybeSingle();
 
     if (!logErr && logRow) {
       if (!nextState.lastReviewedOn && logRow.reviewed_on) nextState.lastReviewedOn = logRow.reviewed_on;
-      if (typeof logRow.interval_days === "number" && !settings?.interval_days)
+      if (typeof logRow.interval_days === "number" && !settings?.interval_days) {
         nextState.intervalDays = logRow.interval_days;
+      }
       if (logRow.reviewer) nextState.lastReviewedBy = logRow.reviewer;
     }
 
     setReview(nextState);
     try {
       localStorage.setItem(LS_REVIEW, JSON.stringify(nextState));
-    } catch {}
+    } catch {
+      // ignore
+    }
   }
 
   /* ---------- persist local shadows ---------- */
@@ -541,14 +553,18 @@ export default function AllergenManager() {
     if (!hydrated) return;
     try {
       localStorage.setItem(LS_ROWS, JSON.stringify(rows));
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, [rows, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
     try {
       localStorage.setItem(LS_REVIEW, JSON.stringify(review));
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, [review, hydrated]);
 
   /* ---------- CRUD ---------- */
@@ -566,7 +582,8 @@ export default function AllergenManager() {
       return false;
     }
 
-    const currentOrgId = orgId ?? (await getActiveOrgIdClient().catch(() => null));
+    const currentOrgId = orgId;
+    const currentLocationId = locationId ?? null;
     const beforeRow = d.id ? rows.find((r) => r.id === d.id) ?? null : null;
 
     const applyLocal = (forcedId?: string) => {
@@ -607,6 +624,7 @@ export default function AllergenManager() {
             locked: true,
             org_id: currentOrgId,
             organisation_id: currentOrgId,
+            location_id: currentLocationId,
           })
           .eq("id", rowId);
 
@@ -623,6 +641,7 @@ export default function AllergenManager() {
             locked: true,
             org_id: currentOrgId,
             organisation_id: currentOrgId,
+            location_id: currentLocationId,
           })
           .select("id")
           .single();
@@ -662,6 +681,7 @@ export default function AllergenManager() {
 
         await logAllergenChange({
           orgId: currentOrgId,
+          locationId: currentLocationId,
           action: d.id ? "update" : "create",
           itemId: rowId,
           before: beforeRow,
@@ -687,7 +707,8 @@ export default function AllergenManager() {
       return;
     }
 
-    const currentOrgId = orgId ?? (await getActiveOrgIdClient().catch(() => null));
+    const currentOrgId = orgId;
+    const currentLocationId = locationId ?? null;
     const beforeRow = rows.find((r) => r.id === idToDelete) ?? null;
 
     if (!currentOrgId) {
@@ -707,6 +728,7 @@ export default function AllergenManager() {
       if (beforeRow) {
         await logAllergenChange({
           orgId: currentOrgId,
+          locationId: currentLocationId,
           action: "delete",
           itemId: idToDelete,
           before: beforeRow,
@@ -728,7 +750,7 @@ export default function AllergenManager() {
       return;
     }
 
-    const id = orgId ?? (await getActiveOrgIdClient().catch(() => null));
+    const currentOrgId = orgId;
     const today = todayISO();
 
     const reviewer = await getReviewerLabel();
@@ -741,7 +763,7 @@ export default function AllergenManager() {
       intervalDays: newInterval,
     }));
 
-    if (!id) {
+    if (!currentOrgId) {
       await fireConfetti();
       bumpVibrate();
       return;
@@ -750,7 +772,7 @@ export default function AllergenManager() {
     const { data: existing, error: existingErr } = await supabase
       .from("allergen_review")
       .select("org_id")
-      .eq("org_id", id)
+      .eq("org_id", currentOrgId)
       .maybeSingle();
 
     if (existingErr) {
@@ -766,7 +788,7 @@ export default function AllergenManager() {
           interval_days: newInterval,
           reviewer,
         })
-        .eq("org_id", id);
+        .eq("org_id", currentOrgId);
 
       if (updErr) {
         alert(`Failed to save review: ${updErr.message}`);
@@ -774,7 +796,7 @@ export default function AllergenManager() {
       }
     } else {
       const { error: insErr } = await supabase.from("allergen_review").insert({
-        org_id: id,
+        org_id: currentOrgId,
         last_reviewed: today,
         interval_days: newInterval,
         reviewer,
@@ -787,7 +809,7 @@ export default function AllergenManager() {
     }
 
     const { error: logErr } = await supabase.from("allergen_review_log").insert({
-      org_id: id,
+      org_id: currentOrgId,
       reviewed_on: today,
       reviewer,
       interval_days: newInterval,
@@ -936,10 +958,16 @@ export default function AllergenManager() {
     : "border-slate-200 bg-white/70";
 
   return (
-    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur md:px-8">
+    <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6 md:px-8">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold text-slate-900">Allergens</h1>
       </div>
+
+      {activeLocationLoading ? (
+        <div className="rounded-2xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-600">
+          Loading allergen context…
+        </div>
+      ) : null}
 
       <div className={`rounded-2xl px-4 py-3 shadow-sm backdrop-blur-sm ${reviewPanelTone}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1007,7 +1035,7 @@ export default function AllergenManager() {
             </p>
           </div>
 
-          <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 md:col-span-2">
             <div className="mb-2 text-sm font-medium text-slate-900">Select allergens to exclude</div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
               {ALLERGENS.map((a) => (

@@ -3,8 +3,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
 import ActionMenu from "@/components/ActionMenu";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 
 /* -------------------- Config -------------------- */
 const PRESET_CATEGORIES = [
@@ -25,9 +25,10 @@ type SupplierRow = {
   contact: string | null;
   phone: string | null;
   email: string | null;
-  categories: string[] | string | null; // supports old string + new text[]
+  categories: string[] | string | null;
   notes: string | null;
   active: boolean | null;
+  location_id?: string | null;
 };
 
 type SupplierEdit = {
@@ -49,7 +50,6 @@ function cls(...p: Array<string | false | undefined>) {
 
 function parseCats(input: unknown): string[] {
   try {
-    // Already an array
     if (Array.isArray(input)) {
       return input
         .map((x) => (x == null ? "" : String(x)))
@@ -64,7 +64,6 @@ function parseCats(input: unknown): string[] {
       const raw = input.trim();
       if (!raw) return [];
 
-      // 1) JSON array string e.g. ["Meat","Frozen"]
       if (raw.startsWith("[") && raw.endsWith("]")) {
         try {
           const parsed = JSON.parse(raw);
@@ -79,12 +78,10 @@ function parseCats(input: unknown): string[] {
         }
       }
 
-      // 2) Postgres array string e.g. {Meat,Frozen} or {"Meat","Frozen"}
       if (raw.startsWith("{") && raw.endsWith("}")) {
         const inner = raw.slice(1, -1).trim();
         if (!inner) return [];
 
-        // Split on commas not inside quotes
         const out: string[] = [];
         let cur = "";
         let inQuotes = false;
@@ -92,7 +89,6 @@ function parseCats(input: unknown): string[] {
         for (let i = 0; i < inner.length; i++) {
           const ch = inner[i];
           if (ch === '"') {
-            // handle escaped quotes \" (rare but possible)
             const prev = inner[i - 1];
             if (prev !== "\\") inQuotes = !inQuotes;
             cur += ch;
@@ -114,7 +110,6 @@ function parseCats(input: unknown): string[] {
         return out
           .map((s) => s.trim())
           .map((s) => {
-            // strip surrounding quotes if present
             if (s.startsWith('"') && s.endsWith('"')) {
               return s.slice(1, -1).replace(/\\"/g, '"').trim();
             }
@@ -123,7 +118,6 @@ function parseCats(input: unknown): string[] {
           .filter(Boolean);
       }
 
-      // 3) Legacy delimited string e.g. "Meat, Frozen"
       return raw
         .split(/[;,|]/g)
         .map((s) => s.trim())
@@ -143,8 +137,108 @@ function ModalPortal({ children }: { children: React.ReactNode }) {
   return createPortal(children, document.body);
 }
 
+function isMissingLocationColumnError(err: any) {
+  const msg = String(err?.message ?? "").toLowerCase();
+  return (
+    msg.includes("location_id") &&
+    (msg.includes("does not exist") ||
+      msg.includes("column") ||
+      msg.includes("schema cache"))
+  );
+}
+
+function toggleCatNullable(
+  setState: React.Dispatch<React.SetStateAction<SupplierEdit | null>>,
+  cat: string
+) {
+  setState((prev) => {
+    if (!prev) return prev;
+
+    const v = cat.trim();
+    const has = prev.categories.includes(v);
+
+    return {
+      ...prev,
+      categories: has
+        ? prev.categories.filter((c) => c !== v)
+        : [...prev.categories, v],
+    };
+  });
+}
+
+function addFreeCatNullable(
+  state: SupplierEdit | null,
+  setState: React.Dispatch<React.SetStateAction<SupplierEdit | null>>
+) {
+  const v = state?.addCategory.trim() ?? "";
+  if (!v) return;
+
+  if (!state?.categories.includes(v)) {
+    setState((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        categories: [...prev.categories, v],
+        addCategory: "",
+      };
+    });
+  } else {
+    setState((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        addCategory: "",
+      };
+    });
+  }
+}
+
+function toggleCatNonNull(
+  setState: React.Dispatch<React.SetStateAction<SupplierEdit>>,
+  cat: string
+) {
+  setState((prev) => {
+    const v = cat.trim();
+    const has = prev.categories.includes(v);
+
+    return {
+      ...prev,
+      categories: has
+        ? prev.categories.filter((c) => c !== v)
+        : [...prev.categories, v],
+    };
+  });
+}
+
+function addFreeCatNonNull(
+  state: SupplierEdit,
+  setState: React.Dispatch<React.SetStateAction<SupplierEdit>>
+) {
+  const v = state.addCategory.trim();
+  if (!v) return;
+
+  if (!state.categories.includes(v)) {
+    setState((prev) => ({
+      ...prev,
+      categories: [...prev.categories, v],
+      addCategory: "",
+    }));
+  } else {
+    setState((prev) => ({
+      ...prev,
+      addCategory: "",
+    }));
+  }
+}
+
 /* ================================================= */
 export default function SuppliersManager() {
+  const {
+    orgId,
+    locationId,
+    loading: activeLocationLoading,
+  } = useActiveLocation();
+
   const [rows, setRows] = useState<SupplierRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
@@ -167,28 +261,46 @@ export default function SuppliersManager() {
     active: true,
   });
 
-  const [orgId, setOrgId] = useState<string | null>(null);
   const [canManage, setCanManage] = useState(false);
 
   async function refresh() {
+    if (!orgId) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
-      const id = await getActiveOrgIdClient();
-      setOrgId(id ?? null);
+      let data: any[] | null = null;
 
-      if (!id) {
-        setRows([]);
-        return;
+      if (locationId) {
+        const { data: d1, error: e1 } = await supabase
+          .from("suppliers")
+          .select("id,name,contact,phone,email,categories,notes,active,location_id")
+          .eq("org_id", orgId)
+          .or(`location_id.eq.${locationId},location_id.is.null`)
+          .order("name");
+
+        if (!e1) {
+          data = d1 ?? [];
+        } else if (!isMissingLocationColumnError(e1)) {
+          throw e1;
+        }
       }
 
-      const { data, error } = await supabase
-        .from("suppliers")
-        .select("id,name,contact,phone,email,categories,notes,active")
-        .eq("org_id", id)
-        .order("name");
+      if (data === null) {
+        const { data: d2, error: e2 } = await supabase
+          .from("suppliers")
+          .select("id,name,contact,phone,email,categories,notes,active")
+          .eq("org_id", orgId)
+          .order("name");
 
-      if (error) throw error;
-      setRows((data ?? []) as SupplierRow[]);
+        if (e2) throw e2;
+        data = d2 ?? [];
+      }
+
+      setRows(data as SupplierRow[]);
     } catch (e: any) {
       alert(e?.message ?? "Failed to load suppliers.");
       setRows([]);
@@ -198,54 +310,65 @@ export default function SuppliersManager() {
   }
 
   useEffect(() => {
-    refresh();
-  }, []);
+    if (activeLocationLoading) return;
+    void refresh();
+  }, [activeLocationLoading, orgId, locationId]);
 
-  // permissions: try team_members role, but DO NOT block UI if lookup fails
   useEffect(() => {
-    (async () => {
-      try {
-        const [id, userRes] = await Promise.all([
-          getActiveOrgIdClient(),
-          supabase.auth.getUser(),
-        ]);
+    let cancelled = false;
 
+    async function loadPermissions() {
+      if (activeLocationLoading) return;
+      if (!orgId) {
+        if (!cancelled) setCanManage(false);
+        return;
+      }
+
+      try {
+        const userRes = await supabase.auth.getUser();
         const user = userRes.data.user;
-        if (!id || !user) {
-          setCanManage(false);
+
+        if (!user) {
+          if (!cancelled) setCanManage(false);
           return;
         }
 
         const email = user.email?.toLowerCase() ?? null;
 
-        // If we don't even have an email, still allow and let RLS decide.
         if (!email) {
-          setCanManage(true);
+          if (!cancelled) setCanManage(true);
           return;
         }
 
         const { data, error } = await supabase
           .from("team_members")
           .select("role,email")
-          .eq("org_id", id)
-          .eq("email", email)
+          .eq("org_id", orgId)
+          .ilike("email", email)
           .maybeSingle();
 
-        // If the lookup fails or no row found, don't block the UI.
-        // RLS is the real gate anyway.
         if (error || !data) {
-          setCanManage(true);
+          if (!cancelled) setCanManage(true);
           return;
         }
 
-        const role = (data?.role ?? "").toLowerCase();
-        setCanManage(role === "owner" || role === "manager" || role === "admin");
+        const role = (data.role ?? "").toLowerCase();
+        if (!cancelled) {
+          setCanManage(
+            role === "owner" || role === "manager" || role === "admin"
+          );
+        }
       } catch {
-        // also don't block if something transient breaks
-        setCanManage(true);
+        if (!cancelled) setCanManage(true);
       }
-    })();
-  }, []);
+    }
+
+    void loadPermissions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeLocationLoading, orgId]);
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -267,6 +390,7 @@ export default function SuppliersManager() {
       alert("Only managers / owners can edit suppliers.");
       return;
     }
+
     setEditing({
       id: r.id,
       name: r.name ?? "",
@@ -278,6 +402,7 @@ export default function SuppliersManager() {
       notes: r.notes ?? "",
       active: !!r.active,
     });
+
     setEditOpen(true);
   }
 
@@ -295,18 +420,16 @@ export default function SuppliersManager() {
       return;
     }
     if (!confirm("Delete supplier?")) return;
-
-    const oid = orgId ?? (await getActiveOrgIdClient());
-    if (!oid) return alert("No organisation found.");
+    if (!orgId) return alert("No organisation found.");
 
     const { error } = await supabase
       .from("suppliers")
       .delete()
       .eq("id", id)
-      .eq("org_id", oid);
+      .eq("org_id", orgId);
 
     if (error) return alert(error.message);
-    refresh();
+    await refresh();
   }
 
   function normalizeBeforeSave(s: SupplierEdit) {
@@ -319,7 +442,7 @@ export default function SuppliersManager() {
       contact: s.contact.trim() || null,
       phone: s.phone.trim() || null,
       email: s.email.trim() || null,
-      categories: cleanCats, // ✅ array (text[])
+      categories: cleanCats,
       notes: s.notes.trim() || null,
       active: !!s.active,
     };
@@ -332,20 +455,49 @@ export default function SuppliersManager() {
       return;
     }
     if (!editing.name.trim()) return alert("Name is required.");
+    if (!orgId) return alert("No organisation found.");
 
-    const oid = orgId ?? (await getActiveOrgIdClient());
-    if (!oid) return alert("No organisation found.");
+    const basePayload = normalizeBeforeSave(editing);
 
-    const { error } = await supabase
+    let error: any = null;
+
+    if (locationId) {
+      const attempt = await supabase
+        .from("suppliers")
+        .update({
+          ...basePayload,
+          location_id: locationId,
+        })
+        .eq("id", editing.id)
+        .eq("org_id", orgId);
+
+      if (!attempt.error) {
+        setEditOpen(false);
+        setEditing(null);
+        await refresh();
+        return;
+      }
+
+      if (!isMissingLocationColumnError(attempt.error)) {
+        return alert(attempt.error.message);
+      }
+
+      error = attempt.error;
+    }
+
+    const fallback = await supabase
       .from("suppliers")
-      .update(normalizeBeforeSave(editing))
+      .update(basePayload)
       .eq("id", editing.id)
-      .eq("org_id", oid);
+      .eq("org_id", orgId);
 
-    if (error) return alert(error.message);
+    if (fallback.error) {
+      return alert(fallback.error.message || error?.message || "Failed to save supplier.");
+    }
+
     setEditOpen(false);
     setEditing(null);
-    refresh();
+    await refresh();
   }
 
   async function saveAdd() {
@@ -354,13 +506,42 @@ export default function SuppliersManager() {
       alert("Only managers / owners can add suppliers.");
       return;
     }
+    if (!orgId) return alert("No organisation found.");
 
-    const oid = orgId ?? (await getActiveOrgIdClient());
-    if (!oid) return alert("No organisation found.");
+    const basePayload = {
+      org_id: orgId,
+      ...normalizeBeforeSave(adding),
+    };
 
-    const payload = { org_id: oid, ...normalizeBeforeSave(adding) };
-    const { error } = await supabase.from("suppliers").insert(payload);
-    if (error) return alert(error.message);
+    if (locationId) {
+      const attempt = await supabase.from("suppliers").insert({
+        ...basePayload,
+        location_id: locationId,
+      });
+
+      if (!attempt.error) {
+        setAddOpen(false);
+        setAdding({
+          name: "",
+          contact: "",
+          phone: "",
+          email: "",
+          categories: [],
+          addCategory: "",
+          notes: "",
+          active: true,
+        });
+        await refresh();
+        return;
+      }
+
+      if (!isMissingLocationColumnError(attempt.error)) {
+        return alert(attempt.error.message);
+      }
+    }
+
+    const fallback = await supabase.from("suppliers").insert(basePayload);
+    if (fallback.error) return alert(fallback.error.message);
 
     setAddOpen(false);
     setAdding({
@@ -373,40 +554,7 @@ export default function SuppliersManager() {
       notes: "",
       active: true,
     });
-    refresh();
-  }
-
-  function toggleCat(
-    _state: SupplierEdit,
-    setState: (updater: (s: SupplierEdit) => SupplierEdit) => void,
-    cat: string
-  ) {
-    setState((s: SupplierEdit) => {
-      const v = cat.trim();
-      const has = s.categories.includes(v);
-      return {
-        ...s,
-        categories: has ? s.categories.filter((c) => c !== v) : [...s.categories, v],
-      };
-    });
-  }
-
-  function addFreeCat(
-    state: SupplierEdit,
-    setState: (updater: (s: SupplierEdit) => SupplierEdit) => void
-  ) {
-    const v = state.addCategory.trim();
-    if (!v) return;
-
-    if (!state.categories.includes(v)) {
-      setState((s: SupplierEdit) => ({
-        ...s,
-        categories: [...s.categories, v],
-        addCategory: "",
-      }));
-    } else {
-      setState((s: SupplierEdit) => ({ ...s, addCategory: "" }));
-    }
+    await refresh();
   }
 
   /* -------------------- Render -------------------- */
@@ -414,6 +562,14 @@ export default function SuppliersManager() {
     <div className="mx-auto w-full max-w-6xl px-0 sm:px-4">
       <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/80 p-4 sm:p-6 shadow-sm backdrop-blur">
         <h1 className="text-lg font-semibold text-slate-900">Suppliers</h1>
+
+        <div className="text-xs text-slate-500">
+          Viewing:{" "}
+          <span className="font-semibold text-slate-700">
+            {locationId ? "Current location" : "Organisation-wide"}
+          </span>
+        </div>
+
         <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
           <input
             className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-900 placeholder:text-slate-400 sm:w-64"
@@ -434,12 +590,13 @@ export default function SuppliersManager() {
             + Add supplier
           </button>
         </div>
+
         <div className="mt-4 text-xs text-slate-500">
-          Add suppliers - keep track of suppliers, thier details and products.
+          Add suppliers - keep track of suppliers, their details and products.
         </div>
       </div>
 
-      {loading ? (
+      {activeLocationLoading || loading ? (
         <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
           Loading…
         </div>
@@ -479,7 +636,7 @@ export default function SuppliersManager() {
                       <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
                         <span
                           className={cls(
-                            "rounded-full px-2 py-0.5 text-[10px] font-medium border",
+                            "rounded-full border px-2 py-0.5 text-[10px] font-medium",
                             r.active
                               ? "border-emerald-100 bg-emerald-50 text-emerald-700"
                               : "border-slate-200 bg-slate-50 text-slate-500"
@@ -489,7 +646,7 @@ export default function SuppliersManager() {
                         </span>
                         {cats.length > 0 && (
                           <span className="text-[10px] text-slate-500">
-                            {cats.length} category{cats.length > 1 ? "ies" : "y"}
+                            {cats.length} categor{cats.length > 1 ? "ies" : "y"}
                           </span>
                         )}
                       </div>
@@ -579,7 +736,6 @@ export default function SuppliersManager() {
         </div>
       )}
 
-      {/* ---------- VIEW ---------- */}
       {viewOpen && viewing && (
         <ModalPortal>
           <div
@@ -632,7 +788,6 @@ export default function SuppliersManager() {
         </ModalPortal>
       )}
 
-      {/* ---------- EDIT ---------- */}
       {editOpen && editing && (
         <ModalPortal>
           <div
@@ -697,7 +852,7 @@ export default function SuppliersManager() {
                               ? "border-emerald-600 bg-emerald-600 text-white"
                               : "border-slate-200 bg-white hover:bg-slate-50"
                           )}
-                          onClick={() => toggleCat(editing, setEditing as any, c)}
+                          onClick={() => toggleCatNullable(setEditing, c)}
                         >
                           {c}
                         </button>
@@ -712,14 +867,17 @@ export default function SuppliersManager() {
                       onChange={(e) =>
                         setEditing((s) => ({ ...s!, addCategory: e.target.value }))
                       }
-                      onKeyDown={(e) =>
-                        e.key === "Enter" && addFreeCat(editing, setEditing as any)
-                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addFreeCatNullable(editing, setEditing);
+                        }
+                      }}
                     />
                     <button
                       type="button"
                       className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 hover:bg-slate-50"
-                      onClick={() => addFreeCat(editing, setEditing as any)}
+                      onClick={() => addFreeCatNullable(editing, setEditing)}
                     >
                       Add
                     </button>
@@ -766,7 +924,6 @@ export default function SuppliersManager() {
         </ModalPortal>
       )}
 
-      {/* ---------- ADD ---------- */}
       {addOpen && (
         <ModalPortal>
           <div
@@ -832,7 +989,7 @@ export default function SuppliersManager() {
                               ? "border-emerald-600 bg-emerald-600 text-white"
                               : "border-slate-200 bg-white hover:bg-slate-50"
                           )}
-                          onClick={() => toggleCat(adding, setAdding as any, c)}
+                          onClick={() => toggleCatNonNull(setAdding, c)}
                         >
                           {c}
                         </button>
@@ -847,14 +1004,17 @@ export default function SuppliersManager() {
                       onChange={(e) =>
                         setAdding((s) => ({ ...s, addCategory: e.target.value }))
                       }
-                      onKeyDown={(e) =>
-                        e.key === "Enter" && addFreeCat(adding, setAdding as any)
-                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addFreeCatNonNull(adding, setAdding);
+                        }
+                      }}
                     />
                     <button
                       type="button"
                       className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 hover:bg-slate-50"
-                      onClick={() => addFreeCat(adding, setAdding as any)}
+                      onClick={() => addFreeCatNonNull(adding, setAdding)}
                     >
                       Add
                     </button>

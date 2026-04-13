@@ -2,8 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 
 import Button from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
@@ -188,6 +187,13 @@ type HygieneHistoryRow = {
 
 function safeDate(val: any): Date | null {
   if (!val) return null;
+
+  if (typeof val === "string" && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+    const [y, m, d] = val.split("-").map(Number);
+    const parsed = new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
   const d = new Date(val);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -370,8 +376,7 @@ function canonicalAreaName(raw: string): (typeof SFBB_AREAS)[number] | null {
 
   if (map[k]) return map[k];
 
-  if (k.includes("cross") && k.includes("contam"))
-    return "Cross-contamination";
+  if (k.includes("cross") && k.includes("contam")) return "Cross-contamination";
   if (k.includes("clean")) return "Cleaning";
   if (k.includes("chill") || k.includes("fridge") || k.includes("freez"))
     return "Chilling";
@@ -418,8 +423,7 @@ function normaliseTrainingAreas(
 
   if (typeof val === "object") {
     for (const [area, meta] of Object.entries(val as Record<string, any>)) {
-      const awarded =
-        (meta as any)?.awarded_on ?? (meta as any)?.added_on ?? null;
+      const awarded = (meta as any)?.awarded_on ?? (meta as any)?.added_on ?? null;
       const expires = (meta as any)?.expires_on ?? null;
       setArea(String(area), awarded, expires);
     }
@@ -518,13 +522,32 @@ function computeTrainingStatus(awardedISO: string | null, expiresISO: string | n
     ? Math.round((exp0.getTime() - today0.getTime()) / 86400000)
     : null;
 
-  if (days_until == null)
-    return { expires_on: null, days_until: null, status: "unknown" as TrainingAreaStatus };
-  if (days_until < 0)
-    return { expires_on: toISODate(exp0!), days_until, status: "red" as TrainingAreaStatus };
-  if (days_until <= 30)
-    return { expires_on: toISODate(exp0!), days_until, status: "amber" as TrainingAreaStatus };
-  return { expires_on: toISODate(exp0!), days_until, status: "green" as TrainingAreaStatus };
+  if (days_until == null) {
+    return {
+      expires_on: null,
+      days_until: null,
+      status: "unknown" as TrainingAreaStatus,
+    };
+  }
+  if (days_until < 0) {
+    return {
+      expires_on: toISODate(exp0!),
+      days_until,
+      status: "red" as TrainingAreaStatus,
+    };
+  }
+  if (days_until <= 30) {
+    return {
+      expires_on: toISODate(exp0!),
+      days_until,
+      status: "amber" as TrainingAreaStatus,
+    };
+  }
+  return {
+    expires_on: toISODate(exp0!),
+    days_until,
+    status: "green" as TrainingAreaStatus,
+  };
 }
 
 async function fetchTrainingAreasReport(
@@ -608,7 +631,7 @@ async function fetchTrainingAreasReport(
       const areaKey = String(area);
       const selected = Object.prototype.hasOwnProperty.call(normal, areaKey);
 
-      const meta = selected ? (normal[areaKey] ?? {}) : {};
+      const meta = selected ? normal[areaKey] ?? {} : {};
       const awarded_on = meta.awarded_on ?? null;
       const expires_on_in = meta.expires_on ?? null;
 
@@ -634,10 +657,14 @@ async function fetchTrainingAreasReport(
 
 /* ===================== Food hygiene ratings fetch ===================== */
 
-async function fetchLatestHygieneByLocation(orgId: string): Promise<Record<string, HygieneMeta>> {
+async function fetchLatestHygieneByLocation(
+  orgId: string
+): Promise<Record<string, HygieneMeta>> {
   const { data, error } = await supabase
     .from("food_hygiene_ratings")
-    .select("location_id, rating, visit_date, certificate_expires_at, issuing_authority, reference")
+    .select(
+      "location_id, rating, visit_date, certificate_expires_at, issuing_authority, reference"
+    )
     .eq("org_id", orgId)
     .order("visit_date", { ascending: false })
     .order("created_at", { ascending: false })
@@ -655,7 +682,9 @@ async function fetchLatestHygieneByLocation(orgId: string): Promise<Record<strin
     map[locId] = {
       rating: r.rating != null ? Number(r.rating) : null,
       visit_date: r.visit_date ? String(r.visit_date) : null,
-      certificate_expires_at: r.certificate_expires_at ? String(r.certificate_expires_at) : null,
+      certificate_expires_at: r.certificate_expires_at
+        ? String(r.certificate_expires_at)
+        : null,
       issuing_authority: r.issuing_authority ? String(r.issuing_authority) : null,
       reference: r.reference ? String(r.reference) : null,
     };
@@ -685,7 +714,9 @@ async function fetchHygieneHistoryForLocation(
     id: String(r.id),
     rating: r.rating != null ? Number(r.rating) : null,
     visit_date: r.visit_date ? String(r.visit_date) : null,
-    certificate_expires_at: r.certificate_expires_at ? String(r.certificate_expires_at) : null,
+    certificate_expires_at: r.certificate_expires_at
+      ? String(r.certificate_expires_at)
+      : null,
     issuing_authority: r.issuing_authority ? String(r.issuing_authority) : null,
     reference: r.reference ? String(r.reference) : null,
     notes: r.notes ? String(r.notes) : null,
@@ -811,7 +842,7 @@ async function fetchTempFailuresUnified(
       happened_on,
       created_at: atISO,
       type: "Temp failure",
-      created_by: (ca?.recorded_by ?? l.staff_initials ?? null)
+      created_by: ca?.recorded_by ?? l.staff_initials ?? null
         ? String(ca?.recorded_by ?? l.staff_initials)
         : null,
       details,
@@ -865,7 +896,9 @@ async function fetchCleaningRunsTrail(
   const runRows = (runs ?? []) as any[];
   if (!runRows.length) return [];
 
-  const taskIds = Array.from(new Set(runRows.map((r) => String(r.task_id)).filter(Boolean)));
+  const taskIds = Array.from(
+    new Set(runRows.map((r) => String(r.task_id)).filter(Boolean))
+  );
 
   let tasksQ = supabase
     .from("cleaning_tasks")
@@ -888,7 +921,10 @@ async function fetchCleaningRunsTrail(
   }
 
   return runRows.map((r) => {
-    const t = taskMap.get(String(r.task_id)) ?? { task: "—", category: "Uncategorised" };
+    const t = taskMap.get(String(r.task_id)) ?? {
+      task: "—",
+      category: "Uncategorised",
+    };
     return {
       id: String(r.id),
       run_on: String(r.run_on),
@@ -1073,7 +1109,10 @@ async function fetchTeamDue(
     )
   );
 
-  const staffMap = new Map<string, { name: string; email: string | null; initials: string | null }>();
+  const staffMap = new Map<
+    string,
+    { name: string; email: string | null; initials: string | null }
+  >();
 
   if (staffIds.length) {
     const { data: sData, error: sErr } = await supabase
@@ -1097,7 +1136,11 @@ async function fetchTeamDue(
 
   return trainings
     .map((r: any): TeamRow | null => {
-      const staff = staffMap.get(String(r.staff_id)) ?? { name: "—", email: null, initials: null };
+      const staff = staffMap.get(String(r.staff_id)) ?? {
+        name: "—",
+        email: null,
+        initials: null,
+      };
 
       const exp = safeDate(r.expires_on);
       if (!exp) return null;
@@ -1105,7 +1148,9 @@ async function fetchTeamDue(
       const exp0 = new Date(exp);
       exp0.setHours(0, 0, 0, 0);
 
-      const days_until = Math.round((exp0.getTime() - today0.getTime()) / 86400000);
+      const days_until = Math.round(
+        (exp0.getTime() - today0.getTime()) / 86400000
+      );
 
       return {
         id: String(r.id),
@@ -1118,7 +1163,9 @@ async function fetchTeamDue(
     })
     .filter(isTeamRow)
     .filter((r) => typeof r.days_until === "number" && r.days_until <= withinDays)
-    .sort((a: any, b: any) => (a.expires_on || "").localeCompare(b.expires_on || ""));
+    .sort((a: any, b: any) =>
+      (a.expires_on || "").localeCompare(b.expires_on || "")
+    );
 }
 
 async function fetchAllergenLog(
@@ -1135,7 +1182,9 @@ async function fetchAllergenLog(
 
       const intervalDaysRaw = r.interval_days;
       const intervalDays =
-        intervalDaysRaw == null || intervalDaysRaw === "" ? null : Number(intervalDaysRaw);
+        intervalDaysRaw == null || intervalDaysRaw === ""
+          ? null
+          : Number(intervalDaysRaw);
 
       let nextDue: Date | null = null;
       if (reviewed && intervalDays && Number.isFinite(intervalDays) && intervalDays > 0) {
@@ -1325,7 +1374,10 @@ async function fetchStaffAbsences(
 /**
  * Education/trainings table now location-aware when possible.
  */
-async function fetchEducation(orgId: string, locationId: string | null): Promise<EducationRow[]> {
+async function fetchEducation(
+  orgId: string,
+  locationId: string | null
+): Promise<EducationRow[]> {
   let data: any[] | null = null;
 
   if (locationId) {
@@ -1389,7 +1441,9 @@ async function fetchEducation(orgId: string, locationId: string | null): Promise
     let status: EducationRow["status"] = "no-expiry";
 
     if (expires0) {
-      daysUntil = Math.round((expires0.getTime() - today0.getTime()) / 86400000);
+      daysUntil = Math.round(
+        (expires0.getTime() - today0.getTime()) / 86400000
+      );
       status = daysUntil < 0 ? "expired" : "valid";
     }
 
@@ -1412,7 +1466,15 @@ async function fetchEducation(orgId: string, locationId: string | null): Promise
 /* ===================== CSV ===================== */
 
 function tempsToCSV(rows: TempRow[]) {
-  const header = ["Date", "Staff", "Location", "Item", "Temp (°C)", "Target", "Status"];
+  const header = [
+    "Date",
+    "Staff",
+    "Location",
+    "Item",
+    "Temp (°C)",
+    "Target",
+    "Status",
+  ];
   const lines = [header.join(",")];
   for (const r of rows) {
     const cells = [
@@ -1432,32 +1494,42 @@ function tempsToCSV(rows: TempRow[]) {
 /* ===================== Page ===================== */
 
 export default function ReportsPage() {
+  const {
+    orgId,
+    locationId: activeLocationId,
+    loading: activeLocationLoading,
+  } = useActiveLocation();
+
   const today = new Date();
   const d30 = new Date(Date.now() - 29 * 24 * 3600 * 1000);
   const [from, setFrom] = useState(toISODate(d30));
   const [to, setTo] = useState(toISODate(today));
-
-  const [orgId, setOrgId] = useState<string | null>(null);
 
   const [locationFilter, setLocationFilter] = useState<string | "all">("all");
   const [locations, setLocations] = useState<LocationOption[]>([]);
 
   const [bootReady, setBootReady] = useState(false);
 
-  const [hygieneByLocation, setHygieneByLocation] = useState<Record<string, HygieneMeta>>({});
+  const [hygieneByLocation, setHygieneByLocation] = useState<Record<string, HygieneMeta>>(
+    {}
+  );
   const [hygieneHistory, setHygieneHistory] = useState<HygieneHistoryRow[] | null>(null);
 
   const [temps, setTemps] = useState<TempRow[] | null>(null);
   const [teamDue, setTeamDue] = useState<TeamRow[] | null>(null);
   const [allergenLog, setAllergenLog] = useState<AllergenRow[] | null>(null);
-  const [allergenChanges, setAllergenChanges] = useState<AllergenChangeRow[] | null>(null);
+  const [allergenChanges, setAllergenChanges] = useState<AllergenChangeRow[] | null>(
+    null
+  );
   const [staffReviews, setStaffReviews] = useState<StaffReviewRow[] | null>(null);
   const [staffAbsences, setStaffAbsences] = useState<StaffAbsenceRow[] | null>(null);
   const [education, setEducation] = useState<EducationRow[] | null>(null);
   const [cleaningCount, setCleaningCount] = useState(0);
 
   const [incidents, setIncidents] = useState<UnifiedIncidentRow[] | null>(null);
-  const [loggedIncidents, setLoggedIncidents] = useState<LoggedIncidentRow[] | null>(null);
+  const [loggedIncidents, setLoggedIncidents] = useState<LoggedIncidentRow[] | null>(
+    null
+  );
 
   const [signoffs, setSignoffs] = useState<SignoffRow[] | null>(null);
   const [cleaningRuns, setCleaningRuns] = useState<CleaningRunRow[] | null>(null);
@@ -1465,7 +1537,9 @@ export default function ReportsPage() {
   const [trainingAreas, setTrainingAreas] = useState<TrainingAreaRow[] | null>(null);
   const [showAllTrainingAreas, setShowAllTrainingAreas] = useState(false);
 
-  const [calibrationChecks, setCalibrationChecks] = useState<CalibrationRow[] | null>(null);
+  const [calibrationChecks, setCalibrationChecks] = useState<CalibrationRow[] | null>(
+    null
+  );
   const [showAllCalibration, setShowAllCalibration] = useState(false);
 
   const [showAllTemps, setShowAllTemps] = useState(false);
@@ -1550,8 +1624,7 @@ export default function ReportsPage() {
       row.byArea[r.area] = { selected: r.selected, awarded_on: r.awarded_on };
     }
 
-    const rows = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-    return rows;
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [trainingAreas]);
 
   const hygieneDisplay = useMemo(() => {
@@ -1567,7 +1640,9 @@ export default function ReportsPage() {
     }
 
     const metas = Object.values(hygieneByLocation);
-    const rated = metas.map((m) => m.rating).filter((x): x is number => typeof x === "number");
+    const rated = metas
+      .map((m) => m.rating)
+      .filter((x): x is number => typeof x === "number");
     if (!rated.length) return { label: "—", visit: null as string | null };
 
     const uniq = Array.from(new Set(rated));
@@ -1584,38 +1659,65 @@ export default function ReportsPage() {
   /* ---------- boot ---------- */
 
   useEffect(() => {
+    if (activeLocationLoading) return;
+
+    let cancelled = false;
+
     (async () => {
       try {
         setBootReady(false);
 
-        const id = await getActiveOrgIdClient();
-        setOrgId(id ?? null);
-        if (!id) return;
+        if (!orgId) {
+          if (!cancelled) {
+            setLocations([]);
+            setHygieneByLocation({});
+            setLocationFilter("all");
+          }
+          return;
+        }
 
         const { data: locData, error: locErr } = await supabase
           .from("locations")
           .select("id,name")
-          .eq("org_id", id)
+          .eq("org_id", orgId)
           .order("name");
 
-        if (!locErr && locData) {
-          setLocations(locData.map((r: any) => ({ id: String(r.id), name: r.name ?? "Unnamed" })));
+        if (!cancelled) {
+          if (!locErr && locData) {
+            setLocations(
+              locData.map((r: any) => ({
+                id: String(r.id),
+                name: r.name ?? "Unnamed",
+              }))
+            );
+          } else {
+            setLocations([]);
+          }
         }
 
         try {
-          const map = await fetchLatestHygieneByLocation(id);
-          setHygieneByLocation(map);
+          const map = await fetchLatestHygieneByLocation(orgId);
+          if (!cancelled) setHygieneByLocation(map);
         } catch {
-          setHygieneByLocation({});
+          if (!cancelled) setHygieneByLocation({});
         }
 
-        const activeLoc = await getActiveLocationIdClient();
-        if (activeLoc) setLocationFilter(activeLoc);
+        if (!cancelled) {
+          setLocationFilter(activeLocationId ?? "all");
+        }
       } finally {
-        setBootReady(true);
+        if (!cancelled) setBootReady(true);
       }
     })();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [orgId, activeLocationId, activeLocationLoading]);
+
+  useEffect(() => {
+    setInitialRunDone(false);
+  }, [orgId]);
 
   /* ---------- runners ---------- */
 
@@ -1648,7 +1750,12 @@ export default function ReportsPage() {
         fetchStaffReviews(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchStaffAbsences(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchLoggedIncidentsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
-        fetchIncidentsTrailAsUnifiedIncidentShape(rangeFrom, rangeTo, orgIdValue, locationId),
+        fetchIncidentsTrailAsUnifiedIncidentShape(
+          rangeFrom,
+          rangeTo,
+          orgIdValue,
+          locationId
+        ),
         fetchTempFailuresUnified(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchSignoffsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
         fetchCleaningRunsTrail(rangeFrom, rangeTo, orgIdValue, locationId),
@@ -1663,7 +1770,6 @@ export default function ReportsPage() {
 
       setLoggedIncidents(loggedInc);
       setAllergenChanges(allergenEditRows);
-
       setCalibrationChecks(calibrations);
 
       const unified: UnifiedIncidentRow[] = [
@@ -1679,8 +1785,14 @@ export default function ReportsPage() {
         })),
         ...(tempFails ?? []),
       ].sort((a, b) => {
-        const aT = safeDate(a.created_at)?.getTime() ?? safeDate(a.happened_on)?.getTime() ?? 0;
-        const bT = safeDate(b.created_at)?.getTime() ?? safeDate(b.happened_on)?.getTime() ?? 0;
+        const aT =
+          safeDate(a.created_at)?.getTime() ??
+          safeDate(a.happened_on)?.getTime() ??
+          0;
+        const bT =
+          safeDate(b.created_at)?.getTime() ??
+          safeDate(b.happened_on)?.getTime() ??
+          0;
         return bT - aT;
       });
 
@@ -1775,29 +1887,39 @@ export default function ReportsPage() {
   }
 
   useEffect(() => {
+    if (activeLocationLoading) return;
     if (!orgId) return;
     if (!bootReady) return;
     if (initialRunDone) return;
 
-    (async () => {
+    void (async () => {
       await runInstantAudit90();
       setInitialRunDone(true);
     })();
-  }, [orgId, bootReady, initialRunDone]);
+  }, [orgId, bootReady, initialRunDone, activeLocationLoading]);
 
   useEffect(() => {
+    if (activeLocationLoading) return;
     if (!orgId) return;
     if (!bootReady) return;
     if (!initialRunDone) return;
     if (loading) return;
 
     const locId = locationFilter !== "all" ? locationFilter : null;
-    runRange(from, to, orgId, locId, true);
-  }, [locationFilter, orgId, bootReady, initialRunDone]);
+    void runRange(from, to, orgId, locId, true);
+  }, [
+    locationFilter,
+    orgId,
+    bootReady,
+    initialRunDone,
+    activeLocationLoading,
+  ]);
 
   function downloadCSV() {
     if (!temps?.length) return;
-    const blob = new Blob([tempsToCSV(temps)], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob([tempsToCSV(temps)], {
+      type: "text/csv;charset=utf-8",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -1846,19 +1968,29 @@ export default function ReportsPage() {
     document.body.removeChild(link);
   }
 
-  function downloadFourWeekPDF() {
-    const toParam = encodeURIComponent(toISODate(to));
-    window.open(`/reports/four-week?to=${toParam}`, "_blank", "noopener,noreferrer");
-  }
-
-  const fourWeekTo = toISODate(to);
+  const fourWeekTo = to;
   const fourWeekFrom = addDaysISO(fourWeekTo, -27);
 
+  function downloadFourWeekPDF() {
+    const params = new URLSearchParams();
+    params.set("to", fourWeekTo);
+
+    if (locationFilter !== "all") {
+      params.set("locationId", String(locationFilter));
+    }
+
+    window.open(`/reports/four-week?${params.toString()}`, "_blank", "noopener,noreferrer");
+  }
+
   const selectedLatestRating =
-    locationFilter !== "all" ? hygieneByLocation[String(locationFilter)]?.rating ?? null : null;
+    locationFilter !== "all"
+      ? hygieneByLocation[String(locationFilter)]?.rating ?? null
+      : null;
 
   const selectedLatestVisit =
-    locationFilter !== "all" ? hygieneByLocation[String(locationFilter)]?.visit_date ?? null : null;
+    locationFilter !== "all"
+      ? hygieneByLocation[String(locationFilter)]?.visit_date ?? null
+      : null;
 
   const previousHygiene =
     locationFilter !== "all" && hygieneHistory && hygieneHistory.length > 1
@@ -1897,7 +2029,7 @@ export default function ReportsPage() {
               />
               <Button
                 onClick={runCustom}
-                disabled={loading || !orgId}
+                disabled={loading || !orgId || activeLocationLoading}
                 className="shrink-0 rounded-xl bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
               >
                 Run
@@ -1908,7 +2040,7 @@ export default function ReportsPage() {
           <div className="flex flex-col justify-end gap-2 sm:col-span-2 lg:col-span-2">
             <Button
               onClick={runInstantAudit90}
-              disabled={loading || !orgId}
+              disabled={loading || !orgId || activeLocationLoading}
               className="w-full rounded-xl bg-emerald-600 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
             >
               Instant Audit (last 90 days)
@@ -1926,7 +2058,7 @@ export default function ReportsPage() {
             <Button
               variant="outline"
               onClick={downloadGeneratedPdf}
-              disabled={!orgId || loading}
+              disabled={!orgId || loading || activeLocationLoading}
               className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
             >
               <Download className="mr-2 h-4 w-4" /> Download PDF report
@@ -1935,7 +2067,7 @@ export default function ReportsPage() {
             <Button
               variant="outline"
               onClick={openPrintableReport}
-              disabled={!orgId || loading}
+              disabled={!orgId || loading || activeLocationLoading}
               className="w-full rounded-xl border-slate-300 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
             >
               <Printer className="mr-2 h-4 w-4" /> Print generated report
@@ -1947,7 +2079,7 @@ export default function ReportsPage() {
               to={to}
               locationId={locationFilter !== "all" ? locationFilter : null}
               locationLabel={currentLocationLabel}
-              disabled={loading || !orgId}
+              disabled={loading || !orgId || activeLocationLoading}
             />
           </div>
         </div>
@@ -1961,6 +2093,7 @@ export default function ReportsPage() {
               className="mt-1 w-full rounded-xl border border-slate-300 bg-white/80 px-2 py-1.5 text-sm"
               value={locationFilter}
               onChange={(e) => setLocationFilter(e.target.value as "all" | string)}
+              disabled={activeLocationLoading}
             >
               <option value="all">All locations</option>
               {locations.map((loc) => (
@@ -1970,7 +2103,9 @@ export default function ReportsPage() {
               ))}
             </select>
 
-            <div className="mt-1 text-[11px] text-slate-500">Current: {currentLocationLabel}</div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Current: {currentLocationLabel}
+            </div>
 
             <div className="mt-3">
               <div className="mb-1 text-xs uppercase tracking-wide text-slate-500">
@@ -2036,7 +2171,9 @@ export default function ReportsPage() {
                   )}
                 </>
               ) : hygieneDisplay.label === "Varies" ? (
-                <span className="text-sm font-medium text-slate-600">Varies by location</span>
+                <span className="text-sm font-medium text-slate-600">
+                  Varies by location
+                </span>
               ) : hygieneDisplay.label === "—" ? (
                 <span className="text-sm font-medium text-slate-500">No ratings</span>
               ) : (
@@ -2048,7 +2185,9 @@ export default function ReportsPage() {
             </div>
 
             <div className="mt-2 text-[11px] text-slate-500">
-              {loading ? "Loading…" : "Auto-runs when you change location."}
+              {loading || activeLocationLoading
+                ? "Loading…"
+                : "Auto-runs when you change location."}
             </div>
           </div>
         </div>
@@ -2059,9 +2198,10 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {!temps && !loading && (
+        {!temps && !loading && !activeLocationLoading && (
           <div className="mt-3 text-xs text-slate-500">
-            Run a report to see results. Instant Audit gives you a ready-for-inspection 90-day view.
+            Run a report to see results. Instant Audit gives you a ready-for-inspection
+            90-day view.
           </div>
         )}
       </Card>
@@ -2096,7 +2236,8 @@ export default function ReportsPage() {
                 Download 4-Week Audit (PDF)
               </Button>
               <div className="text-[11px] text-slate-500">
-                Uses your Four-Weekly route: <span className="font-mono">/reports/four-week</span>
+                Uses your Four-Weekly route:{" "}
+                <span className="font-mono">/reports/four-week</span>
               </div>
             </div>
           </div>
@@ -2170,8 +2311,8 @@ export default function ReportsPage() {
               data-hide-on-print
             >
               <div>
-                Showing {showAllTemps ? temps.length : Math.min(10, temps.length)} of {temps.length}{" "}
-                entries
+                Showing {showAllTemps ? temps.length : Math.min(10, temps.length)} of{" "}
+                {temps.length} entries
               </div>
               <button
                 type="button"
@@ -2190,7 +2331,8 @@ export default function ReportsPage() {
             {calibrationChecks ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
           <p className="mb-3 text-xs text-slate-500">
-            Systematic calibrations carried out on cold stores, probes and thermometers.
+            Systematic calibrations carried out on cold stores, probes and
+            thermometers.
           </p>
 
           <div className="overflow-x-auto">
@@ -2229,7 +2371,9 @@ export default function ReportsPage() {
                   visibleCalibrationChecks!.map((r) => {
                     const yesPill = "bg-emerald-100 text-emerald-800";
                     const noPill = "bg-slate-100 text-slate-700";
-                    const allPill = r.all_equipment_calibrated ? yesPill : "bg-red-100 text-red-800";
+                    const allPill = r.all_equipment_calibrated
+                      ? yesPill
+                      : "bg-red-100 text-red-800";
 
                     const pill = (v: boolean) => (
                       <span
@@ -2243,7 +2387,9 @@ export default function ReportsPage() {
 
                     return (
                       <tr key={r.id} className="border-t border-slate-100">
-                        <td className="whitespace-nowrap py-2 pr-3">{formatISOToUK(r.checked_on)}</td>
+                        <td className="whitespace-nowrap py-2 pr-3">
+                          {formatISOToUK(r.checked_on)}
+                        </td>
                         <td className="py-2 pr-3 font-semibold">
                           {r.staff_initials ? r.staff_initials.toUpperCase() : "—"}
                         </td>
@@ -2268,27 +2414,29 @@ export default function ReportsPage() {
             </table>
           </div>
 
-          {calibrationChecks && calibrationChecks.length > 10 && locationFilter !== "all" && (
-            <div
-              className="mt-2 flex items-center justify-between text-xs text-slate-600"
-              data-hide-on-print
-            >
-              <div>
-                Showing{" "}
-                {showAllCalibration
-                  ? calibrationChecks.length
-                  : Math.min(10, calibrationChecks.length)}{" "}
-                of {calibrationChecks.length} entries
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAllCalibration((v) => !v)}
-                className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+          {calibrationChecks &&
+            calibrationChecks.length > 10 &&
+            locationFilter !== "all" && (
+              <div
+                className="mt-2 flex items-center justify-between text-xs text-slate-600"
+                data-hide-on-print
               >
-                {showAllCalibration ? "Show first 10" : "View all"}
-              </button>
-            </div>
-          )}
+                <div>
+                  Showing{" "}
+                  {showAllCalibration
+                    ? calibrationChecks.length
+                    : Math.min(10, calibrationChecks.length)}{" "}
+                  of {calibrationChecks.length} entries
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAllCalibration((v) => !v)}
+                  className="rounded-full border border-slate-300 bg-white/80 px-3 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+                >
+                  {showAllCalibration ? "Show first 10" : "View all"}
+                </button>
+              </div>
+            )}
         </Card>
 
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
@@ -2324,35 +2472,37 @@ export default function ReportsPage() {
                     </td>
                   </tr>
                 ) : (
-                  (showAllLoggedIncidents ? loggedIncidents : visibleLoggedIncidents!).map((r) => (
-                    <tr key={r.id} className="border-t border-slate-100">
-                      <td className="py-2 pr-3">
-                        {r.happened_on ? formatISOToUK(r.happened_on) : "—"}
-                      </td>
-                      <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
-                      <td className="py-2 pr-3 font-semibold">{r.type ?? "Incident"}</td>
-                      <td className="py-2 pr-3">
-                        {r.created_by ? r.created_by.toUpperCase() : "—"}
-                      </td>
-                      <td className="max-w-xs py-2 pr-3">
-                        {r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}
-                      </td>
-                      <td className="max-w-xs py-2 pr-3">
-                        {r.immediate_action ? (
-                          <span className="line-clamp-2">{r.immediate_action}</span>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="max-w-xs py-2 pr-3">
-                        {r.preventive_action ? (
-                          <span className="line-clamp-2">{r.preventive_action}</span>
-                        ) : (
-                          <span className="text-slate-500">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+                  (showAllLoggedIncidents ? loggedIncidents : visibleLoggedIncidents!).map(
+                    (r) => (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="py-2 pr-3">
+                          {r.happened_on ? formatISOToUK(r.happened_on) : "—"}
+                        </td>
+                        <td className="py-2 pr-3">{formatTimeHM(r.created_at)}</td>
+                        <td className="py-2 pr-3 font-semibold">{r.type ?? "Incident"}</td>
+                        <td className="py-2 pr-3">
+                          {r.created_by ? r.created_by.toUpperCase() : "—"}
+                        </td>
+                        <td className="max-w-xs py-2 pr-3">
+                          {r.details ? <span className="line-clamp-2">{r.details}</span> : "—"}
+                        </td>
+                        <td className="max-w-xs py-2 pr-3">
+                          {r.immediate_action ? (
+                            <span className="line-clamp-2">{r.immediate_action}</span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="max-w-xs py-2 pr-3">
+                          {r.preventive_action ? (
+                            <span className="line-clamp-2">{r.preventive_action}</span>
+                          ) : (
+                            <span className="text-slate-500">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  )
                 )}
               </tbody>
             </table>
@@ -2455,8 +2605,8 @@ export default function ReportsPage() {
               data-hide-on-print
             >
               <div>
-                Showing {showAllIncidents ? incidents.length : Math.min(10, incidents.length)} of{" "}
-                {incidents.length} entries
+                Showing {showAllIncidents ? incidents.length : Math.min(10, incidents.length)}{" "}
+                of {incidents.length} entries
               </div>
               <button
                 type="button"
@@ -2524,8 +2674,10 @@ export default function ReportsPage() {
             >
               <div>
                 Showing{" "}
-                {showAllCleaningRuns ? cleaningRuns.length : Math.min(10, cleaningRuns.length)} of{" "}
-                {cleaningRuns.length} entries
+                {showAllCleaningRuns
+                  ? cleaningRuns.length
+                  : Math.min(10, cleaningRuns.length)}{" "}
+                of {cleaningRuns.length} entries
               </div>
               <button
                 type="button"
@@ -2654,8 +2806,12 @@ export default function ReportsPage() {
                           {formatISOToUK(r.reviewed_on)}
                         </td>
                         <td className="whitespace-nowrap py-2 pr-3">{staffLabel}</td>
-                        <td className="whitespace-nowrap py-2 pr-3">{r.reviewer ?? "—"}</td>
-                        <td className="whitespace-nowrap py-2 pr-3">{r.location_name ?? "—"}</td>
+                        <td className="whitespace-nowrap py-2 pr-3">
+                          {r.reviewer ?? "—"}
+                        </td>
+                        <td className="whitespace-nowrap py-2 pr-3">
+                          {r.location_name ?? "—"}
+                        </td>
                         <td className="py-2 pr-3">
                           <span
                             className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${pill}`}
@@ -2681,8 +2837,10 @@ export default function ReportsPage() {
             >
               <div>
                 Showing{" "}
-                {showAllStaffReviews ? staffReviews.length : Math.min(10, staffReviews.length)} of{" "}
-                {staffReviews.length} entries
+                {showAllStaffReviews
+                  ? staffReviews.length
+                  : Math.min(10, staffReviews.length)}{" "}
+                of {staffReviews.length} entries
               </div>
               <button
                 type="button"
@@ -2744,7 +2902,10 @@ export default function ReportsPage() {
                           <div>{prettyAbsenceType(r.absence_type)}</div>
                           {r.is_half_day && (
                             <div className="text-xs text-slate-500">
-                              Half day{r.half_day_period ? ` (${String(r.half_day_period).toUpperCase()})` : ""}
+                              Half day
+                              {r.half_day_period
+                                ? ` (${String(r.half_day_period).toUpperCase()})`
+                                : ""}
                             </div>
                           )}
                         </td>
@@ -2754,7 +2915,7 @@ export default function ReportsPage() {
                         <td className="whitespace-nowrap py-2 pr-3">
                           {formatISOToUK(r.end_date)}
                         </td>
-                        <td className="py-2 pr-3">{daysInclusive(r.start_date, r.end_date, r.is_half_day)}</td>
+                       <td className="py-2 pr-3">{daysInclusive(r.start_date, r.end_date, r.is_half_day)}</td>
                         <td className="py-2 pr-3">{r.location_name ?? "All / org-wide"}</td>
                         <td className="py-2 pr-3">
                           <span
@@ -2855,7 +3016,9 @@ export default function ReportsPage() {
                         <td className="py-2 pr-3">
                           {r.expires_on ? formatISOToUK(r.expires_on) : "—"}
                           {r.days_until != null && (
-                            <span className="ml-1 text-xs text-slate-500">({r.days_until}d)</span>
+                            <span className="ml-1 text-xs text-slate-500">
+                              ({r.days_until}d)
+                            </span>
                           )}
                         </td>
                         <td className="py-2 pr-3">
@@ -2935,13 +3098,19 @@ export default function ReportsPage() {
               <tbody>
                 {!trainingMatrix ? (
                   <tr>
-                    <td colSpan={1 + SFBB_AREAS.length} className="py-6 text-center text-slate-500">
+                    <td
+                      colSpan={1 + SFBB_AREAS.length}
+                      className="py-6 text-center text-slate-500"
+                    >
                       Run a report to load training areas
                     </td>
                   </tr>
                 ) : trainingMatrix.length === 0 ? (
                   <tr>
-                    <td colSpan={1 + SFBB_AREAS.length} className="py-6 text-center text-slate-500">
+                    <td
+                      colSpan={1 + SFBB_AREAS.length}
+                      className="py-6 text-center text-slate-500"
+                    >
                       No training area data
                     </td>
                   </tr>
@@ -3011,7 +3180,8 @@ export default function ReportsPage() {
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-2 text-base font-semibold">Allergen reviews (history)</h3>
           <p className="mb-3 text-xs text-slate-500">
-            Historic log of reviews of allergen info for the selected location (or all locations).
+            Historic log of reviews of allergen info for the selected location (or all
+            locations).
           </p>
 
           <div className="overflow-x-auto">
@@ -3043,7 +3213,9 @@ export default function ReportsPage() {
                       <td className="py-2 pr-3">
                         {r.reviewed_on ? formatISOToUK(r.reviewed_on) : "—"}
                       </td>
-                      <td className="py-2 pr-3">{r.next_due ? formatISOToUK(r.next_due) : "—"}</td>
+                      <td className="py-2 pr-3">
+                        {r.next_due ? formatISOToUK(r.next_due) : "—"}
+                      </td>
                       <td className="py-2 pr-3">{r.days_until ?? "—"}</td>
                       <td className="py-2 pr-3">{r.reviewer ?? "—"}</td>
                     </tr>
@@ -3056,7 +3228,8 @@ export default function ReportsPage() {
 
         <Card className="rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-sm backdrop-blur-sm">
           <h3 className="mb-3 text-base font-semibold">
-            Allergen edits {allergenChanges ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
+            Allergen edits{" "}
+            {allergenChanges ? `(${formatISOToUK(from)} → ${formatISOToUK(to)})` : ""}
           </h3>
           <p className="mb-2 text-xs text-slate-500">
             Changes made to allergen info for the selected range and location.
