@@ -436,7 +436,7 @@ export default function AllergenManager() {
     }
   }
 
-  /** Load items and flags from cloud */
+  /** Load items and flags from cloud - ORG WIDE */
   async function loadFromSupabase(currentOrgId = orgId) {
     if (!currentOrgId) return;
 
@@ -446,7 +446,7 @@ export default function AllergenManager() {
     const { data: items, error: itemsErr } = await supabase
       .from("allergen_items")
       .select(
-        "id,item,category,notes,ingredients_text,ingredients_label_image_url,locked,org_id,location_id"
+        "id,item,category,notes,ingredients_text,ingredients_label_image_url,locked,org_id,organisation_id"
       )
       .or(`organisation_id.eq.${currentOrgId},org_id.eq.${currentOrgId}`)
       .order("item", { ascending: true });
@@ -457,12 +457,7 @@ export default function AllergenManager() {
       return;
     }
 
-    const filteredItems = (items ?? []).filter((r: any) => {
-      const rowLocationId = r.location_id ? String(r.location_id) : null;
-      return rowLocationId === null || rowLocationId === locationId;
-    });
-
-    const ids = filteredItems.map((r: any) => r.id);
+    const ids = (items ?? []).map((r: any) => r.id);
     const flagsByItem: Record<string, Flags> = {};
 
     if (ids.length) {
@@ -486,7 +481,7 @@ export default function AllergenManager() {
       }
     }
 
-    const list: MatrixRow[] = filteredItems.map((r: any) => ({
+    const list: MatrixRow[] = (items ?? []).map((r: any) => ({
       id: String(r.id),
       item: r.item,
       category: (r.category ?? undefined) as Category | undefined,
@@ -624,7 +619,6 @@ export default function AllergenManager() {
             locked: true,
             org_id: currentOrgId,
             organisation_id: currentOrgId,
-            location_id: currentLocationId,
           })
           .eq("id", rowId);
 
@@ -641,7 +635,6 @@ export default function AllergenManager() {
             locked: true,
             org_id: currentOrgId,
             organisation_id: currentOrgId,
-            location_id: currentLocationId,
           })
           .select("id")
           .single();
