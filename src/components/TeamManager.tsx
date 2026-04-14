@@ -353,6 +353,12 @@ function isTrainingStillActive(c: TrainingCert) {
   return false;
 }
 
+function normalizeLocationId(value: string | null | undefined) {
+  const v = (value ?? "").trim();
+  if (!v || v.toLowerCase() === "all") return null;
+  return v;
+}
+
 /* ================================================= */
 export default function TeamManager() {
   const searchParams = useSearchParams();
@@ -362,6 +368,8 @@ export default function TeamManager() {
     locationId,
     loading: activeLocationLoading,
   } = useActiveLocation();
+
+  const safeLocationId = useMemo(() => normalizeLocationId(locationId), [locationId]);
 
   const [rows, setRows] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
@@ -454,7 +462,7 @@ export default function TeamManager() {
   async function setOrResetPin() {
     if (!editing) return;
     if (!orgId) return alert("No organisation found.");
-    if (!locationId) return alert("Pick a location first.");
+    if (!safeLocationId) return alert("Pick a location first.");
     if (!isOwner) return alert("Only owner/admin can set PINs.");
     if (!editing.id) return;
 
@@ -472,7 +480,7 @@ export default function TeamManager() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           orgId,
-          locationId,
+          locationId: safeLocationId,
           teamMemberId: editing.id,
           pin,
         }),
@@ -573,7 +581,9 @@ export default function TeamManager() {
         .eq("org_id", orgId)
         .order("name", { ascending: true });
 
-      if (locationId) qMembers = qMembers.eq("location_id", locationId);
+      if (safeLocationId) {
+        qMembers = qMembers.or(`location_id.eq.${safeLocationId},location_id.is.null`);
+      }
 
       const { data, error } = await qMembers;
       if (error) throw error;
@@ -599,7 +609,7 @@ export default function TeamManager() {
         const derivedInitials = requireInitialsOrDerive({
           id: "",
           org_id: orgId,
-          location_id: locationId ?? null,
+          location_id: safeLocationId,
           user_id: userId,
           login_enabled: true,
           initials: null,
@@ -616,7 +626,7 @@ export default function TeamManager() {
           .from("team_members")
           .insert({
             org_id: orgId,
-            location_id: locationId ?? null,
+            location_id: safeLocationId,
             initials: derivedInitials,
             name: userName,
             email: userEmail,
@@ -658,12 +668,12 @@ export default function TeamManager() {
         }
       }
 
-      if (locationId && userEmail && userId) {
+      if (safeLocationId && userEmail && userId) {
         const { data: myRow } = await supabase
           .from("team_members")
           .select("id,user_id,login_enabled")
           .eq("org_id", orgId)
-          .eq("location_id", locationId)
+          .or(`location_id.eq.${safeLocationId},location_id.is.null`)
           .ilike("email", userEmail)
           .maybeSingle();
 
@@ -703,7 +713,7 @@ export default function TeamManager() {
   useEffect(() => {
     if (activeLocationLoading) return;
     void load();
-  }, [activeLocationLoading, orgId, locationId]);
+  }, [activeLocationLoading, orgId, safeLocationId]);
 
   useEffect(() => {
     const staffParam = searchParams.get("staff");
@@ -751,7 +761,7 @@ export default function TeamManager() {
   function openAdd() {
     setEditing({
       id: "",
-      location_id: locationId ?? null,
+      location_id: safeLocationId,
       user_id: null,
       login_enabled: false,
       initials: "",
@@ -861,19 +871,25 @@ export default function TeamManager() {
 
   async function ensureMemberRowByEmail(params: {
     orgId: string;
-    locationId: string;
+    locationId: string | null;
     email: string;
     payload: any;
   }): Promise<string> {
     const { orgId, locationId, email, payload } = params;
 
-    const { data: existing, error: selErr } = await supabase
+    let selectQuery = supabase
       .from("team_members")
       .select("id")
       .eq("org_id", orgId)
-      .eq("location_id", locationId)
-      .ilike("email", email)
-      .maybeSingle();
+      .ilike("email", email);
+
+    if (locationId) {
+      selectQuery = selectQuery.or(`location_id.eq.${locationId},location_id.is.null`);
+    } else {
+      selectQuery = selectQuery.is("location_id", null);
+    }
+
+    const { data: existing, error: selErr } = await selectQuery.maybeSingle();
 
     if (selErr) throw selErr;
 
@@ -901,7 +917,6 @@ export default function TeamManager() {
   async function sendInviteForExistingMember() {
     if (!editing) return;
     if (!orgId) return alert("No organisation found.");
-    if (!locationId) return alert("Pick a location first.");
     if (!isOwner) return alert("Only the owner/admin can invite team members.");
     if (!editing.id) return;
     if (editing.user_id) return alert("This staff member already has a linked login.");
@@ -915,7 +930,6 @@ export default function TeamManager() {
           .from("team_members")
           .update({ user_id: authUserId, login_enabled: true })
           .eq("org_id", orgId)
-          .eq("location_id", locationId)
           .eq("id", editing.id);
 
         alert("Your profile has been linked to your login.");
@@ -955,7 +969,6 @@ export default function TeamManager() {
 
     try {
       if (!orgId) return alert("No organisation found.");
-      if (!locationId) return alert("Pick a location first.");
       if (!editing.name.trim()) return alert("Name is required.");
 
       const roleValue = (editing.role ?? "").trim().toLowerCase() || "staff";
@@ -967,10 +980,11 @@ export default function TeamManager() {
       }
 
       const emailNormalized = cleanEmail(editing.email);
+      const memberLocationId = safeLocationId;
 
       if (editing.id) {
         const updatePayload: any = {
-          location_id: locationId,
+          location_id: memberLocationId,
           initials: initialsToSave,
           name: editing.name.trim(),
           email: emailNormalized || null,
@@ -1016,7 +1030,7 @@ export default function TeamManager() {
 
         const payload: any = {
           org_id: orgId,
-          location_id: locationId,
+          location_id: memberLocationId,
           initials: initialsToSave,
           name: editing.name.trim(),
           email: emailNormalized,
@@ -1030,7 +1044,7 @@ export default function TeamManager() {
 
         const memberId = await ensureMemberRowByEmail({
           orgId,
-          locationId,
+          locationId: memberLocationId,
           email: emailNormalized,
           payload,
         });
@@ -1049,7 +1063,7 @@ export default function TeamManager() {
         .from("team_members")
         .insert({
           org_id: orgId,
-          location_id: locationId,
+          location_id: memberLocationId,
           initials: initialsToSave,
           name: editing.name.trim(),
           email: emailNormalized || null,
@@ -1550,9 +1564,9 @@ export default function TeamManager() {
                 </div>
               </div>
 
-              {!locationId ? (
-                <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                  No active location selected. Pick a location at the top of the app first.
+              {!safeLocationId ? (
+                <div className="mb-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                  No active location selected. This member will be saved as org-wide.
                 </div>
               ) : null}
 
@@ -1836,7 +1850,7 @@ export default function TeamManager() {
                     <button
                       className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
                       onClick={() => void saveMember()}
-                      disabled={sendingInviteOnSave || !locationId}
+                      disabled={sendingInviteOnSave}
                       type="button"
                     >
                       {sendingInviteOnSave ? "Sending invite…" : "Save"}
