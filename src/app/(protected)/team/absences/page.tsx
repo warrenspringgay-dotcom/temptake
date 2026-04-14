@@ -24,6 +24,8 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
+type StatusFilter = "all" | "pending" | "approved" | "rejected" | "cancelled";
+
 function toDateInputValue(date: Date) {
   return date.toISOString().slice(0, 10);
 }
@@ -41,6 +43,51 @@ function daysInclusive(startDate: string, endDate: string) {
   const end = new Date(`${endDate}T00:00:00`);
   const diffMs = end.getTime() - start.getTime();
   return Math.floor(diffMs / 86400000) + 1;
+}
+
+function normalizeLocationForCreate(value: unknown): string | null {
+  const v = String(value ?? "").trim();
+
+  if (!v) return null;
+
+  const lowered = v.toLowerCase();
+  if (
+    lowered === "all" ||
+    lowered === "__orgwide__" ||
+    lowered === "null" ||
+    lowered === "undefined"
+  ) {
+    return null;
+  }
+
+  return v;
+}
+
+function normalizeLocationFilterValue(value: unknown): string | undefined {
+  const v = String(value ?? "").trim();
+
+  if (!v) return undefined;
+
+  const lowered = v.toLowerCase();
+  if (lowered === "all" || lowered === "null" || lowered === "undefined") {
+    return undefined;
+  }
+
+  return v;
+}
+
+function normalizeStatus(value: unknown): StatusFilter {
+  const v = String(value ?? "").trim();
+  if (
+    v === "pending" ||
+    v === "approved" ||
+    v === "rejected" ||
+    v === "cancelled" ||
+    v === "all"
+  ) {
+    return v;
+  }
+  return "all";
 }
 
 export default async function TeamAbsencesPage({
@@ -63,11 +110,15 @@ export default async function TeamAbsencesPage({
   const endDefault = new Date(today);
   endDefault.setMonth(endDefault.getMonth() + 1, 0);
 
-  const preselectedTeamMemberId = params.teamMemberId || "";
-  const from = params.from || toDateInputValue(startDefault);
-  const to = params.to || toDateInputValue(endDefault);
-  const locationId = params.locationId || "";
-  const status = params.status || "all";
+  const preselectedTeamMemberId = String(params.teamMemberId ?? "").trim();
+  const from = String(params.from ?? "").trim() || toDateInputValue(startDefault);
+  const to = String(params.to ?? "").trim() || toDateInputValue(endDefault);
+
+  const rawLocationId = String(params.locationId ?? "").trim();
+  const locationId = rawLocationId;
+  const normalizedLocationFilter = normalizeLocationFilterValue(rawLocationId);
+
+  const status = normalizeStatus(params.status);
 
   const [{ teamMembers, locations, activeLocationId }, absences] = await Promise.all([
     listStaffAbsenceReferenceDataServer(),
@@ -75,15 +126,22 @@ export default async function TeamAbsencesPage({
       from,
       to,
       teamMemberId: preselectedTeamMemberId || undefined,
-      locationId: locationId || undefined,
+      locationId: normalizedLocationFilter,
       status,
     }),
   ]);
 
   const todayStr = toDateInputValue(today);
 
-  const defaultLocationForNewAbsence =
-    locationId || activeLocationId || "";
+  const defaultLocationForNewAbsence = (() => {
+    const explicit = normalizeLocationForCreate(locationId);
+    if (explicit) return explicit;
+
+    const active = normalizeLocationForCreate(activeLocationId);
+    if (active) return active;
+
+    return "";
+  })();
 
   const offToday = absences.filter(
     (row: any) =>
@@ -123,7 +181,7 @@ export default async function TeamAbsencesPage({
 
               await createStaffAbsenceServer({
                 teamMemberId: String(formData.get("teamMemberId") || ""),
-                locationId: String(formData.get("locationId") || "") || null,
+                locationId: normalizeLocationForCreate(formData.get("locationId")),
                 absenceType: String(formData.get("absenceType") || "other") as
                   | "holiday"
                   | "sickness"
