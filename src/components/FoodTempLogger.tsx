@@ -1443,41 +1443,32 @@ export default function DashboardPage() {
           .map((r: any) => String(r.signoff_on ?? "").slice(0, 10))
           .filter(Boolean)
       );
-
       const signedOffDays = signedOffDaysSet.size;
       const tempLogs = (tempRows ?? []).length;
       const cleaningRuns = (cleaningRows ?? []).length;
 
       let streak = 0;
-      const cursor = new Date();
-      cursor.setHours(0, 0, 0, 0);
 
-      for (let i = 0; i < 365; i++) {
-        const dIso = isoDate(cursor);
+      if (signedOffDaysSet.size > 0) {
+        const signedDates = Array.from(signedOffDaysSet)
+          .map((d) => {
+            const dt = new Date(`${d}T00:00:00`);
+            dt.setHours(0, 0, 0, 0);
+            return dt;
+          })
+          .sort((a, b) => b.getTime() - a.getTime());
 
-        let signedOff = signedOffDaysSet.has(dIso);
+        const cursor = new Date(signedDates[0]);
+        cursor.setHours(0, 0, 0, 0);
 
-        if (!signedOff) {
-          let q = supabase
-            .from("daily_signoffs")
-            .select("id")
-            .eq("org_id", orgId)
-            .eq("signoff_on", dIso)
-            .limit(1)
-            .maybeSingle();
+        for (let i = 0; i < 365; i++) {
+          const dIso = isoDate(cursor);
 
-          if (locationId) q = q.eq("location_id", locationId);
+          if (!signedOffDaysSet.has(dIso)) break;
 
-          const { data } = await q;
-          if (!data) break;
-
-          signedOff = true;
+          streak += 1;
+          cursor.setDate(cursor.getDate() - 1);
         }
-
-        if (!signedOff) break;
-
-        streak += 1;
-        cursor.setDate(cursor.getDate() - 1);
       }
 
       const scoreRaw =
