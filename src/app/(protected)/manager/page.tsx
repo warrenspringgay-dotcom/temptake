@@ -4,9 +4,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { getActiveLocationIdClient } from "@/lib/locationClient";
+import { useActiveLocation } from "@/hooks/useActiveLocation";
 import IncidentModal from "@/components/IncidentModal";
+import { setActiveLocationIdClient } from "@/lib/locationClient";
 
 /* ===================== Types ===================== */
 
@@ -621,10 +621,14 @@ function CompletionFeedbackModal({
 /* ===================== Page ===================== */
 
 export default function ManagerDashboardPage() {
-  const [orgId, setOrgId] = useState<string | null>(null);
-  const [locationId, setLocationId] = useState<string | null>(null);
-  const [locations, setLocations] = useState<LocationOption[]>([]);
-  const [locationLoading, setLocationLoading] = useState(false);
+ const {
+  orgId,
+  locationId,
+  loading: activeLocationLoading,
+} = useActiveLocation();
+
+const [locations, setLocations] = useState<LocationOption[]>([]);
+const [locationLoading, setLocationLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -731,6 +735,20 @@ export default function ManagerDashboardPage() {
     thermometers_checked: false,
     notes: "",
   });
+async function handleLocationChange(nextLocationId: string | null) {
+  if (!orgId || !nextLocationId) return;
+
+  try {
+    await setActiveLocationIdClient(nextLocationId, orgId);
+
+    // Force same-tab listeners/hooks to notice immediately.
+    window.dispatchEvent(new Event("focus"));
+  } catch (e) {
+    console.error(e);
+    setErr("Failed to switch location.");
+  }
+}
+
 
   useEffect(() => {
     if (calibrationDue) {
@@ -1121,36 +1139,49 @@ async function loadQcReviews() {
     void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staffAssessOpen, staffAssessStaffId, staffAssessDays, selectedDateISO, orgId, locationId]);
+useEffect(() => {
+  if (!orgId) {
+    setLocations([]);
+    return;
+  }
 
-  useEffect(() => {
-    (async () => {
-      const oId = await getActiveOrgIdClient();
-      setOrgId(oId ?? null);
-      if (!oId) return;
+  let cancelled = false;
 
-      setLocationLoading(true);
-      try {
-        const { data, error } = await supabase.from("locations").select("id,name").eq("org_id", oId).order("name");
-        if (error) throw error;
+  (async () => {
+    setLocationLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("locations")
+        .select("id,name")
+        .eq("org_id", orgId)
+        .order("name");
 
-        const locs =
-          data?.map((r: any) => ({
-            id: String(r.id),
-            name: r.name ?? "Unnamed",
-          })) ?? [];
-        setLocations(locs);
+      if (error) throw error;
+      if (cancelled) return;
 
-        const activeLoc = await getActiveLocationIdClient();
-        if (activeLoc) setLocationId(activeLoc);
-        else if (locs[0]) setLocationId(locs[0].id);
-      } catch (e: any) {
-        console.error(e);
+      const locs: LocationOption[] =
+        data?.map((r: any) => ({
+          id: String(r.id),
+          name: r.name ?? "Unnamed",
+        })) ?? [];
+
+      setLocations(locs);
+    } catch (e: any) {
+      console.error(e);
+      if (!cancelled) {
         setErr(e?.message ?? "Failed to load locations.");
-      } finally {
+      }
+    } finally {
+      if (!cancelled) {
         setLocationLoading(false);
       }
-    })();
-  }, []);
+    }
+  })();
+
+  return () => {
+    cancelled = true;
+  };
+}, [orgId]);
 
   useEffect(() => {
     if (!orgId) return;
@@ -1984,18 +2015,18 @@ async function openQcFromActions() {
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold text-slate-600">Location</label>
-            <select
-              value={locationId ?? ""}
-              onChange={(e) => setLocationId(e.target.value || null)}
-              className="h-9 rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-              disabled={locationLoading || locations.length === 0}
-            >
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
+           <select
+  value={locationId ?? ""}
+  onChange={(e) => void handleLocationChange(e.target.value || null)}
+  className="h-9 rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+  disabled={locationLoading || activeLocationLoading || locations.length === 0}
+>
+  {locations.map((l) => (
+    <option key={l.id} value={l.id}>
+      {l.name}
+    </option>
+  ))}
+</select>
           </div>
 
           <div className="flex items-center gap-2">
