@@ -5,7 +5,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseBrowser";
-import { getActiveOrgIdClient } from "@/lib/orgClient";
+import { calculateOpenDaySignoffStreak } from "@/lib/locationOpenStatus";
 import OnboardingBanner from "@/components/OnboardingBanner";
 import WelcomeGate from "@/components/WelcomeGate";
 import { useActiveLocation } from "@/hooks/useActiveLocation";
@@ -1394,7 +1394,6 @@ export default function DashboardPage() {
       allergenOver,
     }));
   }
-
 async function loadWeeklyCompliance(
   orgId: string,
   locationId: string | null,
@@ -1462,15 +1461,18 @@ async function loadWeeklyCompliance(
         b.localeCompare(a)
       );
 
-      let cursorISO = signedDatesDesc[0];
+      const latestSignedISO = signedDatesDesc[0];
 
-      for (let i = 0; i < 365; i++) {
-        if (!signedOffDaysSet.has(cursorISO)) break;
-
-        streak += 1;
-        cursorISO = shiftISODateUTC(cursorISO, -1);
-      }
+      streak = await calculateOpenDaySignoffStreak({
+        orgId,
+        locationId,
+        signedOffDays: signedOffDaysSet,
+        startFromISO: latestSignedISO,
+        maxLookbackDays: 365,
+      });
     }
+
+    if (cancelled) return;
 
     const scoreRaw =
       signedOffDays * 10 + Math.min(tempLogs, 30) + Math.min(cleaningRuns, 30);

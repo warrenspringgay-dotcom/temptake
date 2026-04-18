@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabaseBrowser";
 import { useActiveLocation } from "@/hooks/useActiveLocation";
 import IncidentModal from "@/components/IncidentModal";
 import { setActiveLocationIdClient } from "@/lib/locationClient";
-
+import { calculateOpenDaySignoffStreak } from "@/lib/locationOpenStatus";
 /* ===================== Types ===================== */
 
 type LocationOption = { id: string; name: string };
@@ -1617,7 +1617,7 @@ useEffect(() => {
       const weeklyTempLogsCount = ((weeklyTempLogsRes.data as any[]) ?? []).length;
       const weeklyCleaningRunsCount = ((weeklyCleaningRunsRes.data as any[]) ?? []).length;
 
-      let streakDays = 0;
+            let streakDays = 0;
       const sortedSignedDates = Array.from(weeklySignedDates).sort();
       const latestSignedDate =
         [...sortedSignedDates]
@@ -1625,13 +1625,14 @@ useEffect(() => {
           .find((d) => d <= selectedDateISO) ?? null;
 
       if (latestSignedDate) {
-        let streakCursor = latestSignedDate;
-        while (weeklySignedDates.has(streakCursor)) {
-          streakDays += 1;
-          streakCursor = addDaysISO(streakCursor, -1);
-        }
+        streakDays = await calculateOpenDaySignoffStreak({
+          orgId,
+          locationId,
+          signedOffDays: weeklySignedDates,
+          startFromISO: latestSignedDate,
+          maxLookbackDays: 365,
+        });
       }
-
       const weeklyScoreRaw =
         weeklySignedOffDays * 10 +
         Math.min(weeklyTempLogsCount, 30) +
@@ -1771,12 +1772,13 @@ useEffect(() => {
 
     const signedDates = new Set<string>(((data ?? []) as Array<{ signoff_on: string }>).map((row) => String(row.signoff_on)));
 
-    let streakDays = 0;
-    let cursor = selectedDateISO;
-    while (signedDates.has(cursor)) {
-      streakDays += 1;
-      cursor = addDaysISO(cursor, -1);
-    }
+       const streakDays = await calculateOpenDaySignoffStreak({
+      orgId,
+      locationId,
+      signedOffDays: signedDates,
+      startFromISO: selectedDateISO,
+      maxLookbackDays: 365,
+    });
 
     let compliantDaysThisWeek = 0;
     let dayCursor = weekStart;
