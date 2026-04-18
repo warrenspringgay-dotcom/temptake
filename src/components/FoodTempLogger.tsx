@@ -129,6 +129,13 @@ const isoToday = () => {
   return `${year}-${month}-${day}`;
 };
 
+function shiftISODateUTC(iso: string, delta: number) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + delta);
+  return dt.toISOString().slice(0, 10);
+}
+
 function formatPrettyDate(d: Date) {
   const WEEKDAYS = [
     "Sunday",
@@ -1388,114 +1395,108 @@ export default function DashboardPage() {
     }));
   }
 
-  async function loadWeeklyCompliance(
-    orgId: string,
-    locationId: string | null,
-    cancelled: boolean
-  ) {
-    try {
-      const now = new Date();
-      const weekStart = startOfWeekMonday(now);
-      const weekStartISO = isoDate(weekStart);
-      const todayISO = isoToday();
+async function loadWeeklyCompliance(
+  orgId: string,
+  locationId: string | null,
+  cancelled: boolean
+) {
+  try {
+    const now = new Date();
+    const weekStart = startOfWeekMonday(now);
+    const weekStartISO = isoDate(weekStart);
+    const todayISO = isoToday();
 
-      let signoffQuery = supabase
-        .from("daily_signoffs")
-        .select("signoff_on")
-        .eq("org_id", orgId)
-        .gte("signoff_on", weekStartISO)
-        .lte("signoff_on", todayISO);
+    let signoffQuery = supabase
+      .from("daily_signoffs")
+      .select("signoff_on")
+      .eq("org_id", orgId)
+      .gte("signoff_on", weekStartISO)
+      .lte("signoff_on", todayISO);
 
-      if (locationId) signoffQuery = signoffQuery.eq("location_id", locationId);
+    if (locationId) signoffQuery = signoffQuery.eq("location_id", locationId);
 
-      let tempQuery = supabase
-        .from("food_temp_logs")
-        .select("id,at")
-        .eq("org_id", orgId)
-        .gte("at", weekStart.toISOString())
-        .lte("at", new Date().toISOString());
+    let tempQuery = supabase
+      .from("food_temp_logs")
+      .select("id,at")
+      .eq("org_id", orgId)
+      .gte("at", weekStart.toISOString())
+      .lte("at", new Date().toISOString());
 
-      if (locationId) tempQuery = tempQuery.eq("location_id", locationId);
+    if (locationId) tempQuery = tempQuery.eq("location_id", locationId);
 
-      let cleaningQuery = supabase
-        .from("cleaning_task_runs")
-        .select("task_id,run_on")
-        .eq("org_id", orgId)
-        .gte("run_on", weekStartISO)
-        .lte("run_on", todayISO);
+    let cleaningQuery = supabase
+      .from("cleaning_task_runs")
+      .select("task_id,run_on")
+      .eq("org_id", orgId)
+      .gte("run_on", weekStartISO)
+      .lte("run_on", todayISO);
 
-      if (locationId) cleaningQuery = cleaningQuery.eq("location_id", locationId);
+    if (locationId) cleaningQuery = cleaningQuery.eq("location_id", locationId);
 
-      const [
-        { data: signoffRows, error: signoffErr },
-        { data: tempRows, error: tempErr },
-        { data: cleaningRows, error: cleaningErr },
-      ] = await Promise.all([signoffQuery, tempQuery, cleaningQuery]);
+    const [
+      { data: signoffRows, error: signoffErr },
+      { data: tempRows, error: tempErr },
+      { data: cleaningRows, error: cleaningErr },
+    ] = await Promise.all([signoffQuery, tempQuery, cleaningQuery]);
 
-      if (signoffErr) throw signoffErr;
-      if (tempErr) throw tempErr;
-      if (cleaningErr) throw cleaningErr;
+    if (signoffErr) throw signoffErr;
+    if (tempErr) throw tempErr;
+    if (cleaningErr) throw cleaningErr;
 
-      if (cancelled) return;
+    if (cancelled) return;
 
-      const signedOffDaysSet = new Set(
-        (signoffRows ?? [])
-          .map((r: any) => String(r.signoff_on ?? "").slice(0, 10))
-          .filter(Boolean)
+    const signedOffDaysSet: Set<string> = new Set(
+      (signoffRows ?? [])
+        .map((r: any) => String(r.signoff_on ?? "").slice(0, 10))
+        .filter(Boolean)
+    );
+
+    const signedOffDays = signedOffDaysSet.size;
+    const tempLogs = (tempRows ?? []).length;
+    const cleaningRuns = (cleaningRows ?? []).length;
+
+    let streak = 0;
+
+    if (signedOffDaysSet.size > 0) {
+      const signedDatesDesc: string[] = Array.from(signedOffDaysSet).sort((a, b) =>
+        b.localeCompare(a)
       );
-      const signedOffDays = signedOffDaysSet.size;
-      const tempLogs = (tempRows ?? []).length;
-      const cleaningRuns = (cleaningRows ?? []).length;
 
-      let streak = 0;
+      let cursorISO = signedDatesDesc[0];
 
-      if (signedOffDaysSet.size > 0) {
-        const signedDates = Array.from(signedOffDaysSet)
-          .map((d) => {
-            const dt = new Date(`${d}T00:00:00`);
-            dt.setHours(0, 0, 0, 0);
-            return dt;
-          })
-          .sort((a, b) => b.getTime() - a.getTime());
+      for (let i = 0; i < 365; i++) {
+        if (!signedOffDaysSet.has(cursorISO)) break;
 
-        const cursor = new Date(signedDates[0]);
-        cursor.setHours(0, 0, 0, 0);
-
-        for (let i = 0; i < 365; i++) {
-          const dIso = isoDate(cursor);
-
-          if (!signedOffDaysSet.has(dIso)) break;
-
-          streak += 1;
-          cursor.setDate(cursor.getDate() - 1);
-        }
-      }
-
-      const scoreRaw =
-        signedOffDays * 10 + Math.min(tempLogs, 30) + Math.min(cleaningRuns, 30);
-
-      const scorePct = clampPct(Math.round((scoreRaw / 130) * 100));
-
-      setWeeklyCompliance({
-        scorePct,
-        signedOffDays,
-        tempLogs,
-        cleaningRuns,
-        streak,
-      });
-    } catch (e) {
-      console.warn("[weekly compliance] failed:", e);
-      if (!cancelled) {
-        setWeeklyCompliance({
-          scorePct: 0,
-          signedOffDays: 0,
-          tempLogs: 0,
-          cleaningRuns: 0,
-          streak: 0,
-        });
+        streak += 1;
+        cursorISO = shiftISODateUTC(cursorISO, -1);
       }
     }
+
+    const scoreRaw =
+      signedOffDays * 10 + Math.min(tempLogs, 30) + Math.min(cleaningRuns, 30);
+
+    const scorePct = clampPct(Math.round((scoreRaw / 130) * 100));
+
+    setWeeklyCompliance({
+      scorePct,
+      signedOffDays,
+      tempLogs,
+      cleaningRuns,
+      streak,
+    });
+  } catch (e) {
+    console.warn("[weekly compliance] failed:", e);
+    if (!cancelled) {
+      setWeeklyCompliance({
+        scorePct: 0,
+        signedOffDays: 0,
+        tempLogs: 0,
+        cleaningRuns: 0,
+        streak: 0,
+      });
+    }
   }
+}
 
   async function loadLeaderBoard(orgId: string, locationId: string | null, cancelled: boolean) {
     try {
