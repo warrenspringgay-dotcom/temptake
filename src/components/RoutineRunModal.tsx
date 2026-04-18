@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
 import { TARGET_BY_KEY, type TargetPreset } from "@/lib/temp-constants";
@@ -23,6 +24,12 @@ type LocationDayStatus = {
   isOpen: boolean;
   source: "default" | "weekly_schedule" | "closure_override";
   note: string | null;
+};
+
+type CompletionFeedback = {
+  points: number;
+  compliantDays: number;
+  streak: number;
 };
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
@@ -52,6 +59,15 @@ function isoToday() {
 function getDow1to7(ymd: string) {
   const date = new Date(ymd);
   return ((date.getDay() + 6) % 7) + 1;
+}
+
+function startOfWeekMonday(d: Date) {
+  const x = new Date(d);
+  const day = x.getDay();
+  const diff = (day === 0 ? -6 : 1) - day;
+  x.setDate(x.getDate() + diff);
+  x.setHours(0, 0, 0, 0);
+  return x;
 }
 
 async function getLocationDayStatus(
@@ -242,6 +258,89 @@ function ModalPortal({ children }: { children: React.ReactNode }) {
   return createPortal(children, document.body);
 }
 
+function CompletionFeedbackModal({
+  open,
+  onClose,
+  points,
+  compliantDays,
+  streak,
+}: {
+  open: boolean;
+  onClose: () => void;
+  points: number;
+  compliantDays: number;
+  streak: number;
+}) {
+  return (
+    <AnimatePresence>
+      {open ? (
+        <div
+          className="fixed inset-0 z-[1001] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 8 }}
+            transition={{ duration: 0.18 }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-3xl border border-white/50 bg-white p-5 shadow-2xl"
+          >
+            <div className="text-center">
+              <div className="text-4xl">🌡️</div>
+              <h2 className="mt-3 text-xl font-extrabold text-slate-900">
+                Routine completed
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Good. That routine is logged and your compliance score keeps moving instead of sitting there pretending to matter.
+              </p>
+            </div>
+
+            <div className="mt-5 grid grid-cols-3 gap-3">
+              <div className="rounded-2xl bg-slate-100 p-3 text-center">
+                <div className="text-xl font-extrabold text-slate-900">+{points}</div>
+                <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  points
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-emerald-50 p-3 text-center">
+                <div className="text-xl font-extrabold text-emerald-700">
+                  {compliantDays}/7
+                </div>
+                <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700/80">
+                  this week
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-amber-50 p-3 text-center">
+                <div className="text-xl font-extrabold text-amber-700">{streak}</div>
+                <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700/80">
+                  day streak
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm text-slate-600">
+              {compliantDays >= 7
+                ? "Perfect week so far. Miracles do happen."
+                : `You’ve logged routine temps on ${compliantDays} day${compliantDays === 1 ? "" : "s"} this week.`}
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="mt-5 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Continue
+            </button>
+          </motion.div>
+        </div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
 export default function RoutineRunModal({
   open,
   routine,
@@ -270,6 +369,16 @@ export default function RoutineRunModal({
     note: null,
   });
   const [checkingDayStatus, setCheckingDayStatus] = useState(false);
+
+  const [completionFeedbackOpen, setCompletionFeedbackOpen] = useState(false);
+  const [completionFeedback, setCompletionFeedback] =
+    useState<CompletionFeedback>({
+      points: 0,
+      compliantDays: 0,
+      streak: 0,
+    });
+
+  const [pendingRefresh, setPendingRefresh] = useState(false);
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const rowRefs = useRef<
@@ -319,6 +428,97 @@ export default function RoutineRunModal({
     }
   }
 
+  async function getCompletionFeedbackMetrics(
+    orgId: string,
+    locationId: string,
+    currentDayIso: string,
+    savedRowCount: number
+  ): Promise<CompletionFeedback> {
+    const currentDate = new Date(currentDayIso);
+    currentDate.setHours(0, 0, 0, 0);
+
+    const weekStart = startOfWeekMonday(currentDate);
+
+    const { data: weekRows, error: weekErr } = await supabase
+      .from("food_temp_logs")
+      .select("at")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .gte("at", weekStart.toISOString())
+      .lte(
+        "at",
+        new Date(
+          currentDate.getFullYear(),
+          currentDate.getMonth(),
+          currentDate.getDate(),
+          23,
+          59,
+          59,
+          999
+        ).toISOString()
+      )
+      .limit(5000);
+
+    if (weekErr) throw weekErr;
+
+    const daySet = new Set<string>();
+    for (const row of (weekRows ?? []) as Array<{ at: string | null }>) {
+      if (!row?.at) continue;
+      const d = new Date(row.at);
+      if (Number.isNaN(d.getTime())) continue;
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      daySet.add(`${y}-${m}-${day}`);
+    }
+
+    let streak = 0;
+    const cursor = new Date(currentDate);
+
+    for (let i = 0; i < 365; i++) {
+      const y = cursor.getFullYear();
+      const m = String(cursor.getMonth() + 1).padStart(2, "0");
+      const day = String(cursor.getDate()).padStart(2, "0");
+      const dIso = `${y}-${m}-${day}`;
+
+      let hasLogsForDay = daySet.has(dIso);
+
+      if (!hasLogsForDay) {
+        const dayStart = new Date(cursor);
+        dayStart.setHours(0, 0, 0, 0);
+
+        const dayEnd = new Date(cursor);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        const { data: oneRow, error: oneErr } = await supabase
+          .from("food_temp_logs")
+          .select("id")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .gte("at", dayStart.toISOString())
+          .lte("at", dayEnd.toISOString())
+          .limit(1)
+          .maybeSingle();
+
+        if (oneErr) throw oneErr;
+        if (!oneRow) break;
+
+        hasLogsForDay = true;
+      }
+
+      if (!hasLogsForDay) break;
+
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+
+    return {
+      points: Math.max(savedRowCount, 1),
+      compliantDays: daySet.size,
+      streak,
+    };
+  }
+
   useEffect(() => {
     if (!open || !routine) return;
 
@@ -331,6 +531,13 @@ export default function RoutineRunModal({
       return init;
     });
     setActiveIdx(0);
+    setCompletionFeedbackOpen(false);
+    setCompletionFeedback({
+      points: 0,
+      compliantDays: 0,
+      streak: 0,
+    });
+    setPendingRefresh(false);
 
     const opIni = (operator?.initials ?? "").toString().trim().toUpperCase();
     if (opIni) setInitials(opIni);
@@ -524,8 +731,27 @@ export default function RoutineRunModal({
         return;
       }
 
-      await onSaved();
-      onClose();
+      if (listening) stop();
+
+      setCompletionFeedback({
+        points: Math.max(rows.length, 1),
+        compliantDays: 1,
+        streak: 1,
+      });
+      setCompletionFeedbackOpen(true);
+      setPendingRefresh(true);
+
+      try {
+        const metrics = await getCompletionFeedbackMetrics(
+          org_id,
+          location_id,
+          date,
+          rows.length
+        );
+        setCompletionFeedback(metrics);
+      } catch (metricsErr) {
+        console.error("[routine] completion feedback metrics failed:", metricsErr);
+      }
     } finally {
       setSaving(false);
     }
@@ -533,11 +759,36 @@ export default function RoutineRunModal({
 
   const activeId = items[activeIdx]?.id ?? null;
 
+  const handleCloseEverything = async () => {
+    if (listening) stop();
+    setCompletionFeedbackOpen(false);
+
+    if (pendingRefresh) {
+      try {
+        await onSaved();
+      } catch (err) {
+        console.error("[routine] onSaved failed:", err);
+      }
+      setPendingRefresh(false);
+    }
+
+    onClose();
+  };
+
   return (
     <ModalPortal>
+      <CompletionFeedbackModal
+        open={completionFeedbackOpen}
+        onClose={handleCloseEverything}
+        points={completionFeedback.points}
+        compliantDays={completionFeedback.compliantDays}
+        streak={completionFeedback.streak}
+      />
+
       <div
         className="fixed inset-0 z-[999] overflow-y-auto bg-black/40 px-3 pb-6 pt-[88px]"
         onClick={() => {
+          if (completionFeedbackOpen) return;
           if (listening) stop();
           onClose();
         }}

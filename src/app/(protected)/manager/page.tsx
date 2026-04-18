@@ -5,14 +5,22 @@ import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import { useActiveLocation } from "@/hooks/useActiveLocation";
+import { getActiveLocationIdClient } from "@/lib/locationClient";
 import IncidentModal from "@/components/IncidentModal";
-import Link from "next/link";
+
 /* ===================== Types ===================== */
 
 type LocationOption = { id: string; name: string };
 
 type TempSummary = { today: number; fails7d: number };
+
+type WeeklyComplianceState = {
+  scorePct: number;
+  signedOffDays: number;
+  tempLogs: number;
+  cleaningRuns: number;
+  streak: number;
+};
 
 type UnifiedIncidentRow = {
   id: string;
@@ -63,6 +71,17 @@ type SignoffSummary = {
   todayCount: number;
 };
 
+type CompletionFeedbackData = {
+  title: string;
+  points: number;
+  compliantDaysThisWeek: number;
+  streakDays: number;
+  completedTodayLabel: string;
+  summaryLine: string;
+  selectedDate: string;
+  initials: string | null;
+};
+
 type TeamMemberOption = {
   id: string;
   name: string | null;
@@ -85,21 +104,6 @@ type StaffAssessment = {
   incidents: number;
   qcAvg30d: number | null;
   qcCount30d: number;
-};
-
-type StaffAbsenceRow = {
-  id: string;
-  start_date: string;
-  end_date: string;
-  created_at: string | null;
-  absence_type: string;
-  is_half_day: boolean;
-  half_day_period: string | null;
-  notes: string | null;
-  operational_impact: string | null;
-  status: string;
-  team_member_id: string | null;
-  staff: { initials: string | null; name: string | null; role: string | null } | null;
 };
 
 type AllergenChangeLogRow = {
@@ -228,27 +232,19 @@ function formatDDMMYYYY(val: any): string {
   return `${dd}/${mm}/${yyyy}`;
 }
 
-function formatAbsenceType(val: string | null | undefined): string {
-  if (!val) return "—";
-  return String(val)
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (m) => m.toUpperCase());
-}
-
-function formatAbsenceRange(r: Pick<StaffAbsenceRow, "start_date" | "end_date" | "is_half_day" | "half_day_period">): string {
-  const start = formatDDMMYYYY(r.start_date);
-  const end = formatDDMMYYYY(r.end_date);
-  const suffix = r.is_half_day ? ` (${String(r.half_day_period ?? "").toUpperCase() || "HALF DAY"})` : "";
-  if (r.start_date === r.end_date) return `${start}${suffix}`;
-  return `${start} → ${end}${suffix}`;
-}
-
 const cls = (...p: Array<string | false | null | undefined>) => p.filter(Boolean).join(" ");
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 const addDaysISO = (dmy: string, delta: number) => {
   const d = new Date(dmy);
   d.setDate(d.getDate() + delta);
+  return isoDate(d);
+};
+
+const startOfWeekISO = (dmy: string) => {
+  const d = new Date(`${dmy}T00:00:00`);
+  const day = (d.getDay() + 6) % 7; // Monday = 0
+  d.setDate(d.getDate() - day);
   return isoDate(d);
 };
 
@@ -259,6 +255,12 @@ function isDueOn(t: CleaningTask, dmy: string) {
   if (t.frequency === "daily") return true;
   if (t.frequency === "weekly") return t.weekday === getDow1to7(dmy);
   return t.month_day === getDom(dmy);
+}
+
+
+function clampPct(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
 }
 
 /* ===================== Temp failures (unified) ===================== */
@@ -425,6 +427,103 @@ function KpiTile({
   );
 }
 
+
+
+function ProgressBar({
+  pct,
+  tone,
+}: {
+  pct: number;
+  tone: "danger" | "warn" | "ok" | "neutral";
+}) {
+  const bg =
+    tone === "danger"
+      ? "bg-red-200/70"
+      : tone === "warn"
+      ? "bg-amber-200/70"
+      : tone === "ok"
+      ? "bg-emerald-200/70"
+      : "bg-slate-200/70";
+
+  const fill =
+    tone === "danger"
+      ? "bg-red-500"
+      : tone === "warn"
+      ? "bg-amber-500"
+      : tone === "ok"
+      ? "bg-emerald-500"
+      : "bg-slate-500";
+
+  const p = clampPct(pct);
+
+  return (
+    <div className={cls("h-3 w-full overflow-hidden rounded-full", bg)}>
+      <div
+        className={cls("h-full rounded-full transition-all duration-300", fill)}
+        style={{ width: `${p}%` }}
+      />
+    </div>
+  );
+}
+
+function WeeklyComplianceSlimBar({
+  stats,
+}: {
+  stats: WeeklyComplianceState;
+}) {
+  const tone: "danger" | "warn" | "ok" =
+    stats.scorePct >= 75 ? "ok" : stats.scorePct >= 40 ? "warn" : "danger";
+
+  const wrapperCls =
+    tone === "ok"
+      ? "border-emerald-200 bg-emerald-50/80"
+      : tone === "warn"
+      ? "border-amber-200 bg-amber-50/80"
+      : "border-red-200 bg-red-50/80";
+
+  return (
+    <div className={cls("mt-4 rounded-2xl border px-3 py-3", wrapperCls)}>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-slate-600">
+            Weekly compliance
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-slate-700">
+            <span>
+              <span className="font-extrabold text-slate-900">{stats.scorePct}%</span> this
+              week
+            </span>
+            <span>
+              <span className="font-extrabold text-slate-900">{stats.signedOffDays}/7</span>{" "}
+              signed off
+            </span>
+            <span>
+              <span className="font-extrabold text-slate-900">{stats.tempLogs}</span> temps
+            </span>
+            <span>
+              <span className="font-extrabold text-slate-900">{stats.cleaningRuns}</span>{" "}
+              cleaning
+            </span>
+            <span>
+              <span className="font-extrabold text-slate-900">{stats.streak}</span> day
+              streak
+            </span>
+          </div>
+        </div>
+
+        <div className="text-sm font-extrabold text-slate-900 shrink-0">
+          {stats.scorePct}%
+        </div>
+      </div>
+
+      <div className="mt-2">
+        <ProgressBar pct={stats.scorePct} tone={tone} />
+      </div>
+    </div>
+  );
+}
+
+
 function TableFooterToggle({
   total,
   showingAll,
@@ -445,15 +544,85 @@ function TableFooterToggle({
   );
 }
 
+function CompletionFeedbackModal({
+  open,
+  data,
+  onClose,
+}: {
+  open: boolean;
+  data: CompletionFeedbackData | null;
+  onClose: () => void;
+}) {
+  if (!open || !data) return null;
+
+  return (
+    <div className="fixed inset-0 z-[10000] bg-slate-950/45 backdrop-blur-[2px]" onClick={onClose}>
+      <div
+        className="mx-auto mt-12 w-[calc(100%-24px)] max-w-md rounded-3xl border border-emerald-200 bg-white p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-emerald-600">Completed</div>
+            <h3 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">{data.title}</h3>
+            <p className="mt-1 text-sm text-slate-600">{data.summaryLine}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3">
+            <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-emerald-700">Points</div>
+            <div className="mt-1 text-2xl font-extrabold text-emerald-900">+{data.points}</div>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+            <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500">This week</div>
+            <div className="mt-1 text-2xl font-extrabold text-slate-900">{data.compliantDaysThisWeek}/7</div>
+          </div>
+          <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-3">
+            <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-indigo-600">Streak</div>
+            <div className="mt-1 text-2xl font-extrabold text-indigo-900">{data.streakDays}d</div>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">Today</div>
+          <div className="mt-1 text-sm font-semibold text-slate-900">{data.completedTodayLabel}</div>
+          <div className="mt-1 text-xs text-slate-600">
+            {formatDDMMYYYY(data.selectedDate)}
+            {data.initials ? ` · ${data.initials}` : ""}
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          You’re building your compliance score one finished day at a time.
+        </div>
+
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+          >
+            Nice
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ===================== Page ===================== */
 
 export default function ManagerDashboardPage() {
-const {
-  orgId,
-  locationId,
-  loading: activeLocationLoading,
-  setLocationId,
-} = useActiveLocation();
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [locationId, setLocationId] = useState<string | null>(null);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [locationLoading, setLocationLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -470,10 +639,16 @@ const {
   const [cleaningDoneTotal, setCleaningDoneTotal] = useState(0);
   const [incidentsToday, setIncidentsToday] = useState(0);
   const [incidents7d, setIncidents7d] = useState(0);
-  const [staffOffToday, setStaffOffToday] = useState(0);
-  const [staffAbsences30d, setStaffAbsences30d] = useState(0);
   const [trainingExpired, setTrainingExpired] = useState(0);
   const [trainingDueSoon, setTrainingDueSoon] = useState(0);
+
+  const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>({
+    scorePct: 0,
+    signedOffDays: 0,
+    tempLogs: 0,
+    cleaningRuns: 0,
+    streak: 0,
+  });
 
   /* ===== Today activity tables ===== */
   const [todayTemps, setTodayTemps] = useState<TempLogRow[]>([]);
@@ -481,13 +656,11 @@ const {
   const [cleaningCategoryProgress, setCleaningCategoryProgress] = useState<CleaningCategoryProgress[]>([]);
   const [tempFailsToday, setTempFailsToday] = useState<UnifiedIncidentRow[]>([]);
   const [incidentsHistory, setIncidentsHistory] = useState<UnifiedIncidentRow[]>([]);
-  const [staffAbsences, setStaffAbsences] = useState<StaffAbsenceRow[]>([]);
 
   const [showAllTemps, setShowAllTemps] = useState(false);
   const [showAllTempFails, setShowAllTempFails] = useState(false);
   const [showAllCleaning, setShowAllCleaning] = useState(false);
   const [showAllIncidents, setShowAllIncidents] = useState(false);
-  const [showAllStaffAbsences, setShowAllStaffAbsences] = useState(false);
 
   /* ===== Day sign-offs ===== */
   const [signoffsToday, setSignoffsToday] = useState<SignoffRow[]>([]);
@@ -498,6 +671,8 @@ const {
   const [signoffInitials, setSignoffInitials] = useState("");
   const [signoffNotes, setSignoffNotes] = useState("");
   const [signoffSaving, setSignoffSaving] = useState(false);
+  const [completionFeedbackOpen, setCompletionFeedbackOpen] = useState(false);
+  const [completionFeedback, setCompletionFeedback] = useState<CompletionFeedbackData | null>(null);
 
   /* ===== Manager QC ===== */
   const [qcOpen, setQcOpen] = useState(false);
@@ -947,51 +1122,42 @@ async function loadQcReviews() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staffAssessOpen, staffAssessStaffId, staffAssessDays, selectedDateISO, orgId, locationId]);
 
- useEffect(() => {
-  if (!orgId) {
-    setLocations([]);
-    return;
-  }
+  useEffect(() => {
+    (async () => {
+      const oId = await getActiveOrgIdClient();
+      setOrgId(oId ?? null);
+      if (!oId) return;
 
-  (async () => {
-    setLocationLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("locations")
-        .select("id,name")
-        .eq("org_id", orgId)
-        .order("name");
+      setLocationLoading(true);
+      try {
+        const { data, error } = await supabase.from("locations").select("id,name").eq("org_id", oId).order("name");
+        if (error) throw error;
 
-      if (error) throw error;
+        const locs =
+          data?.map((r: any) => ({
+            id: String(r.id),
+            name: r.name ?? "Unnamed",
+          })) ?? [];
+        setLocations(locs);
 
-      const locs =
-        data?.map((r: any) => ({
-          id: String(r.id),
-          name: r.name ?? "Unnamed",
-        })) ?? [];
-
-      setLocations(locs);
-
-      if (!locationId && locs[0]) {
-        await setLocationId(locs[0].id);
+        const activeLoc = await getActiveLocationIdClient();
+        if (activeLoc) setLocationId(activeLoc);
+        else if (locs[0]) setLocationId(locs[0].id);
+      } catch (e: any) {
+        console.error(e);
+        setErr(e?.message ?? "Failed to load locations.");
+      } finally {
+        setLocationLoading(false);
       }
-    } catch (e: any) {
-      console.error(e);
-      setErr(e?.message ?? "Failed to load locations.");
-    } finally {
-      setLocationLoading(false);
-    }
-  })();
-}, [orgId, locationId, setLocationId]);
+    })();
+  }, []);
 
-useEffect(() => {
-  if (activeLocationLoading) return;
-  if (!orgId) return;
-
-  void loadLoggedInManager();
-  if (locationId) void loadTeamOptions(locationId);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [orgId, locationId, activeLocationLoading]);
+  useEffect(() => {
+    if (!orgId) return;
+    void loadLoggedInManager();
+    if (locationId) void loadTeamOptions(locationId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, locationId]);
 
   useEffect(() => {
     if (!signoffOpen) return;
@@ -1009,14 +1175,13 @@ useEffect(() => {
     if (ini) setCalibrationForm((f) => ({ ...f, staff_initials: ini }));
   }, [calibrationOpen, managerTeamMember, calibrationForm.staff_initials]);
 
- useEffect(() => {
-  if (activeLocationLoading) return;
-  if (!orgId || !locationId) return;
+  useEffect(() => {
+    if (!orgId || !locationId) return;
+    void refreshAll();
+    void loadQcReviews();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, locationId, selectedDateISO]);
 
-  void refreshAll();
-  void loadQcReviews();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [orgId, locationId, selectedDateISO, activeLocationLoading]);
   async function refreshAll() {
     if (!orgId || !locationId) return;
     setLoading(true);
@@ -1048,11 +1213,13 @@ useEffect(() => {
         incidentsListRes,
         incidentsTodayRes,
         incidents7dRes,
-        staffAbsencesRes,
         trainingsForKpiRes,
         trainingRecordsRes,
         trainingAreasRes,
         signoffsDayRes,
+        weeklySignoffsRes,
+        weeklyTempLogsRes,
+        weeklyCleaningRunsRes,
         allergenReviewsRes,
         allergenLogsRes,
         calibrationChecksRes,
@@ -1127,32 +1294,6 @@ useEffect(() => {
           .lte("happened_on", selectedDateISO),
 
         supabase
-          .from("staff_absences")
-          .select(
-            `
-            id,
-            start_date,
-            end_date,
-            absence_type,
-            is_half_day,
-            half_day_period,
-            notes,
-            operational_impact,
-            status,
-            created_at,
-            team_member_id,
-            staff:team_members!staff_absences_team_member_id_fkey(initials,name,role)
-          `
-          )
-          .eq("org_id", orgId)
-          .or(`location_id.eq.${locationId},location_id.is.null`)
-          .gte("end_date", isoDate(ninetyDaysAgo))
-          .lte("start_date", selectedDateISO)
-          .order("start_date", { ascending: false })
-          .order("created_at", { ascending: false })
-          .limit(500),
-
-        supabase
           .from("trainings")
           .select(
             `
@@ -1206,6 +1347,34 @@ useEffect(() => {
           .limit(200),
 
         supabase
+          .from("daily_signoffs")
+          .select("signoff_on")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .gte("signoff_on", startOfWeekISO(selectedDateISO))
+          .lte("signoff_on", selectedDateISO)
+          .order("signoff_on", { ascending: false })
+          .limit(20),
+
+        supabase
+          .from("food_temp_logs")
+          .select("id")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .gte("at", `${startOfWeekISO(selectedDateISO)}T00:00:00.000Z`)
+          .lte("at", `${selectedDateISO}T23:59:59.999Z`)
+          .limit(5000),
+
+        supabase
+          .from("cleaning_task_runs")
+          .select("id")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .gte("run_on", startOfWeekISO(selectedDateISO))
+          .lte("run_on", selectedDateISO)
+          .limit(5000),
+
+        supabase
           .from("allergen_review")
           .select("id, last_reviewed, reviewer, interval_days, created_at")
           .eq("org_id", orgId)
@@ -1241,11 +1410,13 @@ useEffect(() => {
         incidentsListRes.error ||
         incidentsTodayRes.error ||
         incidents7dRes.error ||
-        staffAbsencesRes.error ||
         trainingsForKpiRes.error ||
         trainingRecordsRes.error ||
         trainingAreasRes.error ||
         signoffsDayRes.error ||
+        weeklySignoffsRes.error ||
+        weeklyTempLogsRes.error ||
+        weeklyCleaningRunsRes.error ||
         allergenReviewsRes.error ||
         allergenLogsRes.error ||
         calibrationChecksRes.error;
@@ -1374,43 +1545,6 @@ useEffect(() => {
       setIncidentsToday(incidentsTodayRes.count ?? 0);
       setIncidents7d(incidents7dRes.count ?? 0);
 
-      const absenceRows: any[] = (staffAbsencesRes.data as any[]) ?? [];
-      const mappedAbsences: StaffAbsenceRow[] = absenceRows.map((r) => ({
-        id: String(r.id),
-        start_date: String(r.start_date),
-        end_date: String(r.end_date),
-        created_at: r.created_at ? String(r.created_at) : null,
-        absence_type: String(r.absence_type ?? "other"),
-        is_half_day: !!r.is_half_day,
-        half_day_period: r.half_day_period ? String(r.half_day_period) : null,
-        notes: r.notes ?? null,
-        operational_impact: r.operational_impact ?? null,
-        status: String(r.status ?? "approved"),
-        team_member_id: r.team_member_id ? String(r.team_member_id) : null,
-        staff: r.staff
-          ? {
-              initials: r.staff.initials ?? null,
-              name: r.staff.name ?? null,
-              role: r.staff.role ?? null,
-            }
-          : null,
-      }));
-      setStaffAbsences(mappedAbsences);
-      setShowAllStaffAbsences(false);
-
-      const thirtyDaysAgo = new Date(selectedDateISO);
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
-      const thirtyDaysAgoIso = isoDate(thirtyDaysAgo);
-
-      const offToday = mappedAbsences.filter((r) => r.status === "approved" && r.start_date <= selectedDateISO && r.end_date >= selectedDateISO).length;
-
-      const absences30d = mappedAbsences.filter(
-        (r) => r.status === "approved" && r.end_date >= thirtyDaysAgoIso && r.start_date <= selectedDateISO
-      ).length;
-
-      setStaffOffToday(offToday);
-      setStaffAbsences30d(absences30d);
-
       const todayRows: any[] = (todayTempLogsRes.data as any[]) ?? [];
       setTodayTemps(
         todayRows.map((r) => {
@@ -1441,6 +1575,46 @@ useEffect(() => {
         }))
       );
       setSignoffSummary({ todayCount: signoffRows.length });
+
+      const weeklySignedDates = new Set<string>(
+        (((weeklySignoffsRes.data as any[]) ?? []) as Array<{ signoff_on: string }>)
+          .map((row) => String(row.signoff_on ?? "").slice(0, 10))
+          .filter(Boolean)
+      );
+
+      const weeklySignedOffDays = weeklySignedDates.size;
+      const weeklyTempLogsCount = ((weeklyTempLogsRes.data as any[]) ?? []).length;
+      const weeklyCleaningRunsCount = ((weeklyCleaningRunsRes.data as any[]) ?? []).length;
+
+      let streakDays = 0;
+      const sortedSignedDates = Array.from(weeklySignedDates).sort();
+      const latestSignedDate =
+        [...sortedSignedDates]
+          .reverse()
+          .find((d) => d <= selectedDateISO) ?? null;
+
+      if (latestSignedDate) {
+        let streakCursor = latestSignedDate;
+        while (weeklySignedDates.has(streakCursor)) {
+          streakDays += 1;
+          streakCursor = addDaysISO(streakCursor, -1);
+        }
+      }
+
+      const weeklyScoreRaw =
+        weeklySignedOffDays * 10 +
+        Math.min(weeklyTempLogsCount, 30) +
+        Math.min(weeklyCleaningRunsCount, 30);
+
+      const weeklyScorePct = clampPct(Math.round((weeklyScoreRaw / 130) * 100));
+
+      setWeeklyCompliance({
+        scorePct: weeklyScorePct,
+        signedOffDays: weeklySignedOffDays,
+        tempLogs: weeklyTempLogsCount,
+        cleaningRuns: weeklyCleaningRunsCount,
+        streak: streakDays,
+      });
 
       const arRows: any[] = (allergenReviewsRes.data as any[]) ?? [];
       setAllergenReviews(
@@ -1518,14 +1692,10 @@ useEffect(() => {
   const trainingTone: "neutral" | "ok" | "warn" | "danger" =
     trainingExpired > 0 ? "danger" : trainingDueSoon > 0 ? "warn" : "ok";
 
-  const staffOffTone: "neutral" | "ok" | "warn" | "danger" =
-    staffOffToday > 2 ? "danger" : staffOffToday > 0 ? "warn" : "ok";
-
   const tempsToRender = showAllTemps ? todayTemps : todayTemps.slice(0, 10);
   const tempFailsToRender = showAllTempFails ? tempFailsToday : tempFailsToday.slice(0, 10);
   const cleaningToRender = showAllCleaning ? cleaningActivity : cleaningActivity.slice(0, 10);
   const incidentsToRender = showAllIncidents ? incidentsHistory : incidentsHistory.slice(0, 10);
-  const staffAbsencesToRender = showAllStaffAbsences ? staffAbsences : staffAbsences.slice(0, 10);
   const qcToRender = showAllQc ? qcReviews : qcReviews.slice(0, 10);
   const signoffsToRender = showAllSignoffs ? signoffsToday : signoffsToday.slice(0, 10);
 
@@ -1539,6 +1709,69 @@ useEffect(() => {
 
   const cleaningAllDone = cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
   const alreadySignedOff = signoffsToday.length > 0;
+
+  async function buildDaySignoffFeedback(initials: string): Promise<CompletionFeedbackData> {
+    if (!orgId || !locationId) {
+      return {
+        title: "Day signed off",
+        points: 10,
+        compliantDaysThisWeek: 1,
+        streakDays: 1,
+        completedTodayLabel: "Day sign-off completed",
+        summaryLine: "Good job. The boring compliance work is done.",
+        selectedDate: selectedDateISO,
+        initials: initials || null,
+      };
+    }
+
+    const weekStart = startOfWeekISO(selectedDateISO);
+    const streakWindowStart = addDaysISO(selectedDateISO, -41);
+
+    const { data, error } = await supabase
+      .from("daily_signoffs")
+      .select("signoff_on")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .gte("signoff_on", streakWindowStart)
+      .lte("signoff_on", selectedDateISO)
+      .order("signoff_on", { ascending: false });
+
+    if (error) throw error;
+
+    const signedDates = new Set<string>(((data ?? []) as Array<{ signoff_on: string }>).map((row) => String(row.signoff_on)));
+
+    let streakDays = 0;
+    let cursor = selectedDateISO;
+    while (signedDates.has(cursor)) {
+      streakDays += 1;
+      cursor = addDaysISO(cursor, -1);
+    }
+
+    let compliantDaysThisWeek = 0;
+    let dayCursor = weekStart;
+    while (dayCursor <= selectedDateISO) {
+      if (signedDates.has(dayCursor)) compliantDaysThisWeek += 1;
+      dayCursor = addDaysISO(dayCursor, 1);
+    }
+
+    const summaryLine =
+      compliantDaysThisWeek >= 5
+        ? "Strong week. You’re staying on top of compliance."
+        : compliantDaysThisWeek >= 3
+        ? "Good momentum. Keep stacking completed days."
+        : "First steps count. Keep the streak alive tomorrow.";
+
+    return {
+      title: "Day signed off",
+      points: 10,
+      compliantDaysThisWeek,
+      streakDays,
+      completedTodayLabel: "All cleaning due today is complete and the day is signed off.",
+      summaryLine,
+      selectedDate: selectedDateISO,
+      initials: initials || null,
+    };
+  }
 
   async function createDaySignoff() {
     if (!orgId || !locationId) return;
@@ -1565,10 +1798,14 @@ useEffect(() => {
 
       if (error) throw error;
 
+      const feedback = await buildDaySignoffFeedback(signoffInitials.trim().toUpperCase());
+
       setSignoffInitials("");
       setSignoffNotes("");
       setSignoffOpen(false);
       await refreshAll();
+      setCompletionFeedback(feedback);
+      setCompletionFeedbackOpen(true);
     } catch (e: any) {
       console.error(e);
       alert(e?.message ?? "Failed to sign off.");
@@ -1719,7 +1956,7 @@ async function openQcFromActions() {
       )}
 
       <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <KpiTile
             title="Temps"
             icon="🌡"
@@ -1738,42 +1975,18 @@ async function openQcFromActions() {
 
           <KpiTile title="Cleaning" icon="🧼" tone={cleaningTone} value={`${cleaningDoneTotal}/${cleaningTotal}`} sub="Tasks completed today" />
           <KpiTile title="Incidents" icon="⚠️" tone={incidentsTone} value={incidentsToday} sub={`Last 7d: ${incidents7d}`} />
-          <KpiTile title="Staff off" icon="🧑‍🍳" tone={staffOffTone} value={staffOffToday} sub={`Approved in last 30d: ${staffAbsences30d}`} />
           <KpiTile title="Training" icon="🎓" tone={trainingTone} value={`${trainingExpired} expired`} sub={`${trainingDueSoon} due in 30d`} />
          
         </div>
-<div className="mt-4">
-  <Link
-    href="/four-week-review"
-    className="flex w-full items-center justify-between gap-3 rounded-2xl border border-indigo-200 bg-indigo-50/80 px-4 py-4 shadow-sm transition hover:bg-indigo-100/80"
-  >
-    <div className="min-w-0">
-      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-indigo-700">
-        Review
-      </div>
-      <div className="mt-0.5 text-base font-extrabold text-slate-900">
-        Open 4-Week Review
-      </div>
-      <div className="mt-1 text-sm text-slate-600">
-        View trends, missed tasks, training drift, incidents and compliance over the last 4 weeks.
-      </div>
-    </div>
 
-    <div className="shrink-0 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm">
-      Open
-    </div>
-  </Link>
-</div>
+        <WeeklyComplianceSlimBar stats={weeklyCompliance} />
+
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold text-slate-600">Location</label>
             <select
-  value={locationId ?? ""}
-  onChange={async (e) => {
-    const next = e.target.value || "";
-    if (!next) return;
-    await setLocationId(next);
-  }}
+              value={locationId ?? ""}
+              onChange={(e) => setLocationId(e.target.value || null)}
               className="h-9 rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
               disabled={locationLoading || locations.length === 0}
             >
@@ -2217,80 +2430,6 @@ async function openQcFromActions() {
         <TableFooterToggle total={signoffsToday.length} showingAll={showAllSignoffs} onToggle={() => setShowAllSignoffs((v) => !v)} />
       </section>
 
-      {/* Staff absences */}
-      <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Staff absences</div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">Recent absence history (last 90 days)</div>
-        </div>
-
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
-          <table className="min-w-full text-xs">
-            <thead className="bg-slate-50">
-              <tr className="text-left text-slate-500">
-                <th className="px-3 py-2">Staff</th>
-                <th className="px-3 py-2">Type</th>
-                <th className="px-3 py-2">Dates</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Impact</th>
-                <th className="px-3 py-2">Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {staffAbsencesToRender.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
-                    No staff absences logged.
-                  </td>
-                </tr>
-              ) : (
-                staffAbsencesToRender.map((r) => {
-                  const isOffToday = r.status === "approved" && r.start_date <= selectedDateISO && r.end_date >= selectedDateISO;
-                  const statusPill =
-                    r.status === "approved"
-                      ? "bg-emerald-100 text-emerald-800"
-                      : r.status === "pending"
-                      ? "bg-amber-100 text-amber-800"
-                      : r.status === "rejected"
-                      ? "bg-red-100 text-red-800"
-                      : "bg-slate-100 text-slate-800";
-
-                  return (
-                    <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap font-semibold">
-                        <div className="flex items-center gap-2">
-                          <span>{tmLabel(r.staff ?? { initials: null, name: "—" })}</span>
-                          {isOffToday ? (
-                            <span className="inline-flex rounded-full bg-amber-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-amber-800">
-                              Off today
-                            </span>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">{formatAbsenceType(r.absence_type)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{formatAbsenceRange(r)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", statusPill)}>
-                          {r.status}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 max-w-[14rem] truncate">{r.operational_impact ?? "—"}</td>
-                      <td className="px-3 py-2 max-w-[18rem] truncate">{r.notes ?? "—"}</td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <TableFooterToggle
-          total={staffAbsences.length}
-          showingAll={showAllStaffAbsences}
-          onToggle={() => setShowAllStaffAbsences((v) => !v)}
-        />
-      </section>
-
       {/* Manager QC Summary table */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="min-w-0">
@@ -2701,6 +2840,12 @@ async function openQcFromActions() {
 
         <TableFooterToggle total={calibrationChecks.length} showingAll={showAllCalibration} onToggle={() => setShowAllCalibration((v) => !v)} />
       </section>
+
+      <CompletionFeedbackModal
+        open={completionFeedbackOpen}
+        data={completionFeedback}
+        onClose={() => setCompletionFeedbackOpen(false)}
+      />
 
       {/* Sign-off modal */}
       {signoffOpen && (

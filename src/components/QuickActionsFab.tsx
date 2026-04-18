@@ -17,7 +17,7 @@ import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 import IncidentModal from "@/components/IncidentModal";
 import { useActiveLocation } from "@/hooks/useActiveLocation";
-
+import { motion } from "framer-motion";
 import {
   Thermometer,
   Lock,
@@ -62,6 +62,12 @@ type LocationDayStatus = {
   note: string | null;
 };
 
+type CompletionFeedback = {
+  points: number;
+  compliantDays: number;
+  streak: number;
+};
+
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
 
@@ -72,6 +78,15 @@ const getDow1to7 = (ymd: string) => {
   return ((date.getDay() + 6) % 7) + 1;
 };
 const getDom = (ymd: string) => new Date(ymd).getDate();
+
+function startOfWeekMonday(d: Date) {
+  const x = new Date(d);
+  const day = x.getDay();
+  const diff = (day === 0 ? -6 : 1) - day;
+  x.setDate(x.getDate() + diff);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
 
 function isDueOn(
   frequency: "daily" | "weekly" | "monthly",
@@ -754,6 +769,100 @@ function FeedbackModal({
   );
 }
 
+/* ===================== Quick temp completion modal ===================== */
+
+function CompletionFeedbackModal({
+  open,
+  onClose,
+  points,
+  compliantDays,
+  streak,
+}: {
+  open: boolean;
+  onClose: () => void;
+  points: number;
+  compliantDays: number;
+  streak: number;
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-3">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+        onClick={onClose}
+        aria-label="Close completion feedback modal"
+      />
+
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ duration: 0.18 }}
+        className="relative w-full max-w-[520px] overflow-hidden rounded-3xl border border-white/30 bg-white shadow-2xl"
+      >
+        <div className="bg-slate-900 px-5 py-4 text-white">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] opacity-80">
+            Temperature logged
+          </div>
+          <div className="text-xl font-extrabold leading-tight">
+            Quick temp saved
+          </div>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            Nice. One more check logged without messing about with paper.
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-center">
+              <div className="text-xl font-extrabold text-slate-900">+{points}</div>
+              <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                points
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-center">
+              <div className="text-xl font-extrabold text-emerald-700">
+                {compliantDays}/7
+              </div>
+              <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700/80">
+                this week
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-center">
+              <div className="text-xl font-extrabold text-amber-700">{streak}</div>
+              <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700/80">
+                day streak
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm text-slate-600">
+            {compliantDays >= 7
+              ? "Perfect week so far. Try not to sabotage it."
+              : `You’ve logged temperatures on ${compliantDays} day${
+                  compliantDays === 1 ? "" : "s"
+                } this week.`}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 /* ======================================================================= */
 
 export default function TempFab() {
@@ -808,6 +917,13 @@ export default function TempFab() {
     note: null,
   });
 
+  const [completionFeedbackOpen, setCompletionFeedbackOpen] = useState(false);
+  const [completionFeedback, setCompletionFeedback] = useState<CompletionFeedback>({
+    points: 1,
+    compliantDays: 0,
+    streak: 0,
+  });
+
   // Prevent overlapping cleaning refresh calls
   const cleaningRefreshInFlight = useRef(false);
   const cleaningRefreshQueued = useRef(false);
@@ -830,7 +946,7 @@ export default function TempFab() {
   // Corrective action state
   const [corrective, setCorrective] = useState<CorrectiveDraft>({
     open: false,
-    tempLogId: null,
+    tempLogId:  null,
     org_id: null,
     location_id: null,
     staff_initials: "",
@@ -908,6 +1024,87 @@ export default function TempFab() {
     });
 
     return false;
+  }
+
+  async function getQuickTempCompletionMetrics(
+    orgId: string,
+    locationId: string,
+    currentDayIso: string
+  ): Promise<CompletionFeedback> {
+    const currentDate = new Date(`${currentDayIso}T00:00:00`);
+    currentDate.setHours(0, 0, 0, 0);
+
+    const weekStart = startOfWeekMonday(currentDate);
+    const weekEnd = new Date(currentDate);
+    weekEnd.setHours(23, 59, 59, 999);
+
+    const { data: weekRows, error: weekErr } = await supabase
+      .from("food_temp_logs")
+      .select("at")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .gte("at", weekStart.toISOString())
+      .lte("at", weekEnd.toISOString())
+      .limit(5000);
+
+    if (weekErr) throw weekErr;
+
+    const daySet = new Set<string>();
+    for (const row of (weekRows ?? []) as Array<{ at: string | null }>) {
+      if (!row?.at) continue;
+      const d = new Date(row.at);
+      if (Number.isNaN(d.getTime())) continue;
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      daySet.add(`${y}-${m}-${day}`);
+    }
+
+    let streak = 0;
+    const cursor = new Date(currentDate);
+
+    for (let i = 0; i < 365; i++) {
+      const y = cursor.getFullYear();
+      const m = String(cursor.getMonth() + 1).padStart(2, "0");
+      const day = String(cursor.getDate()).padStart(2, "0");
+      const dIso = `${y}-${m}-${day}`;
+
+      let hasLogsForDay = daySet.has(dIso);
+
+      if (!hasLogsForDay) {
+        const dayStart = new Date(cursor);
+        dayStart.setHours(0, 0, 0, 0);
+
+        const dayEnd = new Date(cursor);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        const { data: oneRow, error: oneErr } = await supabase
+          .from("food_temp_logs")
+          .select("id")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .gte("at", dayStart.toISOString())
+          .lte("at", dayEnd.toISOString())
+          .limit(1)
+          .maybeSingle();
+
+        if (oneErr) throw oneErr;
+        if (!oneRow) break;
+
+        hasLogsForDay = true;
+      }
+
+      if (!hasLogsForDay) break;
+
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+
+    return {
+      points: 1,
+      compliantDays: daySet.size,
+      streak,
+    };
   }
 
   async function refreshTodayStatus(force = false) {
@@ -1704,6 +1901,24 @@ export default function TempFab() {
       return;
     }
 
+    setCompletionFeedback({
+      points: 1,
+      compliantDays: 1,
+      streak: 1,
+    });
+    setCompletionFeedbackOpen(true);
+
+    try {
+      const metrics = await getQuickTempCompletionMetrics(
+        org_id,
+        location_id,
+        form.date
+      );
+      setCompletionFeedback(metrics);
+    } catch (metricsErr) {
+      console.error("[quick-temp] completion feedback metrics failed:", metricsErr);
+    }
+
     setOpen(false);
   }
 
@@ -2125,6 +2340,14 @@ export default function TempFab() {
         setAction={setCorrectiveAction}
         setRecheckEnabled={setCorrectiveRecheckEnabled}
         setRecheckTemp={setCorrectiveRecheckTemp}
+      />
+
+      <CompletionFeedbackModal
+        open={completionFeedbackOpen}
+        onClose={() => setCompletionFeedbackOpen(false)}
+        points={completionFeedback.points}
+        compliantDays={completionFeedback.compliantDays}
+        streak={completionFeedback.streak}
       />
 
       {showPicker && (

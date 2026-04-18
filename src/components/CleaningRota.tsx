@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { supabase } from "@/lib/supabaseBrowser";
 import ManageCleaningTasksModal, {
@@ -61,6 +61,12 @@ type LocationDayStatus = {
   isOpen: boolean;
   source: "default" | "weekly_schedule" | "closure_override";
   note: string | null;
+};
+
+type CompletionFeedback = {
+  points: number;
+  compliantDays: number;
+  streak: number;
 };
 
 function isoDate(d: Date) {
@@ -267,6 +273,89 @@ function ClassicConfetti({ show }: { show: boolean }) {
   );
 }
 
+function CompletionFeedbackModal({
+  open,
+  onClose,
+  points,
+  compliantDays,
+  streak,
+}: {
+  open: boolean;
+  onClose: () => void;
+  points: number;
+  compliantDays: number;
+  streak: number;
+}) {
+  return (
+    <AnimatePresence>
+      {open ? (
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 p-3 backdrop-blur-sm"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 8 }}
+            transition={{ duration: 0.18 }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-3xl border border-white/50 bg-white p-5 shadow-2xl"
+          >
+            <div className="text-center">
+              <div className="text-4xl">✅</div>
+              <h2 className="mt-3 text-xl font-extrabold text-slate-900">
+                Cleaning day signed off
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Nice. You’re building your compliance score instead of just logging and disappearing like everyone else.
+              </p>
+            </div>
+
+            <div className="mt-5 grid grid-cols-3 gap-3">
+              <div className="rounded-2xl bg-slate-100 p-3 text-center">
+                <div className="text-xl font-extrabold text-slate-900">+{points}</div>
+                <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  points
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-emerald-50 p-3 text-center">
+                <div className="text-xl font-extrabold text-emerald-700">
+                  {compliantDays}/7
+                </div>
+                <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700/80">
+                  this week
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-amber-50 p-3 text-center">
+                <div className="text-xl font-extrabold text-amber-700">{streak}</div>
+                <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700/80">
+                  day streak
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm text-slate-600">
+              {compliantDays >= 7
+                ? "Perfect week so far. Try not to ruin it."
+                : `You’ve signed off ${compliantDays} day${compliantDays === 1 ? "" : "s"} this week.`}
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="mt-5 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Continue
+            </button>
+          </motion.div>
+        </div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
 export default function CleaningRotaPage() {
   const { operator } = useWorkstation();
   const {
@@ -328,6 +417,13 @@ export default function CleaningRotaPage() {
   const [signoffInitialsDirty, setSignoffInitialsDirty] = useState(false);
   const [signoffNotes, setSignoffNotes] = useState("");
   const [signoffSaving, setSignoffSaving] = useState(false);
+
+  const [completionFeedbackOpen, setCompletionFeedbackOpen] = useState(false);
+  const [completionFeedback, setCompletionFeedback] = useState<CompletionFeedback>({
+    points: 10,
+    compliantDays: 0,
+    streak: 0,
+  });
 
   const defaultRowInitials = useMemo(
     () => normalizeInitials(bestInitials(operatorInitials, initials)),
@@ -406,6 +502,77 @@ export default function CleaningRotaPage() {
   function setTaskInitialsValue(taskId: string, value: string) {
     const clean = normalizeInitials(value);
     setTaskInitials((prev) => ({ ...prev, [taskId]: clean }));
+  }
+
+  async function getCompletionFeedbackMetrics(
+    oid: string,
+    lid: string,
+    currentDayIso: string
+  ): Promise<CompletionFeedback> {
+    const currentDate = new Date(currentDayIso);
+    currentDate.setHours(0, 0, 0, 0);
+
+    const weekStart = startOfWeekMonday(currentDate);
+    const weekEnd = endOfWeekSunday(currentDate);
+
+    const { data: weekRows, error: weekErr } = await supabase
+      .from("daily_signoffs")
+      .select("signoff_on")
+      .eq("org_id", oid)
+      .eq("location_id", lid)
+      .gte("signoff_on", isoDate(weekStart))
+      .lte("signoff_on", isoDate(weekEnd));
+
+    if (weekErr) throw weekErr;
+
+    const compliantDaySet = new Set(
+      ((weekRows ?? []) as Array<{ signoff_on: string }>)
+        .map((r) => String(r.signoff_on))
+        .filter(Boolean)
+    );
+
+    let streak = 0;
+    const cursor = new Date(currentDate);
+
+    for (let i = 0; i < 365; i++) {
+      const dIso = isoDate(cursor);
+      if (!compliantDaySet.has(dIso)) {
+        if (i === 0) {
+          const { data: oneRow, error: oneErr } = await supabase
+            .from("daily_signoffs")
+            .select("signoff_on")
+            .eq("org_id", oid)
+            .eq("location_id", lid)
+            .eq("signoff_on", dIso)
+            .limit(1)
+            .maybeSingle();
+
+          if (oneErr) throw oneErr;
+          if (!oneRow) break;
+        } else {
+          const { data: oneRow, error: oneErr } = await supabase
+            .from("daily_signoffs")
+            .select("signoff_on")
+            .eq("org_id", oid)
+            .eq("location_id", lid)
+            .eq("signoff_on", dIso)
+            .limit(1)
+            .maybeSingle();
+
+          if (oneErr) throw oneErr;
+          if (!oneRow) break;
+        }
+      }
+
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+
+    return {
+      points: 10,
+      compliantDays: compliantDaySet.size,
+      streak,
+    };
   }
 
   useEffect(() => {
@@ -873,75 +1040,97 @@ export default function CleaningRotaPage() {
       return [...keep, ...returnedRuns];
     });
   }
+async function createSignoff() {
+  if (!orgId || !locationId) return;
 
-  async function createSignoff() {
-    if (!orgId || !locationId) return;
-
-    if (!dayStatus.isOpen) {
-      alert("This location is marked closed today, so sign-off is not required.");
-      return;
-    }
-
-    if (!allDone) {
-      alert("Complete all cleaning tasks due today before signing off.");
-      return;
-    }
-    if (signoff) return;
-
-    const ini = signoffInitials.trim().toUpperCase();
-    if (!ini) {
-      alert("Enter initials to sign off.");
-      return;
-    }
-
-    setSignoffSaving(true);
-    try {
-      const signerTeamMemberId = await resolveSignerTeamMemberId(orgId, locationId, ini);
-
-      const payload = {
-        org_id: orgId,
-        location_id: locationId,
-        signoff_on: todayIso,
-        signed_by: ini,
-        signed_by_team_member_id: signerTeamMemberId,
-        signed_by_user_id: authUserId,
-        notes: signoffNotes.trim() || null,
-      };
-
-      const { data, error } = await supabase
-        .from("daily_signoffs")
-        .insert(payload)
-        .select(
-          "id, signoff_on, signed_by, signed_by_team_member_id, signed_by_user_id, notes, created_at"
-        )
-        .single();
-
-      if (error) throw error;
-
-      setSignoff({
-        id: String((data as any).id),
-        signoff_on: String((data as any).signoff_on),
-        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
-        signed_by_team_member_id: (data as any).signed_by_team_member_id
-          ? String((data as any).signed_by_team_member_id)
-          : null,
-        signed_by_user_id: (data as any).signed_by_user_id
-          ? String((data as any).signed_by_user_id)
-          : null,
-        notes: (data as any).notes ? String((data as any).notes) : null,
-        created_at: (data as any).created_at ? String((data as any).created_at) : null,
-      });
-
-      setSignoffOpen(false);
-      setSignoffNotes("");
-      setSignoffInitialsDirty(false);
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message ?? "Failed to sign off the day.");
-    } finally {
-      setSignoffSaving(false);
-    }
+  if (!dayStatus.isOpen) {
+    alert("This location is marked closed today, so sign-off is not required.");
+    return;
   }
+
+  if (!allDone) {
+    alert("Complete all cleaning tasks due today before signing off.");
+    return;
+  }
+
+  if (signoff) return;
+
+  const ini = signoffInitials.trim().toUpperCase();
+  if (!ini) {
+    alert("Enter initials to sign off.");
+    return;
+  }
+
+  setSignoffSaving(true);
+
+  try {
+    const signerTeamMemberId = await resolveSignerTeamMemberId(
+      orgId,
+      locationId,
+      ini
+    );
+
+    const payload = {
+      org_id: orgId,
+      location_id: locationId,
+      signoff_on: todayIso,
+      signed_by: ini,
+      signed_by_team_member_id: signerTeamMemberId,
+      signed_by_user_id: authUserId,
+      notes: signoffNotes.trim() || null,
+    };
+
+    const { data, error } = await supabase
+      .from("daily_signoffs")
+      .insert(payload)
+      .select(
+        "id, signoff_on, signed_by, signed_by_team_member_id, signed_by_user_id, notes, created_at"
+      )
+      .single();
+
+    if (error) throw error;
+
+    setSignoff({
+      id: String((data as any).id),
+      signoff_on: String((data as any).signoff_on),
+      signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+      signed_by_team_member_id: (data as any).signed_by_team_member_id
+        ? String((data as any).signed_by_team_member_id)
+        : null,
+      signed_by_user_id: (data as any).signed_by_user_id
+        ? String((data as any).signed_by_user_id)
+        : null,
+      notes: (data as any).notes ? String((data as any).notes) : null,
+      created_at: (data as any).created_at ? String((data as any).created_at) : null,
+    });
+
+    // Close sign-off modal first so the feedback card is not fighting another overlay.
+    setSignoffOpen(false);
+    setSignoffNotes("");
+    setSignoffInitialsDirty(false);
+
+    // Open feedback immediately with safe fallback values.
+    setCompletionFeedback({
+      points: 10,
+      compliantDays: 1,
+      streak: 1,
+    });
+    setCompletionFeedbackOpen(true);
+
+    // Then try to replace with real metrics.
+    try {
+      const metrics = await getCompletionFeedbackMetrics(orgId, locationId, todayIso);
+      setCompletionFeedback(metrics);
+    } catch (metricsErr) {
+      console.error("[cleaning] completion feedback metrics failed:", metricsErr);
+    }
+  } catch (e: any) {
+    console.error(e);
+    alert(e?.message ?? "Failed to sign off the day.");
+  } finally {
+    setSignoffSaving(false);
+  }
+}
 
   useEffect(() => {
     if (!signoffOpen) return;
@@ -976,6 +1165,14 @@ export default function CleaningRotaPage() {
   return (
     <div className={PAGE}>
       <ClassicConfetti show={showConfetti} />
+
+      <CompletionFeedbackModal
+        open={completionFeedbackOpen}
+        onClose={() => setCompletionFeedbackOpen(false)}
+        points={completionFeedback.points}
+        compliantDays={completionFeedback.compliantDays}
+        streak={completionFeedback.streak}
+      />
 
       <div className={`${CARD} p-4 sm:p-5`}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getActiveOrgIdClient } from "@/lib/orgClient";
-import  OnboardingBanner  from "@/components/OnboardingBanner";
+import OnboardingBanner from "@/components/OnboardingBanner";
 import WelcomeGate from "@/components/WelcomeGate";
 import { useActiveLocation } from "@/hooks/useActiveLocation";
 
@@ -34,6 +34,14 @@ type KpiState = {
 
   allergenDueSoon: number;
   allergenOver: number;
+};
+
+type WeeklyComplianceState = {
+  scorePct: number;
+  signedOffDays: number;
+  tempLogs: number;
+  cleaningRuns: number;
+  streak: number;
 };
 
 type LeaderboardEntry = {
@@ -559,6 +567,63 @@ function KpiTile({
   return <div className="w-full h-full">{inner}</div>;
 }
 
+function WeeklyComplianceSlimBar({
+  stats,
+}: {
+  stats: WeeklyComplianceState;
+}) {
+  const tone: "danger" | "warn" | "ok" =
+    stats.scorePct >= 75 ? "ok" : stats.scorePct >= 40 ? "warn" : "danger";
+
+  const wrapperCls =
+    tone === "ok"
+      ? "border-emerald-200 bg-emerald-50/80"
+      : tone === "warn"
+      ? "border-amber-200 bg-amber-50/80"
+      : "border-red-200 bg-red-50/80";
+
+  return (
+    <div className={cls("rounded-2xl border px-3 py-3", wrapperCls)}>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-slate-600">
+            Weekly compliance
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-slate-700">
+            <span>
+              <span className="font-extrabold text-slate-900">{stats.scorePct}%</span> this
+              week
+            </span>
+            <span>
+              <span className="font-extrabold text-slate-900">{stats.signedOffDays}/7</span>{" "}
+              signed off
+            </span>
+            <span>
+              <span className="font-extrabold text-slate-900">{stats.tempLogs}</span> temps
+            </span>
+            <span>
+              <span className="font-extrabold text-slate-900">{stats.cleaningRuns}</span>{" "}
+              cleaning
+            </span>
+            <span>
+              <span className="font-extrabold text-slate-900">{stats.streak}</span> day
+              streak
+            </span>
+          </div>
+        </div>
+
+        <div className="text-sm font-extrabold text-slate-900 shrink-0">
+          {stats.scorePct}%
+        </div>
+      </div>
+
+      <div className="mt-2">
+        <ProgressBar pct={stats.scorePct} tone={tone} />
+      </div>
+    </div>
+  );
+}
+
 /* ---------- Alerts modal ---------- */
 
 function shortSnippet(s: string | null | undefined, n = 140) {
@@ -908,6 +973,14 @@ export default function DashboardPage() {
     allergenOver: 0,
   });
 
+  const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>({
+    scorePct: 0,
+    signedOffDays: 0,
+    tempLogs: 0,
+    cleaningRuns: 0,
+    streak: 0,
+  });
+
   const [eom, setEom] = useState<LeaderboardEntry | null>(null);
   const [wallPosts, setWallPosts] = useState<WallPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1002,6 +1075,7 @@ export default function DashboardPage() {
           loadTempsKpi(orgId, locationId, today, dayStatus, cancelled),
           loadCleaningKpi(orgId, locationId, today, dayStatus, cancelled),
           loadTrainingAndAllergenKpi(orgId, locationId, cancelled),
+          loadWeeklyCompliance(orgId, locationId, cancelled),
           loadLeaderBoard(orgId, locationId, cancelled),
           loadWallPosts(orgId, locationId, cancelled),
           loadFourWeekBanner(orgId, locationId, today, cancelled),
@@ -1312,6 +1386,124 @@ export default function DashboardPage() {
       allergenDueSoon,
       allergenOver,
     }));
+  }
+
+  async function loadWeeklyCompliance(
+    orgId: string,
+    locationId: string | null,
+    cancelled: boolean
+  ) {
+    try {
+      const now = new Date();
+      const weekStart = startOfWeekMonday(now);
+      const weekStartISO = isoDate(weekStart);
+      const todayISO = isoToday();
+
+      let signoffQuery = supabase
+        .from("daily_signoffs")
+        .select("signoff_on")
+        .eq("org_id", orgId)
+        .gte("signoff_on", weekStartISO)
+        .lte("signoff_on", todayISO);
+
+      if (locationId) signoffQuery = signoffQuery.eq("location_id", locationId);
+
+      let tempQuery = supabase
+        .from("food_temp_logs")
+        .select("id,at")
+        .eq("org_id", orgId)
+        .gte("at", weekStart.toISOString())
+        .lte("at", new Date().toISOString());
+
+      if (locationId) tempQuery = tempQuery.eq("location_id", locationId);
+
+      let cleaningQuery = supabase
+        .from("cleaning_task_runs")
+        .select("task_id,run_on")
+        .eq("org_id", orgId)
+        .gte("run_on", weekStartISO)
+        .lte("run_on", todayISO);
+
+      if (locationId) cleaningQuery = cleaningQuery.eq("location_id", locationId);
+
+      const [
+        { data: signoffRows, error: signoffErr },
+        { data: tempRows, error: tempErr },
+        { data: cleaningRows, error: cleaningErr },
+      ] = await Promise.all([signoffQuery, tempQuery, cleaningQuery]);
+
+      if (signoffErr) throw signoffErr;
+      if (tempErr) throw tempErr;
+      if (cleaningErr) throw cleaningErr;
+
+      if (cancelled) return;
+
+      const signedOffDaysSet = new Set(
+        (signoffRows ?? [])
+          .map((r: any) => String(r.signoff_on ?? "").slice(0, 10))
+          .filter(Boolean)
+      );
+
+      const signedOffDays = signedOffDaysSet.size;
+      const tempLogs = (tempRows ?? []).length;
+      const cleaningRuns = (cleaningRows ?? []).length;
+
+      let streak = 0;
+      const cursor = new Date();
+      cursor.setHours(0, 0, 0, 0);
+
+      for (let i = 0; i < 365; i++) {
+        const dIso = isoDate(cursor);
+
+        let signedOff = signedOffDaysSet.has(dIso);
+
+        if (!signedOff) {
+          let q = supabase
+            .from("daily_signoffs")
+            .select("id")
+            .eq("org_id", orgId)
+            .eq("signoff_on", dIso)
+            .limit(1)
+            .maybeSingle();
+
+          if (locationId) q = q.eq("location_id", locationId);
+
+          const { data } = await q;
+          if (!data) break;
+
+          signedOff = true;
+        }
+
+        if (!signedOff) break;
+
+        streak += 1;
+        cursor.setDate(cursor.getDate() - 1);
+      }
+
+      const scoreRaw =
+        signedOffDays * 10 + Math.min(tempLogs, 30) + Math.min(cleaningRuns, 30);
+
+      const scorePct = clampPct(Math.round((scoreRaw / 130) * 100));
+
+      setWeeklyCompliance({
+        scorePct,
+        signedOffDays,
+        tempLogs,
+        cleaningRuns,
+        streak,
+      });
+    } catch (e) {
+      console.warn("[weekly compliance] failed:", e);
+      if (!cancelled) {
+        setWeeklyCompliance({
+          scorePct: 0,
+          signedOffDays: 0,
+          tempLogs: 0,
+          cleaningRuns: 0,
+          streak: 0,
+        });
+      }
+    }
   }
 
   async function loadLeaderBoard(orgId: string, locationId: string | null, cancelled: boolean) {
@@ -2092,6 +2284,8 @@ export default function DashboardPage() {
               }
             />
           </div>
+
+          <WeeklyComplianceSlimBar stats={weeklyCompliance} />
 
           {err && (
             <div className="mt-1 rounded-2xl border border-red-200 bg-red-50/90 px-3 py-2 text-xs font-semibold text-red-800">
