@@ -92,6 +92,30 @@ export async function getLocationDayStatus(
   };
 }
 
+export async function countOpenDaysInRange(args: {
+  orgId: string;
+  locationId: string | null;
+  startISO: string;
+  endISO: string;
+}): Promise<number> {
+  const { orgId, locationId, startISO, endISO } = args;
+
+  let count = 0;
+  let cursor = new Date(`${startISO}T00:00:00`);
+  const end = new Date(`${endISO}T00:00:00`);
+
+  while (cursor <= end) {
+    const cursorISO = cursor.toISOString().slice(0, 10);
+    const status = await getLocationDayStatus(orgId, locationId, cursorISO);
+
+    if (status.isOpen) count += 1;
+
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return count;
+}
+
 export async function calculateOpenDaySignoffStreak(args: {
   orgId: string;
   locationId: string | null;

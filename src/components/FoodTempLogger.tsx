@@ -5,11 +5,15 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseBrowser";
-import { calculateOpenDaySignoffStreak } from "@/lib/locationOpenStatus";
+
 import OnboardingBanner from "@/components/OnboardingBanner";
 import WelcomeGate from "@/components/WelcomeGate";
 import { useActiveLocation } from "@/hooks/useActiveLocation";
-
+import {
+  getLocationDayStatus,
+  calculateOpenDaySignoffStreak,
+  countOpenDaysInRange,
+} from "@/lib/locationOpenStatus";
 /* ---------- CONFIG ---------- */
 
 const WALL_TABLE = "kitchen_wall";
@@ -39,6 +43,7 @@ type KpiState = {
 type WeeklyComplianceState = {
   scorePct: number;
   signedOffDays: number;
+  openDays: number;
   tempLogs: number;
   cleaningRuns: number;
   streak: number;
@@ -129,12 +134,7 @@ const isoToday = () => {
   return `${year}-${month}-${day}`;
 };
 
-function shiftISODateUTC(iso: string, delta: number) {
-  const [y, m, d] = iso.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() + delta);
-  return dt.toISOString().slice(0, 10);
-}
+
 
 function formatPrettyDate(d: Date) {
   const WEEKDAYS = [
@@ -192,7 +192,10 @@ function formatDDMMYYYY(val: any): string | null {
 }
 
 function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function startOfWeekMonday(d: Date) {
@@ -261,84 +264,8 @@ function isLikelyMonthEnd(d = new Date()) {
   return d.getDate() <= 3;
 }
 
-async function getLocationDayStatus(
-  orgId: string,
-  locationId: string | null,
-  dateISO: string
-): Promise<LocationDayStatus> {
-  if (!locationId) {
-    return {
-      isOpen: true,
-      source: "default",
-      note: null,
-    };
-  }
 
-  try {
-    const { data: closure, error: closureErr } = await supabase
-      .from("location_closures")
-      .select("id, reason")
-      .eq("org_id", orgId)
-      .eq("location_id", locationId)
-      .eq("date", dateISO)
-      .maybeSingle();
 
-    if (!closureErr && closure) {
-      return {
-        isOpen: false,
-        source: "closure_override",
-        note: closure.reason ? String(closure.reason) : "Marked closed for today.",
-      };
-    }
-  } catch {
-    // ignore and fall through
-  }
-
-  const weekday0to6 = new Date(dateISO).getDay();
-  const weekday1to7 = getDow1to7(dateISO);
-
-  try {
-    const { data: scheduleRows, error: scheduleErr } = await supabase
-      .from("location_opening_days")
-      .select("weekday, is_open, opens_at, closes_at")
-      .eq("org_id", orgId)
-      .eq("location_id", locationId)
-      .in("weekday", [weekday1to7, weekday0to6]);
-
-    if (!scheduleErr && Array.isArray(scheduleRows) && scheduleRows.length > 0) {
-      const exact1to7 = scheduleRows.find(
-        (r: any) => Number(r.weekday) === weekday1to7
-      );
-      const exact0to6 = scheduleRows.find(
-        (r: any) => Number(r.weekday) === weekday0to6
-      );
-      const row = exact1to7 ?? exact0to6 ?? scheduleRows[0];
-
-      const isOpen = row?.is_open !== false;
-
-      let note: string | null = null;
-      if (!isOpen) {
-        note = "Closed by weekly opening days.";
-      } else if (row?.opens_at && row?.closes_at) {
-        note = `${String(row.opens_at).slice(0, 5)}–${String(row.closes_at).slice(0, 5)}`;
-      }
-
-      return {
-        isOpen,
-        source: "weekly_schedule",
-        note,
-      };
-    }
-  } catch {
-    // ignore and fall through
-  }
-
-  return {
-    isOpen: true,
-    source: "default",
-    note: null,
-  };
-}
 
 /* ---------- Four-week dismiss helpers ---------- */
 
@@ -602,9 +529,11 @@ function WeeklyComplianceSlimBar({
               week
             </span>
             <span>
-              <span className="font-extrabold text-slate-900">{stats.signedOffDays}/7</span>{" "}
-              signed off
-            </span>
+  <span className="font-extrabold text-slate-900">
+    {stats.signedOffDays}/{stats.openDays}
+  </span>{" "}
+  signed off
+</span>
             <span>
               <span className="font-extrabold text-slate-900">{stats.tempLogs}</span> temps
             </span>
@@ -980,13 +909,14 @@ export default function DashboardPage() {
     allergenOver: 0,
   });
 
-  const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>({
-    scorePct: 0,
-    signedOffDays: 0,
-    tempLogs: 0,
-    cleaningRuns: 0,
-    streak: 0,
-  });
+const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>({
+  scorePct: 0,
+  signedOffDays: 0,
+  openDays: 0,
+  tempLogs: 0,
+  cleaningRuns: 0,
+  streak: 0,
+});
 
   const [eom, setEom] = useState<LeaderboardEntry | null>(null);
   const [wallPosts, setWallPosts] = useState<WallPost[]>([]);
@@ -1450,7 +1380,19 @@ async function loadWeeklyCompliance(
         .filter(Boolean)
     );
 
-    const signedOffDays = signedOffDaysSet.size;
+    const openDays = await countOpenDaysInRange({
+      orgId,
+      locationId,
+      startISO: weekStartISO,
+      endISO: todayISO,
+    });
+
+    let signedOffDays = 0;
+    for (const iso of signedOffDaysSet) {
+      const dayStatus = await getLocationDayStatus(orgId, locationId, iso);
+      if (dayStatus.isOpen) signedOffDays += 1;
+    }
+
     const tempLogs = (tempRows ?? []).length;
     const cleaningRuns = (cleaningRows ?? []).length;
 
@@ -1474,14 +1416,19 @@ async function loadWeeklyCompliance(
 
     if (cancelled) return;
 
+    const effectiveOpenDays = Math.max(openDays, 1);
+    const signoffScoreMax = effectiveOpenDays * 10;
+    const totalMax = signoffScoreMax + 30 + 30;
+
     const scoreRaw =
       signedOffDays * 10 + Math.min(tempLogs, 30) + Math.min(cleaningRuns, 30);
 
-    const scorePct = clampPct(Math.round((scoreRaw / 130) * 100));
+    const scorePct = clampPct(Math.round((scoreRaw / totalMax) * 100));
 
     setWeeklyCompliance({
       scorePct,
       signedOffDays,
+      openDays,
       tempLogs,
       cleaningRuns,
       streak,
@@ -1492,6 +1439,7 @@ async function loadWeeklyCompliance(
       setWeeklyCompliance({
         scorePct: 0,
         signedOffDays: 0,
+        openDays: 0,
         tempLogs: 0,
         cleaningRuns: 0,
         streak: 0,
@@ -1499,7 +1447,6 @@ async function loadWeeklyCompliance(
     }
   }
 }
-
   async function loadLeaderBoard(orgId: string, locationId: string | null, cancelled: boolean) {
     try {
       if (locationId) {
