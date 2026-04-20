@@ -35,6 +35,14 @@ import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
 // ✅ Workstation operator (PIN user)
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 
+import { countOpenDaysInRange } from "@/lib/locationOpenStatus";
+import {
+  buildComplianceFeedback,
+  calculateWeeklyComplianceState,
+  type CompletionFeedbackData,
+  type WeeklyComplianceState,
+} from "@/lib/complianceProgress";
+
 const DEFAULT_AREA = "Kitchen";
 const PRESET_AREAS = [
   "Kitchen",
@@ -62,17 +70,20 @@ type LocationDayStatus = {
   note: string | null;
 };
 
-type CompletionFeedback = {
-  points: number;
-  compliantDays: number;
-  streak: number;
-};
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
 
 // ===== Cleaning helpers (aligned with FoodTempLogger) =====
 const isoToday = () => new Date().toISOString().slice(0, 10);
+
+function isoDate(d: Date) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 const getDow1to7 = (ymd: string) => {
   const date = new Date(ymd);
   return ((date.getDay() + 6) % 7) + 1;
@@ -770,21 +781,16 @@ function FeedbackModal({
 }
 
 /* ===================== Quick temp completion modal ===================== */
-
 function CompletionFeedbackModal({
   open,
   onClose,
-  points,
-  compliantDays,
-  streak,
+  data,
 }: {
   open: boolean;
   onClose: () => void;
-  points: number;
-  compliantDays: number;
-  streak: number;
+  data: CompletionFeedbackData | null;
 }) {
-  if (!open) return null;
+  if (!open || !data) return null;
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center p-3">
@@ -805,19 +811,19 @@ function CompletionFeedbackModal({
           <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] opacity-80">
             Temperature logged
           </div>
-          <div className="text-xl font-extrabold leading-tight">
-            Quick temp saved
-          </div>
+          <div className="text-xl font-extrabold leading-tight">{data.title}</div>
         </div>
 
         <div className="space-y-4 p-5">
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-            Nice. One more check logged without messing about with paper.
+            {data.summaryLine}
           </div>
 
           <div className="grid grid-cols-3 gap-3">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-center">
-              <div className="text-xl font-extrabold text-slate-900">+{points}</div>
+              <div className="text-xl font-extrabold text-slate-900">
+                +{data.points}
+              </div>
               <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 points
               </div>
@@ -825,7 +831,7 @@ function CompletionFeedbackModal({
 
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-center">
               <div className="text-xl font-extrabold text-emerald-700">
-                {compliantDays}/7
+                {data.compliantDaysThisWeek}/{data.openDaysThisWeek}
               </div>
               <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700/80">
                 this week
@@ -833,19 +839,23 @@ function CompletionFeedbackModal({
             </div>
 
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-center">
-              <div className="text-xl font-extrabold text-amber-700">{streak}</div>
+              <div className="text-xl font-extrabold text-amber-700">
+                {data.streakDays}
+              </div>
               <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700/80">
                 day streak
               </div>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm text-slate-600">
-            {compliantDays >= 7
-              ? "Perfect week so far. Try not to sabotage it."
-              : `You’ve logged temperatures on ${compliantDays} day${
-                  compliantDays === 1 ? "" : "s"
-                } this week.`}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-center text-sm text-slate-600">
+            <div className="font-semibold text-slate-900">
+              {data.completedTodayLabel}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {data.selectedDate}
+              {data.initials ? ` · ${data.initials}` : ""}
+            </div>
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-1">
@@ -918,11 +928,8 @@ export default function TempFab() {
   });
 
   const [completionFeedbackOpen, setCompletionFeedbackOpen] = useState(false);
-  const [completionFeedback, setCompletionFeedback] = useState<CompletionFeedback>({
-    points: 1,
-    compliantDays: 0,
-    streak: 0,
-  });
+const [completionFeedback, setCompletionFeedback] =
+  useState<CompletionFeedbackData | null>(null);
 
   // Prevent overlapping cleaning refresh calls
   const cleaningRefreshInFlight = useRef(false);
@@ -1025,87 +1032,103 @@ export default function TempFab() {
 
     return false;
   }
+async function getQuickTempCompletionMetrics(
+  orgId: string,
+  locationId: string,
+  currentDayIso: string,
+  initials: string
+): Promise<CompletionFeedbackData> {
+  const currentDate = new Date(`${currentDayIso}T00:00:00`);
+  currentDate.setHours(0, 0, 0, 0);
 
-  async function getQuickTempCompletionMetrics(
-    orgId: string,
-    locationId: string,
-    currentDayIso: string
-  ): Promise<CompletionFeedback> {
-    const currentDate = new Date(`${currentDayIso}T00:00:00`);
-    currentDate.setHours(0, 0, 0, 0);
+  const weekStart = startOfWeekMonday(currentDate);
+  const weekEnd = new Date(currentDate);
+  weekEnd.setHours(23, 59, 59, 999);
 
-    const weekStart = startOfWeekMonday(currentDate);
-    const weekEnd = new Date(currentDate);
-    weekEnd.setHours(23, 59, 59, 999);
+  const { data: weekRows, error: weekErr } = await supabase
+    .from("food_temp_logs")
+    .select("at")
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .gte("at", weekStart.toISOString())
+    .lte("at", weekEnd.toISOString())
+    .limit(5000);
 
-    const { data: weekRows, error: weekErr } = await supabase
-      .from("food_temp_logs")
-      .select("at")
-      .eq("org_id", orgId)
-      .eq("location_id", locationId)
-      .gte("at", weekStart.toISOString())
-      .lte("at", weekEnd.toISOString())
-      .limit(5000);
+  if (weekErr) throw weekErr;
 
-    if (weekErr) throw weekErr;
-
-    const daySet = new Set<string>();
-    for (const row of (weekRows ?? []) as Array<{ at: string | null }>) {
-      if (!row?.at) continue;
-      const d = new Date(row.at);
-      if (Number.isNaN(d.getTime())) continue;
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      daySet.add(`${y}-${m}-${day}`);
-    }
-
-    let streak = 0;
-    const cursor = new Date(currentDate);
-
-    for (let i = 0; i < 365; i++) {
-      const y = cursor.getFullYear();
-      const m = String(cursor.getMonth() + 1).padStart(2, "0");
-      const day = String(cursor.getDate()).padStart(2, "0");
-      const dIso = `${y}-${m}-${day}`;
-
-      let hasLogsForDay = daySet.has(dIso);
-
-      if (!hasLogsForDay) {
-        const dayStart = new Date(cursor);
-        dayStart.setHours(0, 0, 0, 0);
-
-        const dayEnd = new Date(cursor);
-        dayEnd.setHours(23, 59, 59, 999);
-
-        const { data: oneRow, error: oneErr } = await supabase
-          .from("food_temp_logs")
-          .select("id")
-          .eq("org_id", orgId)
-          .eq("location_id", locationId)
-          .gte("at", dayStart.toISOString())
-          .lte("at", dayEnd.toISOString())
-          .limit(1)
-          .maybeSingle();
-
-        if (oneErr) throw oneErr;
-        if (!oneRow) break;
-
-        hasLogsForDay = true;
-      }
-
-      if (!hasLogsForDay) break;
-
-      streak += 1;
-      cursor.setDate(cursor.getDate() - 1);
-    }
-
-    return {
-      points: 1,
-      compliantDays: daySet.size,
-      streak,
-    };
+  const loggedDaySet = new Set<string>();
+  for (const row of (weekRows ?? []) as Array<{ at: string | null }>) {
+    if (!row?.at) continue;
+    const d = new Date(row.at);
+    if (Number.isNaN(d.getTime())) continue;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    loggedDaySet.add(`${y}-${m}-${day}`);
   }
+
+  const weekStartISO = isoDate(weekStart);
+  const openDaysThisWeek = await countOpenDaysInRange({
+    orgId,
+    locationId,
+    startISO: weekStartISO,
+    endISO: currentDayIso,
+  });
+
+  let compliantDaysThisWeek = 0;
+  const cursorForWeek = new Date(weekStart);
+  while (isoDate(cursorForWeek) <= currentDayIso) {
+    const dIso = isoDate(cursorForWeek);
+    if (loggedDaySet.has(dIso)) compliantDaysThisWeek += 1;
+    cursorForWeek.setDate(cursorForWeek.getDate() + 1);
+  }
+
+  let streakDays = 0;
+  const streakCursor = new Date(currentDate);
+
+  for (let i = 0; i < 365; i++) {
+    const dIso = isoDate(streakCursor);
+
+    let hasLogsForDay = loggedDaySet.has(dIso);
+
+    if (!hasLogsForDay) {
+      const dayStart = new Date(streakCursor);
+      dayStart.setHours(0, 0, 0, 0);
+
+      const dayEnd = new Date(streakCursor);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const { data: oneRow, error: oneErr } = await supabase
+        .from("food_temp_logs")
+        .select("id")
+        .eq("org_id", orgId)
+        .eq("location_id", locationId)
+        .gte("at", dayStart.toISOString())
+        .lte("at", dayEnd.toISOString())
+        .limit(1)
+        .maybeSingle();
+
+      if (oneErr) throw oneErr;
+      if (!oneRow) break;
+
+      hasLogsForDay = true;
+    }
+
+    if (!hasLogsForDay) break;
+
+    streakDays += 1;
+    streakCursor.setDate(streakCursor.getDate() - 1);
+  }
+
+  return buildComplianceFeedback({
+    compliantDaysThisWeek,
+    openDaysThisWeek,
+    streakDays,
+    selectedDate: currentDayIso,
+    initials: initials || null,
+    completedTodayLabel: "Quick temperature logged.",
+  });
+}
 
   async function refreshTodayStatus(force = false) {
     try {
@@ -1900,28 +1923,32 @@ export default function TempFab() {
       setShowMenu(false);
       return;
     }
+setCompletionFeedback(
+  buildComplianceFeedback({
+    compliantDaysThisWeek: 1,
+    openDaysThisWeek: 1,
+    streakDays: 1,
+    selectedDate: form.date,
+    initials: operatorInitials || null,
+    completedTodayLabel: "Quick temperature logged.",
+  })
+);
+setCompletionFeedbackOpen(true);
 
-    setCompletionFeedback({
-      points: 1,
-      compliantDays: 1,
-      streak: 1,
-    });
-    setCompletionFeedbackOpen(true);
+try {
+  const metrics = await getQuickTempCompletionMetrics(
+    org_id,
+    location_id,
+    form.date,
+    operatorInitials
+  );
+  setCompletionFeedback(metrics);
+} catch (metricsErr) {
+  console.error("[quick-temp] completion feedback metrics failed:", metricsErr);
+}
 
-    try {
-      const metrics = await getQuickTempCompletionMetrics(
-        org_id,
-        location_id,
-        form.date
-      );
-      setCompletionFeedback(metrics);
-    } catch (metricsErr) {
-      console.error("[quick-temp] completion feedback metrics failed:", metricsErr);
-    }
-
-    setOpen(false);
+setOpen(false);
   }
-
   /* --------- routines --------- */
 
   async function openRoutinePicker() {
@@ -2342,13 +2369,11 @@ export default function TempFab() {
         setRecheckTemp={setCorrectiveRecheckTemp}
       />
 
-      <CompletionFeedbackModal
-        open={completionFeedbackOpen}
-        onClose={() => setCompletionFeedbackOpen(false)}
-        points={completionFeedback.points}
-        compliantDays={completionFeedback.compliantDays}
-        streak={completionFeedback.streak}
-      />
+    <CompletionFeedbackModal
+  open={completionFeedbackOpen}
+  onClose={() => setCompletionFeedbackOpen(false)}
+  data={completionFeedback}
+/>
 
       {showPicker && (
         <div

@@ -12,21 +12,18 @@ import {
   countOpenDaysInRange,
   getLocationDayStatus,
 } from "@/lib/locationOpenStatus";
-
+import {
+  buildComplianceFeedback,
+  calculateWeeklyComplianceState,
+  type CompletionFeedbackData,
+  type WeeklyComplianceState,
+} from "@/lib/complianceProgress";
 /* ===================== Types ===================== */
 
 type LocationOption = { id: string; name: string };
 
 type TempSummary = { today: number; fails7d: number };
 
-type WeeklyComplianceState = {
-  scorePct: number;
-  signedOffDays: number;
-  openDays: number;
-  tempLogs: number;
-  cleaningRuns: number;
-  streak: number;
-};
 
 type UnifiedIncidentRow = {
   id: string;
@@ -77,17 +74,6 @@ type SignoffSummary = {
   todayCount: number;
 };
 
-type CompletionFeedbackData = {
-  title: string;
-  points: number;
-  compliantDaysThisWeek: number;
-  openDaysThisWeek: number;
-  streakDays: number;
-  completedTodayLabel: string;
-  summaryLine: string;
-  selectedDate: string;
-  initials: string | null;
-};
 
 type TeamMemberOption = {
   id: string;
@@ -1720,28 +1706,15 @@ export default function ManagerDashboardPage() {
         });
       }
 
-      const effectiveOpenDays = Math.max(openDays, 1);
-      const signoffScoreMax = effectiveOpenDays * 10;
-      const totalMax = signoffScoreMax + 30 + 30;
-
-      const weeklyScoreRaw =
-        weeklySignedOffDays * 10 +
-        Math.min(weeklyTempLogsCount, 30) +
-        Math.min(weeklyCleaningRunsCount, 30);
-
-      const weeklyScorePct = clampPct(
-        Math.round((weeklyScoreRaw / totalMax) * 100)
-      );
-
-      setWeeklyCompliance({
-        scorePct: weeklyScorePct,
-        signedOffDays: weeklySignedOffDays,
-        openDays,
-        tempLogs: weeklyTempLogsCount,
-        cleaningRuns: weeklyCleaningRunsCount,
-        streak: streakDays,
-      });
-
+  setWeeklyCompliance(
+  calculateWeeklyComplianceState({
+    signedOffDays: weeklySignedOffDays,
+    openDays,
+    tempLogs: weeklyTempLogsCount,
+    cleaningRuns: weeklyCleaningRunsCount,
+    streak: streakDays,
+  })
+);
       const arRows: any[] = (allergenReviewsRes.data as any[]) ?? [];
       setAllergenReviews(
         arRows.map((r) => ({
@@ -1851,89 +1824,75 @@ export default function ManagerDashboardPage() {
 
   const cleaningAllDone = cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
   const alreadySignedOff = signoffsToday.length > 0;
-
-  async function buildDaySignoffFeedback(
-    initials: string
-  ): Promise<CompletionFeedbackData> {
-    if (!orgId || !locationId) {
-      return {
-        title: "Day signed off",
-        points: 10,
-        compliantDaysThisWeek: 1,
-        openDaysThisWeek: 1,
-        streakDays: 1,
-        completedTodayLabel: "Day sign-off completed",
-        summaryLine: "Good job. The boring compliance work is done.",
-        selectedDate: selectedDateISO,
-        initials: initials || null,
-      };
-    }
-
-    const weekStart = startOfWeekISO(selectedDateISO);
-    const streakWindowStart = addDaysISO(selectedDateISO, -41);
-
-    const { data, error } = await supabase
-      .from("daily_signoffs")
-      .select("signoff_on")
-      .eq("org_id", orgId)
-      .eq("location_id", locationId)
-      .gte("signoff_on", streakWindowStart)
-      .lte("signoff_on", selectedDateISO)
-      .order("signoff_on", { ascending: false });
-
-    if (error) throw error;
-
-    const signedDates = new Set<string>(
-      ((data ?? []) as Array<{ signoff_on: string }>).map((row) =>
-        String(row.signoff_on)
-      )
-    );
-
-    const streakDays = await calculateOpenDaySignoffStreak({
-      orgId,
-      locationId,
-      signedOffDays: signedDates,
-      startFromISO: selectedDateISO,
-      maxLookbackDays: 365,
-    });
-
-    const openDaysThisWeek = await countOpenDaysInRange({
-      orgId,
-      locationId,
-      startISO: weekStart,
-      endISO: selectedDateISO,
-    });
-
-    let compliantDaysThisWeek = 0;
-    let dayCursor = weekStart;
-    while (dayCursor <= selectedDateISO) {
-      const dayStatus = await getLocationDayStatus(orgId, locationId, dayCursor);
-      if (dayStatus.isOpen && signedDates.has(dayCursor)) {
-        compliantDaysThisWeek += 1;
-      }
-      dayCursor = addDaysISO(dayCursor, 1);
-    }
-
-    const summaryLine =
-      compliantDaysThisWeek >= 5
-        ? "Strong week. You’re staying on top of compliance."
-        : compliantDaysThisWeek >= 3
-        ? "Good momentum. Keep stacking completed days."
-        : "First steps count. Keep the streak alive tomorrow.";
-
-    return {
-      title: "Day signed off",
-      points: 10,
-      compliantDaysThisWeek,
-      openDaysThisWeek,
-      streakDays,
-      completedTodayLabel:
-        "All cleaning due today is complete and the day is signed off.",
-      summaryLine,
+async function buildDaySignoffFeedback(
+  initials: string
+): Promise<CompletionFeedbackData> {
+  if (!orgId || !locationId) {
+    return buildComplianceFeedback({
+      compliantDaysThisWeek: 1,
+      openDaysThisWeek: 1,
+      streakDays: 1,
       selectedDate: selectedDateISO,
       initials: initials || null,
-    };
+      completedTodayLabel: "Day sign-off completed",
+    });
   }
+
+  const weekStart = startOfWeekISO(selectedDateISO);
+  const streakWindowStart = addDaysISO(selectedDateISO, -41);
+
+  const { data, error } = await supabase
+    .from("daily_signoffs")
+    .select("signoff_on")
+    .eq("org_id", orgId)
+    .eq("location_id", locationId)
+    .gte("signoff_on", streakWindowStart)
+    .lte("signoff_on", selectedDateISO)
+    .order("signoff_on", { ascending: false });
+
+  if (error) throw error;
+
+  const signedDates = new Set<string>(
+    ((data ?? []) as Array<{ signoff_on: string }>).map((row) =>
+      String(row.signoff_on)
+    )
+  );
+
+  const streakDays = await calculateOpenDaySignoffStreak({
+    orgId,
+    locationId,
+    signedOffDays: signedDates,
+    startFromISO: selectedDateISO,
+    maxLookbackDays: 365,
+  });
+
+  const openDaysThisWeek = await countOpenDaysInRange({
+    orgId,
+    locationId,
+    startISO: weekStart,
+    endISO: selectedDateISO,
+  });
+
+  let compliantDaysThisWeek = 0;
+  let dayCursor = weekStart;
+  while (dayCursor <= selectedDateISO) {
+    const dayStatus = await getLocationDayStatus(orgId, locationId, dayCursor);
+    if (dayStatus.isOpen && signedDates.has(dayCursor)) {
+      compliantDaysThisWeek += 1;
+    }
+    dayCursor = addDaysISO(dayCursor, 1);
+  }
+
+  return buildComplianceFeedback({
+    compliantDaysThisWeek,
+    openDaysThisWeek,
+    streakDays,
+    selectedDate: selectedDateISO,
+    initials: initials || null,
+    completedTodayLabel:
+      "All cleaning due today is complete and the day is signed off.",
+  });
+}
 
   async function createDaySignoff() {
     if (!orgId || !locationId) return;

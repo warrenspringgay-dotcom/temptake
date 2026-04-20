@@ -14,6 +14,10 @@ import {
   calculateOpenDaySignoffStreak,
   countOpenDaysInRange,
 } from "@/lib/locationOpenStatus";
+import {
+  calculateWeeklyComplianceState,
+  type WeeklyComplianceState,
+} from "@/lib/complianceProgress";
 /* ---------- CONFIG ---------- */
 
 const WALL_TABLE = "kitchen_wall";
@@ -40,14 +44,7 @@ type KpiState = {
   allergenOver: number;
 };
 
-type WeeklyComplianceState = {
-  scorePct: number;
-  signedOffDays: number;
-  openDays: number;
-  tempLogs: number;
-  cleaningRuns: number;
-  streak: number;
-};
+
 
 type LeaderboardEntry = {
   display_name: string | null;
@@ -1415,24 +1412,15 @@ async function loadWeeklyCompliance(
     }
 
     if (cancelled) return;
-
-    const effectiveOpenDays = Math.max(openDays, 1);
-    const signoffScoreMax = effectiveOpenDays * 10;
-    const totalMax = signoffScoreMax + 30 + 30;
-
-    const scoreRaw =
-      signedOffDays * 10 + Math.min(tempLogs, 30) + Math.min(cleaningRuns, 30);
-
-    const scorePct = clampPct(Math.round((scoreRaw / totalMax) * 100));
-
-    setWeeklyCompliance({
-      scorePct,
-      signedOffDays,
-      openDays,
-      tempLogs,
-      cleaningRuns,
-      streak,
-    });
+setWeeklyCompliance(
+  calculateWeeklyComplianceState({
+    signedOffDays,
+    openDays,
+    tempLogs,
+    cleaningRuns,
+    streak,
+  })
+);
   } catch (e) {
     console.warn("[weekly compliance] failed:", e);
     if (!cancelled) {
