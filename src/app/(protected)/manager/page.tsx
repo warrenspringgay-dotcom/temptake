@@ -697,14 +697,20 @@ export default function ManagerDashboardPage() {
   const [trainingExpired, setTrainingExpired] = useState(0);
   const [trainingDueSoon, setTrainingDueSoon] = useState(0);
 
-  const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>({
-    scorePct: 0,
-    signedOffDays: 0,
-    openDays: 0,
-    tempLogs: 0,
-    cleaningRuns: 0,
-    streak: 0,
-  });
+ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>({
+  scorePct: 0,
+  signedOffDays: 0,
+  openDays: 0,
+  tempLogs: 0,
+  cleaningRuns: 0,
+  streak: 0,
+  signoffScorePct: 0,
+  tempScorePct: 0,
+  cleaningScorePct: 0,
+  compliantTempDays: 0,
+  dueCleaningTasks: 0,
+  completedCleaningTasks: 0,
+});
 
   const [todayTemps, setTodayTemps] = useState<TempLogRow[]>([]);
   const [cleaningActivity, setCleaningActivity] = useState<CleaningActivityRow[]>([]);
