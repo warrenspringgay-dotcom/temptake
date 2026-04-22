@@ -17,6 +17,12 @@ const PUBLIC_PATHS = new Set<string>([
   "/cookies",
   "/food-hygiene-app",
   "/templates",
+  "/cafe-food-safety-app",
+  "/takeaway-food-safety-app",
+  "/restaurant-food-safety-app",
+  "/fish-and-chip-shop-food-safety-app",
+  "/pub-food-safety-app",
+  "/mobile-catering-food-safety-app"
 ]);
 
 const OPERATOR_ROLE_COOKIE = "tt_operator_role";
