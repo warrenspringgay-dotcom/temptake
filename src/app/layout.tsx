@@ -13,6 +13,7 @@ import FabShell from "@/app/FabShell";
 import HeaderSwitcher from "@/components/HeaderSwitcher";
 import CookieBanner from "@/components/CookieBanner";
 import ConsentBootstrap from "@/components/ConsentBootstrap";
+import MainWidthShell from "@/components/MainWidthShell";
 
 import ClientProviders from "@/app/ClientProviders";
 
@@ -38,11 +39,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-gray-100 text-gray-900 min-h-[100dvh]">
+      <body className="min-h-[100dvh] bg-gray-100 text-gray-900">
         <ClientProviders>
           <Pwa />
 
-          {/* Cookie consent + PostHog opt-in/out */}
           <ConsentBootstrap />
           <CookieBanner />
 
@@ -51,7 +51,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           </Suspense>
 
           <main className="w-full">
-            <div className="w-full px-0 sm:px-4 md:mx-auto md:max-w-6xl">{children}</div>
+            <MainWidthShell>{children}</MainWidthShell>
           </main>
 
           <Suspense fallback={null}>

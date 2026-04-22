@@ -40,6 +40,7 @@ const APP_TABS: Tab[] = [
 const PUBLIC_TABS: Tab[] = [
   { href: "/", label: "Home" },
   { href: "/templates", label: "Templates" },
+  { href: "/sectors", label: "Sectors" },
   { href: "/guides", label: "Guides" },
   { href: "/demo", label: "Demo App" },
   { href: "/food-hygiene-app", label: "The App" },

@@ -29,6 +29,7 @@ export default function HeaderShell() {
       p.startsWith("/templates") ||
       p.startsWith("/demo") ||
       p.startsWith("/demo-wall") ||
+      p.startsWith("/sectors") ||
       p.startsWith("/app")
     );
   }, [pathname]);

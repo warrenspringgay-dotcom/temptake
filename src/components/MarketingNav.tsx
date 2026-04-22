@@ -9,6 +9,7 @@ type Tab = { href: string; label: string };
 
 const MARKETING_TABS: Tab[] = [
   { href: "/", label: "Home" },
+   { href: "/sectors", label: "Sectors" },
   { href: "/demo", label: "Demo App" },
   { href: "/food-hygiene-app", label: "The App" },
   { href: "/pricing", label: "Pricing" },
@@ -23,9 +24,17 @@ function cls(...parts: Array<string | false | undefined>) {
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
+
+  if (href === "/sectors") {
+    return (
+      pathname === "/sectors" ||
+      pathname.startsWith("/sectors/") ||
+      pathname.endsWith("-food-safety-app")
+    );
+  }
+
   return pathname === href || pathname.startsWith(href + "/");
 }
-
 export default function MarketingNav({ signedIn }: { signedIn: boolean }) {
   const pathname = usePathname() || "/";
 
