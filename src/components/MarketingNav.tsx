@@ -4,18 +4,18 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import BrandLogo from "@/components/BrandLogo";
+import MarketingMobileMenu from "@/components/MarketingMobileMenu";
 
 type Tab = { href: string; label: string };
 
 const MARKETING_TABS: Tab[] = [
   { href: "/", label: "Home" },
-   { href: "/sectors", label: "Sectors" },
+  { href: "/sectors", label: "Sectors" },
   { href: "/demo", label: "Demo App" },
   { href: "/food-hygiene-app", label: "The App" },
   { href: "/pricing", label: "Pricing" },
   { href: "/guides", label: "Guides" },
   { href: "/templates", label: "Templates" },
-  
 ];
 
 function cls(...parts: Array<string | false | undefined>) {
@@ -35,19 +35,20 @@ function isActive(pathname: string, href: string) {
 
   return pathname === href || pathname.startsWith(href + "/");
 }
+
 export default function MarketingNav({ signedIn }: { signedIn: boolean }) {
   const pathname = usePathname() || "/";
 
   return (
     <nav className="sticky top-0 z-40 border-b bg-white/90 backdrop-blur">
-      {/* Top row: brand + tabs (desktop) + auth */}
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-3 py-2 md:px-4">
         <Link href="/" className="flex items-center gap-2">
           <BrandLogo className="h-6 w-6" />
-          <span className="text-base font-semibold tracking-tight">TempTake</span>
+          <span className="text-base font-semibold tracking-tight text-slate-900">
+            TempTake
+          </span>
         </Link>
 
-        {/* Tabs (desktop) */}
         <div className="hidden items-center gap-1 md:flex">
           {MARKETING_TABS.map((t) => (
             <Link
@@ -65,8 +66,7 @@ export default function MarketingNav({ signedIn }: { signedIn: boolean }) {
           ))}
         </div>
 
-        {/* Right side: auth/actions */}
-        <div className="flex items-center gap-2">
+        <div className="hidden items-center gap-2 md:flex">
           {signedIn ? (
             <Link
               href="/dashboard"
@@ -91,25 +91,9 @@ export default function MarketingNav({ signedIn }: { signedIn: boolean }) {
             </>
           )}
         </div>
-      </div>
 
-      {/* Tabs (mobile): simple row under the header */}
-      <div className="mx-auto max-w-6xl px-3 pb-2 md:hidden md:px-4">
-        <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {MARKETING_TABS.map((t) => (
-            <Link
-              key={t.href}
-              href={t.href}
-              className={cls(
-                "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                isActive(pathname, t.href)
-                  ? "border-black bg-black text-white"
-                  : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-              )}
-            >
-              {t.label}
-            </Link>
-          ))}
+        <div className="md:hidden">
+          <MarketingMobileMenu />
         </div>
       </div>
     </nav>
