@@ -27,146 +27,180 @@ export const metadata: Metadata = {
 
 const CORE_FEATURES = [
   {
-    title: "Temperature logging software",
+    title: "2 click temperature logging",
     description:
-      "Log fridge, freezer and hot-hold temperatures quickly with clear pass or fail status, timestamps, initials and corrective actions.",
+      "Log fridge, freezer, hot-hold and food temperatures fast enough to be used during real service, not just in theory.",
     points: [
-      "Fast temperature entries during service",
-      "Pass and fail indicators",
-      "Corrective action records",
-      "Re-checks captured in the same workflow",
+      "2 click temp logging flow",
+      "Fast pass and fail status",
+      "Initials and timestamps recorded",
+      "Corrective action and re-check flow built in",
     ],
     image: "/temp_log.jpg",
     alt: "TempTake temperature logging screen",
   },
   {
-    title: "Cleaning schedule software",
+    title: "Hands-free voice logging",
     description:
-      "Keep daily, weekly and monthly cleaning tasks visible so staff know what needs doing and managers can see what is complete.",
+      "Use voice-led workflows to speed up logging when hands are busy and service pressure is high.",
+    points: [
+      "Useful during prep and live service",
+      "Reduces friction for routine logs",
+      "Supports faster daily compliance habits",
+      "Built for real kitchen use, not desk use",
+    ],
+    image: "/temp_log.jpg",
+    alt: "TempTake voice-enabled temperature logging workflow",
+  },
+  {
+    title: "Remote manager access",
+    description:
+      "Managers can check in remotely anytime and see what is complete, late, failed or unresolved without being on site.",
+    points: [
+      "Remote access for managers",
+      "Live compliance visibility",
+      "Quick review of missed checks",
+      "Better oversight across the day",
+    ],
+    image: "/dashboard.jpg",
+    alt: "TempTake remote manager dashboard screen",
+  },
+  {
+    title: "Cleaning schedule and sign-off control",
+    description:
+      "Keep daily, weekly and monthly cleaning visible, accountable and easier to complete properly.",
     points: [
       "Task prompting for staff",
       "Daily, weekly and monthly frequencies",
-      "Completion tracking by task and category",
-      "Clear overdue visibility",
+      "Completion tracking by area and category",
+      "Daily sign-offs in the same system",
     ],
     image: "/cleaning_rota.jpg",
-    alt: "TempTake cleaning schedule screen",
+    alt: "TempTake cleaning schedule and sign-off screen",
   },
   {
-    title: "Manager dashboard",
+    title: "Allergen and food lookup tools",
     description:
-      "See site activity, missed checks, incidents, absences, sign-offs and training status from one dashboard without chasing paper records.",
+      "Search which foods customers can order in seconds and keep allergen information structured instead of relying on memory.",
     points: [
-      "Remote visibility across the day",
-      "Track what is done and missed",
-      "Review incidents and corrective actions",
-      "See team and compliance status fast",
-    ],
-    image: "/dashboard.jpg",
-    alt: "TempTake manager dashboard screen",
-  },
-  {
-    title: "Training records",
-    description:
-      "Track food hygiene training, expiry dates and staff coverage so certificates do not quietly lapse in the background.",
-    points: [
-      "Certificate tracking",
-      "Expiry visibility",
-      "Staff training coverage",
-      "Manager-friendly overview",
-    ],
-    image: "/training.jpg",
-    alt: "TempTake training records screen",
-  },
-  {
-    title: "Allergen management",
-    description:
-      "Keep allergen information current, structured and reviewable instead of scattered across paper sheets and memory.",
-    points: [
+      "Fast food search",
       "Allergen matrix visibility",
-      "Review history",
-      "Cleaner records for menu control",
-      "Useful for inspections and internal checks",
+      "Review history and control trail",
+      "Cleaner records for customer queries",
     ],
     image: "/allergens.jpg",
-    alt: "TempTake allergen management screen",
+    alt: "TempTake allergen management and food lookup screen",
   },
   {
-    title: "Team prompting and visibility",
+    title: "Training tracking and expiry dates",
     description:
-      "Keep tasks and compliance activity visible so staff are prompted to complete records instead of leaving them until later.",
+      "Track staff training, expiry dates and refreshers so certificates do not quietly lapse in the background.",
     points: [
-      "Shared visibility for the team",
-      "Useful during busy shifts",
-      "Supports task completion habits",
-      "Better accountability across the day",
+      "Training tracking by team member",
+      "Expiry date visibility",
+      "Refreshers easier to manage",
+      "Cleaner records for inspection",
     ],
-    image: "/wall.jpg",
-    alt: "TempTake wall display and team visibility screen",
+    image: "/training.jpg",
+    alt: "TempTake training tracking screen",
+  },
+];
+
+const PRODUCT_BLOCKS = [
+  {
+    title: "Small, compact and mobile-first",
+    body:
+      "TempTake is built to work on phones and compact devices because that is where the work actually happens. Staff should not need a full office setup just to log a fridge check.",
+  },
+  {
+    title: "Works well on EPOS and shared screens",
+    body:
+      "The system is easy to run on tablets, shared wall displays and EPOS-adjacent hardware where teams need visibility, prompting and quick access during service.",
+  },
+  {
+    title: "One touch 3 month report sending",
+    body:
+      "Generate and send a 3 month report directly to your EHO inspector without digging through folders, exporting bits manually or trying to rebuild the truth afterwards.",
+  },
+  {
+    title: "4 week business reviews",
+    body:
+      "Run structured 4 week reviews of business performance so managers can spot repeated misses, weak teams, overdue tasks and recurring compliance pain points.",
+  },
+  {
+    title: "Quick switch user login",
+    body:
+      "Staff can switch user quickly on shared devices, which keeps accountability cleaner without turning basic logging into a password drama every five minutes.",
+  },
+  {
+    title: "Multi-site organisation and site switching",
+    body:
+      "Run multiple locations under one setup and switch between sites quickly so owners and managers can see what is happening across the wider business, not just one kitchen.",
+  },
+  {
+    title: "Supplier contact centre",
+    body:
+      "Keep supplier contacts easy to find so teams are not scrambling for numbers when they need deliveries chased, product details checked or issues resolved quickly.",
+  },
+  {
+    title: "Team leaderboard and notice board",
+    body:
+      "Use the leaderboard and notice board to drive visibility, accountability and team communication without relying on people noticing scraps of paper stuck to a wall.",
+  },
+  {
+    title: "EHO inspection anniversary reminders",
+    body:
+      "Get notified around inspection anniversaries so you can tighten records, review standards and avoid drifting into complacency between visits.",
+  },
+  {
+    title: "Hygiene rating history log",
+    body:
+      "Keep a visible record of hygiene rating history so the business has a clearer long-term picture of inspection performance and improvement over time.",
   },
 ];
 
 const STAFF_FEATURES = [
-  "Fast app-based logging during service",
-  "Prompts to complete compliance tasks",
-  "Clear pass or fail feedback",
-  "Simple daily workflows on mobile",
-  "Less paperwork and less duplication",
-  "Cleaner sign-offs and initials tracking",
+  "2 click temp logging",
+  "Hands-free voice logging",
+  "Fast mobile workflows",
+  "Quick switch user login on shared devices",
+  "Visible tasks and prompts during service",
+  "Less paper and less duplication",
 ];
 
 const MANAGER_FEATURES = [
-  "Check in on your business remotely anytime",
-  "See what has been completed and what is overdue",
-  "Review temperature failures and corrective actions",
-  "Monitor cleaning, incidents, training and absences",
-  "Generate reports quickly when records are requested",
-  "Keep all compliance records in one place",
-];
-
-const APP_SECTIONS = [
-  {
-    title: "One system instead of separate paper habits",
-    text: "TempTake brings temperatures, cleaning, sign-offs, allergens, training and manager oversight into one food hygiene software system instead of forcing you to run five separate admin habits badly.",
-  },
-  {
-    title: "Built for staff speed",
-    text: "The software is designed for fast daily use in real kitchens. Staff can complete checks quickly without stopping everything to fill out awkward paperwork.",
-  },
-  {
-    title: "Built for manager control",
-    text: "Managers get a cleaner view of what is happening across the business. That means fewer surprises, fewer missed checks and less blind trust.",
-  },
-  {
-    title: "Built for inspection day",
-    text: "The software helps you keep records ready day to day, so when an EHO or manager asks to see something, you are not trying to reconstruct reality from half-completed sheets.",
-  },
+  "Check in remotely anytime",
+  "Switch quickly between locations",
+  "Generate 3 month reports fast",
+  "Run 4 week business reviews",
+  "Track training and expiry dates",
+  "See missed, failed and overdue work clearly",
 ];
 
 const FAQS = [
   {
-    q: "What kind of software is TempTake?",
-    a: "TempTake is food hygiene software for UK food businesses. It helps manage temperatures, cleaning, sign-offs, allergens, training and related records in one system.",
+    q: "Is TempTake just for temperature logs?",
+    a: "No. Temperature logging is only one part of it. TempTake also covers cleaning, sign-offs, allergens, training, reporting, team visibility, supplier contacts and manager oversight.",
   },
   {
-    q: "Can staff use it on mobile?",
-    a: "Yes. It is built for daily use during service, so staff can log checks quickly instead of relying on paper sheets that get ignored, damaged or completed badly.",
+    q: "Can managers access it remotely?",
+    a: "Yes. Remote manager access is one of the core strengths of the system. You can check in on your business remotely anytime and review what is complete, overdue, failed or unresolved.",
   },
   {
-    q: "Can managers use it remotely?",
-    a: "Yes. One of the core strengths is remote manager visibility. You can check in on your business remotely anytime and see what is complete, late or missing.",
+    q: "Does it work on phones and compact devices?",
+    a: "Yes. It is designed for mobile-first use and compact workflows because daily food hygiene logging needs to happen on the move, not only from a desk.",
   },
   {
-    q: "Does it handle temperature failures?",
-    a: "Yes. TempTake lets staff log temperature failures and record corrective actions, giving you a cleaner audit trail than crossing things out on paper and hoping it makes sense later.",
+    q: "Can it work across multiple sites?",
+    a: "Yes. TempTake supports multi-site operation and quick switching between sites, so owners and managers can stay on top of more than one location.",
   },
   {
-    q: "Can it generate reports?",
-    a: "Yes. The system is built to support inspection-ready reporting so records are easier to review, export and send when needed.",
+    q: "Can it help with EHO reporting?",
+    a: "Yes. Reports are built into the workflow, including quick generation of longer-range reports so records are easier to send when inspectors ask for them.",
   },
   {
-    q: "Who is it for?",
-    a: "TempTake is designed for UK restaurants, takeaways, pubs, cafés, fish and chip shops and small multi-site food businesses that want a more reliable way to manage daily food hygiene records.",
+    q: "Does it help with staff training and expiry dates?",
+    a: "Yes. Training tracking and expiry visibility are built in so certificates and refreshers are easier to stay on top of.",
   },
 ];
 
@@ -276,19 +310,19 @@ export default function FoodHygieneAppPage() {
 
           <h1 className="mt-5 text-4xl font-semibold leading-tight sm:text-5xl">
             Food hygiene software for UK food businesses
-            <span className="block text-emerald-300">replace paper with one live system.</span>
+            <span className="block text-emerald-300">built to run the daily reality properly.</span>
           </h1>
 
           <p className="mt-5 max-w-2xl text-sm text-slate-200 sm:text-base">
-            TempTake is food hygiene software for UK food businesses that want one
-            system for temperature logs, cleaning schedules, sign-offs, allergen
-            controls, training records and manager oversight.
+            TempTake gives UK food businesses one live system for temperature logs,
+            cleaning schedules, sign-offs, allergen controls, training records,
+            manager visibility and inspection-ready reporting.
           </p>
 
           <p className="mt-4 max-w-2xl text-sm text-slate-300 sm:text-base">
-            Staff are prompted to complete compliance tasks, managers can check in
-            remotely anytime, and records stay inspection-ready without relying on
-            paper, memory or luck.
+            This page is not the broad sales pitch. This is the actual product view:
+            what it does, how it works and why it is better than relying on paper,
+            memory and people “doing it later”.
           </p>
 
           <div className="mt-6 flex flex-wrap gap-3">
@@ -313,36 +347,10 @@ export default function FoodHygieneAppPage() {
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] text-slate-300">
-            <span>✓ Save time logging</span>
-            <span>✓ Staff task prompting</span>
-            <span>✓ One-click reports</span>
+            <span>✓ Mobile-first</span>
             <span>✓ Remote manager access</span>
-          </div>
-
-          <div className="mt-8 rounded-3xl border border-emerald-500/20 bg-emerald-500/10 p-5">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
-              Built for
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2 text-sm font-medium text-white">
-              <Link href="/restaurant-food-safety-app" className="rounded-full border border-white/15 px-3 py-1.5 hover:bg-white/10">
-                Restaurants
-              </Link>
-              <Link href="/takeaway-food-safety-app" className="rounded-full border border-white/15 px-3 py-1.5 hover:bg-white/10">
-                Takeaways
-              </Link>
-              <Link href="/cafe-food-safety-app" className="rounded-full border border-white/15 px-3 py-1.5 hover:bg-white/10">
-                Cafés
-              </Link>
-              <Link href="/pub-food-safety-app" className="rounded-full border border-white/15 px-3 py-1.5 hover:bg-white/10">
-                Pubs
-              </Link>
-              <Link href="/fish-and-chip-shop-food-safety-app" className="rounded-full border border-white/15 px-3 py-1.5 hover:bg-white/10">
-                Fish & chip shops
-              </Link>
-              <Link href="/mobile-catering-food-safety-app" className="rounded-full border border-white/15 px-3 py-1.5 hover:bg-white/10">
-                Mobile caterers
-              </Link>
-            </div>
+            <span>✓ Voice logging</span>
+            <span>✓ Multi-site ready</span>
           </div>
         </div>
 
@@ -368,11 +376,11 @@ export default function FoodHygieneAppPage() {
         <div className="mx-auto w-full max-w-[1320px] px-4 py-12 md:py-16 xl:px-6">
           <div className="max-w-3xl">
             <h2 className="text-2xl font-semibold sm:text-3xl">
-              What the software actually does
+              Core product features
             </h2>
             <p className="mt-3 text-sm text-slate-300 sm:text-base">
-              TempTake is food hygiene software built to handle the daily operational
-              records that UK food businesses struggle to keep consistent on paper.
+              These are the features that make the system usable during real shifts,
+              not just impressive in screenshots.
             </p>
           </div>
 
@@ -395,7 +403,7 @@ export default function FoodHygieneAppPage() {
 
                   <div className="p-5">
                     <div className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300">
-                      Software feature
+                      Product feature
                     </div>
                     <h3 className="mt-3 text-xl font-semibold text-white">{feature.title}</h3>
                     <p className="mt-3 text-sm text-slate-300">{feature.description}</p>
@@ -420,8 +428,74 @@ export default function FoodHygieneAppPage() {
             </h3>
             <p className="mt-3 max-w-3xl text-sm text-slate-300 sm:text-base">
               It is software for actually running daily food hygiene properly, with records
-              you can trust, managers can review and inspectors can follow.
+              staff can complete, managers can trust and inspectors can follow.
             </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="relative z-10 border-t border-white/10 bg-slate-950/80">
+        <div className="mx-auto w-full max-w-[1320px] px-4 py-12 md:py-16 xl:px-6">
+          <div className="mb-8 max-w-3xl">
+            <h2 className="text-2xl font-semibold sm:text-3xl">
+              More of what the platform actually includes
+            </h2>
+            <p className="mt-3 text-sm text-slate-300 sm:text-base">
+              This is where the difference shows. Not just “logs and reports”, but the
+              surrounding operational features that make the whole system useful.
+            </p>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {PRODUCT_BLOCKS.map((item) => (
+              <div
+                key={item.title}
+                className="rounded-3xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-black/30"
+              >
+                <h3 className="text-base font-semibold text-slate-50">{item.title}</h3>
+                <p className="mt-3 text-sm text-slate-300">{item.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="relative z-10 border-t border-white/10 bg-slate-950/80">
+        <div className="mx-auto grid w-full max-w-[1320px] gap-6 px-4 py-12 md:grid-cols-2 md:py-16 xl:px-6">
+          <div className="rounded-3xl border border-emerald-500/20 bg-emerald-500/5 p-6 shadow-lg shadow-black/30">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
+              Staff side
+            </div>
+            <h2 className="mt-3 text-2xl font-semibold text-white">
+              What staff actually use
+            </h2>
+            <p className="mt-3 text-sm text-slate-300">
+              Staff need speed, clarity and low friction. If the system is awkward, they will avoid it.
+            </p>
+
+            <ul className="mt-5 space-y-3 text-sm text-slate-100">
+              {STAFF_FEATURES.map((item) => (
+                <li key={item}>• {item}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-3xl border border-cyan-500/20 bg-cyan-500/5 p-6 shadow-lg shadow-black/30">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-200">
+              Manager side
+            </div>
+            <h2 className="mt-3 text-2xl font-semibold text-white">
+              What managers actually get
+            </h2>
+            <p className="mt-3 text-sm text-slate-300">
+              Managers need visibility, control and reporting without living inside spreadsheets and folders.
+            </p>
+
+            <ul className="mt-5 space-y-3 text-sm text-slate-100">
+              {MANAGER_FEATURES.map((item) => (
+                <li key={item}>• {item}</li>
+              ))}
+            </ul>
           </div>
         </div>
       </section>
@@ -463,48 +537,6 @@ export default function FoodHygieneAppPage() {
         </div>
       </section>
 
-      <section className="relative z-10 border-t border-white/10 bg-slate-950/80">
-        <div className="mx-auto grid w-full max-w-[1320px] gap-6 px-4 py-12 md:grid-cols-2 md:py-16 xl:px-6">
-          <div className="rounded-3xl border border-emerald-500/20 bg-emerald-500/5 p-6 shadow-lg shadow-black/30">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-200">
-              Staff software features
-            </div>
-            <h2 className="mt-3 text-2xl font-semibold text-white">
-              What staff use it for
-            </h2>
-            <p className="mt-3 text-sm text-slate-300">
-              Staff need software that is quick, obvious and usable in the middle of an actual
-              shift, not some back-office fantasy tool.
-            </p>
-
-            <ul className="mt-5 space-y-3 text-sm text-slate-100">
-              {STAFF_FEATURES.map((item) => (
-                <li key={item}>• {item}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="rounded-3xl border border-cyan-500/20 bg-cyan-500/5 p-6 shadow-lg shadow-black/30">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-200">
-              Manager software features
-            </div>
-            <h2 className="mt-3 text-2xl font-semibold text-white">
-              What managers use it for
-            </h2>
-            <p className="mt-3 text-sm text-slate-300">
-              Managers need visibility, accountability and reporting without being chained to the
-              site all day.
-            </p>
-
-            <ul className="mt-5 space-y-3 text-sm text-slate-100">
-              {MANAGER_FEATURES.map((item) => (
-                <li key={item}>• {item}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </section>
-
       <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
         <div className="mx-auto w-full max-w-[1320px] px-4 py-12 md:py-16 xl:px-6">
           <div className="max-w-3xl">
@@ -515,18 +547,6 @@ export default function FoodHygieneAppPage() {
               Paper depends on memory, timing and discipline. TempTake gives you structure,
               prompts, visibility and a proper audit trail.
             </p>
-          </div>
-
-          <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {APP_SECTIONS.map((item) => (
-              <div
-                key={item.title}
-                className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-black/30"
-              >
-                <h3 className="text-base font-semibold text-slate-50">{item.title}</h3>
-                <p className="mt-3 text-sm text-slate-300">{item.text}</p>
-              </div>
-            ))}
           </div>
 
           <div className="mt-8 grid gap-4 md:grid-cols-2">
@@ -572,9 +592,9 @@ export default function FoodHygieneAppPage() {
 
               <ul className="mt-5 space-y-2 text-sm text-slate-200">
                 <li>• Generate inspection-ready reports faster</li>
-                <li>• Review recorded checks and corrective actions</li>
+                <li>• Send 3 month reports without the paper chase</li>
+                <li>• Review checks and corrective actions clearly</li>
                 <li>• Keep daily records organised in one place</li>
-                <li>• Avoid the paper-folder panic when someone asks for proof</li>
               </ul>
 
               <div className="mt-6 flex flex-wrap gap-3">
@@ -603,8 +623,8 @@ export default function FoodHygieneAppPage() {
                   text="The system captures temperatures, cleaning and daily compliance records quickly."
                 />
                 <WorkflowRow
-                  title="2. Managers review the dashboard"
-                  text="The dashboard shows what is complete, failed, overdue or unresolved."
+                  title="2. Managers review remotely"
+                  text="Managers can see what is complete, failed, overdue or unresolved from anywhere."
                 />
                 <WorkflowRow
                   title="3. Reports are ready"
@@ -623,8 +643,8 @@ export default function FoodHygieneAppPage() {
               Learn what EHOs actually expect
             </h2>
             <p className="mt-3 text-sm text-slate-300 sm:text-base">
-              These public guides help explain the standards behind the software, and they also
-              show why paper systems fall apart so often in real kitchens.
+              These public guides explain the standards behind the software and why paper systems
+              keep breaking down in real kitchens.
             </p>
           </div>
 
@@ -640,33 +660,6 @@ export default function FoodHygieneAppPage() {
                 <div className="mt-4 text-sm font-semibold text-emerald-300">Read guide →</div>
               </Link>
             ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
-        <div className="mx-auto w-full max-w-[1320px] px-4 py-12 text-center md:py-16 xl:px-6">
-          <h2 className="text-2xl font-semibold sm:text-3xl">
-            See the software in action
-          </h2>
-          <p className="mx-auto mt-3 max-w-2xl text-sm text-slate-300 sm:text-base">
-            Open the live demo to see how TempTake handles temperatures, cleaning, incidents,
-            sign-offs, training and manager visibility in one working system.
-          </p>
-
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-            <Link
-              href="/demo"
-              className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-emerald-500 via-lime-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-500/30 hover:brightness-105"
-            >
-              View live demo
-            </Link>
-            <Link
-              href="/pricing"
-              className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-3 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
-            >
-              View pricing
-            </Link>
           </div>
         </div>
       </section>
