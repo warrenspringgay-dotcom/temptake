@@ -62,6 +62,15 @@ const ctaPrimary =
 const ctaSecondary =
   "rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-extrabold text-slate-900 hover:bg-slate-50";
 
+const sectorLinks = [
+  { href: "/takeaway-food-safety-app", label: "Takeaways" },
+  { href: "/cafe-food-safety-app", label: "Cafés" },
+  { href: "/restaurant-food-safety-app", label: "Restaurants" },
+  { href: "/pub-food-safety-app", label: "Pubs serving food" },
+  { href: "/fish-and-chip-shop-food-safety-app", label: "Fish & chip shops" },
+  { href: "/mobile-catering-food-safety-app", label: "Mobile caterers" },
+];
+
 export default function AllergenMatrixGuide() {
   const published = "2026-03-25";
 
@@ -103,6 +112,33 @@ export default function AllergenMatrixGuide() {
             Last updated: <time dateTime={published}>{published}</time>
           </div>
         </header>
+
+        <section>
+          <div className="mt-6 rounded-3xl border border-emerald-200 bg-emerald-50/80 p-5">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-emerald-700">
+              Stop relying on outdated allergen sheets
+            </div>
+            <h2 className="mt-3 text-xl font-extrabold text-slate-900">
+              Use one system for allergen records, review dates and audit trail
+            </h2>
+            <p className={p}>
+              If your allergen matrix still lives in a folder, a spreadsheet or someone’s memory,
+              TempTake gives you a cleaner way to keep allergen information current, track reviews
+              and show a proper review trail when needed.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/demo" className={ctaPrimary}>
+                View live demo
+              </Link>
+              <Link href="/signup" className={ctaSecondary}>
+                Start free trial
+              </Link>
+              <Link href="/food-hygiene-app" className={ctaSecondary}>
+                See the software
+              </Link>
+            </div>
+          </div>
+        </section>
 
         <section>
           <div className={box}>
@@ -283,6 +319,52 @@ export default function AllergenMatrixGuide() {
         </section>
 
         <section>
+          <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50/90 p-5">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Where paper usually breaks down
+            </div>
+            <h2 className="mt-3 text-xl font-extrabold text-slate-900">
+              The problem is not the matrix itself. It is keeping it live.
+            </h2>
+            <p className={p}>
+              Paper allergen matrices often start off correct and then quietly drift. A sauce
+              changes, a supplier swaps product, a garnish gets added, a special goes on the board,
+              and nobody updates the document properly.
+            </p>
+            <ul className={ul}>
+              <li className={li}>
+                <span className={dot} />
+                <span>Reviews get missed because nobody owns them clearly</span>
+              </li>
+              <li className={li}>
+                <span className={dot} />
+                <span>Supplier and ingredient changes are not reflected fast enough</span>
+              </li>
+              <li className={li}>
+                <span className={dot} />
+                <span>Front-of-house stops trusting the document</span>
+              </li>
+              <li className={li}>
+                <span className={dot} />
+                <span>The review trail looks weak during inspection</span>
+              </li>
+            </ul>
+            <p className={p}>
+              TempTake is built to fix that by keeping allergen records visible, reviewable and
+              easier to keep current instead of hoping the folder version is still right.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/demo" className={ctaPrimary}>
+                View live demo
+              </Link>
+              <Link href="/food-hygiene-app" className={ctaSecondary}>
+                See the software
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        <section>
           <h2 className={h2}>When should you update it immediately?</h2>
           <p className={p}>
             Some situations should trigger an immediate allergen review rather than waiting for a
@@ -454,6 +536,41 @@ export default function AllergenMatrixGuide() {
               <span>reduce the risk of outdated information hanging around unnoticed</span>
             </li>
           </ul>
+
+          <div className={box}>
+            <p className="text-sm text-slate-700 leading-7">
+              If you still want a manual system, paper can work. If you want a cleaner day-to-day
+              process, TempTake is built to make allergen reviews easier to track and easier to show.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/templates" className={ctaSecondary}>
+                Free templates
+              </Link>
+              <Link href="/food-hygiene-app" className={ctaPrimary}>
+                See the software
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className={h2}>Find the right version of TempTake for your business</h2>
+          <p className={p}>
+            Different food businesses handle allergen information differently. Choose the version
+            that matches how your kitchen actually works.
+          </p>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {sectorLinks.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm font-semibold text-slate-900 hover:bg-slate-100"
+              >
+                {item.label} →
+              </Link>
+            ))}
+          </div>
         </section>
 
         <section>
@@ -500,11 +617,11 @@ export default function AllergenMatrixGuide() {
           </p>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link href="/allergens" className={ctaPrimary}>
-              Set up your allergen review
+            <Link href="/demo" className={ctaPrimary}>
+              View live demo
             </Link>
-            <Link href="/launch" className={ctaSecondary}>
-              See TempTake
+            <Link href="/food-hygiene-app" className={ctaSecondary}>
+              See the software
             </Link>
             <Link href="/pricing" className={ctaSecondary}>
               Pricing

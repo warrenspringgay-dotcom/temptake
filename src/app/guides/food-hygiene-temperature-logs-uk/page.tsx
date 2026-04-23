@@ -66,6 +66,15 @@ const th =
   "bg-slate-100 px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-700";
 const td = "px-4 py-3 align-top text-sm text-slate-700 border-t border-slate-200";
 
+const sectorLinks = [
+  { href: "/takeaway-food-safety-app", label: "Takeaways" },
+  { href: "/cafe-food-safety-app", label: "Cafés" },
+  { href: "/restaurant-food-safety-app", label: "Restaurants" },
+  { href: "/pub-food-safety-app", label: "Pubs serving food" },
+  { href: "/fish-and-chip-shop-food-safety-app", label: "Fish & chip shops" },
+  { href: "/mobile-catering-food-safety-app", label: "Mobile caterers" },
+];
+
 export default function GuideFoodHygieneTempLogsUKPage() {
   const published = "2026-03-25";
 
@@ -107,6 +116,33 @@ export default function GuideFoodHygieneTempLogsUKPage() {
             Last updated: <time dateTime={published}>{published}</time>
           </div>
         </header>
+
+        <section>
+          <div className="mt-6 rounded-3xl border border-emerald-200 bg-emerald-50/80 p-5">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-emerald-700">
+              Stop relying on paper logs
+            </div>
+            <h2 className="mt-3 text-xl font-extrabold text-slate-900">
+              Use one system for temperature checks, corrective actions and reporting
+            </h2>
+            <p className={p}>
+              If you are still using paper temperature sheets, TempTake gives you a cleaner way to
+              record checks live, capture initials and timestamps, log corrective actions, and keep
+              reports ready when someone asks to see them.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/demo" className={ctaPrimary}>
+                View live demo
+              </Link>
+              <Link href="/signup" className={ctaSecondary}>
+                Start free trial
+              </Link>
+              <Link href="/food-hygiene-app" className={ctaSecondary}>
+                See the software
+              </Link>
+            </div>
+          </div>
+        </section>
 
         <section>
           <div className={box}>
@@ -336,6 +372,52 @@ export default function GuideFoodHygieneTempLogsUKPage() {
         </section>
 
         <section>
+          <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50/90 p-5">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Where paper usually breaks down
+            </div>
+            <h2 className="mt-3 text-xl font-extrabold text-slate-900">
+              The problem is rarely the form. It is what happens around it.
+            </h2>
+            <p className={p}>
+              Paper temperature logs look fine until the kitchen gets busy. Then checks get delayed,
+              readings get copied later, initials go missing, corrective actions are not written
+              properly, and managers have no live view of what is happening.
+            </p>
+            <ul className={ul}>
+              <li className={li}>
+                <span className={dot} />
+                <span>Logs get filled in after the event instead of live</span>
+              </li>
+              <li className={li}>
+                <span className={dot} />
+                <span>Failed readings are recorded without useful corrective action</span>
+              </li>
+              <li className={li}>
+                <span className={dot} />
+                <span>Managers cannot see missed checks until much later</span>
+              </li>
+              <li className={li}>
+                <span className={dot} />
+                <span>Records become harder to trust during inspection</span>
+              </li>
+            </ul>
+            <p className={p}>
+              TempTake is built to fix that. It lets teams record checks live, capture initials and
+              timestamps, flag failed readings and keep a clearer audit trail day to day.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/demo" className={ctaPrimary}>
+                View live demo
+              </Link>
+              <Link href="/food-hygiene-app" className={ctaSecondary}>
+                See the software
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        <section>
           <h2 className={h2}>What should you write when a temperature check fails?</h2>
           <p className={p}>
             This is where many temperature record sheets fall apart. A failed reading on its own is
@@ -452,10 +534,30 @@ export default function GuideFoodHygieneTempLogsUKPage() {
               <Link href="/templates" className={ctaSecondary}>
                 Free templates
               </Link>
-              <Link href="/launch" className={ctaPrimary}>
-                See TempTake
+              <Link href="/food-hygiene-app" className={ctaPrimary}>
+                See the software
               </Link>
             </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className={h2}>Find the right version of TempTake for your business</h2>
+          <p className={p}>
+            Different food businesses handle temperature checks differently. Choose the version that
+            fits how your kitchen actually runs.
+          </p>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {sectorLinks.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm font-semibold text-slate-900 hover:bg-slate-100"
+              >
+                {item.label} →
+              </Link>
+            ))}
           </div>
         </section>
 
@@ -463,22 +565,22 @@ export default function GuideFoodHygieneTempLogsUKPage() {
           <h2 className={h2}>Useful templates and related guides</h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <Link
-              href="/templates/fridge-temperature-log-sheet"
+              href="/templates/fridge-temperature-log"
               className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm font-semibold text-slate-900 hover:bg-slate-100"
             >
-              Fridge temperature log sheet
+              Fridge temperature log
             </Link>
             <Link
-              href="/templates/hot-holding-temperature-log-sheet"
+              href="/templates/hot-holding-temperature-log"
               className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm font-semibold text-slate-900 hover:bg-slate-100"
             >
-              Hot holding temperature log sheet
+              Hot holding temperature log
             </Link>
             <Link
-              href="/templates/delivery-temperature-log-sheet"
+              href="/templates/food-delivery-temperature-log"
               className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm font-semibold text-slate-900 hover:bg-slate-100"
             >
-              Delivery temperature log sheet
+              Delivery temperature log
             </Link>
             <Link
               href="/guides/safer-food-better-business-logs"
@@ -502,8 +604,8 @@ export default function GuideFoodHygieneTempLogsUKPage() {
           </p>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link href="/launch" className={ctaPrimary}>
-              See TempTake
+            <Link href="/demo" className={ctaPrimary}>
+              View live demo
             </Link>
             <Link href="/pricing" className={ctaSecondary}>
               Pricing

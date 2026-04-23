@@ -120,6 +120,15 @@ const SCREENSHOTS: Screen[] = [
   },
 ];
 
+const SECTORS = [
+  { href: "/restaurant-food-safety-app", label: "Restaurants" },
+  { href: "/takeaway-food-safety-app", label: "Takeaways" },
+  { href: "/cafe-food-safety-app", label: "Cafés" },
+  { href: "/pub-food-safety-app", label: "Pubs" },
+  { href: "/fish-and-chip-shop-food-safety-app", label: "Fish & chip shops" },
+  { href: "/mobile-catering-food-safety-app", label: "Mobile catering" },
+];
+
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -174,6 +183,13 @@ export default function LaunchPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            <Link
+              href="/food-hygiene-app"
+              className="hidden items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-50 shadow-sm hover:bg-white/10 sm:inline-flex"
+            >
+              Software
+            </Link>
+
             <a
               href="#guides"
               className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-50 shadow-sm hover:bg-white/10"
@@ -227,8 +243,13 @@ export default function LaunchPage() {
 
             <p className="mt-4 max-w-xl text-sm text-slate-200 sm:text-base">
               TempTake is a{" "}
-              <span className="font-semibold">food hygiene app</span> built for UK food
-              businesses. Replace paper logs with one live system for{" "}
+              <Link
+                href="/food-hygiene-app"
+                className="font-semibold text-emerald-300 underline decoration-emerald-400/60 underline-offset-4 hover:text-emerald-200"
+              >
+                food hygiene app
+              </Link>{" "}
+              built for UK food businesses. Replace paper logs with one live system for{" "}
               <span className="font-semibold">
                 temperatures, cleaning, sign-offs, allergens and staff checks
               </span>
@@ -285,7 +306,33 @@ export default function LaunchPage() {
               <div>
                 <dt className="text-slate-400">Built for</dt>
                 <dd className="mt-0.5 font-semibold">
-                  Restaurants, takeaways, pubs & cafés
+                  <Link
+                    href="/restaurant-food-safety-app"
+                    className="underline decoration-white/30 underline-offset-4 hover:text-emerald-300"
+                  >
+                    Restaurants
+                  </Link>{" "}
+                  •{" "}
+                  <Link
+                    href="/takeaway-food-safety-app"
+                    className="underline decoration-white/30 underline-offset-4 hover:text-emerald-300"
+                  >
+                    Takeaways
+                  </Link>{" "}
+                  •{" "}
+                  <Link
+                    href="/pub-food-safety-app"
+                    className="underline decoration-white/30 underline-offset-4 hover:text-emerald-300"
+                  >
+                    Pubs
+                  </Link>{" "}
+                  •{" "}
+                  <Link
+                    href="/cafe-food-safety-app"
+                    className="underline decoration-white/30 underline-offset-4 hover:text-emerald-300"
+                  >
+                    Cafés
+                  </Link>
                 </dd>
               </div>
               <div>
@@ -362,18 +409,20 @@ export default function LaunchPage() {
             </div>
           </div>
         </section>
-<script
-  type="application/ld+json"
-  dangerouslySetInnerHTML={{
-    __html: JSON.stringify({
-      "@context": "https://schema.org",
-      "@type": "Organization",
-      name: "TempTake",
-      url: "https://temptake.com",
-      logo: "https://temptake.com/logo.png",
-    }),
-  }}
-/>
+
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "Organization",
+              name: "TempTake",
+              url: "https://temptake.com",
+              logo: "https://temptake.com/logo.png",
+            }),
+          }}
+        />
+
         {/* REPLACE PAPER */}
         <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
           <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
@@ -414,6 +463,31 @@ export default function LaunchPage() {
                   <li>✅ One-click reports ready to send</li>
                   <li>✅ Clear manager visibility from anywhere</li>
                 </ul>
+              </div>
+            </div>
+
+            <div className="mt-6 rounded-3xl border border-emerald-500/25 bg-emerald-500/10 p-5">
+              <h3 className="text-lg font-semibold text-white">
+                Want to see how the full system works?
+              </h3>
+              <p className="mt-2 text-sm text-slate-300">
+                Explore the full breakdown of how TempTake works across temperatures,
+                cleaning, allergens, training and reporting.
+              </p>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link
+                  href="/food-hygiene-app"
+                  className="rounded-2xl bg-white px-4 py-2 text-xs font-bold text-slate-900 hover:bg-slate-100"
+                >
+                  See the software
+                </Link>
+                <Link
+                  href="/demo"
+                  className="rounded-2xl border border-white/20 px-4 py-2 text-xs font-bold text-white hover:bg-white/10"
+                >
+                  View demo
+                </Link>
               </div>
             </div>
           </div>
@@ -554,6 +628,42 @@ export default function LaunchPage() {
                 title="Managers check in remotely anytime"
                 description="See what is done, what is overdue and what needs attention without being on site to chase people."
               />
+            </div>
+          </div>
+        </section>
+
+        {/* SECTORS */}
+        <section className="relative z-10 border-t border-white/10 bg-slate-950">
+          <div className="mx-auto w-full max-w-[1400px] px-4 py-12 xl:px-6">
+            <div className="max-w-3xl">
+              <h2 className="text-2xl font-semibold text-white sm:text-3xl">
+                Built for real UK food businesses
+              </h2>
+              <p className="mt-3 text-sm text-slate-300 sm:text-base">
+                Different kitchens have different pressures. Pick the version that matches
+                your business instead of trying to force one generic page to do everything.
+              </p>
+            </div>
+
+            <div className="mt-6 grid gap-4 md:grid-cols-3">
+              {SECTORS.map((sector) => (
+                <Link
+                  key={sector.href}
+                  href={sector.href}
+                  className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm font-semibold text-slate-100 shadow-lg shadow-black/30 hover:border-emerald-400/30 hover:bg-slate-900/90 hover:text-emerald-300"
+                >
+                  {sector.label} →
+                </Link>
+              ))}
+            </div>
+
+            <div className="mt-6">
+              <Link
+                href="/sectors"
+                className="inline-flex items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-50 shadow-sm hover:bg-white/10"
+              >
+                View all sector pages
+              </Link>
             </div>
           </div>
         </section>
@@ -805,6 +915,13 @@ export default function LaunchPage() {
               >
                 Start free trial
               </Link>
+
+              <Link
+                href="/food-hygiene-app"
+                className="inline-flex items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-5 py-2.5 text-sm font-medium text-emerald-200 hover:bg-emerald-500/20"
+              >
+                See the software
+              </Link>
             </div>
 
             <p className="mt-4 text-[12px] text-slate-500">
@@ -834,6 +951,14 @@ export default function LaunchPage() {
               <a href="#guides" className="text-slate-300 hover:text-emerald-300">
                 Guides
               </a>
+
+              <Link href="/food-hygiene-app" className="text-slate-300 hover:text-emerald-300">
+                Software
+              </Link>
+
+              <Link href="/sectors" className="text-slate-300 hover:text-emerald-300">
+                Sectors
+              </Link>
 
               <Link href="/demo" className="text-slate-300 hover:text-emerald-300">
                 Demo

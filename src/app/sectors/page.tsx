@@ -16,7 +16,7 @@ const SECTOR_CARDS = [
     key: "takeaway",
     title: "Takeaways",
     description:
-      "Fast, practical checks for busy service and paper-free daily records.",
+      "Fast, practical food safety records for busy takeaway service.",
   },
   {
     key: "cafe",
@@ -34,7 +34,7 @@ const SECTOR_CARDS = [
     key: "fishAndChips",
     title: "Fish & chip shops",
     description:
-      "Built for chippies handling hot-hold, chilled storage and service pressure.",
+      "Built for chippies handling hot-hold, chilled storage and fast service.",
   },
   {
     key: "pub",
@@ -67,20 +67,9 @@ export default function SectorsPage() {
           </div>
         </div>
 
-    
-       <section className="relative z-10 mx-auto w-full max-w-[1400px] px-4 pb-10 pt-8 md:pb-14 md:pt-10 xl:px-6">
+        <section className="relative z-10 mx-auto w-full max-w-[1400px] px-4 pb-10 pt-8 md:pb-14 md:pt-10 xl:px-6">
           <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3 shadow-lg shadow-black/20 backdrop-blur">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/95 shadow-md">
-                <Image src="/logo.png" width={30} height={30} alt="TempTake logo" />
-              </div>
-              <div className="leading-tight">
-                <div className="text-lg font-semibold text-white">TempTake</div>
-                <div className="text-xs text-slate-400">
-                  Built for UK food businesses
-                </div>
-              </div>
-            </div>
+         
 
             <div className="mt-5 inline-flex flex-wrap items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
@@ -163,11 +152,7 @@ export default function SectorsPage() {
                       </div>
 
                       <div className="p-4">
-                        <div className="inline-flex items-center gap-2 text-[11px] text-slate-500">
-                          <Image src="/logo.png" width={14} height={14} alt="TempTake" />
-                          TempTake for YOUR Sector
-                        </div>
-                        <div className="mt-3 text-sm font-semibold text-emerald-300">
+                        <div className="mt-1 text-sm font-semibold text-emerald-300">
                           View page →
                         </div>
                       </div>
@@ -181,15 +166,27 @@ export default function SectorsPage() {
 
         <section className="relative z-10 border-t border-white/10 bg-slate-950/70">
           <div className="mx-auto w-full max-w-[1400px] px-4 py-12 md:py-16 xl:px-6">
+            <div className="mb-8 max-w-3xl">
+              <h2 className="text-2xl font-semibold sm:text-3xl">
+                Sector pages that feel relevant
+                <span className="text-emerald-300"> from the first screen.</span>
+              </h2>
+              <p className="mt-3 text-sm text-slate-300 sm:text-base">
+                A takeaway owner, café operator and pub kitchen manager should not all
+                land on the same vague product page and be expected to work it out for
+                themselves.
+              </p>
+            </div>
+
             <div className="grid gap-4 md:grid-cols-2">
               <div className="rounded-3xl border border-rose-500/20 bg-rose-500/5 p-5 shadow-lg shadow-black/30">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-rose-200">
                   What you do not want
                 </div>
                 <ul className="mt-4 space-y-3 text-sm text-slate-200">
-                  <li>❌ High subscription with no value</li>
-                  <li>❌ Vague promises with no operational efficiency</li>
-                  <li>❌ False hope that you're compliant</li>
+                  <li>❌ Generic software pages trying to talk to everyone</li>
+                  <li>❌ Vague promises without real operational detail</li>
+                  <li>❌ Buyers guessing whether the system fits their kitchen</li>
                 </ul>
               </div>
 
@@ -198,9 +195,9 @@ export default function SectorsPage() {
                   What this gives you instead
                 </div>
                 <ul className="mt-4 space-y-3 text-sm text-slate-100">
-                  <li>✅ Follow each section - beomome compliant</li>
-                  <li>✅ KNOW you're staff are logging and cleaning</li>
-                  <li>✅ Live data anytime, anywhere in full detail </li>
+                  <li>✅ Clearer pages for each type of food business</li>
+                  <li>✅ Faster relevance for the right operator</li>
+                  <li>✅ A stronger route from search to demo or trial</li>
                 </ul>
               </div>
             </div>

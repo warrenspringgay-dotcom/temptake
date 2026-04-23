@@ -16,11 +16,9 @@ export type SectorPageContent = {
   heroTitle: string;
   heroDescription: string;
 
-  // individual page image (WITH text)
   heroImageSrc: string;
   heroImageAlt: string;
 
-  // sectors overview card image (WITHOUT text)
   selectionImageSrc: string;
   selectionImageAlt: string;
 
@@ -28,17 +26,23 @@ export type SectorPageContent = {
   primaryCtaHref: string;
   secondaryCtaLabel: string;
   secondaryCtaHref: string;
+
   painTitle: string;
   painIntro: string;
   painPoints: string[];
+
   solutionTitle: string;
   solutionBody: string;
+
   featuresTitle: string;
   features: SectorFeature[];
+
   builtForTitle: string;
   builtForBody: string;
+
   ctaBandTitle: string;
   ctaBandBody: string;
+
   faqsTitle: string;
   faqs: SectorFaq[];
 };
@@ -46,14 +50,13 @@ export type SectorPageContent = {
 export const sectorPages: Record<string, SectorPageContent> = {
   takeaway: {
     slug: "takeaway-food-safety-app",
-    seoTitle:
-      "Food Safety App for Takeaways | Digital Temp Logs, Cleaning & Allergen Records | TempTake",
+    seoTitle: "Food Safety App for Takeaways | TempTake",
     metaDescription:
-      "TempTake helps takeaways replace paper food safety records with digital temperature logs, cleaning checks, allergen management and inspection-ready reports.",
+      "Food safety app for takeaways. Replace paper temperature logs, cleaning records and allergen sheets with one digital system built for busy UK takeaway teams.",
     eyebrow: "For takeaways",
-    heroTitle: "Food safety software built for takeaways",
+    heroTitle: "Food safety app for takeaways",
     heroDescription:
-      "Replace paper temperature logs, cleaning sheets and allergen records with a simple digital system your takeaway team can actually use during prep and service.",
+      "TempTake helps takeaways replace paper food safety records with one digital system for temperature logs, cleaning checks, sign-offs, allergen records and daily compliance.",
     heroImageSrc: "/images/sectors/takeaway.png",
     heroImageAlt:
       "Takeaway staff member using a phone in a busy kitchen while completing a food safety check.",
@@ -62,44 +65,43 @@ export const sectorPages: Record<string, SectorPageContent> = {
       "Takeaway kitchen worker using a phone in a busy prep area without text overlay.",
     primaryCtaLabel: "Start free trial",
     primaryCtaHref: "/signup",
-    secondaryCtaLabel: "See how it works",
+    secondaryCtaLabel: "View live demo",
     secondaryCtaHref: "/demo",
-    painTitle: "Running a takeaway is busy enough without chasing paper records",
+    painTitle: "Takeaway paperwork gets skipped when service gets busy",
     painIntro:
-      "When service gets busy, paperwork gets skipped, rushed or forgotten. That leaves you with patchy records, messy folders and more stress than you need if you ever have to show what was done.",
+      "Rush periods do not care about your clipboards. When teams are flat out, paperwork becomes rushed, delayed or forgotten. That leaves you with weak records and no clean view of what actually happened.",
     painPoints: [
       "Temperature checks get missed during rush periods",
       "Cleaning records are inconsistent",
-      "Allergen information is hard to keep on top of",
+      "Allergen information drifts out of date",
       "Paper folders are messy, incomplete or easy to lose",
-      "Staff need something quick, simple and obvious",
+      "Managers have to trust that checks were done properly",
     ],
-    solutionTitle:
-      "TempTake helps takeaway teams stay on top of food safety without slowing service down",
+    solutionTitle: "A quicker way to keep takeaway records under control",
     solutionBody:
-      "TempTake gives you one place to manage the daily jobs that matter. Record temperatures, complete cleaning checks, keep allergen information organised and pull reports without digging through paper sheets.",
+      "TempTake gives takeaway teams one place to record temperatures, complete cleaning tasks, keep allergen information current and show what was done without digging through paper sheets.",
     featuresTitle: "What takeaways use TempTake for",
     features: [
       {
         title: "Digital temperature logs",
-        body: "Record fridge, freezer, hot-hold and food temperatures in seconds.",
+        body: "Record fridge, freezer, hot-hold and food temperatures quickly during service.",
       },
       {
         title: "Cleaning checks",
         body: "Keep opening, during-service and end-of-day cleaning tasks organised.",
       },
       {
-        title: "Allergen management",
-        body: "Keep allergen information easier to review, update and refer to.",
+        title: "Allergen records",
+        body: "Keep allergen information easier to review, update and use during service.",
       },
       {
-        title: "Reports and records",
-        body: "Show clear digital records when you need them.",
+        title: "Reports and proof",
+        body: "Show clear digital records when a manager or inspector needs to see them.",
       },
     ],
     builtForTitle: "Made for busy takeaway kitchens",
     builtForBody:
-      "Whether you run a local kebab shop, pizza takeaway, chicken shop, curry house or multi-site takeaway business, TempTake is built for the pace of real service. It is simple enough for staff to use quickly, practical enough for managers to rely on, and structured enough to help you keep records in order day after day.",
+      "Whether you run a kebab shop, pizza takeaway, chicken shop, curry house or small multi-site takeaway group, TempTake is built for the pace of real service and the reality of short-staffed shifts.",
     ctaBandTitle: "Ready to replace paper food safety records in your takeaway?",
     ctaBandBody:
       "Start your free trial and keep temperatures, cleaning and allergens in one place.",
@@ -108,17 +110,17 @@ export const sectorPages: Record<string, SectorPageContent> = {
       {
         question: "Is TempTake suitable for small takeaways?",
         answer:
-          "Yes. It is built to be simple enough for small teams and busy services.",
+          "Yes. It is built to be simple enough for small teams and fast enough for busy services.",
       },
       {
-        question: "Can my staff use it on their phones?",
+        question: "Can takeaway staff use it on their phones?",
         answer:
-          "Yes. TempTake is designed to be easy to use during the working day.",
+          "Yes. TempTake is designed for quick daily use on mobile during real shifts.",
       },
       {
         question: "Can it replace paper food safety records?",
         answer:
-          "That is the point. It is built to help replace scattered paper logs with organised digital records.",
+          "Yes. That is the point. It is built to replace scattered paper logs with organised digital records.",
       },
       {
         question: "Does it cover cleaning, temperatures and allergens?",
@@ -134,14 +136,13 @@ export const sectorPages: Record<string, SectorPageContent> = {
 
   cafe: {
     slug: "cafe-food-safety-app",
-    seoTitle:
-      "Food Safety App for Cafés | Temp Logs, Cleaning Checks & Allergen Records | TempTake",
+    seoTitle: "Food Safety App for Cafés | TempTake",
     metaDescription:
-      "A simple food safety app for cafés. Manage temperature checks, cleaning tasks, allergen records and daily food safety logs in one place.",
+      "Food safety app for cafés. Manage temperature checks, cleaning tasks, allergen records and daily food hygiene logs in one simple system for UK café teams.",
     eyebrow: "For cafés",
-    heroTitle: "A simple food safety app for cafés",
+    heroTitle: "Food safety app for cafés",
     heroDescription:
-      "Manage temperature checks, cleaning tasks, allergen records and daily compliance in one place — without adding more admin to your café.",
+      "TempTake helps cafés replace paper food safety records with one system for chilled storage checks, cleaning tasks, allergen records and daily compliance logging.",
     heroImageSrc: "/images/sectors/cafe.png",
     heroImageAlt:
       "Café staff member using a phone near a display fridge and prep counter.",
@@ -150,26 +151,26 @@ export const sectorPages: Record<string, SectorPageContent> = {
       "Café worker using a phone near a counter and display case without text overlay.",
     primaryCtaLabel: "Start free trial",
     primaryCtaHref: "/signup",
-    secondaryCtaLabel: "See how it works",
+    secondaryCtaLabel: "View live demo",
     secondaryCtaHref: "/demo",
-    painTitle: "Made for busy cafés, not big chains with compliance teams",
+    painTitle: "Cafés need simple records, not more admin",
     painIntro:
-      "Most cafés do not have a dedicated compliance person. The owner or manager is usually juggling service, staff, prep, ordering and admin all at once.",
+      "Most cafés do not have a compliance department. The owner or manager is usually juggling service, prep, stock, staff and admin at the same time. Paper logs just add friction.",
     painPoints: [
       "Small teams do not have time for messy paperwork",
       "Fridge and display checks still need doing",
       "Cleaning standards need to stay consistent",
-      "Allergen information must be easy to manage",
-      "You want simple records ready if anyone asks",
+      "Allergen information must stay clear and current",
+      "You want records ready if anyone asks to see them",
     ],
-    solutionTitle: "TempTake keeps café food safety records straightforward",
+    solutionTitle: "A café food safety system that stays practical",
     solutionBody:
-      "Use TempTake to log key checks, keep cleaning organised and store the records you need without relying on paper sheets, clipboards or memory.",
+      "Use TempTake to log key checks, keep cleaning organised and store the records you need without relying on clipboards, loose sheets or memory.",
     featuresTitle: "What cafés use TempTake for",
     features: [
       {
         title: "Daily checks",
-        body: "Stay on top of opening and closing food safety checks.",
+        body: "Keep opening and closing food safety checks visible and easier to complete.",
       },
       {
         title: "Fridge and display temperatures",
@@ -181,12 +182,12 @@ export const sectorPages: Record<string, SectorPageContent> = {
       },
       {
         title: "Allergen information",
-        body: "Keep allergen records easier to review and maintain.",
+        body: "Keep allergen records easier to review, maintain and trust.",
       },
     ],
-    builtForTitle: "Ideal for independent cafés, coffee shops and sandwich bars",
+    builtForTitle: "Ideal for cafés, coffee shops and sandwich bars",
     builtForBody:
-      "TempTake suits cafés that need a practical system without heavy admin. It is especially useful where one small team is doing everything and records need to stay tidy without becoming a daily headache.",
+      "TempTake suits independent cafés that need a practical system without heavy admin. It is especially useful where one small team is doing everything and records still need to stay tidy.",
     ctaBandTitle: "Make café food safety records simpler",
     ctaBandBody:
       "Start your free trial and keep checks, cleaning and allergen records in one place.",
@@ -194,17 +195,17 @@ export const sectorPages: Record<string, SectorPageContent> = {
     faqs: [
       {
         question: "Is TempTake good for small café teams?",
-        answer: "Yes. It is built to be simple and easy to manage.",
+        answer: "Yes. It is built to be simple, quick and easy to manage.",
       },
       {
-        question: "Can I manage cleaning and temp checks together?",
+        question: "Can I manage cleaning and temperature checks together?",
         answer:
           "Yes. TempTake is designed to keep those daily jobs together in one place.",
       },
       {
         question: "Does it help with allergen records?",
         answer:
-          "Yes. Allergen management is part of the wider compliance workflow.",
+          "Yes. Allergen management is part of the wider food safety workflow.",
       },
       {
         question: "Is it suitable for coffee shops that also serve food?",
@@ -221,14 +222,13 @@ export const sectorPages: Record<string, SectorPageContent> = {
 
   restaurant: {
     slug: "restaurant-food-safety-app",
-    seoTitle:
-      "Food Safety Software for Restaurants | Digital Logs, Cleaning & Allergen Records | TempTake",
+    seoTitle: "Food Safety Software for Restaurants | TempTake",
     metaDescription:
-      "Food safety software for independent restaurants. Manage kitchen temperature logs, cleaning schedules, allergen controls and team records in one system.",
+      "Food safety software for restaurants. Manage kitchen temperature logs, cleaning schedules, allergen controls and daily food hygiene records in one system.",
     eyebrow: "For restaurants",
-    heroTitle: "Food safety software for independent restaurants",
+    heroTitle: "Food safety software for restaurants",
     heroDescription:
-      "Manage kitchen temperature logs, cleaning schedules, allergen controls and daily records in one system built for restaurant teams.",
+      "TempTake helps restaurants replace paper food safety records with one system for kitchen temperature logs, cleaning schedules, allergen controls and manager visibility.",
     heroImageSrc: "/images/sectors/restaurant.png",
     heroImageAlt:
       "Restaurant chef or kitchen manager checking a phone or tablet during prep.",
@@ -237,21 +237,21 @@ export const sectorPages: Record<string, SectorPageContent> = {
       "Restaurant chef using a phone in a professional kitchen without text overlay.",
     primaryCtaLabel: "Start free trial",
     primaryCtaHref: "/signup",
-    secondaryCtaLabel: "Book a demo",
+    secondaryCtaLabel: "View live demo",
     secondaryCtaHref: "/demo",
-    painTitle: "Restaurant compliance is harder when everything lives on paper",
+    painTitle: "Restaurant compliance gets messy when records live on paper",
     painIntro:
-      "Restaurants have more prep, more moving parts and more people involved. That means more chances for tasks to be missed, records to be incomplete and managers to lose visibility.",
+      "Restaurants have more prep areas, more staff and more moving parts. That means more chances for tasks to be missed, records to be incomplete and managers to lose visibility across the day.",
     painPoints: [
       "Different prep areas mean more checks to track",
-      "Tasks are split across different team members",
-      "Cleaning needs proper oversight",
+      "Tasks are split across multiple team members",
+      "Cleaning needs stronger oversight",
       "Larger menus increase allergen risk",
       "Managers need visibility without chasing clipboards",
     ],
-    solutionTitle: "Bring day-to-day food safety into one clear system",
+    solutionTitle: "Bring restaurant food safety into one clear system",
     solutionBody:
-      "TempTake helps restaurant teams keep records organised and visible. Managers can see what is being completed, what is being missed and where attention is needed.",
+      "TempTake helps restaurant teams keep records organised and visible. Managers can see what is completed, what is overdue and where attention is needed without relying on blind trust.",
     featuresTitle: "What restaurants use TempTake for",
     features: [
       {
@@ -267,17 +267,17 @@ export const sectorPages: Record<string, SectorPageContent> = {
         body: "Keep allergen records and review points in one place.",
       },
       {
-        title: "Team and training",
-        body: "Keep team records and training visibility together.",
+        title: "Team visibility",
+        body: "See what is done, missed or unresolved without being on site all day.",
       },
       {
         title: "Reporting",
-        body: "See what has been completed and what needs attention.",
+        body: "Generate clearer records and reports when they are requested.",
       },
     ],
     builtForTitle: "Built for restaurant kitchens with more moving parts",
     builtForBody:
-      "If your kitchen has multiple prep stations, multiple staff and multiple daily checks, you need more than scattered paper sheets. TempTake gives independent restaurants a practical system for keeping the basics under control.",
+      "If your kitchen has multiple prep stations, multiple staff and multiple daily checks, you need more than scattered paper sheets. TempTake gives restaurants a practical system for keeping the basics under control.",
     ctaBandTitle: "Get restaurant food safety records under control",
     ctaBandBody:
       "Start your free trial and give your team one place for temperatures, cleaning, allergens and records.",
@@ -311,14 +311,13 @@ export const sectorPages: Record<string, SectorPageContent> = {
 
   fishAndChips: {
     slug: "fish-and-chip-shop-food-safety-app",
-    seoTitle:
-      "Food Safety App for Fish & Chip Shops | Temp Logs, Cleaning & Daily Records | TempTake",
+    seoTitle: "Food Safety App for Fish & Chip Shops | TempTake",
     metaDescription:
-      "A food safety app built for fish and chip shops. Keep temperature logs, cleaning checks and digital records organised in one simple system.",
+      "Food safety app for fish and chip shops. Keep temperature logs, cleaning checks and daily food hygiene records organised in one simple system.",
     eyebrow: "For fish & chip shops",
-    heroTitle: "A food safety app built for fish & chip shops",
+    heroTitle: "Food safety app for fish & chip shops",
     heroDescription:
-      "Keep temperature logs, cleaning checks and food safety records organised in one simple system designed for busy fish & chip shops.",
+      "TempTake helps fish and chip shops replace paper records with one system for temperature checks, cleaning tasks, allergen records and daily food safety logging.",
     heroImageSrc: "/images/sectors/fish-and-chips.png",
     heroImageAlt:
       "Fish and chip shop staff member using a phone in a fryer or prep area.",
@@ -327,22 +326,21 @@ export const sectorPages: Record<string, SectorPageContent> = {
       "Fish and chip shop worker using a phone in a fryer area without text overlay.",
     primaryCtaLabel: "Start free trial",
     primaryCtaHref: "/signup",
-    secondaryCtaLabel: "See how it works",
+    secondaryCtaLabel: "View live demo",
     secondaryCtaHref: "/demo",
-    painTitle: "Busy fish & chip shops need something faster than paper",
+    painTitle: "Busy chippies need something faster than paper",
     painIntro:
-      "Peak periods are relentless. The last thing anyone wants is to stop and wrestle with paper logs that end up incomplete, scruffy or forgotten.",
+      "Peak periods are relentless. The last thing anyone wants is to stop and wrestle with paper logs that end up incomplete, scruffy or forgotten by the end of the day.",
     painPoints: [
       "Hot-hold and chilled storage both need checking",
       "Paper records are easy to miss during busy periods",
       "Daily cleaning still needs proper completion",
-      "Small teams need something quick and clear",
+      "Small teams need something quick and obvious",
       "Managers need records without extra hassle",
     ],
-    solutionTitle:
-      "TempTake helps fish & chip shops keep records tidy without slowing the day down",
+    solutionTitle: "A simpler way to keep chippy records tidy",
     solutionBody:
-      "Use TempTake to keep the key checks in one place and make food safety admin less painful for busy independent shops.",
+      "Use TempTake to keep the key checks in one place and make food safety admin less painful for busy fish and chip shops.",
     featuresTitle: "What fish & chip shops use TempTake for",
     features: [
       {
@@ -362,8 +360,7 @@ export const sectorPages: Record<string, SectorPageContent> = {
         body: "Keep clear records ready when needed.",
       },
     ],
-    builtForTitle:
-      "Designed for independent chippies and multi-site fish & chip shops",
+    builtForTitle: "Designed for independent chippies and small groups",
     builtForBody:
       "Fish & chip shops are a distinct trade with their own pace and pressure. TempTake fits operators who want something practical, simple and built around real service conditions.",
     ctaBandTitle: "Still using paper records in your fish & chip shop?",
@@ -397,14 +394,13 @@ export const sectorPages: Record<string, SectorPageContent> = {
 
   pub: {
     slug: "pub-food-safety-app",
-    seoTitle:
-      "Food Safety Software for Pubs Serving Food | Kitchen Logs, Cleaning & Allergen Records | TempTake",
+    seoTitle: "Food Safety Software for Pubs Serving Food | TempTake",
     metaDescription:
-      "Manage kitchen compliance, temperature checks, cleaning tasks and allergen records in one practical food safety system for pubs serving food.",
+      "Food safety software for pubs serving food. Manage kitchen temperature checks, cleaning tasks, allergen records and daily food hygiene logs in one practical system.",
     eyebrow: "For pubs serving food",
     heroTitle: "Food safety software for pubs serving food",
     heroDescription:
-      "Manage kitchen compliance, temperature checks, cleaning tasks and allergen records in one practical system for busy pub teams.",
+      "TempTake helps pubs serving food replace paper kitchen records with one system for temperature checks, cleaning tasks, allergen records and shift visibility.",
     heroImageSrc: "/images/sectors/pub.png",
     heroImageAlt:
       "Pub kitchen staff member using a phone to complete a food safety check.",
@@ -413,11 +409,11 @@ export const sectorPages: Record<string, SectorPageContent> = {
       "Pub kitchen worker using a phone near plated food without text overlay.",
     primaryCtaLabel: "Start free trial",
     primaryCtaHref: "/signup",
-    secondaryCtaLabel: "Book a demo",
+    secondaryCtaLabel: "View live demo",
     secondaryCtaHref: "/demo",
     painTitle: "Food service in pubs gets messy when records are spread everywhere",
     painIntro:
-      "Pubs already have enough to juggle. Once food service is involved, it is easy for checks to become inconsistent across shifts, staff and days.",
+      "Pubs already have enough to juggle. Once food service is involved, it becomes easy for checks to drift across shifts, staff and days unless the system is obvious and consistent.",
     painPoints: [
       "Food checks compete with everything else going on",
       "Different shifts make accountability harder",
@@ -425,10 +421,9 @@ export const sectorPages: Record<string, SectorPageContent> = {
       "Allergen information has to stay up to date",
       "Managers want visibility without paperwork chaos",
     ],
-    solutionTitle:
-      "Give your pub kitchen one clear system for daily food safety records",
+    solutionTitle: "Give your pub kitchen one clear daily system",
     solutionBody:
-      "TempTake helps pub teams keep essential food safety tasks organised while giving managers clearer oversight of what is being done.",
+      "TempTake helps pub teams keep essential food safety tasks organised while giving managers clearer oversight of what is done, missed or still needs attention.",
     featuresTitle: "What pubs use TempTake for",
     features: [
       {
@@ -450,7 +445,7 @@ export const sectorPages: Record<string, SectorPageContent> = {
     ],
     builtForTitle: "For pubs, gastro pubs and hospitality venues serving food",
     builtForBody:
-      "Pub kitchens need systems that are practical, not overcomplicated. TempTake helps teams handle food safety tasks in a way that fits real day-to-day hospitality work.",
+      "Pub kitchens need systems that are practical, not overcomplicated. TempTake helps teams handle food safety tasks in a way that fits real hospitality work.",
     ctaBandTitle: "Make pub kitchen food safety easier to manage",
     ctaBandBody:
       "Start your free trial and get one place for checks, cleaning and records.",
@@ -482,14 +477,13 @@ export const sectorPages: Record<string, SectorPageContent> = {
 
   mobileCatering: {
     slug: "mobile-catering-food-safety-app",
-    seoTitle:
-      "Food Safety App for Mobile Caterers & Food Trucks | Digital Checks & Records | TempTake",
+    seoTitle: "Food Safety App for Mobile Caterers | TempTake",
     metaDescription:
-      "Keep temperature checks, cleaning records and allergen information organised on your phone with a food safety app built for mobile caterers and food trucks.",
+      "Food safety app for mobile caterers and food trucks. Keep temperature checks, cleaning records and allergen information organised on your phone wherever you trade.",
     eyebrow: "For mobile caterers",
-    heroTitle: "Food safety records for mobile caterers and food trucks",
+    heroTitle: "Food safety app for mobile caterers",
     heroDescription:
-      "Keep temperature checks, cleaning records and allergen information organised on your phone — wherever you are trading.",
+      "TempTake helps mobile caterers and food trucks replace paper records with one phone-friendly system for temperature checks, cleaning records and allergen information.",
     heroImageSrc: "/images/sectors/mobile-catering.png",
     heroImageAlt:
       "Food truck or mobile caterer using a phone to record food safety checks.",
@@ -498,7 +492,7 @@ export const sectorPages: Record<string, SectorPageContent> = {
       "Mobile caterer in a food truck using a phone without text overlay.",
     primaryCtaLabel: "Start free trial",
     primaryCtaHref: "/signup",
-    secondaryCtaLabel: "See how it works",
+    secondaryCtaLabel: "View live demo",
     secondaryCtaHref: "/demo",
     painTitle: "Paper records are a pain when your business is on the move",
     painIntro:
@@ -510,19 +504,18 @@ export const sectorPages: Record<string, SectorPageContent> = {
       "Allergens must still be clearly managed",
       "You need records you can access anywhere",
     ],
-    solutionTitle:
-      "TempTake keeps mobile food safety records portable and practical",
+    solutionTitle: "Keep mobile catering records portable and practical",
     solutionBody:
-      "Use your phone to manage the checks you need, keep records together and avoid carrying around loose sheets, folders and half-completed paperwork.",
+      "Use TempTake on your phone to manage the checks you need, keep records together and avoid carrying loose sheets, folders and half-completed paperwork.",
     featuresTitle: "What mobile caterers use TempTake for",
     features: [
       {
         title: "Mobile-friendly checks",
-        body: "Complete daily checks on your phone.",
+        body: "Complete daily checks on your phone wherever you are trading.",
       },
       {
         title: "Temperature logs",
-        body: "Record storage and food temperatures wherever you are trading.",
+        body: "Record storage and food temperatures on the move.",
       },
       {
         title: "Cleaning records",
@@ -537,8 +530,7 @@ export const sectorPages: Record<string, SectorPageContent> = {
         body: "Have a clearer audit trail without the paper mess.",
       },
     ],
-    builtForTitle:
-      "Perfect for food trucks, street food traders and event caterers",
+    builtForTitle: "Perfect for food trucks, street food traders and event caterers",
     builtForBody:
       "TempTake works well for operators who need a practical digital system that travels with them and does not rely on an office, clipboard or fixed site.",
     ctaBandTitle: "Take your food safety records off paper",

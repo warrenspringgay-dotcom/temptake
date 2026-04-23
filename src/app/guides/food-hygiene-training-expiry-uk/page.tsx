@@ -67,6 +67,15 @@ const th =
   "bg-slate-100 px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-700";
 const td = "px-4 py-3 align-top text-sm text-slate-700 border-t border-slate-200";
 
+const sectorLinks = [
+  { href: "/takeaway-food-safety-app", label: "Takeaways" },
+  { href: "/cafe-food-safety-app", label: "Cafés" },
+  { href: "/restaurant-food-safety-app", label: "Restaurants" },
+  { href: "/pub-food-safety-app", label: "Pubs serving food" },
+  { href: "/fish-and-chip-shop-food-safety-app", label: "Fish & chip shops" },
+  { href: "/mobile-catering-food-safety-app", label: "Mobile caterers" },
+];
+
 export default function TrainingExpiryGuide() {
   const published = "2026-03-25";
 
@@ -110,6 +119,33 @@ export default function TrainingExpiryGuide() {
             Last updated: <time dateTime={published}>{published}</time>
           </div>
         </header>
+
+        <section>
+          <div className="mt-6 rounded-3xl border border-emerald-200 bg-emerald-50/80 p-5">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-emerald-700">
+              Stop letting training dates quietly lapse
+            </div>
+            <h2 className="mt-3 text-xl font-extrabold text-slate-900">
+              Use one system for training records, review dates and refresher visibility
+            </h2>
+            <p className={p}>
+              If your training records still live on paper, in email folders or on
+              someone’s mental to-do list, TempTake gives you a cleaner way to track
+              who has what level, when it was completed and when refreshers are due.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/demo" className={ctaPrimary}>
+                View live demo
+              </Link>
+              <Link href="/signup" className={ctaSecondary}>
+                Start free trial
+              </Link>
+              <Link href="/food-hygiene-app" className={ctaSecondary}>
+                See the software
+              </Link>
+            </div>
+          </div>
+        </section>
 
         <section>
           <div className={box}>
@@ -188,6 +224,55 @@ export default function TrainingExpiryGuide() {
             same answer: not a strict legal expiry, but a strong expectation that
             training should be refreshed before it becomes stale.
           </p>
+        </section>
+
+        <section>
+          <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50/90 p-5">
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+              Where paper usually breaks down
+            </div>
+            <h2 className="mt-3 text-xl font-extrabold text-slate-900">
+              The problem is not having certificates. It is staying on top of them.
+            </h2>
+            <p className={p}>
+              Paper training records and loose certificate folders often look fine
+              until someone asks who is overdue, who has the right level, or whether
+              refreshers were planned properly. Then it becomes guesswork.
+            </p>
+
+            <ul className={ul}>
+              <li className={li}>
+                <span className={dot} />
+                <span>Training dates go out of date quietly</span>
+              </li>
+              <li className={li}>
+                <span className={dot} />
+                <span>Role changes are not matched with the right training level</span>
+              </li>
+              <li className={li}>
+                <span className={dot} />
+                <span>Certificates are stored in different places or missing entirely</span>
+              </li>
+              <li className={li}>
+                <span className={dot} />
+                <span>Managers only spot gaps when inspection is close</span>
+              </li>
+            </ul>
+
+            <p className={p}>
+              TempTake is built to fix that by keeping training records, completed
+              dates and review dates in one place with better visibility for managers.
+            </p>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/demo" className={ctaPrimary}>
+                View live demo
+              </Link>
+              <Link href="/food-hygiene-app" className={ctaSecondary}>
+                See the software
+              </Link>
+            </div>
+          </div>
         </section>
 
         <section>
@@ -422,6 +507,42 @@ export default function TrainingExpiryGuide() {
               <span>keep certificates and dates in one place</span>
             </li>
           </ul>
+
+          <div className={box}>
+            <p className="text-sm text-slate-700 leading-7">
+              If you still want a manual system, paper can work. If you want a cleaner
+              day-to-day process, TempTake is built to make training records easier to
+              track, review and keep current.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/templates" className={ctaSecondary}>
+                Free templates
+              </Link>
+              <Link href="/food-hygiene-app" className={ctaPrimary}>
+                See the software
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className={h2}>Find the right version of TempTake for your business</h2>
+          <p className={p}>
+            Different food businesses manage staff training differently. Choose the
+            version that matches how your business actually runs.
+          </p>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {sectorLinks.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm font-semibold text-slate-900 hover:bg-slate-100"
+              >
+                {item.label} →
+              </Link>
+            ))}
+          </div>
         </section>
 
         <section>
@@ -464,11 +585,11 @@ export default function TrainingExpiryGuide() {
           </p>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link href="/team" className={ctaPrimary}>
-              Track staff training
+            <Link href="/demo" className={ctaPrimary}>
+              View live demo
             </Link>
-            <Link href="/launch" className={ctaSecondary}>
-              See TempTake
+            <Link href="/food-hygiene-app" className={ctaSecondary}>
+              See the software
             </Link>
             <Link href="/pricing" className={ctaSecondary}>
               Pricing
