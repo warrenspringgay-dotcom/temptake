@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { getActiveLocationIdClient } from "@/lib/locationClient";
 
 type StatTone = "good" | "warn" | "bad" | "neutral";
+type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
 
 function cls(...parts: Array<string | false | undefined | null>) {
   return parts.filter(Boolean).join(" ");
@@ -55,6 +56,11 @@ function titleCase(val: string | null | undefined): string {
 function formatDays(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
   return `${value}d`;
+}
+
+function percent(numerator: number, denominator: number | null | undefined): number | null {
+  if (!denominator || denominator <= 0) return null;
+  return Math.round((numerator / denominator) * 100);
 }
 
 function prettyAbsenceRange(row: {
@@ -109,15 +115,11 @@ function StatCard({
   value,
   subtitle,
   tone,
-  icon,
-  onClick,
 }: {
   title: string;
   value: string;
   subtitle: string;
   tone: StatTone;
-  icon: string;
-  onClick?: () => void;
 }) {
   const wrap =
     tone === "good"
@@ -128,91 +130,60 @@ function StatCard({
       ? "border-rose-200 bg-rose-50/70"
       : "border-slate-200 bg-white";
 
-  const bar =
+  const valueTone =
     tone === "good"
-      ? "bg-emerald-400"
+      ? "text-emerald-700"
       : tone === "warn"
-      ? "bg-amber-400"
+      ? "text-amber-700"
       : tone === "bad"
-      ? "bg-rose-400"
-      : "bg-slate-300";
-
-  const body = (
-    <div
-      className={cls(
-        "relative overflow-hidden rounded-3xl border p-4 shadow-sm text-left",
-        wrap,
-        onClick && "cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md"
-      )}
-    >
-      <div className={cls("absolute left-0 top-0 h-full w-1.5", bar)} />
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.28em] text-slate-600">
-            {title}
-          </div>
-          <div className="mt-2 text-4xl font-extrabold text-slate-900">{value}</div>
-          <div className="mt-1 text-sm text-slate-600">{subtitle}</div>
-        </div>
-        <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-white/70 text-lg shadow-sm">
-          {icon}
-        </span>
-      </div>
-    </div>
-  );
-
-  if (!onClick) return body;
+      ? "text-rose-700"
+      : "text-slate-900";
 
   return (
-    <button type="button" onClick={onClick} className="w-full">
-      {body}
-    </button>
+    <div className={cls("rounded-3xl border p-4 shadow-sm", wrap)}>
+      <div className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-slate-500">
+        {title}
+      </div>
+      <div className={cls("mt-2 text-4xl font-extrabold", valueTone)}>{value}</div>
+      <div className="mt-1 text-sm text-slate-600">{subtitle}</div>
+    </div>
   );
 }
 
 function SectionCard({
   title,
   subtitle,
-  icon,
   children,
   id,
 }: {
   title: string;
   subtitle?: string;
-  icon?: string;
   children: React.ReactNode;
   id?: string;
 }) {
   return (
-    <div
+    <section
       id={id}
-      className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm"
+      className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-base font-extrabold text-slate-900">{title}</h2>
-          {subtitle ? <p className="text-xs text-slate-600">{subtitle}</p> : null}
-        </div>
-        {icon ? <span className="text-xl">{icon}</span> : null}
+      <div className="mb-4">
+        <h2 className="text-lg font-extrabold text-slate-900">{title}</h2>
+        {subtitle ? <p className="mt-1 text-sm text-slate-600">{subtitle}</p> : null}
       </div>
-      <div className="mt-3">{children}</div>
-    </div>
+      {children}
+    </section>
   );
 }
 
 function EmptyState({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm font-medium text-slate-700">
       {children}
     </div>
   );
 }
 
-function SimpleTable({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+function SimpleTable({ children }: { children: React.ReactNode }) {
   return (
     <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
       {children}
@@ -234,7 +205,7 @@ function SectionFooterToggle({
   if (total <= 10) return null;
 
   return (
-    <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
+    <div className="mt-3 flex items-center justify-between text-xs text-slate-600">
       <div>
         Showing {visible ? total : Math.min(10, total)} of {total} {label}
       </div>
@@ -432,51 +403,37 @@ type HygieneHistoryRow = {
 
 type SummaryShape = {
   rangeLabel?: string;
-
   period?: {
     from?: string;
     to?: string;
     locationId?: string | null;
     days?: number;
   };
-
   compliantDays?: number;
   totalDays?: number;
-
   tempLogs?: number;
   tempFails?: number;
-
   cleaningDone?: number;
   cleaningTotal?: number | null;
-
   trainingDueSoon?: number;
   trainingOver?: number;
   trainingAssigned?: number;
   trainingInProgress?: number;
-
   allergenDueSoon?: number;
   allergenOver?: number;
-
   incidents?: number;
-
   signoffsDone?: number;
   signoffsExpected?: number | null;
-
   calibrationChecks?: number;
   calibrationDue?: boolean;
-
   staffOffToday?: number;
   staffAbsencesLast30Days?: number;
-
   managerQcReviews?: number;
   managerQcAverage?: number | null;
-
   topMissedAreas?: TopMissedArea[];
   topIssues?: TopIssue[];
-
   headline?: string[];
   recommendations?: string[];
-
   temperature?: {
     total?: number;
     fails?: number;
@@ -485,7 +442,6 @@ type SummaryShape = {
     recentLogs?: unknown[];
     recentFailures?: UnifiedIncidentRow[];
   };
-
   cleaning?: {
     dueTotal?: number;
     completedTotal?: number;
@@ -494,7 +450,6 @@ type SummaryShape = {
     recentRuns?: CleaningRunRow[];
     categoryProgress?: CleaningCategoryProgressRow[];
   };
-
   training?: {
     expired?: number;
     dueSoon?: number;
@@ -502,51 +457,42 @@ type SummaryShape = {
     records?: EducationRow[];
     areaCoverage?: TrainingAreaRow[];
   };
-
   allergens?: {
     dueSoon?: number;
     overdue?: number;
     recentChanges?: AllergenChangeRow[];
     recentReviews?: AllergenReviewRow[];
   };
-
   incidentsLog?: {
     total?: number;
     recent?: LoggedIncidentRow[];
   };
-
   signoffs?: {
     total?: number;
     expected?: number | null;
     recent?: SignoffRow[];
   };
-
   staffAbsences?: {
     total?: number;
     today?: number;
     last30Days?: number;
     recent?: StaffAbsenceRow[];
   };
-
   managerQc?: {
     total?: number;
     averageRating?: number | null;
     recent?: StaffReviewRow[];
   };
-
   calibration?: {
     total?: number;
     due?: boolean;
     recent?: CalibrationRow[];
   };
-
   hygiene?: {
     latest?: HygieneLatest | null;
     history?: HygieneHistoryRow[];
   };
 };
-
-type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
 
 export default function FourWeekReviewPage() {
   const router = useRouter();
@@ -754,18 +700,13 @@ export default function FourWeekReviewPage() {
       allergenChanges: Array.isArray(s.allergens?.recentChanges) ? s.allergens.recentChanges : [],
       education: Array.isArray(s.training?.records) ? s.training.records : [],
       trainingAreas: Array.isArray(s.training?.areaCoverage) ? s.training.areaCoverage : [],
+
       calibrationRows: Array.isArray(s.calibration?.recent) ? s.calibration.recent : [],
 
       hygieneLatest: s.hygiene?.latest ?? null,
       hygieneHistory: Array.isArray(s.hygiene?.history) ? s.hygiene.history : [],
     };
   }, [summary]);
-
-  const scrollToId = (id: string) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
 
   const compliancePct = useMemo(() => {
     const denom = data.totalDays > 0 ? data.totalDays : 28;
@@ -1023,67 +964,74 @@ export default function FourWeekReviewPage() {
     ? data.hygieneHistory
     : data.hygieneHistory.slice(0, 10);
 
-  return (
-    <div className="fixed inset-0 z-[60]">
-      <button
-        type="button"
-        aria-label="Close"
-        onClick={() => router.back()}
-        className="absolute inset-0 bg-black/40"
-      />
+  function downloadFourWeekPDF() {
+    const params = new URLSearchParams();
 
-      <div className="absolute inset-x-0 bottom-0 top-10 mx-auto w-full max-w-7xl px-3 sm:top-12 sm:px-4">
-        <div className="h-full overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-          <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-white/90 px-4 py-4 backdrop-blur">
+    if (data.periodTo) {
+      params.set("to", data.periodTo);
+    }
+
+    params.set("download", "1");
+
+    if (data.periodLocationId) {
+      params.set("locationId", String(data.periodLocationId));
+    } else if (activeLocationId) {
+      params.set("locationId", String(activeLocationId));
+    }
+
+    window.open(
+      `/api/reports/four-week/pdf?${params.toString()}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  }
+
+  function printPage() {
+    window.print();
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-100 print:bg-white">
+      <div className="mx-auto max-w-7xl px-4 py-6 print:max-w-none print:px-0 print:py-0">
+        <div className="mb-6 rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm print:rounded-none print:border-0 print:shadow-none">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
               <div className="text-[11px] font-extrabold uppercase tracking-[0.25em] text-slate-500">
-                Four week review
+                TempTake
               </div>
-              <h1 className="mt-1 text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl">
-                Compliance snapshot
+              <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl">
+                Four-weekly food safety review
               </h1>
+              <p className="mt-2 max-w-3xl text-sm text-slate-600">
+                Management review for the last four weeks. Built to surface repeat failures,
+                missed cleaning, training drift, sign-off gaps and other weak spots before
+                they become inspection pain.
+              </p>
 
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Pill tone={complianceTone}>{data.rangeLabel}</Pill>
-
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Pill tone={riskTone}>Risk {riskLevel}</Pill>
+                <Pill tone={complianceTone}>
+                  {loading ? "—" : `${compliancePct}%`} compliant days ({data.compliantDays}/
+                  {data.totalDays})
+                </Pill>
+                <Pill tone="neutral">{data.rangeLabel}</Pill>
                 {isLocationScoped ? (
                   <Pill tone="neutral">Current location</Pill>
                 ) : (
-                  <Pill tone="neutral">Org-wide</Pill>
+                  <Pill tone="neutral">Organisation-wide</Pill>
                 )}
-
-                <Pill tone={riskTone}>Risk {riskLevel}</Pill>
-
                 {data.periodFrom && data.periodTo ? (
                   <Pill tone="neutral">
                     {formatDDMMYYYY(data.periodFrom) ?? "—"} →{" "}
                     {formatDDMMYYYY(data.periodTo) ?? "—"}
                   </Pill>
                 ) : null}
-
-                <Pill tone={complianceTone}>
-                  {loading ? "—" : `${compliancePct}%`} compliant days ({data.compliantDays}/
-                  {data.totalDays})
-                </Pill>
-
-                <Pill tone={tempsTone}>{data.tempFails} temp fails</Pill>
-                <Pill tone={trainingTone}>
-                  {data.trainingOver > 0
-                    ? `${data.trainingOver} training overdue`
-                    : `${data.trainingDueSoon} training due soon`}
-                </Pill>
-                <Pill tone={allergenTone}>
-                  {data.allergenOver > 0
-                    ? `${data.allergenOver} allergen overdue`
-                    : `${data.allergenDueSoon} allergen due soon`}
-                </Pill>
-                <Pill tone={incidentsTone}>{data.incidents} incidents</Pill>
               </div>
 
               {(err || (loading && !summary)) && (
                 <div
                   className={cls(
-                    "mt-2 rounded-xl border px-3 py-2 text-sm font-semibold",
+                    "mt-3 rounded-xl border px-3 py-2 text-sm font-semibold",
                     err
                       ? "border-rose-200 bg-rose-50 text-rose-800"
                       : "border-slate-200 bg-slate-50 text-slate-700"
@@ -1094,1223 +1042,1141 @@ export default function FourWeekReviewPage() {
               )}
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
-              
+            <div className="flex flex-wrap items-center gap-2 print:hidden">
               <Link
-                href="/reports?range=4w"
-                className="hidden rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50 sm:inline-flex"
+                href="/reports"
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50"
               >
-                View full report
+                Back to reports
               </Link>
               <button
                 type="button"
+                onClick={printPage}
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50"
+              >
+                Print
+              </button>
+              <button
+                type="button"
+                onClick={downloadFourWeekPDF}
+                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+              >
+                Download PDF
+              </button>
+              <button
+                type="button"
                 onClick={() => router.back()}
-                className="rounded-2xl bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-slate-900"
+                className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
               >
                 Close
               </button>
             </div>
           </div>
+        </div>
 
-          <div className="h-[calc(100%-72px)] overflow-y-auto bg-slate-50/60 p-4 pb-24">
-            <SectionCard
-              id="risk-snapshot"
-              title="Risk snapshot"
-              subtitle="One brutal summary of how this period looks."
-              icon="🛡️"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-3">
-                  <Pill tone={riskTone}>Risk level: {riskLevel}</Pill>
-                  <div className="text-sm text-slate-700">Score {riskScore}</div>
-                </div>
+        <div className="grid gap-4 md:grid-cols-4 print:grid-cols-4">
+          <StatCard
+            title="Compliance"
+            value={loading ? "—" : `${compliancePct}%`}
+            subtitle={`${data.compliantDays}/${data.totalDays} compliant days`}
+            tone={complianceTone}
+          />
+          <StatCard
+            title="Temperature"
+            value={`${data.tempLogs}`}
+            subtitle={`${data.tempFails} failures recorded`}
+            tone={tempsTone}
+          />
+          <StatCard
+            title="Cleaning"
+            value={cleaningPct == null ? `${data.cleaningDone}` : `${cleaningPct}%`}
+            subtitle={
+              cleaningPct == null
+                ? `${data.cleaningDone} runs completed`
+                : `${data.cleaningDone}/${data.cleaningTotal} completed`
+            }
+            tone={cleaningTone}
+          />
+          <StatCard
+            title="Training"
+            value={
+              data.trainingOver > 0
+                ? `${data.trainingOver}`
+                : `${data.trainingDueSoon + data.trainingAssigned + data.trainingInProgress}`
+            }
+            subtitle={
+              data.trainingOver > 0
+                ? "Overdue items"
+                : `${data.trainingDueSoon} due soon · ${data.trainingAssigned} assigned · ${data.trainingInProgress} in progress`
+            }
+            tone={trainingTone}
+          />
+        </div>
 
-             
-              </div>
-            </SectionCard>
+        <div className="mt-4 grid gap-4 md:grid-cols-4 print:grid-cols-4">
+          <StatCard
+            title="Allergens"
+            value={data.allergenOver > 0 ? `${data.allergenOver}` : `${data.allergenDueSoon}`}
+            subtitle={data.allergenOver > 0 ? "Overdue reviews" : "Due soon"}
+            tone={allergenTone}
+          />
+          <StatCard
+            title="Incidents"
+            value={`${data.incidents}`}
+            subtitle="Manual incidents logged"
+            tone={incidentsTone}
+          />
+          <StatCard
+            title="Sign-offs"
+            value={signoffPct == null ? `${data.signoffsDone}` : `${signoffPct}%`}
+            subtitle={
+              signoffPct == null
+                ? `${data.signoffsDone} sign-offs`
+                : `${data.signoffsDone}/${data.signoffsExpected} completed`
+            }
+            tone={signoffTone}
+          />
+          <StatCard
+            title="Calibration"
+            value={`${data.calibrationChecks}`}
+            subtitle={data.calibrationDue ? "Calibration due now" : "Checks logged"}
+            tone={calibrationTone}
+          />
+        </div>
 
-            <div className="mt-4 grid gap-4 md:grid-cols-4">
-              <StatCard
-                title="Compliance"
-                value={loading ? "—" : `${compliancePct}%`}
-                subtitle={`${data.compliantDays}/${data.totalDays} days compliant`}
-                tone={complianceTone}
-                icon="✅"
-                onClick={() => scrollToId("summary-headlines")}
-              />
-
-              <StatCard
-                title="Temps"
-                value={`${data.tempLogs}`}
-                subtitle={`${data.tempFails} fails (4w)`}
-                tone={tempsTone}
-                icon="🌡️"
-                onClick={() => scrollToId("repeat-temp-fails")}
-              />
-
-              <StatCard
-                title="Cleaning"
-                value={cleaningPct === null ? `${data.cleaningDone}` : `${cleaningPct}%`}
-                subtitle={
-                  cleaningPct === null
-                    ? `${data.cleaningDone} done`
-                    : `${data.cleaningDone}/${data.cleaningTotal} done`
-                }
-                tone={cleaningTone}
-                icon="🧽"
-                onClick={() => scrollToId("cleaning-progress")}
-              />
-
-              <StatCard
-                title="Incidents"
-                value={`${data.incidents}`}
-                subtitle="Manual incident log (4w)"
-                tone={incidentsTone}
-                icon="⚠️"
-                onClick={() => scrollToId("incidents-logged")}
-              />
-            </div>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-4">
-              <StatCard
-                title="Training"
-                value={
-                  data.trainingOver > 0
-                    ? `${data.trainingOver}`
-                    : `${data.trainingDueSoon + data.trainingAssigned + data.trainingInProgress}`
-                }
-                subtitle={
-                  data.trainingOver > 0
-                    ? "Overdue training"
-                    : `${data.trainingDueSoon} due soon · ${data.trainingAssigned} assigned · ${data.trainingInProgress} in progress`
-                }
-                tone={trainingTone}
-                icon="🎓"
-                onClick={() => scrollToId("training-drift")}
-              />
-
-              <StatCard
-                title="Allergens"
-                value={
-                  data.allergenOver > 0
-                    ? `${data.allergenOver}`
-                    : `${data.allergenDueSoon}`
-                }
-                subtitle={
-                  data.allergenOver > 0
-                    ? "Overdue allergen reviews"
-                    : `${data.allergenDueSoon} due soon`
-                }
-                tone={allergenTone}
-                icon="🥜"
-                onClick={() => scrollToId("allergen-reviews")}
-              />
-
-              <StatCard
-                title="Sign-offs"
-                value={signoffPct === null ? `${data.signoffsDone}` : `${signoffPct}%`}
-                subtitle={
-                  signoffPct === null
-                    ? `${data.signoffsDone} signed off`
-                    : `${data.signoffsDone}/${data.signoffsExpected} signed off`
-                }
-                tone={signoffTone}
-                icon="📝"
-                onClick={() => scrollToId("day-signoffs")}
-              />
-
-              <StatCard
-                title="Calibration"
-                value={`${data.calibrationChecks}`}
-                subtitle={data.calibrationDue ? "Calibration due" : "Checks logged (4w)"}
-                tone={calibrationTone}
-                icon="📏"
-                onClick={() => scrollToId("calibration-checks")}
-              />
-            </div>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-4">
-              <StatCard
-                title="Staff off"
-                value={`${data.staffOffToday}`}
-                subtitle={`${data.staffAbsencesLast30Days} overlapping in last 30d`}
-                tone={staffingTone}
-                icon="🧑‍🍳"
-                onClick={() => scrollToId("staff-absences")}
-              />
-
-              <StatCard
-                title="Manager QC"
-                value={data.managerQcAverage == null ? "—" : `${data.managerQcAverage}/5`}
-                subtitle={`${data.managerQcReviews} reviews in period`}
-                tone={qcTone}
-                icon="👀"
-                onClick={() => scrollToId("manager-qc")}
-              />
-
-              <StatCard
-                title="Repeat misses"
-                value={`${data.repeatMisses.length}`}
-                subtitle="Repeated cleaning misses"
-                tone={data.repeatMisses.length > 0 ? "warn" : "good"}
-                icon="🪣"
-                onClick={() => scrollToId("repeat-missed-cleaning")}
-              />
-
-              <StatCard
-                title="Repeat fails"
-                value={`${data.repeatFailures.length}`}
-                subtitle="Repeated temp fail patterns"
-                tone={data.repeatFailures.length > 0 ? "bad" : "good"}
-                icon="🔥"
-                onClick={() => scrollToId("repeat-temp-fails")}
-              />
-            </div>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <SectionCard
-                id="top-missed-areas"
-                title="Top missed areas"
-                subtitle="Where routines are most likely being skipped."
-                icon="📌"
-              >
-                <div className="space-y-2">
-                  {data.topMissedAreas.length === 0 ? (
-                    <EmptyState>No routine miss data yet.</EmptyState>
-                  ) : (
-                    data.topMissedAreas.map((x) => (
-                      <div
-                        key={x.area}
-                        className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2"
-                      >
-                        <div className="text-sm font-semibold text-slate-900">{x.area}</div>
-                        <Pill tone={x.missed >= 4 ? "warn" : "neutral"}>
-                          {x.missed} missed
-                        </Pill>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </SectionCard>
-
-              <SectionCard
-                id="priority-issues"
-                title="Priority issues"
-                subtitle="The biggest things needing attention in this review window."
-                icon="🚨"
-              >
-                <div className="space-y-2">
-                  {issueCards.length === 0 ? (
-                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">
-                      No obvious problem areas surfaced in this period.
-                    </div>
-                  ) : (
-                    issueCards.map((x) => (
-                      <div
-                        key={x.label}
-                        className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2"
-                      >
-                        <div className="text-sm font-semibold text-slate-900">{x.label}</div>
-                        <Pill tone={x.tone ?? "neutral"}>{x.count}</Pill>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </SectionCard>
-            </div>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <SectionCard
-                id="summary-headlines"
-                title="Summary headlines"
-                subtitle="Fast narrative overview of the period."
-                icon="🧾"
-              >
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <SectionCard
+            title="Executive summary"
+            subtitle="The fast read. This is the bit management should actually pay attention to."
+            id="executive-summary"
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
                 {data.headline.length === 0 ? (
                   <EmptyState>No summary lines returned yet.</EmptyState>
                 ) : (
-                  <div className="space-y-2">
-                    {data.headline.map((line, idx) => (
-                      <div
-                        key={`${idx}_${line}`}
-                        className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800"
-                      >
-                        {line}
-                      </div>
-                    ))}
-                  </div>
+                  data.headline.map((line, idx) => (
+                    <div
+                      key={`${idx}_${line}`}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800"
+                    >
+                      {line}
+                    </div>
+                  ))
                 )}
-              </SectionCard>
+              </div>
 
-              <SectionCard
-                id="recommendations"
-                title="Recommendations"
-                subtitle="What needs tightening before this turns into inspection pain."
-                icon="🧠"
-              >
+              <div className="space-y-2">
                 {data.recommendations.length === 0 ? (
                   <EmptyState>No recommendations returned yet.</EmptyState>
                 ) : (
-                  <div className="space-y-2">
-                    {data.recommendations.map((line, idx) => (
-                      <div
-                        key={`${idx}_${line}`}
-                        className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800"
-                      >
-                        {line}
-                      </div>
-                    ))}
-                  </div>
+                  data.recommendations.map((line, idx) => (
+                    <div
+                      key={`${idx}_${line}`}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800"
+                    >
+                      {line}
+                    </div>
+                  ))
                 )}
-              </SectionCard>
+              </div>
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            title="Priority issues"
+            subtitle="The biggest problems in this review window."
+            id="priority-issues"
+          >
+            <div className="space-y-2">
+              {issueCards.length === 0 ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">
+                  No obvious priority issue surfaced in this period.
+                </div>
+              ) : (
+                issueCards.map((x) => (
+                  <div
+                    key={x.label}
+                    className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2"
+                  >
+                    <div className="text-sm font-semibold text-slate-900">{x.label}</div>
+                    <Pill tone={x.tone ?? "neutral"}>{x.count}</Pill>
+                  </div>
+                ))
+              )}
             </div>
 
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <SectionCard
-                id="repeat-temp-fails"
-                title="Repeat temperature failures"
-                subtitle="Recurring fail patterns that deserve actual attention."
-                icon="🌡️"
-              >
+            <div className="mt-4 border-t border-slate-200 pt-4">
+              <h3 className="text-sm font-bold text-slate-900">Top missed areas</h3>
+              <div className="mt-2 space-y-2">
+                {data.topMissedAreas.length === 0 ? (
+                  <EmptyState>No routine miss data yet.</EmptyState>
+                ) : (
+                  data.topMissedAreas.map((x) => (
+                    <div
+                      key={x.area}
+                      className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2"
+                    >
+                      <div className="text-sm font-semibold text-slate-900">{x.area}</div>
+                      <Pill tone={x.missed >= 4 ? "warn" : "neutral"}>{x.missed} missed</Pill>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </SectionCard>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <SectionCard
+            id="repeat-temp-fails"
+            title="Repeat temperature failures"
+            subtitle="Recurring fail patterns that need fixing, not ignoring."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Area</th>
+                    <th className="px-3 py-2">Item</th>
+                    <th className="px-3 py-2">Count</th>
+                    <th className="px-3 py-2">Last seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {repeatFailsToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                        No repeat temperature failure pattern found.
+                      </td>
+                    </tr>
+                  ) : (
+                    repeatFailsToRender.map((r) => (
+                      <tr key={r.key} className="border-t border-slate-100">
+                        <td className="px-3 py-2">{r.area || "—"}</td>
+                        <td className="px-3 py-2">{r.item || "—"}</td>
+                        <td className="px-3 py-2">
+                          <Pill tone={r.count >= 3 ? "bad" : "warn"}>{r.count}</Pill>
+                        </td>
+                        <td className="px-3 py-2">{formatDDMMYYYY(r.lastSeenOn) ?? "—"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.repeatFailures.length}
+              visible={showAllRepeatFails}
+              onToggle={() => setShowAllRepeatFails((v) => !v)}
+            />
+          </SectionCard>
+
+          <SectionCard
+            id="repeat-missed-cleaning"
+            title="Repeat missed cleaning"
+            subtitle="Tasks repeatedly skipped across the review window."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Task</th>
+                    <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2">Area</th>
+                    <th className="px-3 py-2">Missed</th>
+                    <th className="px-3 py-2">Last missed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {repeatMissesToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        No repeated missed cleaning tasks found.
+                      </td>
+                    </tr>
+                  ) : (
+                    repeatMissesToRender.map((r) => (
+                      <tr key={r.taskId} className="border-t border-slate-100">
+                        <td className="px-3 py-2">{r.task || "—"}</td>
+                        <td className="px-3 py-2">{r.category ?? "—"}</td>
+                        <td className="px-3 py-2">{r.area ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          <Pill tone={r.missedCount >= 3 ? "bad" : "warn"}>
+                            {r.missedCount}
+                          </Pill>
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatDDMMYYYY(r.lastMissedOn) ?? "—"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.repeatMisses.length}
+              visible={showAllRepeatMisses}
+              onToggle={() => setShowAllRepeatMisses((v) => !v)}
+            />
+          </SectionCard>
+        </div>
+
+        <div className="mt-4">
+          <SectionCard
+            id="training-drift"
+            title="Training drift"
+            subtitle="Expired and near-expiry records that need management action."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Course</th>
+                    <th className="px-3 py-2">Expires</th>
+                    <th className="px-3 py-2">Days</th>
+                    <th className="px-3 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trainingDriftToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        No training drift records returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    trainingDriftToRender.map((r, idx) => {
+                      const staffLabel = r.staffInitials
+                        ? `${String(r.staffInitials).toUpperCase()} · ${r.staffName}`
+                        : r.staffName;
+
+                      return (
+                        <tr
+                          key={`${r.staffName}_${r.type}_${idx}`}
+                          className="border-t border-slate-100"
+                        >
+                          <td className="px-3 py-2">{staffLabel}</td>
+                          <td className="px-3 py-2">{r.type || "—"}</td>
+                          <td className="px-3 py-2">{formatDDMMYYYY(r.expiresOn) ?? "—"}</td>
+                          <td className="px-3 py-2">{formatDays(r.daysLeft)}</td>
+                          <td className="px-3 py-2">
+                            <Pill tone={r.status === "expired" ? "bad" : "warn"}>
+                              {r.status === "expired" ? "Expired" : "Due soon"}
+                            </Pill>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.trainingDrift.length}
+              visible={showAllTrainingDrift}
+              onToggle={() => setShowAllTrainingDrift((v) => !v)}
+            />
+          </SectionCard>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <SectionCard
+            id="cleaning-progress"
+            title="Cleaning category progress"
+            subtitle="Completion split by category across the review period."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2">Done</th>
+                    <th className="px-3 py-2">Total</th>
+                    <th className="px-3 py-2">Completion</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.cleaningCategoryProgress.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                        No category progress returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    data.cleaningCategoryProgress.map((r) => {
+                      const pct = r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
+                      const tone: StatTone =
+                        pct === 100 ? "good" : pct >= 50 ? "warn" : "bad";
+
+                      return (
+                        <tr key={r.category} className="border-t border-slate-100">
+                          <td className="px-3 py-2">{r.category}</td>
+                          <td className="px-3 py-2">{r.done}</td>
+                          <td className="px-3 py-2">{r.total}</td>
+                          <td className="px-3 py-2">
+                            <Pill tone={tone}>{pct}%</Pill>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+          </SectionCard>
+
+          <SectionCard
+            id="hygiene-rating"
+            title="Food hygiene rating history"
+            subtitle="Latest rating and previous recorded visits for this location."
+          >
+            {!data.hygieneLatest ? (
+              <EmptyState>No hygiene rating data returned.</EmptyState>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
+                    Latest rating
+                  </div>
+                  <div className="mt-2 text-4xl font-extrabold text-slate-900">
+                    {data.hygieneLatest.rating != null ? `${data.hygieneLatest.rating}/5` : "—"}
+                  </div>
+                  <div className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
+                    <div>Visit: {formatDDMMYYYY(data.hygieneLatest.visitDate) ?? "—"}</div>
+                    <div>
+                      Certificate expires:{" "}
+                      {formatDDMMYYYY(data.hygieneLatest.certificateExpiresAt) ?? "—"}
+                    </div>
+                    <div>Authority: {data.hygieneLatest.issuingAuthority ?? "—"}</div>
+                    <div>Reference: {data.hygieneLatest.reference ?? "—"}</div>
+                  </div>
+                </div>
+
                 <SimpleTable>
                   <table className="min-w-full text-sm">
                     <thead className="bg-slate-50/80">
                       <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Area</th>
-                        <th className="px-3 py-2">Item</th>
-                        <th className="px-3 py-2">Count</th>
-                        <th className="px-3 py-2">Last seen</th>
+                        <th className="px-3 py-2">Visit</th>
+                        <th className="px-3 py-2">Rating</th>
+                        <th className="px-3 py-2">Authority</th>
+                        <th className="px-3 py-2">Reference</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {repeatFailsToRender.length === 0 ? (
+                      {hygieneHistoryToRender.length === 0 ? (
                         <tr>
                           <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
-                            No repeat temp failures found.
+                            No hygiene history returned.
                           </td>
                         </tr>
                       ) : (
-                        repeatFailsToRender.map((r) => (
-                          <tr key={r.key} className="border-t border-slate-100">
-                            <td className="px-3 py-2">{r.area || "—"}</td>
-                            <td className="px-3 py-2">{r.item || "—"}</td>
+                        hygieneHistoryToRender.map((r) => (
+                          <tr key={r.id} className="border-t border-slate-100">
+                            <td className="px-3 py-2">{formatDDMMYYYY(r.visitDate) ?? "—"}</td>
                             <td className="px-3 py-2">
-                              <Pill tone={r.count >= 3 ? "bad" : "warn"}>{r.count}</Pill>
-                            </td>
-                            <td className="px-3 py-2">{formatDDMMYYYY(r.lastSeenOn) ?? "—"}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.repeatFailures.length}
-                  visible={showAllRepeatFails}
-                  onToggle={() => setShowAllRepeatFails((v) => !v)}
-                />
-              </SectionCard>
-
-              <SectionCard
-                id="repeat-missed-cleaning"
-                title="Repeat missed cleaning"
-                subtitle="Tasks that keep getting skipped. Inspiring."
-                icon="🧼"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Task</th>
-                        <th className="px-3 py-2">Category</th>
-                        <th className="px-3 py-2">Area</th>
-                        <th className="px-3 py-2">Missed</th>
-                        <th className="px-3 py-2">Last missed</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {repeatMissesToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                            No repeated missed cleaning tasks found.
-                          </td>
-                        </tr>
-                      ) : (
-                        repeatMissesToRender.map((r) => (
-                          <tr key={r.taskId} className="border-t border-slate-100">
-                            <td className="px-3 py-2">{r.task || "—"}</td>
-                            <td className="px-3 py-2">{r.category ?? "—"}</td>
-                            <td className="px-3 py-2">{r.area ?? "—"}</td>
-                            <td className="px-3 py-2">
-                              <Pill tone={r.missedCount >= 3 ? "bad" : "warn"}>
-                                {r.missedCount}
+                              <Pill tone={r.rating != null && r.rating >= 4 ? "good" : "warn"}>
+                                {r.rating != null ? `${r.rating}/5` : "—"}
                               </Pill>
                             </td>
-                            <td className="px-3 py-2">
-                              {formatDDMMYYYY(r.lastMissedOn) ?? "—"}
-                            </td>
+                            <td className="px-3 py-2">{r.issuingAuthority ?? "—"}</td>
+                            <td className="px-3 py-2">{r.reference ?? "—"}</td>
                           </tr>
                         ))
                       )}
                     </tbody>
                   </table>
                 </SimpleTable>
-                <SectionFooterToggle
-                  total={data.repeatMisses.length}
-                  visible={showAllRepeatMisses}
-                  onToggle={() => setShowAllRepeatMisses((v) => !v)}
-                />
-              </SectionCard>
-            </div>
 
-            <div className="mt-4">
-              <SectionCard
-                id="training-drift"
-                title="Training drift"
-                subtitle="Expired and near-expiry records across the review period."
-                icon="🎓"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Staff</th>
-                        <th className="px-3 py-2">Type</th>
-                        <th className="px-3 py-2">Expires</th>
-                        <th className="px-3 py-2">Days</th>
-                        <th className="px-3 py-2">Status</th>
+                <SectionFooterToggle
+                  total={data.hygieneHistory.length}
+                  visible={showAllHygieneHistory}
+                  onToggle={() => setShowAllHygieneHistory((v) => !v)}
+                />
+              </div>
+            )}
+          </SectionCard>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <SectionCard
+            id="incidents-logged"
+            title="Incidents logged"
+            subtitle="Manual incident records captured during the same review window."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2">By</th>
+                    <th className="px-3 py-2">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loggedIncidentsToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        No logged incidents returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    loggedIncidentsToRender.map((r) => (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="px-3 py-2">{formatDDMMYYYY(r.happenedOn) ?? "—"}</td>
+                        <td className="px-3 py-2">{formatTimeHM(r.createdAt) ?? "—"}</td>
+                        <td className="px-3 py-2">{r.type ?? "Incident"}</td>
+                        <td className="px-3 py-2">
+                          {r.createdBy ? r.createdBy.toUpperCase() : "—"}
+                        </td>
+                        <td className="px-3 py-2 max-w-[20rem]">
+                          <span className="line-clamp-2">{r.details ?? "—"}</span>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {trainingDriftToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                            No training drift records returned.
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.loggedIncidents.length}
+              visible={showAllLoggedIncidents}
+              onToggle={() => setShowAllLoggedIncidents((v) => !v)}
+            />
+          </SectionCard>
+
+          <SectionCard
+            id="failure-corrective-actions"
+            title="Failures and corrective actions"
+            subtitle="Temperature failures and what was done about them."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">By</th>
+                    <th className="px-3 py-2">Details</th>
+                    <th className="px-3 py-2">Corrective action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {incidentsDetailedToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        No failure / corrective data returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    incidentsDetailedToRender.map((r) => (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="px-3 py-2">{formatDDMMYYYY(r.happenedOn) ?? "—"}</td>
+                        <td className="px-3 py-2">{formatTimeHM(r.createdAt) ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          {r.createdBy ? r.createdBy.toUpperCase() : "—"}
+                        </td>
+                        <td className="px-3 py-2 max-w-[16rem]">
+                          <span className="line-clamp-2">{r.details ?? "—"}</span>
+                        </td>
+                        <td className="px-3 py-2 max-w-[16rem]">
+                          <span className="line-clamp-2">{r.correctiveAction ?? "—"}</span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.incidentsDetailed.length}
+              visible={showAllIncidentsDetailed}
+              onToggle={() => setShowAllIncidentsDetailed((v) => !v)}
+            />
+          </SectionCard>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <SectionCard
+            id="cleaning-runs"
+            title="Cleaning runs"
+            subtitle="Completed cleaning activity in the review window."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2">Task</th>
+                    <th className="px-3 py-2">By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cleaningRunsToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        No cleaning runs returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    cleaningRunsToRender.map((r) => (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="px-3 py-2">{formatDDMMYYYY(r.runOn) ?? "—"}</td>
+                        <td className="px-3 py-2">{formatTimeHM(r.doneAt) ?? "—"}</td>
+                        <td className="px-3 py-2">{r.category}</td>
+                        <td className="px-3 py-2 max-w-[16rem]">
+                          <span className="line-clamp-2">{r.task}</span>
+                        </td>
+                        <td className="px-3 py-2">{r.doneBy ?? "—"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.cleaningRuns.length}
+              visible={showAllCleaningRuns}
+              onToggle={() => setShowAllCleaningRuns((v) => !v)}
+            />
+          </SectionCard>
+
+          <SectionCard
+            id="day-signoffs"
+            title="Day sign-offs"
+            subtitle="Recorded sign-offs and any notes attached to them."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Signed by</th>
+                    <th className="px-3 py-2">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {signoffsToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                        No sign-offs returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    signoffsToRender.map((r) => (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="px-3 py-2">{formatDDMMYYYY(r.signoffOn) ?? "—"}</td>
+                        <td className="px-3 py-2">{formatTimeHM(r.createdAt) ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          {r.signedBy ? r.signedBy.toUpperCase() : "—"}
+                        </td>
+                        <td className="px-3 py-2 max-w-[20rem]">
+                          <span className="line-clamp-2">{r.notes ?? "—"}</span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.signoffs.length}
+              visible={showAllSignoffs}
+              onToggle={() => setShowAllSignoffs((v) => !v)}
+            />
+          </SectionCard>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <SectionCard
+            id="manager-qc"
+            title="Manager QC reviews"
+            subtitle="Quality control records logged during the period."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Manager</th>
+                    <th className="px-3 py-2">Score</th>
+                    <th className="px-3 py-2">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {staffReviewsToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        No manager QC reviews returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    staffReviewsToRender.map((r) => {
+                      const staffLabel = r.staffInitials
+                        ? `${r.staffInitials.toUpperCase()} · ${r.staffName}`
+                        : r.staffName;
+
+                      const tone: StatTone =
+                        r.rating >= 4 ? "good" : r.rating === 3 ? "warn" : "bad";
+
+                      return (
+                        <tr key={r.id} className="border-t border-slate-100">
+                          <td className="px-3 py-2">{formatDDMMYYYY(r.reviewedOn) ?? "—"}</td>
+                          <td className="px-3 py-2">{staffLabel}</td>
+                          <td className="px-3 py-2">{r.reviewer ?? "—"}</td>
+                          <td className="px-3 py-2">
+                            <Pill tone={tone}>{r.rating}/5</Pill>
+                          </td>
+                          <td className="px-3 py-2 max-w-[18rem]">
+                            <span className="line-clamp-2">{r.notes ?? "—"}</span>
                           </td>
                         </tr>
-                      ) : (
-                        trainingDriftToRender.map((r, idx) => {
-                          const staffLabel = r.staffInitials
-                            ? `${String(r.staffInitials).toUpperCase()} · ${r.staffName}`
-                            : r.staffName;
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.staffReviews.length}
+              visible={showAllStaffReviews}
+              onToggle={() => setShowAllStaffReviews((v) => !v)}
+            />
+          </SectionCard>
 
-                          return (
-                            <tr
-                              key={`${r.staffName}_${r.type}_${idx}`}
-                              className="border-t border-slate-100"
-                            >
-                              <td className="px-3 py-2">{staffLabel}</td>
-                              <td className="px-3 py-2">{r.type || "—"}</td>
-                              <td className="px-3 py-2">
-                                {formatDDMMYYYY(r.expiresOn) ?? "—"}
-                              </td>
-                              <td className="px-3 py-2">{formatDays(r.daysLeft)}</td>
-                              <td className="px-3 py-2">
-                                <Pill tone={r.status === "expired" ? "bad" : "warn"}>
-                                  {r.status === "expired" ? "Expired" : "Due soon"}
-                                </Pill>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.trainingDrift.length}
-                  visible={showAllTrainingDrift}
-                  onToggle={() => setShowAllTrainingDrift((v) => !v)}
-                />
-              </SectionCard>
-            </div>
+          <SectionCard
+            id="staff-absences"
+            title="Staff absences"
+            subtitle="Approved and overlapping absence records in the review window."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2">Dates</th>
+                    <th className="px-3 py-2">Location</th>
+                    <th className="px-3 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {staffAbsencesToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        No staff absences returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    staffAbsencesToRender.map((r) => {
+                      const staffLabel = r.teamMemberInitials
+                        ? `${r.teamMemberInitials.toUpperCase()} · ${r.teamMemberName}`
+                        : r.teamMemberName;
 
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <SectionCard
-                id="cleaning-progress"
-                title="Cleaning category progress"
-                subtitle="Completion split by category across the review period."
-                icon="📊"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Category</th>
-                        <th className="px-3 py-2">Done</th>
-                        <th className="px-3 py-2">Total</th>
-                        <th className="px-3 py-2">Completion</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.cleaningCategoryProgress.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
-                            No category progress returned.
+                      const tone: StatTone =
+                        r.status === "approved"
+                          ? "good"
+                          : r.status === "pending"
+                          ? "warn"
+                          : r.status === "rejected"
+                          ? "bad"
+                          : "neutral";
+
+                      return (
+                        <tr key={r.id} className="border-t border-slate-100">
+                          <td className="px-3 py-2">{staffLabel}</td>
+                          <td className="px-3 py-2">{titleCase(r.absenceType)}</td>
+                          <td className="px-3 py-2">{prettyAbsenceRange(r)}</td>
+                          <td className="px-3 py-2">{r.locationName ?? "All / org-wide"}</td>
+                          <td className="px-3 py-2">
+                            <Pill tone={tone}>{titleCase(r.status)}</Pill>
                           </td>
                         </tr>
-                      ) : (
-                        data.cleaningCategoryProgress.map((r) => {
-                          const pct = r.total > 0 ? Math.round((r.done / r.total) * 100) : 0;
-                          const tone: StatTone =
-                            pct === 100 ? "good" : pct >= 50 ? "warn" : "bad";
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.staffAbsences.length}
+              visible={showAllStaffAbsences}
+              onToggle={() => setShowAllStaffAbsences((v) => !v)}
+            />
+          </SectionCard>
+        </div>
 
-                          return (
-                            <tr key={r.category} className="border-t border-slate-100">
-                              <td className="px-3 py-2">{r.category}</td>
-                              <td className="px-3 py-2">{r.done}</td>
-                              <td className="px-3 py-2">{r.total}</td>
-                              <td className="px-3 py-2">
-                                <Pill tone={tone}>{pct}%</Pill>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-              </SectionCard>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <SectionCard
+            id="training-records"
+            title="Training and certificates"
+            subtitle="Formal training records carried into the review."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Course</th>
+                    <th className="px-3 py-2">Awarded</th>
+                    <th className="px-3 py-2">Expires</th>
+                    <th className="px-3 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {educationToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        No training records returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    educationToRender.map((r) => {
+                      const staffLabel = r.staffInitials
+                        ? `${r.staffInitials.toUpperCase()} · ${r.staffName}`
+                        : r.staffName;
 
-              <SectionCard
-                id="hygiene-rating"
-                title="Hygiene rating"
-                subtitle="Latest recorded food hygiene rating for this location."
-                icon="⭐"
-              >
-                {!data.hygieneLatest ? (
-                  <EmptyState>No hygiene rating data returned.</EmptyState>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                        Latest
-                      </div>
-                      <div className="mt-2 text-4xl font-extrabold text-slate-900">
-                        {data.hygieneLatest.rating != null ? `${data.hygieneLatest.rating}/5` : "—"}
-                      </div>
-                      <div className="mt-2 space-y-1 text-sm text-slate-700">
-                        <div>Visit: {formatDDMMYYYY(data.hygieneLatest.visitDate) ?? "—"}</div>
-                        <div>
-                          Certificate expires:{" "}
-                          {formatDDMMYYYY(data.hygieneLatest.certificateExpiresAt) ?? "—"}
-                        </div>
-                        <div>Authority: {data.hygieneLatest.issuingAuthority ?? "—"}</div>
-                        <div>Reference: {data.hygieneLatest.reference ?? "—"}</div>
-                      </div>
-                    </div>
+                      const tone: StatTone =
+                        r.status === "expired"
+                          ? "bad"
+                          : r.status === "valid"
+                          ? "good"
+                          : "neutral";
 
-                    <SimpleTable>
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-slate-50/80">
-                          <tr className="text-left text-slate-500">
-                            <th className="px-3 py-2">Visit</th>
-                            <th className="px-3 py-2">Rating</th>
-                            <th className="px-3 py-2">Authority</th>
-                            <th className="px-3 py-2">Reference</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {hygieneHistoryToRender.length === 0 ? (
-                            <tr>
-                              <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
-                                No hygiene history returned.
-                              </td>
-                            </tr>
-                          ) : (
-                            hygieneHistoryToRender.map((r) => (
-                              <tr key={r.id} className="border-t border-slate-100">
-                                <td className="px-3 py-2">{formatDDMMYYYY(r.visitDate) ?? "—"}</td>
-                                <td className="px-3 py-2">
-                                  <Pill
-                                    tone={r.rating != null && r.rating >= 4 ? "good" : "warn"}
-                                  >
-                                    {r.rating != null ? `${r.rating}/5` : "—"}
-                                  </Pill>
-                                </td>
-                                <td className="px-3 py-2">{r.issuingAuthority ?? "—"}</td>
-                                <td className="px-3 py-2">{r.reference ?? "—"}</td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </SimpleTable>
+                      const statusText =
+                        r.status === "no-expiry"
+                          ? "No expiry"
+                          : r.status === "expired"
+                          ? "Expired"
+                          : "Valid";
 
-                    <SectionFooterToggle
-                      total={data.hygieneHistory.length}
-                      visible={showAllHygieneHistory}
-                      onToggle={() => setShowAllHygieneHistory((v) => !v)}
-                    />
-                  </div>
-                )}
-              </SectionCard>
-            </div>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <SectionCard
-                id="incidents-logged"
-                title="Incidents (logged)"
-                subtitle="Manual incident log for the same review period."
-                icon="📒"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Date</th>
-                        <th className="px-3 py-2">Time</th>
-                        <th className="px-3 py-2">Type</th>
-                        <th className="px-3 py-2">By</th>
-                        <th className="px-3 py-2">Details</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {loggedIncidentsToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                            No logged incidents returned.
+                      return (
+                        <tr key={r.id} className="border-t border-slate-100">
+                          <td className="px-3 py-2">{staffLabel}</td>
+                          <td className="px-3 py-2">{r.type ?? "—"}</td>
+                          <td className="px-3 py-2">{formatDDMMYYYY(r.awardedOn) ?? "—"}</td>
+                          <td className="px-3 py-2">{formatDDMMYYYY(r.expiresOn) ?? "—"}</td>
+                          <td className="px-3 py-2">
+                            <Pill tone={tone}>
+                              {statusText}
+                              {r.daysUntil != null ? ` (${r.daysUntil}d)` : ""}
+                            </Pill>
                           </td>
                         </tr>
-                      ) : (
-                        loggedIncidentsToRender.map((r) => (
-                          <tr key={r.id} className="border-t border-slate-100">
-                            <td className="px-3 py-2">
-                              {formatDDMMYYYY(r.happenedOn) ?? "—"}
-                            </td>
-                            <td className="px-3 py-2">{formatTimeHM(r.createdAt) ?? "—"}</td>
-                            <td className="px-3 py-2">{r.type ?? "Incident"}</td>
-                            <td className="px-3 py-2">
-                              {r.createdBy ? r.createdBy.toUpperCase() : "—"}
-                            </td>
-                            <td className="px-3 py-2 max-w-[20rem]">
-                              <span className="line-clamp-2">{r.details ?? "—"}</span>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.loggedIncidents.length}
-                  visible={showAllLoggedIncidents}
-                  onToggle={() => setShowAllLoggedIncidents((v) => !v)}
-                />
-              </SectionCard>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.education.length}
+              visible={showAllEducation}
+              onToggle={() => setShowAllEducation((v) => !v)}
+            />
+          </SectionCard>
 
-              <SectionCard
-                id="failure-corrective-actions"
-                title="Failures & corrective actions"
-                subtitle="Temp fails with corrective actions from the same summary window."
-                icon="🚨"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Date</th>
-                        <th className="px-3 py-2">Time</th>
-                        <th className="px-3 py-2">By</th>
-                        <th className="px-3 py-2">Details</th>
-                        <th className="px-3 py-2">Corrective</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {incidentsDetailedToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                            No failure / corrective data returned.
-                          </td>
-                        </tr>
-                      ) : (
-                        incidentsDetailedToRender.map((r) => (
-                          <tr key={r.id} className="border-t border-slate-100">
-                            <td className="px-3 py-2">
-                              {formatDDMMYYYY(r.happenedOn) ?? "—"}
-                            </td>
-                            <td className="px-3 py-2">{formatTimeHM(r.createdAt) ?? "—"}</td>
-                            <td className="px-3 py-2">
-                              {r.createdBy ? r.createdBy.toUpperCase() : "—"}
-                            </td>
-                            <td className="px-3 py-2 max-w-[16rem]">
-                              <span className="line-clamp-2">{r.details ?? "—"}</span>
-                            </td>
-                            <td className="px-3 py-2 max-w-[16rem]">
-                              <span className="line-clamp-2">{r.correctiveAction ?? "—"}</span>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.incidentsDetailed.length}
-                  visible={showAllIncidentsDetailed}
-                  onToggle={() => setShowAllIncidentsDetailed((v) => !v)}
-                />
-              </SectionCard>
-            </div>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <SectionCard
-                id="cleaning-runs"
-                title="Cleaning runs"
-                subtitle="Completed cleaning tasks logged in the review window."
-                icon="🧽"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Date</th>
-                        <th className="px-3 py-2">Time</th>
-                        <th className="px-3 py-2">Category</th>
-                        <th className="px-3 py-2">Task</th>
-                        <th className="px-3 py-2">By</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cleaningRunsToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                            No cleaning runs returned.
-                          </td>
-                        </tr>
-                      ) : (
-                        cleaningRunsToRender.map((r) => (
-                          <tr key={r.id} className="border-t border-slate-100">
-                            <td className="px-3 py-2">{formatDDMMYYYY(r.runOn) ?? "—"}</td>
-                            <td className="px-3 py-2">{formatTimeHM(r.doneAt) ?? "—"}</td>
-                            <td className="px-3 py-2">{r.category}</td>
-                            <td className="px-3 py-2 max-w-[16rem]">
-                              <span className="line-clamp-2">{r.task}</span>
-                            </td>
-                            <td className="px-3 py-2">{r.doneBy ?? "—"}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.cleaningRuns.length}
-                  visible={showAllCleaningRuns}
-                  onToggle={() => setShowAllCleaningRuns((v) => !v)}
-                />
-              </SectionCard>
-
-              <SectionCard
-                id="day-signoffs"
-                title="Day sign-offs"
-                subtitle="Recorded sign-offs and notes for the same review window."
-                icon="📝"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Date</th>
-                        <th className="px-3 py-2">Time</th>
-                        <th className="px-3 py-2">Signed by</th>
-                        <th className="px-3 py-2">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {signoffsToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
-                            No sign-offs returned.
-                          </td>
-                        </tr>
-                      ) : (
-                        signoffsToRender.map((r) => (
-                          <tr key={r.id} className="border-t border-slate-100">
-                            <td className="px-3 py-2">
-                              {formatDDMMYYYY(r.signoffOn) ?? "—"}
-                            </td>
-                            <td className="px-3 py-2">{formatTimeHM(r.createdAt) ?? "—"}</td>
-                            <td className="px-3 py-2">
-                              {r.signedBy ? r.signedBy.toUpperCase() : "—"}
-                            </td>
-                            <td className="px-3 py-2 max-w-[20rem]">
-                              <span className="line-clamp-2">{r.notes ?? "—"}</span>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.signoffs.length}
-                  visible={showAllSignoffs}
-                  onToggle={() => setShowAllSignoffs((v) => !v)}
-                />
-              </SectionCard>
-            </div>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <SectionCard
-                id="manager-qc"
-                title="Manager QC reviews"
-                subtitle="Staff QC records captured during the review window."
-                icon="👀"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Date</th>
-                        <th className="px-3 py-2">Staff</th>
-                        <th className="px-3 py-2">Manager</th>
-                        <th className="px-3 py-2">Score</th>
-                        <th className="px-3 py-2">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {staffReviewsToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                            No manager QC reviews returned.
-                          </td>
-                        </tr>
-                      ) : (
-                        staffReviewsToRender.map((r) => {
-                          const staffLabel = r.staffInitials
-                            ? `${r.staffInitials.toUpperCase()} · ${r.staffName}`
-                            : r.staffName;
-
-                          const tone: StatTone =
-                            r.rating >= 4 ? "good" : r.rating === 3 ? "warn" : "bad";
-
-                          return (
-                            <tr key={r.id} className="border-t border-slate-100">
-                              <td className="px-3 py-2">
-                                {formatDDMMYYYY(r.reviewedOn) ?? "—"}
-                              </td>
-                              <td className="px-3 py-2">{staffLabel}</td>
-                              <td className="px-3 py-2">{r.reviewer ?? "—"}</td>
-                              <td className="px-3 py-2">
-                                <Pill tone={tone}>{r.rating}/5</Pill>
-                              </td>
-                              <td className="px-3 py-2 max-w-[18rem]">
-                                <span className="line-clamp-2">{r.notes ?? "—"}</span>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.staffReviews.length}
-                  visible={showAllStaffReviews}
-                  onToggle={() => setShowAllStaffReviews((v) => !v)}
-                />
-              </SectionCard>
-
-              <SectionCard
-                id="staff-absences"
-                title="Staff absences"
-                subtitle="Approved and overlapping absence records in the review window."
-                icon="🧑‍🍳"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Staff</th>
-                        <th className="px-3 py-2">Type</th>
-                        <th className="px-3 py-2">Dates</th>
-                        <th className="px-3 py-2">Location</th>
-                        <th className="px-3 py-2">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {staffAbsencesToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                            No staff absences returned.
-                          </td>
-                        </tr>
-                      ) : (
-                        staffAbsencesToRender.map((r) => {
-                          const staffLabel = r.teamMemberInitials
-                            ? `${r.teamMemberInitials.toUpperCase()} · ${r.teamMemberName}`
-                            : r.teamMemberName;
-
-                          const tone: StatTone =
-                            r.status === "approved"
-                              ? "good"
-                              : r.status === "pending"
-                              ? "warn"
-                              : r.status === "rejected"
-                              ? "bad"
-                              : "neutral";
-
-                          return (
-                            <tr key={r.id} className="border-t border-slate-100">
-                              <td className="px-3 py-2">{staffLabel}</td>
-                              <td className="px-3 py-2">{titleCase(r.absenceType)}</td>
-                              <td className="px-3 py-2">{prettyAbsenceRange(r)}</td>
-                              <td className="px-3 py-2">{r.locationName ?? "All / org-wide"}</td>
-                              <td className="px-3 py-2">
-                                <Pill tone={tone}>{titleCase(r.status)}</Pill>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.staffAbsences.length}
-                  visible={showAllStaffAbsences}
-                  onToggle={() => setShowAllStaffAbsences((v) => !v)}
-                />
-              </SectionCard>
-            </div>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <SectionCard
-                id="training-records"
-                title="Training & certificates"
-                subtitle="Formal training records carried into the 4-week review."
-                icon="📚"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Staff</th>
-                        <th className="px-3 py-2">Course</th>
-                        <th className="px-3 py-2">Awarded</th>
-                        <th className="px-3 py-2">Expires</th>
-                        <th className="px-3 py-2">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {educationToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                            No training records returned.
-                          </td>
-                        </tr>
-                      ) : (
-                        educationToRender.map((r) => {
-                          const staffLabel = r.staffInitials
-                            ? `${r.staffInitials.toUpperCase()} · ${r.staffName}`
-                            : r.staffName;
-
-                          const tone: StatTone =
-                            r.status === "expired"
-                              ? "bad"
-                              : r.status === "valid"
-                              ? "good"
-                              : "neutral";
-
-                          const statusText =
-                            r.status === "no-expiry"
-                              ? "No expiry"
-                              : r.status === "expired"
-                              ? "Expired"
-                              : "Valid";
-
-                          return (
-                            <tr key={r.id} className="border-t border-slate-100">
-                              <td className="px-3 py-2">{staffLabel}</td>
-                              <td className="px-3 py-2">{r.type ?? "—"}</td>
-                              <td className="px-3 py-2">
-                                {formatDDMMYYYY(r.awardedOn) ?? "—"}
-                              </td>
-                              <td className="px-3 py-2">
-                                {formatDDMMYYYY(r.expiresOn) ?? "—"}
-                              </td>
-                              <td className="px-3 py-2">
-                                <Pill tone={tone}>
-                                  {statusText}
-                                  {r.daysUntil != null ? ` (${r.daysUntil}d)` : ""}
-                                </Pill>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.education.length}
-                  visible={showAllEducation}
-                  onToggle={() => setShowAllEducation((v) => !v)}
-                />
-              </SectionCard>
-
-              <SectionCard
-                id="training-areas"
-                title="Training areas"
-                subtitle="SFBB-style coverage view, because vague training claims are not a system."
-                icon="🧩"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-xs">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Team member</th>
+          <SectionCard
+            id="training-areas"
+            title="Training areas"
+            subtitle="Coverage view by team member and area."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Team member</th>
+                    {allTrainingAreas.length === 0 ? (
+                      <th className="px-3 py-2">Areas</th>
+                    ) : (
+                      allTrainingAreas.map((area) => (
+                        <th key={area} className="px-2 py-2 text-center">
+                          {area}
+                        </th>
+                      ))
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {trainingAreasToRender.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={Math.max(2, 1 + allTrainingAreas.length)}
+                        className="px-3 py-6 text-center text-slate-500"
+                      >
+                        No training area data returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    trainingAreasToRender.map((row) => (
+                      <tr key={row.member_id} className="border-t border-slate-100">
+                        <td className="px-3 py-2 text-sm font-medium">{row.name}</td>
                         {allTrainingAreas.length === 0 ? (
-                          <th className="px-3 py-2">Areas</th>
+                          <td className="px-3 py-2 text-slate-500">—</td>
                         ) : (
-                          allTrainingAreas.map((area) => (
-                            <th key={area} className="px-2 py-2 text-center">
-                              {area}
-                            </th>
-                          ))
+                          allTrainingAreas.map((area) => {
+                            const meta = row.byArea[area];
+                            if (!meta?.selected) {
+                              return (
+                                <td key={area} className="px-2 py-2 text-center text-slate-400">
+                                  —
+                                </td>
+                              );
+                            }
+                            return (
+                              <td key={area} className="px-2 py-2 text-center">
+                                <div className="inline-flex flex-col items-center gap-1">
+                                  <span className="text-base leading-none">✓</span>
+                                  {meta.awarded_on ? (
+                                    <span className="text-[10px] text-slate-500">
+                                      {formatDDMMYYYY(meta.awarded_on)}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </td>
+                            );
+                          })
                         )}
                       </tr>
-                    </thead>
-                    <tbody>
-                      {trainingAreasToRender.length === 0 ? (
-                        <tr>
-                          <td
-                            colSpan={Math.max(2, 1 + allTrainingAreas.length)}
-                            className="px-3 py-6 text-center text-slate-500"
-                          >
-                            No training area data returned.
-                          </td>
-                        </tr>
-                      ) : (
-                        trainingAreasToRender.map((row) => (
-                          <tr key={row.member_id} className="border-t border-slate-100">
-                            <td className="px-3 py-2 text-sm font-medium">{row.name}</td>
-                            {allTrainingAreas.length === 0 ? (
-                              <td className="px-3 py-2 text-slate-500">—</td>
-                            ) : (
-                              allTrainingAreas.map((area) => {
-                                const meta = row.byArea[area];
-                                if (!meta?.selected) {
-                                  return (
-                                    <td key={area} className="px-2 py-2 text-center text-slate-400">
-                                      —
-                                    </td>
-                                  );
-                                }
-                                return (
-                                  <td key={area} className="px-2 py-2 text-center">
-                                    <div className="inline-flex flex-col items-center gap-1">
-                                      <span className="text-base leading-none">✓</span>
-                                      {meta.awarded_on ? (
-                                        <span className="text-[10px] text-slate-500">
-                                          {formatDDMMYYYY(meta.awarded_on)}
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                  </td>
-                                );
-                              })
-                            )}
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={trainingAreaMatrix.length}
-                  visible={showAllTrainingAreas}
-                  onToggle={() => setShowAllTrainingAreas((v) => !v)}
-                  label="team members"
-                />
-              </SectionCard>
-            </div>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={trainingAreaMatrix.length}
+              visible={showAllTrainingAreas}
+              onToggle={() => setShowAllTrainingAreas((v) => !v)}
+              label="team members"
+            />
+          </SectionCard>
+        </div>
 
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <SectionCard
-                id="allergen-reviews"
-                title="Allergen reviews"
-                subtitle="Historic allergen review dates and next-due positions."
-                icon="🥜"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Last review</th>
-                        <th className="px-3 py-2">Next due</th>
-                        <th className="px-3 py-2">Days</th>
-                        <th className="px-3 py-2">Reviewer</th>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <SectionCard
+            id="allergen-reviews"
+            title="Allergen reviews"
+            subtitle="Historic allergen review dates and next-due positions."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Last review</th>
+                    <th className="px-3 py-2">Next due</th>
+                    <th className="px-3 py-2">Days</th>
+                    <th className="px-3 py-2">Reviewer</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allergenReviewsToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                        No allergen review history returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    allergenReviewsToRender.map((r) => {
+                      const tone: StatTone =
+                        r.daysUntil == null
+                          ? "neutral"
+                          : r.daysUntil < 0
+                          ? "bad"
+                          : r.daysUntil <= 30
+                          ? "warn"
+                          : "good";
+
+                      return (
+                        <tr key={r.id} className="border-t border-slate-100">
+                          <td className="px-3 py-2">{formatDDMMYYYY(r.reviewedOn) ?? "—"}</td>
+                          <td className="px-3 py-2">{formatDDMMYYYY(r.nextDue) ?? "—"}</td>
+                          <td className="px-3 py-2">
+                            <Pill tone={tone}>
+                              {r.daysUntil == null ? "—" : `${r.daysUntil}d`}
+                            </Pill>
+                          </td>
+                          <td className="px-3 py-2">{r.reviewer ?? "—"}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.allergenReviews.length}
+              visible={showAllAllergenReviews}
+              onToggle={() => setShowAllAllergenReviews((v) => !v)}
+            />
+          </SectionCard>
+
+          <SectionCard
+            id="allergen-edits"
+            title="Allergen edits"
+            subtitle="Change history for allergen information in the same period."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Item</th>
+                    <th className="px-3 py-2">Action</th>
+                    <th className="px-3 py-2">By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allergenChangesToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        No allergen edit log returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    allergenChangesToRender.map((r) => (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="px-3 py-2">{formatDDMMYYYY(r.createdAt) ?? "—"}</td>
+                        <td className="px-3 py-2">{formatTimeHM(r.createdAt) ?? "—"}</td>
+                        <td className="px-3 py-2">{r.itemName ?? "—"}</td>
+                        <td className="px-3 py-2">{titleCase(r.action)}</td>
+                        <td className="px-3 py-2">
+                          {r.staffInitials ? r.staffInitials.toUpperCase() : "—"}
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {allergenReviewsToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
-                            No allergen review history returned.
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.allergenChanges.length}
+              visible={showAllAllergenChanges}
+              onToggle={() => setShowAllAllergenChanges((v) => !v)}
+            />
+          </SectionCard>
+        </div>
+
+        <div className="mt-4">
+          <SectionCard
+            id="calibration-checks"
+            title="Calibration checks"
+            subtitle="Probe, thermometer and cold storage calibration evidence."
+          >
+            <SimpleTable>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50/80">
+                  <tr className="text-left text-slate-500">
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Staff</th>
+                    <th className="px-3 py-2">Cold storage</th>
+                    <th className="px-3 py-2">Probes</th>
+                    <th className="px-3 py-2">Thermometers</th>
+                    <th className="px-3 py-2">Complete</th>
+                    <th className="px-3 py-2">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {calibrationRowsToRender.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-3 py-6 text-center text-slate-500">
+                        No calibration records returned.
+                      </td>
+                    </tr>
+                  ) : (
+                    calibrationRowsToRender.map((r) => {
+                      const pill = (v: boolean) => (
+                        <Pill tone={v ? "good" : "neutral"}>{v ? "Yes" : "No"}</Pill>
+                      );
+
+                      return (
+                        <tr key={r.id} className="border-t border-slate-100">
+                          <td className="px-3 py-2">{formatDDMMYYYY(r.checkedOn) ?? "—"}</td>
+                          <td className="px-3 py-2">
+                            {r.staffInitials ? r.staffInitials.toUpperCase() : "—"}
+                          </td>
+                          <td className="px-3 py-2">{pill(!!r.coldStorageChecked)}</td>
+                          <td className="px-3 py-2">{pill(!!r.probesChecked)}</td>
+                          <td className="px-3 py-2">{pill(!!r.thermometersChecked)}</td>
+                          <td className="px-3 py-2">
+                            <Pill tone={r.allEquipmentCalibrated ? "good" : "warn"}>
+                              {r.allEquipmentCalibrated ? "Yes" : "No"}
+                            </Pill>
+                          </td>
+                          <td className="px-3 py-2 max-w-[18rem]">
+                            <span className="line-clamp-2">{r.notes ?? "—"}</span>
                           </td>
                         </tr>
-                      ) : (
-                        allergenReviewsToRender.map((r) => {
-                          const tone: StatTone =
-                            r.daysUntil == null
-                              ? "neutral"
-                              : r.daysUntil < 0
-                              ? "bad"
-                              : r.daysUntil <= 30
-                              ? "warn"
-                              : "good";
-
-                          return (
-                            <tr key={r.id} className="border-t border-slate-100">
-                              <td className="px-3 py-2">
-                                {formatDDMMYYYY(r.reviewedOn) ?? "—"}
-                              </td>
-                              <td className="px-3 py-2">
-                                {formatDDMMYYYY(r.nextDue) ?? "—"}
-                              </td>
-                              <td className="px-3 py-2">
-                                <Pill tone={tone}>
-                                  {r.daysUntil == null ? "—" : `${r.daysUntil}d`}
-                                </Pill>
-                              </td>
-                              <td className="px-3 py-2">{r.reviewer ?? "—"}</td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.allergenReviews.length}
-                  visible={showAllAllergenReviews}
-                  onToggle={() => setShowAllAllergenReviews((v) => !v)}
-                />
-              </SectionCard>
-
-              <SectionCard
-                id="allergen-edits"
-                title="Allergen edits"
-                subtitle="Change history for allergen information in the same period."
-                icon="✏️"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Date</th>
-                        <th className="px-3 py-2">Time</th>
-                        <th className="px-3 py-2">Item</th>
-                        <th className="px-3 py-2">Action</th>
-                        <th className="px-3 py-2">By</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {allergenChangesToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                            No allergen edit log returned.
-                          </td>
-                        </tr>
-                      ) : (
-                        allergenChangesToRender.map((r) => (
-                          <tr key={r.id} className="border-t border-slate-100">
-                            <td className="px-3 py-2">
-                              {formatDDMMYYYY(r.createdAt) ?? "—"}
-                            </td>
-                            <td className="px-3 py-2">{formatTimeHM(r.createdAt) ?? "—"}</td>
-                            <td className="px-3 py-2">{r.itemName ?? "—"}</td>
-                            <td className="px-3 py-2">{titleCase(r.action)}</td>
-                            <td className="px-3 py-2">
-                              {r.staffInitials ? r.staffInitials.toUpperCase() : "—"}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.allergenChanges.length}
-                  visible={showAllAllergenChanges}
-                  onToggle={() => setShowAllAllergenChanges((v) => !v)}
-                />
-              </SectionCard>
-            </div>
-
-            <div className="mt-4">
-              <SectionCard
-                id="calibration-checks"
-                title="Calibration checks"
-                subtitle="Probe, thermometer and cold storage calibration evidence."
-                icon="📏"
-              >
-                <SimpleTable>
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50/80">
-                      <tr className="text-left text-slate-500">
-                        <th className="px-3 py-2">Date</th>
-                        <th className="px-3 py-2">Staff</th>
-                        <th className="px-3 py-2">Cold storage</th>
-                        <th className="px-3 py-2">Probes</th>
-                        <th className="px-3 py-2">Thermometers</th>
-                        <th className="px-3 py-2">Complete</th>
-                        <th className="px-3 py-2">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {calibrationRowsToRender.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="px-3 py-6 text-center text-slate-500">
-                            No calibration records returned.
-                          </td>
-                        </tr>
-                      ) : (
-                        calibrationRowsToRender.map((r) => {
-                          const pill = (v: boolean) => (
-                            <Pill tone={v ? "good" : "neutral"}>{v ? "Yes" : "No"}</Pill>
-                          );
-
-                          return (
-                            <tr key={r.id} className="border-t border-slate-100">
-                              <td className="px-3 py-2">
-                                {formatDDMMYYYY(r.checkedOn) ?? "—"}
-                              </td>
-                              <td className="px-3 py-2">
-                                {r.staffInitials ? r.staffInitials.toUpperCase() : "—"}
-                              </td>
-                              <td className="px-3 py-2">{pill(!!r.coldStorageChecked)}</td>
-                              <td className="px-3 py-2">{pill(!!r.probesChecked)}</td>
-                              <td className="px-3 py-2">{pill(!!r.thermometersChecked)}</td>
-                              <td className="px-3 py-2">
-                                <Pill tone={r.allEquipmentCalibrated ? "good" : "warn"}>
-                                  {r.allEquipmentCalibrated ? "Yes" : "No"}
-                                </Pill>
-                              </td>
-                              <td className="px-3 py-2 max-w-[18rem]">
-                                <span className="line-clamp-2">{r.notes ?? "—"}</span>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </SimpleTable>
-                <SectionFooterToggle
-                  total={data.calibrationRows.length}
-                  visible={showAllCalibrationRows}
-                  onToggle={() => setShowAllCalibrationRows((v) => !v)}
-                />
-              </SectionCard>
-            </div>
-
-            <div className="h-20 shrink-0" />
-          </div>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </SimpleTable>
+            <SectionFooterToggle
+              total={data.calibrationRows.length}
+              visible={showAllCalibrationRows}
+              onToggle={() => setShowAllCalibrationRows((v) => !v)}
+            />
+          </SectionCard>
         </div>
       </div>
-    </div>
+
+      <style jsx global>{`
+        @media print {
+          @page {
+            size: A4;
+            margin: 12mm;
+          }
+
+          html,
+          body {
+            background: white !important;
+          }
+
+          a {
+            text-decoration: none !important;
+            color: inherit !important;
+          }
+
+          button {
+            display: none !important;
+          }
+
+          .shadow-sm,
+          .shadow-md,
+          .shadow-lg,
+          .shadow-xl,
+          .shadow-2xl {
+            box-shadow: none !important;
+          }
+
+          .print\\:border-0 {
+            border: 0 !important;
+          }
+
+          .print\\:shadow-none {
+            box-shadow: none !important;
+          }
+
+          section,
+          table,
+          tr,
+          td,
+          th {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+        }
+      `}</style>
+    </main>
   );
 }

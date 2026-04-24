@@ -1971,16 +1971,21 @@ export default function ReportsPage() {
   const fourWeekTo = to;
   const fourWeekFrom = addDaysISO(fourWeekTo, -27);
 
-  function downloadFourWeekPDF() {
-    const params = new URLSearchParams();
-    params.set("to", fourWeekTo);
+function downloadFourWeekPDF() {
+  const params = new URLSearchParams();
+  params.set("to", fourWeekTo);
+  params.set("download", "1");
 
-    if (locationFilter !== "all") {
-      params.set("locationId", String(locationFilter));
-    }
-
-    window.open(`/reports/four-week?${params.toString()}`, "_blank", "noopener,noreferrer");
+  if (locationFilter !== "all") {
+    params.set("locationId", String(locationFilter));
   }
+
+  window.open(
+    `/api/reports/four-week/pdf?${params.toString()}`,
+    "_blank",
+    "noopener,noreferrer"
+  );
+}
 
   const selectedLatestRating =
     locationFilter !== "all"

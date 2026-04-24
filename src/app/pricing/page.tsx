@@ -181,7 +181,12 @@ export default function PricingPage() {
                       <div className="text-lg font-semibold leading-none text-emerald-200">
                         Custom pricing
                       </div>
-                      <div className="mt-1 text-xs text-slate-300">Contact us</div>
+                      <a
+                        href="mailto:info@temptake.com?subject=Enterprise%20pricing%20enquiry"
+                        className="mt-1 inline-block text-xs text-slate-300 underline underline-offset-2 hover:text-emerald-200"
+                      >
+                        Contact us
+                      </a>
                     </div>
                   </div>
                 </div>
