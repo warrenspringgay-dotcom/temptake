@@ -130,27 +130,22 @@ export default function IncidentModal({
       const areaPrefix = area.trim() ? `[Area: ${area.trim()}]\n` : "";
       const finalDetails = `${areaPrefix}${details.trim()}`;
 
-      const payload: any = {
-        // Your schema wants BOTH text + uuid columns, all NOT NULL
-        org_id: String(orgId),
-        location_id: String(locationId),
-        org_id_uuid: String(orgId),
-        location_id_uuid: String(locationId),
+  const payload: any = {
+  org_id: String(orgId),
+  location_id: String(locationId),
+  org_id_uuid: String(orgId),
+  location_id_uuid: String(locationId),
 
-        happened_on: date,
-        type: type || null,
-        details: finalDetails || null,
-        immediate_action: immediateAction.trim() || null,
-        preventive_action: preventiveAction.trim() || null,
+  happened_on: date,
+  type: type || null,
+  details: finalDetails || null,
+  immediate_action: immediateAction.trim() || null,
+  preventive_action: preventiveAction.trim() || null,
 
-        // ✅ enforce operator initials
-        created_by: operatorInitials,
-      };
+  created_by: operatorInitials,
+};
 
-      // Optional: stamp operator ids if your schema supports them
-      const opAny = operator as any;
-      if (opAny?.team_member_id) payload.created_by_team_member_id = opAny.team_member_id;
-      if (opAny?.location_staff_id) payload.location_staff_id = opAny.location_staff_id;
+    
 
       const { error } = await supabase.from("incidents").insert(payload);
       if (error) throw error;

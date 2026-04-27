@@ -1,14 +1,16 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseBrowser";
 
 import OnboardingBanner from "@/components/OnboardingBanner";
 import WelcomeGate from "@/components/WelcomeGate";
 import { useActiveLocation } from "@/hooks/useActiveLocation";
+import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
+import { useEffectiveOperator } from "@/lib/useEffectiveOperator";
 import {
   getLocationDayStatus,
   calculateOpenDaySignoffStreak,
@@ -18,6 +20,7 @@ import {
   calculateWeeklyComplianceState,
   type WeeklyComplianceState,
 } from "@/lib/complianceProgress";
+
 /* ---------- CONFIG ---------- */
 
 const WALL_TABLE = "kitchen_wall";
@@ -43,8 +46,6 @@ type KpiState = {
   allergenDueSoon: number;
   allergenOver: number;
 };
-
-
 
 type LeaderboardEntry = {
   display_name: string | null;
@@ -131,7 +132,13 @@ const isoToday = () => {
   return `${year}-${month}-${day}`;
 };
 
-
+function normalizeInitials(value?: string | null) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
+}
 
 function formatPrettyDate(d: Date) {
   const WEEKDAYS = [
@@ -260,9 +267,6 @@ function daysBetween(aISO: string, bISO: string) {
 function isLikelyMonthEnd(d = new Date()) {
   return d.getDate() <= 3;
 }
-
-
-
 
 /* ---------- Four-week dismiss helpers ---------- */
 
@@ -498,11 +502,7 @@ function KpiTile({
   return <div className="w-full h-full">{inner}</div>;
 }
 
-function WeeklyComplianceSlimBar({
-  stats,
-}: {
-  stats: WeeklyComplianceState;
-}) {
+function WeeklyComplianceSlimBar({ stats }: { stats: WeeklyComplianceState }) {
   const tone: "danger" | "warn" | "ok" =
     stats.scorePct >= 75 ? "ok" : stats.scorePct >= 40 ? "warn" : "danger";
 
@@ -522,25 +522,34 @@ function WeeklyComplianceSlimBar({
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-slate-700">
             <span>
-              <span className="font-extrabold text-slate-900">{stats.scorePct}%</span> this
-              week
+              <span className="font-extrabold text-slate-900">
+                {stats.scorePct}%
+              </span>{" "}
+              this week
             </span>
             <span>
-  <span className="font-extrabold text-slate-900">
-    {stats.signedOffDays}/{stats.openDays}
-  </span>{" "}
-  signed off
-</span>
-            <span>
-              <span className="font-extrabold text-slate-900">{stats.tempLogs}</span> temps
+              <span className="font-extrabold text-slate-900">
+                {stats.signedOffDays}/{stats.openDays}
+              </span>{" "}
+              signed off
             </span>
             <span>
-              <span className="font-extrabold text-slate-900">{stats.cleaningRuns}</span>{" "}
+              <span className="font-extrabold text-slate-900">
+                {stats.tempLogs}
+              </span>{" "}
+              temps
+            </span>
+            <span>
+              <span className="font-extrabold text-slate-900">
+                {stats.cleaningRuns}
+              </span>{" "}
               cleaning
             </span>
             <span>
-              <span className="font-extrabold text-slate-900">{stats.streak}</span> day
-              streak
+              <span className="font-extrabold text-slate-900">
+                {stats.streak}
+              </span>{" "}
+              day streak
             </span>
           </div>
         </div>
@@ -803,6 +812,15 @@ function AlertsModal({
                                 <span className="font-mono">
                                   {formatDDMMYYYY(i.resolved_at) ?? "—"}
                                 </span>
+                                {i.resolved_by ? (
+                                  <>
+                                    {" · "}
+                                    By:{" "}
+                                    <span className="font-mono">
+                                      {i.resolved_by.toUpperCase()}
+                                    </span>
+                                  </>
+                                ) : null}
                               </>
                             ) : null}
                           </div>
@@ -825,7 +843,9 @@ function AlertsModal({
                                   : "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
                               )}
                             >
-                              {resolvingId === i.id ? "Resolving…" : "Mark resolved"}
+                              {resolvingId === i.id
+                                ? "Resolving…"
+                                : "Mark resolved"}
                             </button>
                           ) : null}
                         </div>
@@ -893,6 +913,17 @@ export default function DashboardPage() {
     loading: locationLoading,
   } = useActiveLocation();
 
+  const { locked, openLockModal } = useWorkstation();
+  const effectiveOperator = useEffectiveOperator();
+
+  const operatorInitials = useMemo(
+    () => normalizeInitials(effectiveOperator.initials),
+    [effectiveOperator.initials]
+  );
+
+  const operatorIsUnlocked =
+    !locked && effectiveOperator.source === "operator" && !!operatorInitials;
+
   const [kpi, setKpi] = useState<KpiState>({
     tempLogsToday: 0,
     tempFails7d: 0,
@@ -905,20 +936,22 @@ export default function DashboardPage() {
     allergenDueSoon: 0,
     allergenOver: 0,
   });
-const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>({
-  scorePct: 0,
-  signedOffDays: 0,
-  openDays: 0,
-  tempLogs: 0,
-  cleaningRuns: 0,
-  streak: 0,
-  signoffScorePct: 0,
-  tempScorePct: 0,
-  cleaningScorePct: 0,
-  compliantTempDays: 0,
-  dueCleaningTasks: 0,
-  completedCleaningTasks: 0,
-});
+
+  const [weeklyCompliance, setWeeklyCompliance] =
+    useState<WeeklyComplianceState>({
+      scorePct: 0,
+      signedOffDays: 0,
+      openDays: 0,
+      tempLogs: 0,
+      cleaningRuns: 0,
+      streak: 0,
+      signoffScorePct: 0,
+      tempScorePct: 0,
+      cleaningScorePct: 0,
+      compliantTempDays: 0,
+      dueCleaningTasks: 0,
+      completedCleaningTasks: 0,
+    });
 
   const [eom, setEom] = useState<LeaderboardEntry | null>(null);
   const [wallPosts, setWallPosts] = useState<WallPost[]>([]);
@@ -927,7 +960,6 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
 
   const headerDate = formatPrettyDate(new Date());
 
-  const [user, setUser] = React.useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
 
   const [orgLabel, setOrgLabel] = useState<string | null>(null);
@@ -955,16 +987,14 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
   React.useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getUser().then(({ data }: { data: { user: User | null } }) => {
+    supabase.auth.getUser().then(() => {
       if (!mounted) return;
-      setUser(data?.user ?? null);
       setAuthReady(true);
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange(
-      (_event: AuthChangeEvent, session: Session | null) => {
+      (_event: AuthChangeEvent, _session: Session | null) => {
         if (!mounted) return;
-        setUser(session?.user ?? null);
         setAuthReady(true);
       }
     );
@@ -976,6 +1006,7 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
   }, []);
 
   const [canHover, setCanHover] = useState(false);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mq = window.matchMedia?.("(hover: hover) and (pointer: fine)");
@@ -1136,6 +1167,7 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
       })) || [];
 
     let deferrals: Deferral[] = [];
+
     try {
       const today = new Date(todayISO);
       const weekStart = isoDate(startOfWeekMonday(today));
@@ -1167,10 +1199,14 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
     const deferralsToMap = new Map<string, Set<string>>();
 
     for (const d of deferrals) {
-      if (!deferralsFromMap.has(d.from_on)) deferralsFromMap.set(d.from_on, new Set());
+      if (!deferralsFromMap.has(d.from_on)) {
+        deferralsFromMap.set(d.from_on, new Set());
+      }
       deferralsFromMap.get(d.from_on)!.add(d.task_id);
 
-      if (!deferralsToMap.has(d.to_on)) deferralsToMap.set(d.to_on, new Set());
+      if (!deferralsToMap.has(d.to_on)) {
+        deferralsToMap.set(d.to_on, new Set());
+      }
       deferralsToMap.get(d.to_on)!.add(d.task_id);
     }
 
@@ -1205,6 +1241,7 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
   ) {
     const soon = new Date();
     soon.setDate(soon.getDate() + 14);
+
     const todayD = new Date();
     todayD.setHours(0, 0, 0, 0);
 
@@ -1227,7 +1264,9 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
 
         if (membersErr) throw membersErr;
 
-        const memberIds = (membersForLocation ?? []).map((m: any) => String(m.id));
+        const memberIds = (membersForLocation ?? []).map((m: any) =>
+          String(m.id)
+        );
         memberIdsForLocation = memberIds;
       }
 
@@ -1307,12 +1346,16 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
         const last = r.last_reviewed ? new Date(r.last_reviewed) : null;
         const interval = Number(r.interval_days ?? 0);
         if (!last || !Number.isFinite(interval)) return;
+
         const due = new Date(last);
         due.setDate(due.getDate() + interval);
+
         if (due < todayD) allergenOver++;
         else if (due <= soon) allergenDueSoon++;
       });
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     if (cancelled) return;
 
@@ -1325,128 +1368,137 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
       allergenDueSoon,
       allergenOver,
     }));
-  }async function loadWeeklyCompliance(
-  orgId: string,
-  locationId: string | null,
-  cancelled: boolean
-) {
-  try {
-    const now = new Date();
-    const weekStart = startOfWeekMonday(now);
-    const weekStartISO = isoDate(weekStart);
-    const todayISO = isoToday();
+  }
 
-    let signoffQuery = supabase
-      .from("daily_signoffs")
-      .select("signoff_on")
-      .eq("org_id", orgId)
-      .gte("signoff_on", weekStartISO)
-      .lte("signoff_on", todayISO);
+  async function loadWeeklyCompliance(
+    orgId: string,
+    locationId: string | null,
+    cancelled: boolean
+  ) {
+    try {
+      const now = new Date();
+      const weekStart = startOfWeekMonday(now);
+      const weekStartISO = isoDate(weekStart);
+      const todayISO = isoToday();
 
-    if (locationId) signoffQuery = signoffQuery.eq("location_id", locationId);
+      let signoffQuery = supabase
+        .from("daily_signoffs")
+        .select("signoff_on")
+        .eq("org_id", orgId)
+        .gte("signoff_on", weekStartISO)
+        .lte("signoff_on", todayISO);
 
-    let tempQuery = supabase
-      .from("food_temp_logs")
-      .select("id,at")
-      .eq("org_id", orgId)
-      .gte("at", weekStart.toISOString())
-      .lte("at", new Date().toISOString());
+      if (locationId) signoffQuery = signoffQuery.eq("location_id", locationId);
 
-    if (locationId) tempQuery = tempQuery.eq("location_id", locationId);
+      let tempQuery = supabase
+        .from("food_temp_logs")
+        .select("id,at")
+        .eq("org_id", orgId)
+        .gte("at", weekStart.toISOString())
+        .lte("at", new Date().toISOString());
 
-    let cleaningQuery = supabase
-      .from("cleaning_task_runs")
-      .select("task_id,run_on")
-      .eq("org_id", orgId)
-      .gte("run_on", weekStartISO)
-      .lte("run_on", todayISO);
+      if (locationId) tempQuery = tempQuery.eq("location_id", locationId);
 
-    if (locationId) cleaningQuery = cleaningQuery.eq("location_id", locationId);
+      let cleaningQuery = supabase
+        .from("cleaning_task_runs")
+        .select("task_id,run_on")
+        .eq("org_id", orgId)
+        .gte("run_on", weekStartISO)
+        .lte("run_on", todayISO);
 
-    const [
-      { data: signoffRows, error: signoffErr },
-      { data: tempRows, error: tempErr },
-      { data: cleaningRows, error: cleaningErr },
-    ] = await Promise.all([signoffQuery, tempQuery, cleaningQuery]);
+      if (locationId) cleaningQuery = cleaningQuery.eq("location_id", locationId);
 
-    if (signoffErr) throw signoffErr;
-    if (tempErr) throw tempErr;
-    if (cleaningErr) throw cleaningErr;
+      const [
+        { data: signoffRows, error: signoffErr },
+        { data: tempRows, error: tempErr },
+        { data: cleaningRows, error: cleaningErr },
+      ] = await Promise.all([signoffQuery, tempQuery, cleaningQuery]);
 
-    if (cancelled) return;
+      if (signoffErr) throw signoffErr;
+      if (tempErr) throw tempErr;
+      if (cleaningErr) throw cleaningErr;
 
-    const signedOffDaysSet: Set<string> = new Set(
-      (signoffRows ?? [])
-        .map((r: any) => String(r.signoff_on ?? "").slice(0, 10))
-        .filter(Boolean)
-    );
+      if (cancelled) return;
 
-    const openDays = await countOpenDaysInRange({
-      orgId,
-      locationId,
-      startISO: weekStartISO,
-      endISO: todayISO,
-    });
-
-    let signedOffDays = 0;
-    for (const iso of signedOffDaysSet) {
-      const dayStatus = await getLocationDayStatus(orgId, locationId, iso);
-      if (dayStatus.isOpen) signedOffDays += 1;
-    }
-
-    const tempLogs = (tempRows ?? []).length;
-    const cleaningRuns = (cleaningRows ?? []).length;
-
-    let streak = 0;
-
-    if (signedOffDaysSet.size > 0) {
-      const signedDatesDesc: string[] = Array.from(signedOffDaysSet).sort((a, b) =>
-        b.localeCompare(a)
+      const signedOffDaysSet: Set<string> = new Set(
+        (signoffRows ?? [])
+          .map((r: any) => String(r.signoff_on ?? "").slice(0, 10))
+          .filter(Boolean)
       );
 
-      const latestSignedISO = signedDatesDesc[0];
-
-      streak = await calculateOpenDaySignoffStreak({
+      const openDays = await countOpenDaysInRange({
         orgId,
         locationId,
-        signedOffDays: signedOffDaysSet,
-        startFromISO: latestSignedISO,
-        maxLookbackDays: 365,
+        startISO: weekStartISO,
+        endISO: todayISO,
       });
-    }
 
-    if (cancelled) return;
+      let signedOffDays = 0;
 
-    setWeeklyCompliance(
-      calculateWeeklyComplianceState({
-        signedOffDays,
-        openDays,
-        tempLogs,
-        cleaningRuns,
-        streak,
-      })
-    );
-  } catch (e) {
-    console.warn("[weekly compliance] failed:", e);
-    if (!cancelled) {
-      setWeeklyCompliance({
-        scorePct: 0,
-        signedOffDays: 0,
-        openDays: 0,
-        tempLogs: 0,
-        cleaningRuns: 0,
-        streak: 0,
-        signoffScorePct: 0,
-        tempScorePct: 0,
-        cleaningScorePct: 0,
-        compliantTempDays: 0,
-        dueCleaningTasks: 0,
-        completedCleaningTasks: 0,
-      });
+      for (const iso of signedOffDaysSet) {
+        const dayStatus = await getLocationDayStatus(orgId, locationId, iso);
+        if (dayStatus.isOpen) signedOffDays += 1;
+      }
+
+      const tempLogs = (tempRows ?? []).length;
+      const cleaningRuns = (cleaningRows ?? []).length;
+
+      let streak = 0;
+
+      if (signedOffDaysSet.size > 0) {
+        const signedDatesDesc: string[] = Array.from(signedOffDaysSet).sort(
+          (a, b) => b.localeCompare(a)
+        );
+
+        const latestSignedISO = signedDatesDesc[0];
+
+        streak = await calculateOpenDaySignoffStreak({
+          orgId,
+          locationId,
+          signedOffDays: signedOffDaysSet,
+          startFromISO: latestSignedISO,
+          maxLookbackDays: 365,
+        });
+      }
+
+      if (cancelled) return;
+
+      setWeeklyCompliance(
+        calculateWeeklyComplianceState({
+          signedOffDays,
+          openDays,
+          tempLogs,
+          cleaningRuns,
+          streak,
+        })
+      );
+    } catch (e) {
+      console.warn("[weekly compliance] failed:", e);
+
+      if (!cancelled) {
+        setWeeklyCompliance({
+          scorePct: 0,
+          signedOffDays: 0,
+          openDays: 0,
+          tempLogs: 0,
+          cleaningRuns: 0,
+          streak: 0,
+          signoffScorePct: 0,
+          tempScorePct: 0,
+          cleaningScorePct: 0,
+          compliantTempDays: 0,
+          dueCleaningTasks: 0,
+          completedCleaningTasks: 0,
+        });
+      }
     }
   }
-}
-  async function loadLeaderBoard(orgId: string, locationId: string | null, cancelled: boolean) {
+
+  async function loadLeaderBoard(
+    orgId: string,
+    locationId: string | null,
+    cancelled: boolean
+  ) {
     try {
       if (locationId) {
         const { data, error } = await supabase
@@ -1479,12 +1531,18 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
     }
   }
 
-  async function loadWallPosts(orgId: string, locationId: string | null, cancelled: boolean) {
+  async function loadWallPosts(
+    orgId: string,
+    locationId: string | null,
+    cancelled: boolean
+  ) {
     try {
       if (locationId) {
         const { data, error } = await supabase
           .from(WALL_TABLE)
-          .select("id, org_id, location_id, author_initials, message, color, created_at")
+          .select(
+            "id, org_id, location_id, author_initials, message, color, created_at"
+          )
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .order("created_at", { ascending: false })
@@ -1506,7 +1564,10 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
           return;
         }
 
-        console.warn("[wall] location filter failed, falling back to org-only:", error.message);
+        console.warn(
+          "[wall] location filter failed, falling back to org-only:",
+          error.message
+        );
       }
 
       const { data: data2, error: err2 } = await supabase
@@ -1581,7 +1642,11 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
 
       const reviewKey = makeReviewKey(periodFrom, periodTo);
 
-      const dismissKeyScoped = makeDismissStorageKey({ orgId, locationId, reviewKey });
+      const dismissKeyScoped = makeDismissStorageKey({
+        orgId,
+        locationId,
+        reviewKey,
+      });
       const dismissKeyFallback = makeDismissStorageKey({
         orgId,
         locationId: null,
@@ -1589,7 +1654,8 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
       });
 
       const dismissUntilRaw =
-        localStorage.getItem(dismissKeyScoped) ?? localStorage.getItem(dismissKeyFallback);
+        localStorage.getItem(dismissKeyScoped) ??
+        localStorage.getItem(dismissKeyFallback);
 
       if (dismissUntilRaw) {
         const dismissUntil = new Date(dismissUntilRaw).getTime();
@@ -1601,10 +1667,12 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
 
       if (cancelled) return;
 
-      const overdue = !lastReviewedISO || daysBetween(lastReviewedISO, todayISO) >= 28;
+      const overdue =
+        !lastReviewedISO || daysBetween(lastReviewedISO, todayISO) >= 28;
       const monthEnd = isLikelyMonthEnd(new Date());
 
       let reason: "overdue" | "month_end" | "issues" | null = null;
+
       if (issues > 0) reason = "issues";
       else if (overdue) reason = "overdue";
       else if (monthEnd) reason = "month_end";
@@ -1703,6 +1771,7 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
 
       const firstKey = select.split(",")[0].trim();
       const v = (data as any)?.[firstKey];
+
       if (!v) return null;
 
       return String(v);
@@ -1711,7 +1780,10 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
     }
   }
 
-  async function resolveOrgLocationLabels(orgId: string | null, locationId: string | null) {
+  async function resolveOrgLocationLabels(
+    orgId: string | null,
+    locationId: string | null
+  ) {
     if (!orgId) {
       setOrgLabel(null);
       setLocationLabel(null);
@@ -1721,8 +1793,14 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
     const org =
       (await tryGetSingleText("orgs", "name", { col: "id", val: orgId })) ||
       (await tryGetSingleText("orgs", "org_name", { col: "id", val: orgId })) ||
-      (await tryGetSingleText("organizations", "name", { col: "id", val: orgId })) ||
-      (await tryGetSingleText("organisations", "name", { col: "id", val: orgId })) ||
+      (await tryGetSingleText("organizations", "name", {
+        col: "id",
+        val: orgId,
+      })) ||
+      (await tryGetSingleText("organisations", "name", {
+        col: "id",
+        val: orgId,
+      })) ||
       null;
 
     setOrgLabel(org);
@@ -1733,9 +1811,18 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
     }
 
     const loc =
-      (await tryGetSingleText("locations", "name", { col: "id", val: locationId })) ||
-      (await tryGetSingleText("locations", "label", { col: "id", val: locationId })) ||
-      (await tryGetSingleText("sites", "name", { col: "id", val: locationId })) ||
+      (await tryGetSingleText("locations", "name", {
+        col: "id",
+        val: locationId,
+      })) ||
+      (await tryGetSingleText("locations", "label", {
+        col: "id",
+        val: locationId,
+      })) ||
+      (await tryGetSingleText("sites", "name", {
+        col: "id",
+        val: locationId,
+      })) ||
       null;
 
     setLocationLabel(loc);
@@ -1776,7 +1863,10 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
       const { data, error } = await q;
 
       if (error) {
-        console.warn("[alerts/incidents] uuid filter failed, trying text:", error.message);
+        console.warn(
+          "[alerts/incidents] uuid filter failed, trying text:",
+          error.message
+        );
 
         let q2 = supabase
           .from("incidents")
@@ -1930,39 +2020,58 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
   const alertsSummary = (() => {
     const bits: string[] = [];
 
-    if (openIncidentCount > 0)
-      bits.push(`${openIncidentCount} open incident${openIncidentCount === 1 ? "" : "s"}`);
+    if (openIncidentCount > 0) {
+      bits.push(
+        `${openIncidentCount} open incident${
+          openIncidentCount === 1 ? "" : "s"
+        }`
+      );
+    }
+
     if (kpi.tempFails7d > 0) bits.push(`${kpi.tempFails7d} failed temps (7d)`);
     if (kpi.trainingOver > 0) bits.push(`${kpi.trainingOver} training overdue`);
-    if (kpi.trainingDueSoon > 0) bits.push(`${kpi.trainingDueSoon} training due soon`);
-    if (kpi.trainingAssigned > 0) bits.push(`${kpi.trainingAssigned} assigned training`);
-    if (kpi.trainingInProgress > 0) bits.push(`${kpi.trainingInProgress} training in progress`);
-    if (kpi.allergenOver > 0) bits.push(`${kpi.allergenOver} allergen review overdue`);
+    if (kpi.trainingDueSoon > 0) {
+      bits.push(`${kpi.trainingDueSoon} training due soon`);
+    }
+    if (kpi.trainingAssigned > 0) {
+      bits.push(`${kpi.trainingAssigned} assigned training`);
+    }
+    if (kpi.trainingInProgress > 0) {
+      bits.push(`${kpi.trainingInProgress} training in progress`);
+    }
+    if (kpi.allergenOver > 0) {
+      bits.push(`${kpi.allergenOver} allergen review overdue`);
+    }
 
-    if (!bits.length) return "No incidents, training, allergen or temperature issues flagged.";
+    if (!bits.length) {
+      return "No incidents, training, allergen or temperature issues flagged.";
+    }
+
     return bits.join(" · ");
   })();
 
   const cleaningPct =
-    kpi.cleaningDueToday > 0 ? (kpi.cleaningDoneToday / kpi.cleaningDueToday) * 100 : 0;
+    kpi.cleaningDueToday > 0
+      ? (kpi.cleaningDoneToday / kpi.cleaningDueToday) * 100
+      : 0;
 
-  const cleaningTone: "danger" | "warn" | "ok" | "neutral" = !todayStatus.isOpen
-    ? "neutral"
-    : kpi.cleaningDueToday === 0
-    ? "neutral"
-    : kpi.cleaningDoneToday === kpi.cleaningDueToday
-    ? "ok"
-    : kpi.cleaningDoneToday === 0
-    ? "danger"
-    : "warn";
+  const cleaningTone: "danger" | "warn" | "ok" | "neutral" =
+    !todayStatus.isOpen
+      ? "neutral"
+      : kpi.cleaningDueToday === 0
+      ? "neutral"
+      : kpi.cleaningDoneToday === kpi.cleaningDueToday
+      ? "ok"
+      : kpi.cleaningDoneToday === 0
+      ? "danger"
+      : "warn";
 
-  const tempTone: "danger" | "warn" | "ok" | "neutral" = !todayStatus.isOpen
-    ? "neutral"
-    : kpi.tempLogsToday === 0
+  const tempTone: "danger" | "warn" | "ok" | "neutral" =
+    !todayStatus.isOpen ? "neutral" : kpi.tempLogsToday === 0 ? "danger" : "ok";
+
+  const alertsTone: "danger" | "warn" | "ok" | "neutral" = hasAnyKpiAlert
     ? "danger"
     : "ok";
-
-  const alertsTone: "danger" | "warn" | "ok" | "neutral" = hasAnyKpiAlert ? "danger" : "ok";
 
   const fourWeekBannerTone =
     fourWeekBanner.kind === "show"
@@ -1983,17 +2092,23 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
   }, [incidentRangeDays, alertsOpen, activeOrgId, activeLocationId]);
 
   async function resolveIncident(incidentId: string) {
+    if (!operatorIsUnlocked) {
+      setIncidentsError(
+        "Select a staff operator and enter PIN before resolving an incident."
+      );
+      openLockModal?.();
+      return;
+    }
+
     try {
       setResolvingId(incidentId);
       setIncidentsError(null);
-
-      const uid = user?.id ?? null;
 
       const { error } = await supabase
         .from("incidents")
         .update({
           resolved_at: new Date().toISOString(),
-          resolved_by: uid,
+          resolved_by: operatorInitials,
         })
         .eq("id", incidentId);
 
@@ -2008,7 +2123,7 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
       console.error(e);
       setIncidentsError(
         e?.message ??
-          "Could not resolve incident. (If you haven't added resolved_at/resolved_by columns yet, do that first.)"
+          "Could not resolve incident. Check resolved_at/resolved_by columns exist."
       );
     } finally {
       setResolvingId(null);
@@ -2047,7 +2162,9 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <div className="text-sm font-extrabold">Four-week review ready</div>
+                <div className="text-sm font-extrabold">
+                  Four-week review ready
+                </div>
 
                 <div className="mt-1 text-xs font-medium opacity-90">
                   Period:{" "}
@@ -2057,7 +2174,9 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
                   </span>
                   {" · "}
                   Issues found:{" "}
-                  <span className="font-extrabold">{fourWeekBanner.issues}</span>
+                  <span className="font-extrabold">
+                    {fourWeekBanner.issues}
+                  </span>
                 </div>
 
                 <div className="mt-1 text-[11px] font-medium opacity-80">
@@ -2103,9 +2222,18 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
                       const until = new Date();
                       until.setDate(until.getDate() + 28);
 
-                      localStorage.setItem(dismissKeyScoped, until.toISOString());
-                      localStorage.setItem(dismissKeyFallback, until.toISOString());
-                      localStorage.setItem("tt_four_week_reviewed_at", new Date().toISOString());
+                      localStorage.setItem(
+                        dismissKeyScoped,
+                        until.toISOString()
+                      );
+                      localStorage.setItem(
+                        dismissKeyFallback,
+                        until.toISOString()
+                      );
+                      localStorage.setItem(
+                        "tt_four_week_reviewed_at",
+                        new Date().toISOString()
+                      );
 
                       if (orgId && locationId) {
                         await dismissFourWeekReview({
@@ -2219,7 +2347,9 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
               footer={
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700/90">
                   <span>View details</span>
-                  <span className="opacity-80">{hasAnyKpiAlert ? "Now" : "OK"}</span>
+                  <span className="opacity-80">
+                    {hasAnyKpiAlert ? "Now" : "OK"}
+                  </span>
                 </div>
               }
             />
@@ -2238,7 +2368,9 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
           <div className="rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur flex flex-col">
             <div className="mb-2 flex items-center justify-between gap-2">
               <div>
-                <h2 className="text-sm font-extrabold text-slate-900">Kitchen wall</h2>
+                <h2 className="text-sm font-extrabold text-slate-900">
+                  Kitchen wall
+                </h2>
                 <p className="text-[11px] font-medium text-slate-500">
                   Latest three notes from the team.
                 </p>
@@ -2253,8 +2385,8 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
 
             {wallPosts.length === 0 ? (
               <div className="mt-1 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-4 text-xs text-slate-500 flex-1 flex items-center">
-                No posts yet. When the team adds messages on the wall, the latest three will
-                show here.
+                No posts yet. When the team adds messages on the wall, the latest
+                three will show here.
               </div>
             ) : (
               <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -2296,7 +2428,9 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
 
           <div className="rounded-3xl border border-amber-200 bg-amber-50/90 p-4 shadow-md shadow-amber-200/60 flex flex-col">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <h2 className="text-sm font-extrabold text-amber-900">Employee of the month</h2>
+              <h2 className="text-sm font-extrabold text-amber-900">
+                Employee of the month
+              </h2>
               <span className="text-xl" aria-hidden="true">
                 🏆
               </span>
@@ -2327,8 +2461,8 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
               </>
             ) : (
               <p className="text-xs font-medium text-amber-900/80">
-                No leaderboard data yet. Once your team completes cleaning tasks and logs
-                temperatures, the top performer will be highlighted here.
+                No leaderboard data yet. Once your team completes cleaning tasks
+                and logs temperatures, the top performer will be highlighted here.
               </p>
             )}
 
@@ -2344,21 +2478,58 @@ const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>(
         </section>
 
         <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur space-y-3">
-          <h2 className="text-sm font-extrabold text-slate-900">Quick actions</h2>
+          <h2 className="text-sm font-extrabold text-slate-900">
+            Quick actions
+          </h2>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <QuickLink href="/routines" label="Routines" icon="📋" canHover={canHover} />
-            <QuickLink href="/allergens" label="Allergens" icon="⚠️" canHover={canHover} />
+            <QuickLink
+              href="/routines"
+              label="Routines"
+              icon="📋"
+              canHover={canHover}
+            />
+            <QuickLink
+              href="/allergens"
+              label="Allergens"
+              icon="⚠️"
+              canHover={canHover}
+            />
             <QuickLink
               href="/cleaning-rota"
               label="Cleaning rota"
               icon="🧽"
               canHover={canHover}
             />
-            <QuickLink href="/team" label="Team & training" icon="👥" canHover={canHover} />
-            <QuickLink href="/reports" label="Reports" icon="📊" canHover={canHover} />
-            <QuickLink href="/locations" label="Locations & sites" icon="📍" canHover={canHover} />
-            <QuickLink href="/manager" label="Manager view" icon="💼" canHover={canHover} />
-            <QuickLink href="/help" label="Help & support" icon="❓" canHover={canHover} />
+            <QuickLink
+              href="/team"
+              label="Team & training"
+              icon="👥"
+              canHover={canHover}
+            />
+            <QuickLink
+              href="/reports"
+              label="Reports"
+              icon="📊"
+              canHover={canHover}
+            />
+            <QuickLink
+              href="/locations"
+              label="Locations & sites"
+              icon="📍"
+              canHover={canHover}
+            />
+            <QuickLink
+              href="/manager"
+              label="Manager view"
+              icon="💼"
+              canHover={canHover}
+            />
+            <QuickLink
+              href="/help"
+              label="Help & support"
+              icon="❓"
+              canHover={canHover}
+            />
           </div>
         </section>
 

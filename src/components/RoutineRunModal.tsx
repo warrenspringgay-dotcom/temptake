@@ -10,6 +10,7 @@ import type { RoutineRow } from "@/components/RoutinePickerModal";
 import { useVoiceRoutineEntry } from "@/lib/useVoiceRoutineEntry";
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 import { useActiveLocation } from "@/hooks/useActiveLocation";
+import { useEffectiveOperator } from "@/lib/useEffectiveOperator";
 
 type Props = {
   open: boolean;
@@ -34,6 +35,14 @@ type CompletionFeedback = {
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
+
+function normalizeInitials(value?: string | null) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
+}
 
 function inferStatus(
   temp: number | null,
@@ -150,6 +159,7 @@ async function getLocationDayStatus(
 }
 
 /* ---------- temp helpers ---------- */
+
 function isFrozenPreset(preset?: TargetPreset) {
   if (!preset) return false;
 
@@ -213,6 +223,7 @@ function tempPlaceholderForPreset(preset?: TargetPreset) {
 }
 
 /* ---------- matching helpers ---------- */
+
 function norm(s: string) {
   return (s ?? "")
     .toLowerCase()
@@ -224,13 +235,19 @@ function norm(s: string) {
 function tokenScore(phrase: string, candidate: string) {
   const p = norm(phrase);
   const c = norm(candidate);
+
   if (!p || !c) return 0;
   if (c === p) return 999;
   if (c.includes(p)) return 200;
+
   const pTokens = new Set(p.split(" "));
   const cTokens = new Set(c.split(" "));
+
   let hit = 0;
-  for (const t of pTokens) if (cTokens.has(t)) hit++;
+  for (const t of pTokens) {
+    if (cTokens.has(t)) hit++;
+  }
+
   return hit;
 }
 
@@ -241,6 +258,7 @@ function bestMatchIndex(phrase: string, items: { item?: string | null }[]) {
   for (let i = 0; i < items.length; i++) {
     const label = items[i]?.item ?? "";
     const score = tokenScore(phrase, label);
+
     if (score > best) {
       best = score;
       bestIdx = i;
@@ -253,8 +271,11 @@ function bestMatchIndex(phrase: string, items: { item?: string | null }[]) {
 
 function ModalPortal({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
+
   useEffect(() => setMounted(true), []);
+
   if (!mounted) return null;
+
   return createPortal(children, document.body);
 }
 
@@ -292,13 +313,16 @@ function CompletionFeedbackModal({
                 Routine completed
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Good. That routine is logged and your compliance score keeps moving instead of sitting there pretending to matter.
+                Good. That routine is logged and your compliance score keeps
+                moving instead of sitting there pretending to matter.
               </p>
             </div>
 
             <div className="mt-5 grid grid-cols-3 gap-3">
               <div className="rounded-2xl bg-slate-100 p-3 text-center">
-                <div className="text-xl font-extrabold text-slate-900">+{points}</div>
+                <div className="text-xl font-extrabold text-slate-900">
+                  +{points}
+                </div>
                 <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   points
                 </div>
@@ -314,7 +338,9 @@ function CompletionFeedbackModal({
               </div>
 
               <div className="rounded-2xl bg-amber-50 p-3 text-center">
-                <div className="text-xl font-extrabold text-amber-700">{streak}</div>
+                <div className="text-xl font-extrabold text-amber-700">
+                  {streak}
+                </div>
                 <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700/80">
                   day streak
                 </div>
@@ -324,7 +350,9 @@ function CompletionFeedbackModal({
             <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm text-slate-600">
               {compliantDays >= 7
                 ? "Perfect week so far. Miracles do happen."
-                : `You’ve logged routine temps on ${compliantDays} day${compliantDays === 1 ? "" : "s"} this week.`}
+                : `You’ve logged routine temps on ${compliantDays} day${
+                    compliantDays === 1 ? "" : "s"
+                  } this week.`}
             </div>
 
             <button
@@ -349,7 +377,9 @@ export default function RoutineRunModal({
   onClose,
   onSaved,
 }: Props) {
-  const { operator, locked } = useWorkstation();
+  const { locked } = useWorkstation();
+  const effectiveOperator = useEffectiveOperator();
+
   const {
     orgId: activeOrgId,
     locationId: activeLocationId,
@@ -368,6 +398,7 @@ export default function RoutineRunModal({
     source: "default",
     note: null,
   });
+
   const [checkingDayStatus, setCheckingDayStatus] = useState(false);
 
   const [completionFeedbackOpen, setCompletionFeedbackOpen] = useState(false);
@@ -389,6 +420,15 @@ export default function RoutineRunModal({
 
   const selectedDateIsToday = useMemo(() => date === isoToday(), [date]);
   const saveBlockedByClosedDay = selectedDateIsToday && !todayStatus.isOpen;
+
+  const operatorInitials = useMemo(
+    () => normalizeInitials(effectiveOperator.initials),
+    [effectiveOperator.initials]
+  );
+
+  const operatorName = effectiveOperator.name ?? null;
+  const operatorTeamMemberId = effectiveOperator.teamMemberId ?? null;
+  const operatorUserId = effectiveOperator.userId ?? null;
 
   async function refreshDayStatus(targetDate: string) {
     try {
@@ -428,6 +468,46 @@ export default function RoutineRunModal({
     }
   }
 
+  async function resolveTempLogTeamMemberId(
+    oid: string,
+    lid: string,
+    teamMemberId: string | null,
+    initialsValue: string
+  ): Promise<string | null> {
+    const clean = normalizeInitials(initialsValue);
+    if (!clean) return null;
+
+    if (teamMemberId) {
+      const { data, error } = await supabase
+        .from("team_members")
+        .select("id")
+        .eq("id", teamMemberId)
+        .eq("org_id", oid)
+        .eq("location_id", lid)
+        .limit(1)
+        .maybeSingle();
+
+      if (!error && data?.id) {
+        return String(data.id);
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("team_members")
+      .select("id")
+      .eq("org_id", oid)
+      .eq("location_id", lid)
+      .eq("initials", clean)
+      .limit(1)
+      .maybeSingle();
+
+    if (!error && data?.id) {
+      return String(data.id);
+    }
+
+    return null;
+  }
+
   async function getCompletionFeedbackMetrics(
     orgId: string,
     locationId: string,
@@ -462,13 +542,17 @@ export default function RoutineRunModal({
     if (weekErr) throw weekErr;
 
     const daySet = new Set<string>();
+
     for (const row of (weekRows ?? []) as Array<{ at: string | null }>) {
       if (!row?.at) continue;
+
       const d = new Date(row.at);
       if (Number.isNaN(d.getTime())) continue;
+
       const y = d.getFullYear();
       const m = String(d.getMonth() + 1).padStart(2, "0");
       const day = String(d.getDate()).padStart(2, "0");
+
       daySet.add(`${y}-${m}-${day}`);
     }
 
@@ -523,6 +607,7 @@ export default function RoutineRunModal({
     if (!open || !routine) return;
 
     setDate(defaultDate);
+
     setTemps(() => {
       const init: Record<string, string> = {};
       routine.items.forEach((it) => {
@@ -530,6 +615,7 @@ export default function RoutineRunModal({
       });
       return init;
     });
+
     setActiveIdx(0);
     setCompletionFeedbackOpen(false);
     setCompletionFeedback({
@@ -539,9 +625,11 @@ export default function RoutineRunModal({
     });
     setPendingRefresh(false);
 
-    const opIni = (operator?.initials ?? "").toString().trim().toUpperCase();
-    if (opIni) setInitials(opIni);
-    else setInitials((defaultInitials || "").toUpperCase());
+    if (operatorInitials) {
+      setInitials(operatorInitials);
+    } else {
+      setInitials(normalizeInitials(defaultInitials));
+    }
 
     if (!activeLocationLoading) {
       void refreshDayStatus(defaultDate);
@@ -551,7 +639,7 @@ export default function RoutineRunModal({
     routine,
     defaultDate,
     defaultInitials,
-    operator?.initials,
+    operatorInitials,
     activeOrgId,
     activeLocationId,
     activeLocationLoading,
@@ -577,6 +665,7 @@ export default function RoutineRunModal({
 
         if (r.itemPhrase) {
           const matched = bestMatchIndex(r.itemPhrase, items);
+
           if (matched >= 0) {
             idx = matched;
             setActiveIdx(matched);
@@ -605,6 +694,7 @@ export default function RoutineRunModal({
 
   useEffect(() => {
     if (!open) return;
+
     const it = items[activeIdx];
     if (!it) return;
 
@@ -618,10 +708,15 @@ export default function RoutineRunModal({
   if (!open || !routine) return null;
 
   function requireOperatorOrBail(): boolean {
-    if (locked || !operator?.initials) {
+    if (
+      locked ||
+      effectiveOperator.source !== "operator" ||
+      !operatorInitials
+    ) {
       alert("Workstation is locked. Select a user and enter a PIN to continue.");
       return false;
     }
+
     return true;
   }
 
@@ -636,15 +731,28 @@ export default function RoutineRunModal({
     }));
   }
 
-  async function handleSave(e?: React.FormEvent) {
-    e?.preventDefault();
-    if (!date) return;
-    if (!requireOperatorOrBail()) return;
+ async function handleSave(e?: React.FormEvent) {
+  e?.preventDefault();
 
-    const opInitials = (operator?.initials ?? "").toString().trim().toUpperCase();
-    if (!opInitials) return;
+  const currentRoutine = routine;
+
+  if (!currentRoutine) return;
+  if (!date) return;
+  if (!requireOperatorOrBail()) return;
+    const staffInitials = normalizeInitials(operatorInitials);
+
+    if (!staffInitials) {
+      alert("No PIN operator initials found. Unlock with a staff PIN first.");
+      return;
+    }
+
+    if (!operatorUserId) {
+      alert("No logged-in user found. Refresh and sign in again.");
+      return;
+    }
 
     setSaving(true);
+
     try {
       const org_id = activeOrgId ?? (await getActiveOrgIdClient());
       const location_id = activeLocationId ?? null;
@@ -666,9 +774,11 @@ export default function RoutineRunModal({
       }
 
       let atIso = new Date().toISOString();
+
       try {
         const selected = new Date(date);
         const now = new Date();
+
         const at = new Date(
           selected.getFullYear(),
           selected.getMonth(),
@@ -678,13 +788,20 @@ export default function RoutineRunModal({
           now.getSeconds(),
           now.getMilliseconds()
         );
+
         atIso = at.toISOString();
-      } catch {}
+      } catch {
+        // keep current timestamp
+      }
 
-      const { data: authData } = await supabase.auth.getUser();
-      const authUserId = authData?.user?.id ?? null;
+      const tempLogTeamMemberId = await resolveTempLogTeamMemberId(
+        org_id,
+        location_id,
+        operatorTeamMemberId,
+        staffInitials
+      );
 
-      const opAny = operator as any;
+      const invalidItems: string[] = [];
 
       const rows = items
         .map((it) => {
@@ -698,27 +815,40 @@ export default function RoutineRunModal({
 
           const normalizedRaw = normalizeTempStringForPreset(raw, preset);
           const temp = parseTempForPreset(normalizedRaw, preset);
-          const status = inferStatus(temp, preset);
 
-          const base: any = {
+          if (temp == null) {
+            invalidItems.push(it.item ?? it.location ?? "Unknown item");
+            return null;
+          }
+
+          const status = inferStatus(temp, preset) ?? "pass";
+
+          return {
             org_id,
             location_id,
+            created_by: operatorUserId,
             at: atIso,
-            area: it.location ?? null,
-            note: it.item ?? null,
-            staff_initials: opInitials,
+            area: it.location ?? "—",
             target_key: it.target_key,
             temp_c: temp,
             status,
+            note: it.item ?? null,
+            staff_initials: staffInitials,
+            team_member_id: tempLogTeamMemberId,
+          meta: {
+  routine_id: currentRoutine.id ?? null,
+  routine_item_id: it.id ?? null,
+  routine_name: currentRoutine.name ?? null,
+  operator_source: effectiveOperator.source,
+},
           };
-
-          if (opAny?.team_member_id) base.done_by_team_member_id = opAny.team_member_id;
-          if (opAny?.location_staff_id) base.location_staff_id = opAny.location_staff_id;
-          if (authUserId) base.created_by = authUserId;
-
-          return base;
         })
         .filter((x): x is NonNullable<typeof x> => !!x);
+
+      if (invalidItems.length > 0) {
+        alert(`Invalid temperature entered for: ${invalidItems.join(", ")}`);
+        return;
+      }
 
       if (!rows.length) {
         onClose();
@@ -726,6 +856,7 @@ export default function RoutineRunModal({
       }
 
       const { error } = await supabase.from("food_temp_logs").insert(rows);
+
       if (error) {
         alert(error.message);
         return;
@@ -748,6 +879,7 @@ export default function RoutineRunModal({
           date,
           rows.length
         );
+
         setCompletionFeedback(metrics);
       } catch (metricsErr) {
         console.error("[routine] completion feedback metrics failed:", metricsErr);
@@ -761,6 +893,7 @@ export default function RoutineRunModal({
 
   const handleCloseEverything = async () => {
     if (listening) stop();
+
     setCompletionFeedbackOpen(false);
 
     if (pendingRefresh) {
@@ -769,6 +902,7 @@ export default function RoutineRunModal({
       } catch (err) {
         console.error("[routine] onSaved failed:", err);
       }
+
       setPendingRefresh(false);
     }
 
@@ -854,7 +988,11 @@ export default function RoutineRunModal({
                 Operator (PIN)
                 <input
                   className="mt-1 w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm uppercase shadow-sm"
-                  value={(operator?.initials ?? initials ?? "").toString().toUpperCase()}
+                  value={
+                    operatorInitials ||
+                    normalizeInitials(initials) ||
+                    normalizeInitials(operatorName)
+                  }
                   readOnly
                 />
               </label>
@@ -874,15 +1012,20 @@ export default function RoutineRunModal({
                 {checkingDayStatus || activeLocationLoading
                   ? "Checking today’s opening status…"
                   : todayStatus.isOpen
-                  ? `Location open today${todayStatus.note ? ` · ${todayStatus.note}` : ""}`
-                  : `Location marked closed today${todayStatus.note ? ` · ${todayStatus.note}` : ""}`}
+                  ? `Location open today${
+                      todayStatus.note ? ` · ${todayStatus.note}` : ""
+                    }`
+                  : `Location marked closed today${
+                      todayStatus.note ? ` · ${todayStatus.note}` : ""
+                    }`}
               </div>
             )}
 
             {voiceSupported && (
               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
                 Say: <strong>"fish 75.2"</strong> or <strong>"stop"</strong>.
-                It matches your phrase to the closest routine item name and fills that temp.
+                It matches your phrase to the closest routine item name and fills
+                that temp.
               </div>
             )}
 
@@ -908,9 +1051,7 @@ export default function RoutineRunModal({
                     <th className="p-2 text-left text-xs font-semibold">
                       Target
                     </th>
-                    <th className="p-2 text-left text-xs font-semibold">
-                      Temp
-                    </th>
+                    <th className="p-2 text-left text-xs font-semibold">Temp</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1029,9 +1170,7 @@ export default function RoutineRunModal({
                       )}
                       placeholder={tempPlaceholderForPreset(preset)}
                       value={temps[it.id] ?? ""}
-                      onChange={(e) =>
-                        handleTempChange(it.id, e.target.value)
-                      }
+                      onChange={(e) => handleTempChange(it.id, e.target.value)}
                       onBlur={() => handleTempBlur(it.id, preset)}
                       inputMode="decimal"
                     />
@@ -1055,10 +1194,18 @@ export default function RoutineRunModal({
 
             <button
               type="submit"
-              disabled={saving || checkingDayStatus || activeLocationLoading || saveBlockedByClosedDay}
+              disabled={
+                saving ||
+                checkingDayStatus ||
+                activeLocationLoading ||
+                saveBlockedByClosedDay
+              }
               className={cls(
                 "rounded-xl px-5 py-1.5 text-sm font-semibold text-white shadow-sm",
-                saving || checkingDayStatus || activeLocationLoading || saveBlockedByClosedDay
+                saving ||
+                  checkingDayStatus ||
+                  activeLocationLoading ||
+                  saveBlockedByClosedDay
                   ? "bg-slate-300"
                   : "bg-emerald-600 hover:bg-emerald-500"
               )}

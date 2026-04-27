@@ -7,8 +7,8 @@ import { supabase } from "@/lib/supabaseBrowser";
 import ManageCleaningTasksModal, {
   CLEANING_CATEGORIES,
 } from "@/components/ManageCleaningTasksModal";
-import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
 import { useActiveLocation } from "@/hooks/useActiveLocation";
+import { useEffectiveOperator } from "@/lib/useEffectiveOperator";
 
 const PAGE = "w-full px-3 sm:px-4 md:mx-auto max-w-screen-2xl";
 const CARD =
@@ -32,6 +32,7 @@ type Run = {
   task_id: string;
   run_on: string;
   done_by: string | null;
+  done_by_team_member_id?: string | null;
   done_at?: string | null;
 };
 
@@ -145,6 +146,7 @@ function normalizeInitials(value?: string | null) {
 }
 
 async function getLocationDayStatus(
+  orgId: string,
   locationId: string | null,
   dateISO: string
 ): Promise<LocationDayStatus> {
@@ -160,6 +162,7 @@ async function getLocationDayStatus(
     const { data: closure, error: closureErr } = await supabase
       .from("location_closures")
       .select("id, reason")
+      .eq("org_id", orgId)
       .eq("location_id", locationId)
       .eq("date", dateISO)
       .maybeSingle();
@@ -182,6 +185,7 @@ async function getLocationDayStatus(
     const { data: scheduleRows, error: scheduleErr } = await supabase
       .from("location_opening_days")
       .select("weekday, is_open, opens_at, closes_at")
+      .eq("org_id", orgId)
       .eq("location_id", locationId)
       .in("weekday", [weekday0to6, weekday1to7]);
 
@@ -307,13 +311,16 @@ function CompletionFeedbackModal({
                 Cleaning day signed off
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Nice. You’re building your compliance score instead of just logging and disappearing like everyone else.
+                Nice. You’re building your compliance score instead of just
+                logging and disappearing like everyone else.
               </p>
             </div>
 
             <div className="mt-5 grid grid-cols-3 gap-3">
               <div className="rounded-2xl bg-slate-100 p-3 text-center">
-                <div className="text-xl font-extrabold text-slate-900">+{points}</div>
+                <div className="text-xl font-extrabold text-slate-900">
+                  +{points}
+                </div>
                 <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   points
                 </div>
@@ -329,7 +336,9 @@ function CompletionFeedbackModal({
               </div>
 
               <div className="rounded-2xl bg-amber-50 p-3 text-center">
-                <div className="text-xl font-extrabold text-amber-700">{streak}</div>
+                <div className="text-xl font-extrabold text-amber-700">
+                  {streak}
+                </div>
                 <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700/80">
                   day streak
                 </div>
@@ -339,7 +348,9 @@ function CompletionFeedbackModal({
             <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm text-slate-600">
               {compliantDays >= 7
                 ? "Perfect week so far. Try not to ruin it."
-                : `You’ve signed off ${compliantDays} day${compliantDays === 1 ? "" : "s"} this week.`}
+                : `You’ve signed off ${compliantDays} day${
+                    compliantDays === 1 ? "" : "s"
+                  } this week.`}
             </div>
 
             <button
@@ -357,7 +368,8 @@ function CompletionFeedbackModal({
 }
 
 export default function CleaningRotaPage() {
-  const { operator } = useWorkstation();
+  const effectiveOperator = useEffectiveOperator();
+
   const {
     orgId,
     locationId,
@@ -395,13 +407,12 @@ export default function CleaningRotaPage() {
   const [taskInitials, setTaskInitials] = useState<Record<string, string>>({});
 
   const operatorInitials = useMemo(() => {
-    const ini = String(operator?.initials ?? "").trim().toUpperCase();
-    return ini || initialsFromName(operator?.name) || "";
-  }, [operator?.initials, operator?.name]);
+    const ini = normalizeInitials(effectiveOperator.initials);
+    return ini || initialsFromName(effectiveOperator.name) || "";
+  }, [effectiveOperator.initials, effectiveOperator.name]);
 
-  const operatorTeamMemberId = operator?.teamMemberId ?? null;
-
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const operatorTeamMemberId = effectiveOperator.teamMemberId ?? null;
+  const authUserId = effectiveOperator.userId ?? null;
 
   const [showConfetti, setShowConfetti] = useState(false);
 
@@ -472,13 +483,14 @@ export default function CleaningRotaPage() {
       map.set(defaultRowInitials, {
         id: `default-${defaultRowInitials}`,
         initials: defaultRowInitials,
-        name: operator?.name ?? "Current user",
+        name: effectiveOperator.name ?? "Current operator",
       });
     }
 
     for (const tm of teamMembers) {
       const clean = normalizeInitials(tm.initials);
       if (!clean) continue;
+
       if (!map.has(clean)) {
         map.set(clean, {
           id: tm.id,
@@ -493,7 +505,7 @@ export default function CleaningRotaPage() {
       if (b.initials === defaultRowInitials) return 1;
       return a.initials.localeCompare(b.initials);
     });
-  }, [teamMembers, defaultRowInitials, operator?.name]);
+  }, [teamMembers, defaultRowInitials, effectiveOperator.name]);
 
   function getTaskInitials(taskId: string) {
     return normalizeInitials(taskInitials[taskId] || defaultRowInitials);
@@ -536,32 +548,19 @@ export default function CleaningRotaPage() {
 
     for (let i = 0; i < 365; i++) {
       const dIso = isoDate(cursor);
+
       if (!compliantDaySet.has(dIso)) {
-        if (i === 0) {
-          const { data: oneRow, error: oneErr } = await supabase
-            .from("daily_signoffs")
-            .select("signoff_on")
-            .eq("org_id", oid)
-            .eq("location_id", lid)
-            .eq("signoff_on", dIso)
-            .limit(1)
-            .maybeSingle();
+        const { data: oneRow, error: oneErr } = await supabase
+          .from("daily_signoffs")
+          .select("signoff_on")
+          .eq("org_id", oid)
+          .eq("location_id", lid)
+          .eq("signoff_on", dIso)
+          .limit(1)
+          .maybeSingle();
 
-          if (oneErr) throw oneErr;
-          if (!oneRow) break;
-        } else {
-          const { data: oneRow, error: oneErr } = await supabase
-            .from("daily_signoffs")
-            .select("signoff_on")
-            .eq("org_id", oid)
-            .eq("location_id", lid)
-            .eq("signoff_on", dIso)
-            .limit(1)
-            .maybeSingle();
-
-          if (oneErr) throw oneErr;
-          if (!oneRow) break;
-        }
+        if (oneErr) throw oneErr;
+        if (!oneRow) break;
       }
 
       streak += 1;
@@ -580,24 +579,6 @@ export default function CleaningRotaPage() {
     if (!operatorInitials) return;
     setInitials(operatorInitials);
   }, [operatorInitials, initialsDirty]);
-
-  useEffect(() => {
-    if (!dueToday.length) return;
-
-    setTaskInitials((prev) => {
-      let changed = false;
-      const next = { ...prev };
-
-      for (const task of dueToday) {
-        if (!next[task.id]) {
-          next[task.id] = defaultRowInitials;
-          changed = true;
-        }
-      }
-
-      return changed ? next : prev;
-    });
-  }, [defaultRowInitials, tasks.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadSignoff(oid: string, lid: string) {
     const { data, error } = await supabase
@@ -634,17 +615,10 @@ export default function CleaningRotaPage() {
         ? String((data as any).signed_by_user_id)
         : null,
       notes: (data as any).notes ? String((data as any).notes) : null,
-      created_at: (data as any).created_at ? String((data as any).created_at) : null,
+      created_at: (data as any).created_at
+        ? String((data as any).created_at)
+        : null,
     });
-  }
-
-  async function loadAuthUserIdOnly() {
-    try {
-      const { data: userRes } = await supabase.auth.getUser();
-      setAuthUserId(userRes.user?.id ?? null);
-    } catch {
-      setAuthUserId(null);
-    }
   }
 
   async function loadTeamMembers(oid: string, lid: string) {
@@ -711,7 +685,9 @@ export default function CleaningRotaPage() {
       .limit(1)
       .maybeSingle();
 
-    if (!byOrgWide.error && byOrgWide.data?.id) return String(byOrgWide.data.id);
+    if (!byOrgWide.error && byOrgWide.data?.id) {
+      return String(byOrgWide.data.id);
+    }
 
     return null;
   }
@@ -726,8 +702,6 @@ export default function CleaningRotaPage() {
       const oid = orgId;
       const lid = locationId;
 
-      await loadAuthUserIdOnly();
-
       if (!oid || !lid) {
         setTasks([]);
         setRuns([]);
@@ -739,7 +713,7 @@ export default function CleaningRotaPage() {
         return;
       }
 
-      const status = await getLocationDayStatus(lid, todayIso);
+      const status = await getLocationDayStatus(oid, lid, todayIso);
       setDayStatus(status);
 
       const { data: tData, error: tErr } = await supabase
@@ -754,7 +728,7 @@ export default function CleaningRotaPage() {
 
       const { data: rData, error: rErr } = await supabase
         .from("cleaning_task_runs")
-        .select("task_id,run_on,done_by,done_at")
+        .select("task_id,run_on,done_by,done_by_team_member_id,done_at")
         .eq("org_id", oid)
         .eq("location_id", lid)
         .eq("run_on", todayIso);
@@ -795,6 +769,24 @@ export default function CleaningRotaPage() {
     if (!dayStatus.isOpen) return [];
     return tasks.filter((t) => isDueEffective(t, today));
   }, [tasks, today, deferralsFromMap, deferralsToMap, dayStatus.isOpen]);
+
+  useEffect(() => {
+    if (!dueToday.length) return;
+
+    setTaskInitials((prev) => {
+      let changed = false;
+      const next = { ...prev };
+
+      for (const task of dueToday) {
+        if (!next[task.id]) {
+          next[task.id] = defaultRowInitials;
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+  }, [defaultRowInitials, dueToday]);
 
   const doneCount = useMemo(() => {
     let done = 0;
@@ -838,18 +830,23 @@ export default function CleaningRotaPage() {
 
   const groupedByCategory = useMemo(() => {
     const m = new Map<string, Task[]>();
+
     for (const t of dueToday) {
       const cat = t.category?.trim() || "Other";
       if (!m.has(cat)) m.set(cat, []);
       m.get(cat)!.push(t);
     }
+
     const ordered: Array<[string, Task[]]> = [];
+
     for (const c of CLEANING_CATEGORIES) {
       if (m.has(c)) ordered.push([c, m.get(c)!]);
     }
+
     for (const [k, v] of m.entries()) {
       if (!ordered.find(([ok]) => ok === k)) ordered.push([k, v]);
     }
+
     return ordered;
   }, [dueToday]);
 
@@ -870,16 +867,19 @@ export default function CleaningRotaPage() {
   async function tickTask(taskId: string) {
     if (!orgId || !locationId || !dayStatus.isOpen) return;
 
-    userActionRef.current = true;
+    const doneBy = getTaskInitials(taskId);
 
-    const doneBy = getTaskInitials(taskId) || null;
+    if (!doneBy) {
+      alert("Unlock with a staff PIN or enter initials before ticking the task.");
+      return;
+    }
+
+    userActionRef.current = true;
 
     const doneByTeamMemberId =
       doneBy && operatorTeamMemberId && operatorInitials && doneBy === operatorInitials
         ? operatorTeamMemberId
-        : doneBy
-        ? await resolveSignerTeamMemberId(orgId, locationId, doneBy)
-        : null;
+        : await resolveSignerTeamMemberId(orgId, locationId, doneBy);
 
     const payload = {
       org_id: orgId,
@@ -894,7 +894,7 @@ export default function CleaningRotaPage() {
     const { data, error } = await supabase
       .from("cleaning_task_runs")
       .upsert(payload, { onConflict: "org_id,location_id,task_id,run_on" })
-      .select("task_id,run_on,done_by,done_at")
+      .select("task_id,run_on,done_by,done_by_team_member_id,done_at")
       .maybeSingle();
 
     if (error) {
@@ -906,6 +906,7 @@ export default function CleaningRotaPage() {
       task_id: taskId,
       run_on: todayIso,
       done_by: payload.done_by,
+      done_by_team_member_id: payload.done_by_team_member_id,
       done_at: payload.done_at,
     };
 
@@ -974,6 +975,13 @@ export default function CleaningRotaPage() {
     const idsToDo = taskIds.filter((id) => !runsByTask.has(id));
     if (idsToDo.length === 0) return;
 
+    const missingInitials = idsToDo.some((taskId) => !getTaskInitials(taskId));
+
+    if (missingInitials) {
+      alert("Unlock with a staff PIN or enter initials before completing tasks.");
+      return;
+    }
+
     userActionRef.current = true;
 
     const nowIso = new Date().toISOString();
@@ -997,14 +1005,14 @@ export default function CleaningRotaPage() {
     );
 
     const payloads = idsToDo.map((task_id) => {
-      const doneBy = getTaskInitials(task_id) || null;
+      const doneBy = getTaskInitials(task_id);
       return {
         org_id: orgId,
         location_id: locationId,
         task_id,
         run_on: todayIso,
         done_by: doneBy,
-        done_by_team_member_id: doneBy ? initialsToMemberId.get(doneBy) ?? null : null,
+        done_by_team_member_id: initialsToMemberId.get(doneBy) ?? null,
         done_at: nowIso,
       };
     });
@@ -1012,7 +1020,7 @@ export default function CleaningRotaPage() {
     const { data, error } = await supabase
       .from("cleaning_task_runs")
       .upsert(payloads, { onConflict: "org_id,location_id,task_id,run_on" })
-      .select("task_id,run_on,done_by,done_at");
+      .select("task_id,run_on,done_by,done_by_team_member_id,done_at");
 
     if (error) {
       alert(error.message);
@@ -1026,12 +1034,14 @@ export default function CleaningRotaPage() {
             task_id: r.task_id,
             run_on: r.run_on,
             done_by: r.done_by,
+            done_by_team_member_id: r.done_by_team_member_id ?? null,
             done_at: r.done_at,
           }))
         : payloads.map((p) => ({
             task_id: p.task_id,
             run_on: p.run_on,
             done_by: p.done_by,
+            done_by_team_member_id: p.done_by_team_member_id,
             done_at: p.done_at,
           }));
 
@@ -1040,97 +1050,98 @@ export default function CleaningRotaPage() {
       return [...keep, ...returnedRuns];
     });
   }
-async function createSignoff() {
-  if (!orgId || !locationId) return;
 
-  if (!dayStatus.isOpen) {
-    alert("This location is marked closed today, so sign-off is not required.");
-    return;
-  }
+  async function createSignoff() {
+    if (!orgId || !locationId) return;
 
-  if (!allDone) {
-    alert("Complete all cleaning tasks due today before signing off.");
-    return;
-  }
-
-  if (signoff) return;
-
-  const ini = signoffInitials.trim().toUpperCase();
-  if (!ini) {
-    alert("Enter initials to sign off.");
-    return;
-  }
-
-  setSignoffSaving(true);
-
-  try {
-    const signerTeamMemberId = await resolveSignerTeamMemberId(
-      orgId,
-      locationId,
-      ini
-    );
-
-    const payload = {
-      org_id: orgId,
-      location_id: locationId,
-      signoff_on: todayIso,
-      signed_by: ini,
-      signed_by_team_member_id: signerTeamMemberId,
-      signed_by_user_id: authUserId,
-      notes: signoffNotes.trim() || null,
-    };
-
-    const { data, error } = await supabase
-      .from("daily_signoffs")
-      .insert(payload)
-      .select(
-        "id, signoff_on, signed_by, signed_by_team_member_id, signed_by_user_id, notes, created_at"
-      )
-      .single();
-
-    if (error) throw error;
-
-    setSignoff({
-      id: String((data as any).id),
-      signoff_on: String((data as any).signoff_on),
-      signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
-      signed_by_team_member_id: (data as any).signed_by_team_member_id
-        ? String((data as any).signed_by_team_member_id)
-        : null,
-      signed_by_user_id: (data as any).signed_by_user_id
-        ? String((data as any).signed_by_user_id)
-        : null,
-      notes: (data as any).notes ? String((data as any).notes) : null,
-      created_at: (data as any).created_at ? String((data as any).created_at) : null,
-    });
-
-    // Close sign-off modal first so the feedback card is not fighting another overlay.
-    setSignoffOpen(false);
-    setSignoffNotes("");
-    setSignoffInitialsDirty(false);
-
-    // Open feedback immediately with safe fallback values.
-    setCompletionFeedback({
-      points: 10,
-      compliantDays: 1,
-      streak: 1,
-    });
-    setCompletionFeedbackOpen(true);
-
-    // Then try to replace with real metrics.
-    try {
-      const metrics = await getCompletionFeedbackMetrics(orgId, locationId, todayIso);
-      setCompletionFeedback(metrics);
-    } catch (metricsErr) {
-      console.error("[cleaning] completion feedback metrics failed:", metricsErr);
+    if (!dayStatus.isOpen) {
+      alert("This location is marked closed today, so sign-off is not required.");
+      return;
     }
-  } catch (e: any) {
-    console.error(e);
-    alert(e?.message ?? "Failed to sign off the day.");
-  } finally {
-    setSignoffSaving(false);
+
+    if (!allDone) {
+      alert("Complete all cleaning tasks due today before signing off.");
+      return;
+    }
+
+    if (signoff) return;
+
+    const ini = normalizeInitials(signoffInitials);
+
+    if (!ini) {
+      alert("Enter initials to sign off.");
+      return;
+    }
+
+    setSignoffSaving(true);
+
+    try {
+      const signerTeamMemberId = await resolveSignerTeamMemberId(
+        orgId,
+        locationId,
+        ini
+      );
+
+      const payload = {
+        org_id: orgId,
+        location_id: locationId,
+        signoff_on: todayIso,
+        signed_by: ini,
+        signed_by_team_member_id: signerTeamMemberId,
+        signed_by_user_id: authUserId,
+        notes: signoffNotes.trim() || null,
+      };
+
+      const { data, error } = await supabase
+        .from("daily_signoffs")
+        .insert(payload)
+        .select(
+          "id, signoff_on, signed_by, signed_by_team_member_id, signed_by_user_id, notes, created_at"
+        )
+        .single();
+
+      if (error) throw error;
+
+      setSignoff({
+        id: String((data as any).id),
+        signoff_on: String((data as any).signoff_on),
+        signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+        signed_by_team_member_id: (data as any).signed_by_team_member_id
+          ? String((data as any).signed_by_team_member_id)
+          : null,
+        signed_by_user_id: (data as any).signed_by_user_id
+          ? String((data as any).signed_by_user_id)
+          : null,
+        notes: (data as any).notes ? String((data as any).notes) : null,
+        created_at: (data as any).created_at
+          ? String((data as any).created_at)
+          : null,
+      });
+
+      setSignoffOpen(false);
+      setSignoffNotes("");
+      setSignoffInitialsDirty(false);
+
+      setCompletionFeedback({
+        points: 10,
+        compliantDays: 1,
+        streak: 1,
+      });
+      setCompletionFeedbackOpen(true);
+
+      try {
+        const metrics = await getCompletionFeedbackMetrics(orgId, locationId, todayIso);
+        setCompletionFeedback(metrics);
+      } catch (metricsErr) {
+        console.error("[cleaning] completion feedback metrics failed:", metricsErr);
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "Failed to sign off the day.");
+    } finally {
+      setSignoffSaving(false);
+    }
   }
-}
 
   useEffect(() => {
     if (!signoffOpen) return;
@@ -1177,7 +1188,9 @@ async function createSignoff() {
       <div className={`${CARD} p-4 sm:p-5`}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="text-lg font-semibold text-slate-900">Cleaning rota</div>
+            <div className="text-lg font-semibold text-slate-900">
+              Cleaning rota
+            </div>
             <div className="text-xs text-slate-500">{todayIso}</div>
           </div>
 
@@ -1193,9 +1206,16 @@ async function createSignoff() {
               onClick={() => {
                 if (!dayStatus.isOpen) return;
                 const best = bestInitials(operatorInitials, initials);
+
+                if (!best) {
+                  alert("Unlock with a staff PIN or enter initials before signing off.");
+                  return;
+                }
+
                 if (!signoffInitialsDirty) {
                   setSignoffInitials((prev) => (prev.trim() ? prev : best));
                 }
+
                 setSignoffNotes("");
                 setSignoffOpen(true);
               }}
@@ -1227,7 +1247,7 @@ async function createSignoff() {
                 value={initials}
                 onChange={(e) => {
                   setInitialsDirty(true);
-                  setInitials(e.target.value.toUpperCase());
+                  setInitials(normalizeInitials(e.target.value));
                 }}
                 placeholder="ED"
                 className="h-9 w-20 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none"
@@ -1285,7 +1305,10 @@ async function createSignoff() {
             const isCollapsed = collapsed[category] ?? false;
 
             return (
-              <div key={category} className="rounded-2xl border border-slate-200 bg-white p-3">
+              <div
+                key={category}
+                className="rounded-2xl border border-slate-200 bg-white p-3"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <button
                     type="button"
@@ -1302,7 +1325,9 @@ async function createSignoff() {
                     </span>
 
                     <div className="flex-1">
-                      <div className="text-sm font-semibold text-slate-900">{category}</div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        {category}
+                      </div>
                       <div className="text-xs text-slate-500">
                         {catDone}/{list.length} complete · {open} open
                       </div>
@@ -1338,7 +1363,9 @@ async function createSignoff() {
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <div className="text-sm font-semibold text-slate-900">{t.task}</div>
+                              <div className="text-sm font-semibold text-slate-900">
+                                {t.task}
+                              </div>
                               <div className="text-xs text-slate-500">
                                 {t.area ?? "—"} · {t.frequency}
                               </div>
@@ -1360,7 +1387,9 @@ async function createSignoff() {
                               {!done && (
                                 <select
                                   value={selectedInitials}
-                                  onChange={(e) => setTaskInitialsValue(t.id, e.target.value)}
+                                  onChange={(e) =>
+                                    setTaskInitialsValue(t.id, e.target.value)
+                                  }
                                   className="h-8 min-w-[78px] rounded-full border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 outline-none"
                                   aria-label={`Initials for ${t.task}`}
                                 >
@@ -1418,7 +1447,10 @@ async function createSignoff() {
       />
 
       {signoffOpen && dayStatus.isOpen && (
-        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
+        <div
+          className="fixed inset-0 z-50 bg-black/30"
+          onClick={() => setSignoffOpen(false)}
+        >
           <div
             className="mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
@@ -1451,12 +1483,14 @@ async function createSignoff() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Initials</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Initials
+                </label>
                 <input
                   value={signoffInitials}
                   onChange={(e) => {
                     setSignoffInitialsDirty(true);
-                    setSignoffInitials(e.target.value.toUpperCase());
+                    setSignoffInitials(normalizeInitials(e.target.value));
                   }}
                   placeholder="ED"
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
@@ -1467,7 +1501,9 @@ async function createSignoff() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
+                <label className="mb-1 block text-xs text-slate-500">
+                  Notes (optional)
+                </label>
                 <input
                   value={signoffNotes}
                   onChange={(e) => setSignoffNotes(e.target.value)}

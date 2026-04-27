@@ -1,7 +1,7 @@
 // src/components/QuickActionsFab.tsx
 "use client";
-import posthog from "posthog-js";
 
+import posthog from "posthog-js";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
@@ -17,6 +17,7 @@ import RoutineRunModal from "@/components/RoutineRunModal";
 import type { RoutineRow } from "@/components/RoutinePickerModal";
 import IncidentModal from "@/components/IncidentModal";
 import { useActiveLocation } from "@/hooks/useActiveLocation";
+import { useEffectiveOperator } from "@/lib/useEffectiveOperator";
 import { motion } from "framer-motion";
 import {
   Thermometer,
@@ -31,19 +32,15 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useVoiceTempEntry } from "@/lib/useVoiceTempEntry";
-
-// ✅ Workstation operator (PIN user)
 import { useWorkstation } from "@/components/workstation/WorkstationLockProvider";
-
 import { countOpenDaysInRange } from "@/lib/locationOpenStatus";
 import {
   buildComplianceFeedback,
-  calculateWeeklyComplianceState,
   type CompletionFeedbackData,
-  type WeeklyComplianceState,
 } from "@/lib/complianceProgress";
 
 const DEFAULT_AREA = "Kitchen";
+
 const PRESET_AREAS = [
   "Kitchen",
   "Prep",
@@ -70,12 +67,46 @@ type LocationDayStatus = {
   note: string | null;
 };
 
+type DailySignoffRow = {
+  id: string;
+  org_id: string;
+  location_id: string;
+  signoff_on: string;
+  signed_by: string | null;
+  signed_by_team_member_id: string | null;
+  signed_by_user_id: string | null;
+  notes: string | null;
+  created_at: string | null;
+};
+
+type CorrectiveDraft = {
+  open: boolean;
+  tempLogId: string | null;
+  org_id: string | null;
+  location_id: string | null;
+  staff_initials: string;
+  area: string;
+  item: string;
+  target_key: string;
+  temp_c: number | null;
+};
+
+type FeedbackKind = "bug" | "confusing" | "idea" | "other";
+
+type HasPosition = { position: number };
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
 
-// ===== Cleaning helpers (aligned with FoodTempLogger) =====
 const isoToday = () => new Date().toISOString().slice(0, 10);
+
+function normalizeInitials(value?: string | null) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
+}
 
 function isoDate(d: Date) {
   const year = d.getFullYear();
@@ -88,6 +119,7 @@ const getDow1to7 = (ymd: string) => {
   const date = new Date(ymd);
   return ((date.getDay() + 6) % 7) + 1;
 };
+
 const getDom = (ymd: string) => new Date(ymd).getDate();
 
 function startOfWeekMonday(d: Date) {
@@ -127,8 +159,6 @@ function inferStatus(
   if (maxC != null && temp > maxC) return "fail";
   return "pass";
 }
-
-/* ---------- location open/closed helpers ---------- */
 
 async function getLocationDayStatus(
   orgId: string,
@@ -209,7 +239,6 @@ async function getLocationDayStatus(
   };
 }
 
-/* ---------- temp helpers ---------- */
 function isFrozenPreset(preset?: TargetPreset) {
   if (!preset) return false;
 
@@ -272,8 +301,6 @@ function tempPlaceholderForPreset(preset?: TargetPreset) {
   return isFrozenPreset(preset) ? "e.g. 18 = -18°C" : "e.g. 3.4";
 }
 
-/** TS-safe sort comparator */
-type HasPosition = { position: number };
 const byPosition = (a: HasPosition, b: HasPosition) => a.position - b.position;
 
 async function getActiveContext(): Promise<{
@@ -287,17 +314,14 @@ async function getActiveContext(): Promise<{
   return { orgId, locationId };
 }
 
-/* ===================== Daily sign-off modal + logic ===================== */
-
-type DailySignoffRow = {
-  id: string;
-  org_id: string;
-  location_id: string;
-  signoff_on: string;
-  signed_by: string | null;
-  notes: string | null;
-  created_at: string | null;
-};
+function prettyDateLabel(ymd: string) {
+  const d = new Date(`${ymd}T00:00:00`);
+  const weekday = d.toLocaleDateString("en-GB", { weekday: "long" });
+  const day = d.toLocaleDateString("en-GB", { day: "2-digit" });
+  const month = d.toLocaleDateString("en-GB", { month: "long" });
+  const year = d.toLocaleDateString("en-GB", { year: "numeric" });
+  return `${weekday} ${day} ${month} ${year}`;
+}
 
 function SignoffModal({
   open,
@@ -352,11 +376,13 @@ function SignoffModal({
               allergens and any issues). Any problems found have been recorded
               with corrective actions and notes.
             </div>
+
             {signedAlready ? (
               <div className="text-xs text-slate-500">
                 Already signed off today. Saving again updates initials/notes.
               </div>
             ) : null}
+
             {operatorLocked ? (
               <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 Workstation is locked. Select an operator and enter PIN before
@@ -369,7 +395,7 @@ function SignoffModal({
             <div className="text-sm font-semibold text-slate-900">Initials</div>
             <input
               value={initials}
-              onChange={(e) => setInitials(e.target.value.toUpperCase())}
+              onChange={(e) => setInitials(normalizeInitials(e.target.value))}
               className="mt-2 w-full rounded-2xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm uppercase shadow-sm"
               placeholder="e.g. WS"
               maxLength={8}
@@ -417,29 +443,6 @@ function SignoffModal({
     </div>
   );
 }
-
-function prettyDateLabel(ymd: string) {
-  const d = new Date(`${ymd}T00:00:00`);
-  const weekday = d.toLocaleDateString("en-GB", { weekday: "long" });
-  const day = d.toLocaleDateString("en-GB", { day: "2-digit" });
-  const month = d.toLocaleDateString("en-GB", { month: "long" });
-  const year = d.toLocaleDateString("en-GB", { year: "numeric" });
-  return `${weekday} ${day} ${month} ${year}`;
-}
-
-/* ===================== Corrective action modal + logic ===================== */
-
-type CorrectiveDraft = {
-  open: boolean;
-  tempLogId: string | null;
-  org_id: string | null;
-  location_id: string | null;
-  staff_initials: string;
-  area: string;
-  item: string;
-  target_key: string;
-  temp_c: number | null;
-};
 
 function CorrectiveModal({
   open,
@@ -588,10 +591,6 @@ function CorrectiveModal({
   );
 }
 
-/* ===================== Feedback modal (FAB) ===================== */
-
-type FeedbackKind = "bug" | "confusing" | "idea" | "other";
-
 function FeedbackModal({
   open,
   onClose,
@@ -617,6 +616,7 @@ function FeedbackModal({
 
   async function submit() {
     const text = message.trim();
+
     if (text.length < 3) {
       addToast({
         title: "Add a bit more detail",
@@ -627,12 +627,14 @@ function FeedbackModal({
     }
 
     setSaving(true);
+
     try {
       const orgId = await getActiveOrgIdClient();
       if (!orgId) throw new Error("No organisation found.");
 
       const { data: authData, error: authErr } = await supabase.auth.getUser();
       if (authErr) throw authErr;
+
       const userId = authData?.user?.id;
       if (!userId) throw new Error("Not signed in.");
 
@@ -658,6 +660,7 @@ function FeedbackModal({
       if (error) throw error;
 
       addToast({ title: "Feedback sent", type: "success" });
+
       posthog.capture("feedback_sent", {
         source: "fab",
         kind,
@@ -780,7 +783,6 @@ function FeedbackModal({
   );
 }
 
-/* ===================== Quick temp completion modal ===================== */
 function CompletionFeedbackModal({
   open,
   onClose,
@@ -873,26 +875,26 @@ function CompletionFeedbackModal({
   );
 }
 
-/* ======================================================================= */
-
 export default function TempFab() {
   const { addToast } = useToast();
   const router = useRouter();
+
   const {
     orgId: hookOrgId,
     locationId: hookLocationId,
     loading: activeLocationLoading,
   } = useActiveLocation();
 
-  // ✅ Workstation operator (PIN user)
   const ws = useWorkstation();
-  const operator = ws.operator;
   const locked = ws.locked;
 
-  const operatorInitials = (operator?.initials ?? "")
-    .toString()
-    .trim()
-    .toUpperCase();
+  const effectiveOperator = useEffectiveOperator();
+
+  const operatorInitials = normalizeInitials(effectiveOperator.initials);
+  const operatorTeamMemberId = effectiveOperator.teamMemberId ?? null;
+  const operatorUserId = effectiveOperator.userId ?? null;
+  const operatorIsUnlocked =
+    !locked && effectiveOperator.source === "operator" && !!operatorInitials;
 
   const [open, setOpen] = useState(false);
   const [entriesToday, setEntriesToday] = useState<number | null>(null);
@@ -901,6 +903,7 @@ export default function TempFab() {
 
   const [locations, setLocations] = useState<string[]>(PRESET_AREAS);
   const [customLocationEnabled, setCustomLocationEnabled] = useState(false);
+
   const [form, setForm] = useState<FormState>({
     date: isoToday(),
     staff_initials: "",
@@ -910,14 +913,12 @@ export default function TempFab() {
     temp_c: "",
   });
 
-  // Routine picker / runner
   const [showPicker, setShowPicker] = useState(false);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerErr, setPickerErr] = useState<string | null>(null);
   const [pickerList, setPickerList] = useState<RoutineRow[]>([]);
   const [runRoutine, setRunRoutine] = useState<RoutineRow | null>(null);
 
-  // local cache for active ids
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [activeLocationId, setActiveLocationId] = useState<string | null>(null);
 
@@ -928,21 +929,18 @@ export default function TempFab() {
   });
 
   const [completionFeedbackOpen, setCompletionFeedbackOpen] = useState(false);
-const [completionFeedback, setCompletionFeedback] =
-  useState<CompletionFeedbackData | null>(null);
+  const [completionFeedback, setCompletionFeedback] =
+    useState<CompletionFeedbackData | null>(null);
 
-  // Prevent overlapping cleaning refresh calls
   const cleaningRefreshInFlight = useRef(false);
   const cleaningRefreshQueued = useRef(false);
 
-  // Sign-off state
   const [signoffOpen, setSignoffOpen] = useState(false);
   const [signoffSaving, setSignoffSaving] = useState(false);
   const [signoffInitials, setSignoffInitials] = useState("");
   const [signoffNotes, setSignoffNotes] = useState("");
-  const [signoffExisting, setSignoffExisting] = useState<DailySignoffRow | null>(
-    null
-  );
+  const [signoffExisting, setSignoffExisting] =
+    useState<DailySignoffRow | null>(null);
 
   const signoffDateISO = useMemo(() => isoToday(), []);
   const signoffDateLabel = useMemo(
@@ -950,10 +948,9 @@ const [completionFeedback, setCompletionFeedback] =
     [signoffDateISO]
   );
 
-  // Corrective action state
   const [corrective, setCorrective] = useState<CorrectiveDraft>({
     open: false,
-    tempLogId:  null,
+    tempLogId: null,
     org_id: null,
     location_id: null,
     staff_initials: "",
@@ -962,26 +959,25 @@ const [completionFeedback, setCompletionFeedback] =
     target_key: "",
     temp_c: null,
   });
+
   const [correctiveSaving, setCorrectiveSaving] = useState(false);
   const [correctiveAction, setCorrectiveAction] = useState("");
   const [correctiveRecheckEnabled, setCorrectiveRecheckEnabled] = useState(true);
   const [correctiveRecheckTemp, setCorrectiveRecheckTemp] = useState("");
 
-  // Feedback modal state
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-
-  // Incident modal state
   const [incidentOpen, setIncidentOpen] = useState(false);
   const [incidentArea, setIncidentArea] = useState<string | null>(null);
 
-  // Keep form.staff_initials synced to operator
   useEffect(() => {
     setForm((f) => ({ ...f, staff_initials: operatorInitials }));
   }, [operatorInitials]);
 
   const selectedPreset = useMemo(
     () =>
-      (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[form.target_key],
+      (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
+        form.target_key
+      ],
     [form.target_key]
   );
 
@@ -993,8 +989,7 @@ const [completionFeedback, setCompletionFeedback] =
     !!form.item &&
     !!form.target_key &&
     form.temp_c.trim().length > 0 &&
-    !!operatorInitials &&
-    !locked &&
+    operatorIsUnlocked &&
     !dayClosed;
 
   function openWorkstationLock() {
@@ -1006,7 +1001,7 @@ const [completionFeedback, setCompletionFeedback] =
   }
 
   function requireOperator(): boolean {
-    if (locked || !operatorInitials) {
+    if (!operatorIsUnlocked) {
       addToast({
         title: "Workstation locked",
         message: "Select a user and enter PIN to continue.",
@@ -1016,6 +1011,7 @@ const [completionFeedback, setCompletionFeedback] =
       openWorkstationLock();
       return false;
     }
+
     return true;
   }
 
@@ -1032,103 +1028,149 @@ const [completionFeedback, setCompletionFeedback] =
 
     return false;
   }
-async function getQuickTempCompletionMetrics(
-  orgId: string,
-  locationId: string,
-  currentDayIso: string,
-  initials: string
-): Promise<CompletionFeedbackData> {
-  const currentDate = new Date(`${currentDayIso}T00:00:00`);
-  currentDate.setHours(0, 0, 0, 0);
 
-  const weekStart = startOfWeekMonday(currentDate);
-  const weekEnd = new Date(currentDate);
-  weekEnd.setHours(23, 59, 59, 999);
+  async function resolveAuditTeamMemberIdForLocation(
+    orgId: string,
+    locationId: string,
+    teamMemberId: string | null,
+    initialsValue: string
+  ): Promise<string | null> {
+    const clean = normalizeInitials(initialsValue);
+    if (!clean) return null;
 
-  const { data: weekRows, error: weekErr } = await supabase
-    .from("food_temp_logs")
-    .select("at")
-    .eq("org_id", orgId)
-    .eq("location_id", locationId)
-    .gte("at", weekStart.toISOString())
-    .lte("at", weekEnd.toISOString())
-    .limit(5000);
-
-  if (weekErr) throw weekErr;
-
-  const loggedDaySet = new Set<string>();
-  for (const row of (weekRows ?? []) as Array<{ at: string | null }>) {
-    if (!row?.at) continue;
-    const d = new Date(row.at);
-    if (Number.isNaN(d.getTime())) continue;
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    loggedDaySet.add(`${y}-${m}-${day}`);
-  }
-
-  const weekStartISO = isoDate(weekStart);
-  const openDaysThisWeek = await countOpenDaysInRange({
-    orgId,
-    locationId,
-    startISO: weekStartISO,
-    endISO: currentDayIso,
-  });
-
-  let compliantDaysThisWeek = 0;
-  const cursorForWeek = new Date(weekStart);
-  while (isoDate(cursorForWeek) <= currentDayIso) {
-    const dIso = isoDate(cursorForWeek);
-    if (loggedDaySet.has(dIso)) compliantDaysThisWeek += 1;
-    cursorForWeek.setDate(cursorForWeek.getDate() + 1);
-  }
-
-  let streakDays = 0;
-  const streakCursor = new Date(currentDate);
-
-  for (let i = 0; i < 365; i++) {
-    const dIso = isoDate(streakCursor);
-
-    let hasLogsForDay = loggedDaySet.has(dIso);
-
-    if (!hasLogsForDay) {
-      const dayStart = new Date(streakCursor);
-      dayStart.setHours(0, 0, 0, 0);
-
-      const dayEnd = new Date(streakCursor);
-      dayEnd.setHours(23, 59, 59, 999);
-
-      const { data: oneRow, error: oneErr } = await supabase
-        .from("food_temp_logs")
+    if (teamMemberId) {
+      const { data, error } = await supabase
+        .from("team_members")
         .select("id")
+        .eq("id", teamMemberId)
         .eq("org_id", orgId)
         .eq("location_id", locationId)
-        .gte("at", dayStart.toISOString())
-        .lte("at", dayEnd.toISOString())
         .limit(1)
         .maybeSingle();
 
-      if (oneErr) throw oneErr;
-      if (!oneRow) break;
-
-      hasLogsForDay = true;
+      if (!error && data?.id) {
+        return String(data.id);
+      }
     }
 
-    if (!hasLogsForDay) break;
+    const { data, error } = await supabase
+      .from("team_members")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .eq("initials", clean)
+      .limit(1)
+      .maybeSingle();
 
-    streakDays += 1;
-    streakCursor.setDate(streakCursor.getDate() - 1);
+    if (!error && data?.id) {
+      return String(data.id);
+    }
+
+    return null;
   }
 
-  return buildComplianceFeedback({
-    compliantDaysThisWeek,
-    openDaysThisWeek,
-    streakDays,
-    selectedDate: currentDayIso,
-    initials: initials || null,
-    completedTodayLabel: "Quick temperature logged.",
-  });
-}
+  async function getQuickTempCompletionMetrics(
+    orgId: string,
+    locationId: string,
+    currentDayIso: string,
+    initials: string
+  ): Promise<CompletionFeedbackData> {
+    const currentDate = new Date(`${currentDayIso}T00:00:00`);
+    currentDate.setHours(0, 0, 0, 0);
+
+    const weekStart = startOfWeekMonday(currentDate);
+    const weekEnd = new Date(currentDate);
+    weekEnd.setHours(23, 59, 59, 999);
+
+    const { data: weekRows, error: weekErr } = await supabase
+      .from("food_temp_logs")
+      .select("at")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .gte("at", weekStart.toISOString())
+      .lte("at", weekEnd.toISOString())
+      .limit(5000);
+
+    if (weekErr) throw weekErr;
+
+    const loggedDaySet = new Set<string>();
+
+    for (const row of (weekRows ?? []) as Array<{ at: string | null }>) {
+      if (!row?.at) continue;
+
+      const d = new Date(row.at);
+      if (Number.isNaN(d.getTime())) continue;
+
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+
+      loggedDaySet.add(`${y}-${m}-${day}`);
+    }
+
+    const weekStartISO = isoDate(weekStart);
+
+    const openDaysThisWeek = await countOpenDaysInRange({
+      orgId,
+      locationId,
+      startISO: weekStartISO,
+      endISO: currentDayIso,
+    });
+
+    let compliantDaysThisWeek = 0;
+    const cursorForWeek = new Date(weekStart);
+
+    while (isoDate(cursorForWeek) <= currentDayIso) {
+      const dIso = isoDate(cursorForWeek);
+      if (loggedDaySet.has(dIso)) compliantDaysThisWeek += 1;
+      cursorForWeek.setDate(cursorForWeek.getDate() + 1);
+    }
+
+    let streakDays = 0;
+    const streakCursor = new Date(currentDate);
+
+    for (let i = 0; i < 365; i++) {
+      const dIso = isoDate(streakCursor);
+      let hasLogsForDay = loggedDaySet.has(dIso);
+
+      if (!hasLogsForDay) {
+        const dayStart = new Date(streakCursor);
+        dayStart.setHours(0, 0, 0, 0);
+
+        const dayEnd = new Date(streakCursor);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        const { data: oneRow, error: oneErr } = await supabase
+          .from("food_temp_logs")
+          .select("id")
+          .eq("org_id", orgId)
+          .eq("location_id", locationId)
+          .gte("at", dayStart.toISOString())
+          .lte("at", dayEnd.toISOString())
+          .limit(1)
+          .maybeSingle();
+
+        if (oneErr) throw oneErr;
+        if (!oneRow) break;
+
+        hasLogsForDay = true;
+      }
+
+      if (!hasLogsForDay) break;
+
+      streakDays += 1;
+      streakCursor.setDate(streakCursor.getDate() - 1);
+    }
+
+    return buildComplianceFeedback({
+      compliantDaysThisWeek,
+      openDaysThisWeek,
+      streakDays,
+      selectedDate: currentDayIso,
+      initials: initials || null,
+      completedTodayLabel: "Quick temperature logged.",
+    });
+  }
 
   async function refreshTodayStatus(force = false) {
     try {
@@ -1152,6 +1194,7 @@ async function getQuickTempCompletionMetrics(
       }
 
       if (orgId !== activeOrgId) setActiveOrgId(orgId);
+
       if ((locationId ?? null) !== (activeLocationId ?? null)) {
         setActiveLocationId(locationId ?? null);
       }
@@ -1183,6 +1226,7 @@ async function getQuickTempCompletionMetrics(
       if (locationId) q = q.eq("location_id", locationId);
 
       type LogRow = { area: string | null };
+
       const { data: logsData } = await q;
 
       const fromAreas: string[] = (logsData ?? [])
@@ -1222,6 +1266,7 @@ async function getQuickTempCompletionMetrics(
       recheck_temp_c != null ? inferStatus(recheck_temp_c, preset) : null;
 
     setCorrectiveSaving(true);
+
     try {
       const payload = {
         org_id: corrective.org_id,
@@ -1231,9 +1276,7 @@ async function getQuickTempCompletionMetrics(
         recheck_temp_c,
         recheck_at: recheck_temp_c != null ? new Date().toISOString() : null,
         recheck_status,
-        recorded_by: corrective.staff_initials
-          ? corrective.staff_initials.toUpperCase()
-          : null,
+        recorded_by: operatorInitials || corrective.staff_initials || null,
       };
 
       const { error } = await supabase
@@ -1243,6 +1286,7 @@ async function getQuickTempCompletionMetrics(
       if (error) throw error;
 
       addToast({ title: "Corrective action saved", type: "success" });
+
       posthog.capture("temp_corrective_saved", {
         source: "fab_quick",
         recheck: recheck_temp_c != null,
@@ -1269,49 +1313,46 @@ async function getQuickTempCompletionMetrics(
     }
   }
 
-  // Voice hook
-  const { supported: voiceSupported, listening, start, stop } = useVoiceTempEntry(
-    {
-      lang: "en-GB",
-      onResult: (r) => {
-        setForm((f) => {
-          const nextLocation = r.location?.trim() || "";
-          const nextPreset =
-            (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
-              f.target_key
-            ];
+  const { supported: voiceSupported, listening, start, stop } = useVoiceTempEntry({
+    lang: "en-GB",
+    onResult: (r) => {
+      setForm((f) => {
+        const nextLocation = r.location?.trim() || "";
+        const nextPreset =
+          (TARGET_BY_KEY as Record<string, TargetPreset | undefined>)[
+            f.target_key
+          ];
 
-          return {
-            ...f,
-            temp_c: r.temp_c
-              ? normalizeTempStringForPreset(String(r.temp_c), nextPreset)
-              : f.temp_c,
-            item: r.item ?? f.item,
-            location: nextLocation || f.location,
-            staff_initials: operatorInitials || f.staff_initials,
-          };
-        });
+        return {
+          ...f,
+          temp_c: r.temp_c
+            ? normalizeTempStringForPreset(String(r.temp_c), nextPreset)
+            : f.temp_c,
+          item: r.item ?? f.item,
+          location: nextLocation || f.location,
+          staff_initials: operatorInitials || f.staff_initials,
+        };
+      });
 
-        if (r.location?.trim()) {
-          const nextLocation = r.location.trim();
-          const isPreset = locations.some(
-            (loc) => loc.toLowerCase() === nextLocation.toLowerCase()
-          );
-          setCustomLocationEnabled(!isPreset);
-        }
+      if (r.location?.trim()) {
+        const nextLocation = r.location.trim();
+        const isPreset = locations.some(
+          (loc) => loc.toLowerCase() === nextLocation.toLowerCase()
+        );
+        setCustomLocationEnabled(!isPreset);
+      }
 
-        posthog.capture("temp_voice_parsed", {
-          raw: r.raw,
-          has_temp: !!r.temp_c,
-          has_item: !!r.item,
-          has_location: !!r.location,
-        });
-      },
-      onError: (msg) => {
-        addToast({ title: "Voice entry failed", message: msg, type: "error" });
-      },
-    }
-  );
+      posthog.capture("temp_voice_parsed", {
+        raw: r.raw,
+        has_temp: !!r.temp_c,
+        has_item: !!r.item,
+        has_location: !!r.location,
+      });
+    },
+    onError: (msg) => {
+      addToast({ title: "Voice entry failed", message: msg, type: "error" });
+    },
+  });
 
   async function refreshEntriesToday() {
     try {
@@ -1331,17 +1372,18 @@ async function getQuickTempCompletionMetrics(
 
       const todayISO = isoToday();
 
-      const start = new Date();
-      start.setHours(0, 0, 0, 0);
-      const end = new Date();
-      end.setHours(23, 59, 59, 999);
+      const startDate = new Date();
+      startDate.setHours(0, 0, 0, 0);
+
+      const endDate = new Date();
+      endDate.setHours(23, 59, 59, 999);
 
       let qFood = supabase
         .from("food_temp_logs")
         .select("id", { count: "exact", head: true })
         .eq("org_id", orgId)
-        .gte("at", start.toISOString())
-        .lte("at", end.toISOString());
+        .gte("at", startDate.toISOString())
+        .lte("at", endDate.toISOString());
 
       if (locationId) qFood = qFood.eq("location_id", locationId);
 
@@ -1413,6 +1455,7 @@ async function getQuickTempCompletionMetrics(
       }
 
       if (orgId !== activeOrgId) setActiveOrgId(orgId);
+
       if ((locationId ?? null) !== (activeLocationId ?? null)) {
         setActiveLocationId(locationId);
       }
@@ -1521,7 +1564,9 @@ async function getQuickTempCompletionMetrics(
 
       const { data, error } = await supabase
         .from("daily_signoffs")
-        .select("id,org_id,location_id,signoff_on,signed_by,notes,created_at")
+        .select(
+          "id,org_id,location_id,signoff_on,signed_by,signed_by_team_member_id,signed_by_user_id,notes,created_at"
+        )
         .eq("org_id", String(orgId))
         .eq("location_id", String(locationId))
         .eq("signoff_on", todayISO)
@@ -1538,6 +1583,12 @@ async function getQuickTempCompletionMetrics(
             signed_by: (data as any).signed_by
               ? String((data as any).signed_by)
               : null,
+            signed_by_team_member_id: (data as any).signed_by_team_member_id
+              ? String((data as any).signed_by_team_member_id)
+              : null,
+            signed_by_user_id: (data as any).signed_by_user_id
+              ? String((data as any).signed_by_user_id)
+              : null,
             notes: (data as any).notes ? String((data as any).notes) : null,
             created_at: (data as any).created_at
               ? String((data as any).created_at)
@@ -1546,7 +1597,7 @@ async function getQuickTempCompletionMetrics(
         : null;
 
       setSignoffExisting(existing);
-      setSignoffInitials((existing?.signed_by ?? operatorInitials).toUpperCase());
+      setSignoffInitials(normalizeInitials(existing?.signed_by ?? operatorInitials));
       setSignoffNotes(existing?.notes ?? "");
       setSignoffOpen(true);
 
@@ -1564,7 +1615,8 @@ async function getQuickTempCompletionMetrics(
   async function saveDaySignoff() {
     if (!requireOperator()) return;
 
-    const initialsTxt = operatorInitials;
+    const initialsTxt = normalizeInitials(operatorInitials);
+
     if (!initialsTxt) {
       addToast({
         title: "Operator required",
@@ -1575,7 +1627,17 @@ async function getQuickTempCompletionMetrics(
       return;
     }
 
+    if (!operatorUserId) {
+      addToast({
+        title: "No logged-in user",
+        message: "Refresh and sign in again.",
+        type: "error",
+      });
+      return;
+    }
+
     setSignoffSaving(true);
+
     try {
       const { orgId, locationId } = await getActiveContext();
 
@@ -1583,18 +1645,29 @@ async function getQuickTempCompletionMetrics(
 
       const todayISO = isoToday();
 
+      const signerTeamMemberId = await resolveAuditTeamMemberIdForLocation(
+        String(orgId),
+        String(locationId),
+        operatorTeamMemberId,
+        initialsTxt
+      );
+
       const payload = {
         org_id: String(orgId),
         location_id: String(locationId),
         signoff_on: todayISO,
         signed_by: initialsTxt,
+        signed_by_team_member_id: signerTeamMemberId,
+        signed_by_user_id: operatorUserId,
         notes: signoffNotes.trim() ? signoffNotes.trim() : null,
       };
 
       const { data, error } = await supabase
         .from("daily_signoffs")
         .upsert(payload, { onConflict: "org_id,location_id,signoff_on" })
-        .select("id,org_id,location_id,signoff_on,signed_by,notes,created_at")
+        .select(
+          "id,org_id,location_id,signoff_on,signed_by,signed_by_team_member_id,signed_by_user_id,notes,created_at"
+        )
         .single();
 
       if (error) throw error;
@@ -1605,8 +1678,16 @@ async function getQuickTempCompletionMetrics(
         location_id: String((data as any).location_id),
         signoff_on: String((data as any).signoff_on),
         signed_by: (data as any).signed_by ? String((data as any).signed_by) : null,
+        signed_by_team_member_id: (data as any).signed_by_team_member_id
+          ? String((data as any).signed_by_team_member_id)
+          : null,
+        signed_by_user_id: (data as any).signed_by_user_id
+          ? String((data as any).signed_by_user_id)
+          : null,
         notes: (data as any).notes ? String((data as any).notes) : null,
-        created_at: (data as any).created_at ? String((data as any).created_at) : null,
+        created_at: (data as any).created_at
+          ? String((data as any).created_at)
+          : null,
       });
 
       addToast({ title: "Day signed off", type: "success" });
@@ -1624,8 +1705,6 @@ async function getQuickTempCompletionMetrics(
       setSignoffSaving(false);
     }
   }
-
-  /* --------- boot: locations + default values --------- */
 
   useEffect(() => {
     setForm((f) => ({
@@ -1682,6 +1761,7 @@ async function getQuickTempCompletionMetrics(
       void refreshCleaningOpen(false);
       void refreshTodayStatus(false);
     }, 6000);
+
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId, activeLocationId, hookOrgId, hookLocationId]);
@@ -1694,6 +1774,7 @@ async function getQuickTempCompletionMetrics(
         void refreshEntriesToday();
       }
     };
+
     const onFocus = () => {
       void refreshCleaningOpen(true);
       void refreshTodayStatus(true);
@@ -1702,6 +1783,7 @@ async function getQuickTempCompletionMetrics(
 
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("focus", onFocus);
+
     return () => {
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("focus", onFocus);
@@ -1713,7 +1795,9 @@ async function getQuickTempCompletionMetrics(
     const onCleaningChanged = () => {
       void refreshCleaningOpen(true);
     };
+
     window.addEventListener("tt-cleaning-changed", onCleaningChanged);
+
     return () =>
       window.removeEventListener("tt-cleaning-changed", onCleaningChanged);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1724,9 +1808,14 @@ async function getQuickTempCompletionMetrics(
       void refreshTodayStatus(true);
       void refreshCleaningOpen(true);
       void refreshEntriesToday();
-      void refreshAreaSuggestions(hookOrgId ?? activeOrgId, hookLocationId ?? activeLocationId);
+      void refreshAreaSuggestions(
+        hookOrgId ?? activeOrgId,
+        hookLocationId ?? activeLocationId
+      );
     };
+
     window.addEventListener("tt-location-changed" as any, onLocationChanged);
+
     return () =>
       window.removeEventListener("tt-location-changed" as any, onLocationChanged);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1753,6 +1842,7 @@ async function getQuickTempCompletionMetrics(
             (payload.new as any)?.location_id ??
             (payload.old as any)?.location_id ??
             null;
+
           if (loc && String(loc) !== String(subLocationId)) return;
 
           void refreshCleaningOpen(true);
@@ -1788,10 +1878,9 @@ async function getQuickTempCompletionMetrics(
     };
 
     window.addEventListener("tt-open-temp-modal", handler);
+
     return () => window.removeEventListener("tt-open-temp-modal", handler);
   }, [dayClosed, todayStatus.note, addToast]);
-
-  /* --------- save entry --------- */
 
   async function handleSave() {
     if (!canSave) return;
@@ -1804,7 +1893,17 @@ async function getQuickTempCompletionMetrics(
 
     const normalizedTemp = normalizeTempStringForPreset(form.temp_c, preset);
     const tempNum = parseTempForPreset(normalizedTemp, preset);
-    const status: "pass" | "fail" | null = inferStatus(tempNum, preset);
+
+    if (tempNum == null) {
+      addToast({
+        title: "Invalid temperature",
+        message: "Enter a valid temperature before saving.",
+        type: "error",
+      });
+      return;
+    }
+
+    const status: "pass" | "fail" = inferStatus(tempNum, preset) ?? "pass";
 
     const { orgId: org_id, locationId: location_id } = await getActiveContext();
 
@@ -1826,6 +1925,15 @@ async function getQuickTempCompletionMetrics(
       return;
     }
 
+    if (!operatorUserId) {
+      addToast({
+        title: "No logged-in user",
+        message: "Refresh and sign in again.",
+        type: "error",
+      });
+      return;
+    }
+
     const latestStatus = await getLocationDayStatus(org_id, location_id, isoToday());
     setTodayStatus(latestStatus);
 
@@ -1841,9 +1949,11 @@ async function getQuickTempCompletionMetrics(
     }
 
     let atIso: string;
+
     try {
       const selectedDate = new Date(form.date);
       const now = new Date();
+
       const at = new Date(
         selectedDate.getFullYear(),
         selectedDate.getMonth(),
@@ -1853,21 +1963,35 @@ async function getQuickTempCompletionMetrics(
         now.getSeconds(),
         now.getMilliseconds()
       );
+
       atIso = at.toISOString();
     } catch {
       atIso = new Date().toISOString();
     }
 
-    const payload: any = {
+    const tempLogTeamMemberId = await resolveAuditTeamMemberIdForLocation(
       org_id,
       location_id,
+      operatorTeamMemberId,
+      operatorInitials
+    );
+
+    const payload = {
+      org_id,
+      location_id,
+      created_by: operatorUserId,
       at: atIso,
-      area: form.location || null,
+      area: form.location || "—",
       note: form.item || null,
-      staff_initials: operatorInitials || null,
-      target_key: form.target_key || null,
+      staff_initials: operatorInitials,
+      team_member_id: tempLogTeamMemberId,
+      target_key: form.target_key,
       temp_c: tempNum,
       status,
+      meta: {
+        source: "fab_quick",
+        operator_source: effectiveOperator.source,
+      },
     };
 
     const { data: inserted, error } = await supabase
@@ -1900,7 +2024,9 @@ async function getQuickTempCompletionMetrics(
       item: "",
       temp_c: "",
     }));
+
     setCustomLocationEnabled(false);
+
     await refreshEntriesToday();
     await refreshAreaSuggestions(org_id, location_id);
 
@@ -1916,6 +2042,7 @@ async function getQuickTempCompletionMetrics(
         target_key: form.target_key || "",
         temp_c: tempNum,
       });
+
       setCorrectiveAction("");
       setCorrectiveRecheckEnabled(true);
       setCorrectiveRecheckTemp("");
@@ -1923,39 +2050,45 @@ async function getQuickTempCompletionMetrics(
       setShowMenu(false);
       return;
     }
-setCompletionFeedback(
-  buildComplianceFeedback({
-    compliantDaysThisWeek: 1,
-    openDaysThisWeek: 1,
-    streakDays: 1,
-    selectedDate: form.date,
-    initials: operatorInitials || null,
-    completedTodayLabel: "Quick temperature logged.",
-  })
-);
-setCompletionFeedbackOpen(true);
 
-try {
-  const metrics = await getQuickTempCompletionMetrics(
-    org_id,
-    location_id,
-    form.date,
-    operatorInitials
-  );
-  setCompletionFeedback(metrics);
-} catch (metricsErr) {
-  console.error("[quick-temp] completion feedback metrics failed:", metricsErr);
-}
+    setCompletionFeedback(
+      buildComplianceFeedback({
+        compliantDaysThisWeek: 1,
+        openDaysThisWeek: 1,
+        streakDays: 1,
+        selectedDate: form.date,
+        initials: operatorInitials || null,
+        completedTodayLabel: "Quick temperature logged.",
+      })
+    );
 
-setOpen(false);
+    setCompletionFeedbackOpen(true);
+
+    try {
+      const metrics = await getQuickTempCompletionMetrics(
+        org_id,
+        location_id,
+        form.date,
+        operatorInitials
+      );
+      setCompletionFeedback(metrics);
+    } catch (metricsErr) {
+      console.error("[quick-temp] completion feedback metrics failed:", metricsErr);
+    }
+
+    setOpen(false);
+
+    try {
+      window.dispatchEvent(new Event("tt-temps-changed"));
+    } catch {}
   }
-  /* --------- routines --------- */
 
   async function openRoutinePicker() {
     if (!requireOperator()) return;
     if (!requireOpenDay("Routine logging")) return;
 
     const { orgId, locationId } = await getActiveContext();
+
     if (orgId) {
       const latestStatus = await getLocationDayStatus(orgId, locationId, isoToday());
       setTodayStatus(latestStatus);
@@ -1980,12 +2113,14 @@ setOpen(false);
       const orgId = await getActiveOrgIdClient();
 
       let rowsAny: any[] = [];
+
       if (orgId) {
         const q1 = await supabase
           .from("temp_routines")
           .select("id,name,active")
           .eq("org_id", orgId)
           .order("name", { ascending: true });
+
         rowsAny = q1.data ?? [];
 
         if (rowsAny.length === 0) {
@@ -1994,6 +2129,7 @@ setOpen(false);
             .select("id,name,active")
             .eq("organisation_id", orgId)
             .order("name", { ascending: true });
+
           rowsAny = q2.data ?? [];
         }
       }
@@ -2003,6 +2139,7 @@ setOpen(false);
           .from("routines")
           .select("id,name,active")
           .order("name", { ascending: true });
+
         rowsAny = q3.data ?? [];
       }
 
@@ -2026,11 +2163,13 @@ setOpen(false);
   async function pickRoutine(r: RoutineRow) {
     try {
       let items: any[] = [];
+
       const t1 = await supabase
         .from("temp_routine_items")
         .select("id,routine_id,position,location,item,target_key")
         .eq("routine_id", r.id)
         .order("position", { ascending: true });
+
       items = t1.data ?? [];
 
       if (items.length === 0) {
@@ -2039,6 +2178,7 @@ setOpen(false);
           .select("id,routine_id,position,location,item,target_key")
           .eq("routine_id", r.id)
           .order("position", { ascending: true });
+
         items = t2.data ?? [];
       }
 
@@ -2055,6 +2195,7 @@ setOpen(false);
       };
 
       setShowPicker(false);
+
       setRunRoutine({
         ...filled,
         items: filled.items.sort(byPosition),
@@ -2068,16 +2209,12 @@ setOpen(false);
     }
   }
 
-  /* --------- derived --------- */
-
   const wrapperClass =
     entriesToday !== null && entriesToday === 0 ? "no-temps-today" : "";
 
   const showTempWarning = entriesToday !== null && entriesToday === 0;
   const showCleaningWarning = openCleaning !== null && openCleaning > 0;
   const selectedPresetIsFrozen = isFrozenPreset(selectedPreset);
-
-  /* --------- render --------- */
 
   return (
     <>
@@ -2148,7 +2285,7 @@ setOpen(false);
                 What would you like to do?
               </div>
 
-              {!operatorInitials || locked ? (
+              {!operatorIsUnlocked ? (
                 <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                   Workstation locked. Select operator + PIN to log anything.
                 </div>
@@ -2167,7 +2304,7 @@ setOpen(false);
               )}
 
               <div className="space-y-2">
-                {locked || !operatorInitials ? (
+                {!operatorIsUnlocked ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -2273,7 +2410,6 @@ setOpen(false);
 
                     setActiveOrgId(orgId);
                     setActiveLocationId(locationId);
-
                     setIncidentArea(form.location ? String(form.location) : null);
                     setIncidentOpen(true);
 
@@ -2352,7 +2488,7 @@ setOpen(false);
         onSave={saveDaySignoff}
         setInitials={setSignoffInitials}
         setNotes={setSignoffNotes}
-        operatorLocked={!operatorInitials || locked}
+        operatorLocked={!operatorIsUnlocked}
       />
 
       <CorrectiveModal
@@ -2369,11 +2505,11 @@ setOpen(false);
         setRecheckTemp={setCorrectiveRecheckTemp}
       />
 
-    <CompletionFeedbackModal
-  open={completionFeedbackOpen}
-  onClose={() => setCompletionFeedbackOpen(false)}
-  data={completionFeedback}
-/>
+      <CompletionFeedbackModal
+        open={completionFeedbackOpen}
+        onClose={() => setCompletionFeedbackOpen(false)}
+        data={completionFeedback}
+      />
 
       {showPicker && (
         <div
@@ -2503,7 +2639,7 @@ setOpen(false);
                 </div>
               </div>
 
-              {!operatorInitials || locked ? (
+              {!operatorIsUnlocked ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                   Workstation locked. Select operator + PIN to log temperatures.
                 </div>
@@ -2557,11 +2693,13 @@ setOpen(false);
                   value={customLocationEnabled ? "__custom__" : form.location}
                   onChange={(e) => {
                     const value = e.target.value;
+
                     if (value === "__custom__") {
                       setCustomLocationEnabled(true);
                       setForm((f) => ({ ...f, location: "" }));
                       return;
                     }
+
                     setCustomLocationEnabled(false);
                     setForm((f) => ({ ...f, location: value }));
                   }}
@@ -2694,7 +2832,11 @@ setOpen(false);
           setRunRoutine(null);
           await refreshEntriesToday();
           await refreshCleaningOpen(true);
-          await refreshAreaSuggestions(hookOrgId ?? activeOrgId, hookLocationId ?? activeLocationId);
+          await refreshAreaSuggestions(
+            hookOrgId ?? activeOrgId,
+            hookLocationId ?? activeLocationId
+          );
+
           try {
             window.dispatchEvent(new Event("tt-temps-changed"));
           } catch {}
