@@ -648,7 +648,7 @@ const [locationLoading, setLocationLoading] = useState(false);
   const [tempsSummary, setTempsSummary] = useState<TempSummary>({ today: 0, fails7d: 0 });
   const [cleaningTotal, setCleaningTotal] = useState(0);
   const [cleaningDoneTotal, setCleaningDoneTotal] = useState(0);
-  const [incidentsToday, setIncidentsToday] = useState(0);
+  const [openIncidents, setOpenIncidents] = useState(0);
   const [incidents7d, setIncidents7d] = useState(0);
   const [trainingExpired, setTrainingExpired] = useState(0);
   const [trainingDueSoon, setTrainingDueSoon] = useState(0);
@@ -1251,7 +1251,7 @@ useEffect(() => {
         cleaningTasksRes,
         cleaningRunsDayRes,
         incidentsListRes,
-        incidentsTodayRes,
+        openIncidentsRes,
         incidents7dRes,
         trainingsForKpiRes,
         trainingRecordsRes,
@@ -1323,15 +1323,13 @@ useEffect(() => {
           .select("id", { count: "exact", head: true })
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .is("resolved_at", null)
-          .eq("happened_on", selectedDateISO),
+          .is("resolved_at", null),
 
         supabase
           .from("incidents")
           .select("id", { count: "exact", head: true })
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .is("resolved_at", null)
           .gte("happened_on", isoDate(sevenDaysAgo))
           .lte("happened_on", selectedDateISO),
 
@@ -1450,7 +1448,7 @@ useEffect(() => {
         cleaningTasksRes.error ||
         cleaningRunsDayRes.error ||
         incidentsListRes.error ||
-        incidentsTodayRes.error ||
+        openIncidentsRes.error ||
         incidents7dRes.error ||
         trainingsForKpiRes.error ||
         trainingRecordsRes.error ||
@@ -1588,7 +1586,7 @@ useEffect(() => {
         }))
       );
 
-      setIncidentsToday(incidentsTodayRes.count ?? 0);
+      setOpenIncidents(openIncidentsRes.count ?? 0);
       setIncidents7d(incidents7dRes.count ?? 0);
 
       const todayRows: any[] = (todayTempLogsRes.data as any[]) ?? [];
@@ -1733,7 +1731,7 @@ useEffect(() => {
     cleaningTotal === 0 ? "neutral" : cleaningDoneTotal === cleaningTotal ? "ok" : "warn";
 
   const incidentsTone: "neutral" | "ok" | "warn" | "danger" =
-    incidentsToday > 0 ? "danger" : incidents7d > 0 ? "warn" : "ok";
+    openIncidents >= 3 ? "danger" : openIncidents > 0 ? "warn" : incidents7d >= 4 ? "warn" : "ok";
 
   const trainingTone: "neutral" | "ok" | "warn" | "danger" =
     trainingExpired > 0 ? "danger" : trainingDueSoon > 0 ? "warn" : "ok";
@@ -2020,7 +2018,28 @@ async function openQcFromActions() {
           />
 
           <KpiTile title="Cleaning" icon="🧼" tone={cleaningTone} value={`${cleaningDoneTotal}/${cleaningTotal}`} sub="Tasks completed today" />
-          <KpiTile title="Incidents" icon="⚠️" tone={incidentsTone} value={incidentsToday} sub={`Last 7d: ${incidents7d}`} />
+          <KpiTile
+            title="Incidents"
+            icon="⚠️"
+            tone={incidentsTone}
+            value={openIncidents}
+            sub={
+              <>
+                <div className="text-xs text-slate-500">
+  Open incidents
+</div>
+
+<div className="text-xs text-slate-500 mt-1">
+  Last 7d: {incidents7d} total
+</div>
+                {openIncidents > 0 && incidents7d > 3 ? (
+                  <span className="ml-1 font-semibold text-red-700">
+                    Repeated issues
+                  </span>
+                ) : null}
+              </>
+            }
+          />
           <KpiTile title="Training" icon="🎓" tone={trainingTone} value={`${trainingExpired} expired`} sub={`${trainingDueSoon} due in 30d`} />
          
         </div>
