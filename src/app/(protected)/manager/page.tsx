@@ -1,4 +1,4 @@
-"use client";
+"use client"
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -6,24 +6,24 @@ import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabaseBrowser";
 import { useActiveLocation } from "@/hooks/useActiveLocation";
 import IncidentModal from "@/components/IncidentModal";
+import IncidentReviewModal, {
+  type IncidentReviewRow,
+} from "@/components/IncidentReviewModal";
 import { setActiveLocationIdClient } from "@/lib/locationClient";
-import {
-  calculateOpenDaySignoffStreak,
-  countOpenDaysInRange,
-  getLocationDayStatus,
-} from "@/lib/locationOpenStatus";
-import {
-  buildComplianceFeedback,
-  calculateWeeklyComplianceState,
-  type CompletionFeedbackData,
-  type WeeklyComplianceState,
-} from "@/lib/complianceProgress";
+
 /* ===================== Types ===================== */
 
 type LocationOption = { id: string; name: string };
 
 type TempSummary = { today: number; fails7d: number };
 
+type WeeklyComplianceState = {
+  scorePct: number;
+  signedOffDays: number;
+  tempLogs: number;
+  cleaningRuns: number;
+  streak: number;
+};
 
 type UnifiedIncidentRow = {
   id: string;
@@ -33,7 +33,11 @@ type UnifiedIncidentRow = {
   details: string | null;
   immediate_action: string | null;
   corrective_action: string | null;
+  preventive_action?: string | null;
   created_by: string | null;
+  resolved_at?: string | null;
+  resolved_by?: string | null;
+  resolution_notes?: string | null;
   source: "incident" | "temp_fail";
 };
 
@@ -64,7 +68,7 @@ type TempLogRow = {
 
 type SignoffRow = {
   id: string;
-  signoff_on: string;
+  signoff_on: string; // yyyy-mm-dd
   signed_by: string | null;
   notes: string | null;
   created_at: string | null;
@@ -74,6 +78,16 @@ type SignoffSummary = {
   todayCount: number;
 };
 
+type CompletionFeedbackData = {
+  title: string;
+  points: number;
+  compliantDaysThisWeek: number;
+  streakDays: number;
+  completedTodayLabel: string;
+  summaryLine: string;
+  selectedDate: string;
+  initials: string | null;
+};
 
 type TeamMemberOption = {
   id: string;
@@ -111,7 +125,7 @@ type AllergenChangeLogRow = {
 
 type AllergenReviewRow = {
   id: string;
-  last_reviewed: string | null;
+  last_reviewed: string | null; // date
   reviewer: string | null;
   interval_days: number;
   created_at: string | null;
@@ -127,11 +141,7 @@ type TrainingRow = {
   course_key: string | null;
   notes: string | null;
   created_at: string | null;
-  team_member: {
-    name: string | null;
-    initials: string | null;
-    location_id: string | null;
-  } | null;
+  team_member: { name: string | null; initials: string | null; location_id: string | null } | null;
 };
 
 type StaffQcReviewRow = {
@@ -164,25 +174,30 @@ type CleaningTaskRun = {
   location_id: string | null;
 };
 
+/* ===== Calibration (simple tick + notes) =====
+   Table assumed: calibration_checks
+   Columns used:
+   - id (uuid)
+   - org_id
+   - location_id
+   - checked_on (date)
+   - staff_initials (text)
+   - cold_storage_checked (bool)
+   - probes_checked (bool)
+   - thermometers_checked (bool)
+   - notes (text nullable)
+   - created_at (timestamp)
+*/
 type CalibrationCheckRow = {
   id: string;
-  checked_on: string;
+  checked_on: string; // yyyy-mm-dd
   staff_initials: string | null;
   all_equipment_calibrated: boolean | null;
   notes: string | null;
   created_at: string | null;
 };
 
-/* ===================== Date helpers ===================== */
-
-function formatLocalISODate(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-const nowISO = formatLocalISODate(new Date());
+const nowISO = new Date().toISOString().slice(0, 10);
 
 function safeDate(val: any): Date | null {
   if (!val) return null;
@@ -193,7 +208,7 @@ function safeDate(val: any): Date | null {
 
 function formatPrettyDate(dmy: string | null): string {
   if (!dmy) return "—";
-  const d = new Date(`${dmy}T00:00:00`);
+  const d = new Date(dmy);
   if (Number.isNaN(d.getTime())) return dmy;
   return d.toLocaleDateString("en-GB", {
     weekday: "long",
@@ -205,7 +220,7 @@ function formatPrettyDate(dmy: string | null): string {
 
 function toISODate(val: any): string {
   const d = safeDate(val) ?? new Date();
-  return formatLocalISODate(d);
+  return d.toISOString().slice(0, 10);
 }
 
 function formatTimeHM(d: Date | null | undefined): string | null {
@@ -224,34 +239,31 @@ function formatDDMMYYYY(val: any): string {
   return `${dd}/${mm}/${yyyy}`;
 }
 
-const cls = (...p: Array<string | false | null | undefined>) =>
-  p.filter(Boolean).join(" ");
+const cls = (...p: Array<string | false | null | undefined>) => p.filter(Boolean).join(" ");
 
-const isoDate = (d: Date) => formatLocalISODate(d);
-
+const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 const addDaysISO = (dmy: string, delta: number) => {
-  const d = new Date(`${dmy}T00:00:00`);
+  const d = new Date(dmy);
   d.setDate(d.getDate() + delta);
   return isoDate(d);
 };
 
 const startOfWeekISO = (dmy: string) => {
   const d = new Date(`${dmy}T00:00:00`);
-  const day = (d.getDay() + 6) % 7;
+  const day = (d.getDay() + 6) % 7; // Monday = 0
   d.setDate(d.getDate() - day);
   return isoDate(d);
 };
 
-const getDow1to7 = (dmy: string) =>
-  ((new Date(`${dmy}T00:00:00`).getDay() + 6) % 7) + 1;
-
-const getDom = (dmy: string) => new Date(`${dmy}T00:00:00`).getDate();
+const getDow1to7 = (dmy: string) => ((new Date(dmy).getDay() + 6) % 7) + 1;
+const getDom = (dmy: string) => new Date(dmy).getDate();
 
 function isDueOn(t: CleaningTask, dmy: string) {
   if (t.frequency === "daily") return true;
   if (t.frequency === "weekly") return t.weekday === getDow1to7(dmy);
   return t.month_day === getDom(dmy);
 }
+
 
 function clampPct(n: number) {
   if (!Number.isFinite(n)) return 0;
@@ -260,12 +272,7 @@ function clampPct(n: number) {
 
 /* ===================== Temp failures (unified) ===================== */
 
-async function fetchTempFailuresUnifiedForDay(
-  orgId: string,
-  locationId: string,
-  d0: Date,
-  d1: Date
-) {
+async function fetchTempFailuresUnifiedForDay(orgId: string, locationId: string, d0: Date, d1: Date) {
   const { data, error } = await supabase
     .from("food_temp_logs")
     .select(
@@ -359,10 +366,7 @@ async function fetchTempFailuresUnifiedForDay(
       happened_on,
       created_at: atISO,
       type: "Temp failure",
-      created_by:
-        ca?.recorded_by ?? l.staff_initials ?? null
-          ? String(ca?.recorded_by ?? l.staff_initials)
-          : null,
+      created_by: (ca?.recorded_by ?? l.staff_initials ?? null) ? String(ca?.recorded_by ?? l.staff_initials) : null,
       details,
       immediate_action: null,
       corrective_action: correctiveText,
@@ -409,28 +413,14 @@ function KpiTile({
   return (
     <motion.div
       whileHover={{ y: -3 }}
-      className={cls(
-        "relative rounded-2xl border p-4 shadow-sm overflow-hidden",
-        "flex flex-col",
-        KPI_HEIGHT,
-        toneCls
-      )}
+      className={cls("relative rounded-2xl border p-4 shadow-sm overflow-hidden", "flex flex-col", KPI_HEIGHT, toneCls)}
     >
-      <div
-        className={cls(
-          "absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80",
-          accentCls
-        )}
-      />
+      <div className={cls("absolute left-0 top-3 bottom-3 w-1.5 rounded-full opacity-80", accentCls)} />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-            {title}
-          </div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">{title}</div>
           <div className="mt-1 flex items-baseline gap-2">
-            <div className="text-2xl font-extrabold text-slate-900 truncate">
-              {value}
-            </div>
+            <div className="text-2xl font-extrabold text-slate-900 truncate">{value}</div>
           </div>
           <div className="mt-1 text-xs text-slate-600 truncate">{sub}</div>
         </div>
@@ -443,6 +433,8 @@ function KpiTile({
     </motion.div>
   );
 }
+
+
 
 function ProgressBar({
   pct,
@@ -505,28 +497,23 @@ function WeeklyComplianceSlimBar({
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-slate-700">
             <span>
-              <span className="font-extrabold text-slate-900">{stats.scorePct}%</span>{" "}
-              this week
+              <span className="font-extrabold text-slate-900">{stats.scorePct}%</span> this
+              week
             </span>
             <span>
-              <span className="font-extrabold text-slate-900">
-                {stats.signedOffDays}/{stats.openDays}
-              </span>{" "}
+              <span className="font-extrabold text-slate-900">{stats.signedOffDays}/7</span>{" "}
               signed off
             </span>
             <span>
-              <span className="font-extrabold text-slate-900">{stats.tempLogs}</span>{" "}
-              temps
+              <span className="font-extrabold text-slate-900">{stats.tempLogs}</span> temps
             </span>
             <span>
-              <span className="font-extrabold text-slate-900">
-                {stats.cleaningRuns}
-              </span>{" "}
+              <span className="font-extrabold text-slate-900">{stats.cleaningRuns}</span>{" "}
               cleaning
             </span>
             <span>
-              <span className="font-extrabold text-slate-900">{stats.streak}</span>{" "}
-              day streak
+              <span className="font-extrabold text-slate-900">{stats.streak}</span> day
+              streak
             </span>
           </div>
         </div>
@@ -543,6 +530,7 @@ function WeeklyComplianceSlimBar({
   );
 }
 
+
 function TableFooterToggle({
   total,
   showingAll,
@@ -556,11 +544,7 @@ function TableFooterToggle({
   return (
     <div className="border-t border-slate-100 bg-slate-50/80 px-3 py-2 text-right text-xs text-slate-600">
       Showing {showingAll ? "all" : "latest 10"} of {total} rows.{" "}
-      <button
-        type="button"
-        onClick={onToggle}
-        className="font-semibold text-indigo-700 hover:underline"
-      >
+      <button type="button" onClick={onToggle} className="font-semibold text-indigo-700 hover:underline">
         {showingAll ? "Show less" : "Show all"}
       </button>
     </div>
@@ -579,22 +563,15 @@ function CompletionFeedbackModal({
   if (!open || !data) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-[10000] bg-slate-950/45 backdrop-blur-[2px]"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-[10000] bg-slate-950/45 backdrop-blur-[2px]" onClick={onClose}>
       <div
         className="mx-auto mt-12 w-[calc(100%-24px)] max-w-md rounded-3xl border border-emerald-200 bg-white p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-emerald-600">
-              Completed
-            </div>
-            <h3 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">
-              {data.title}
-            </h3>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-emerald-600">Completed</div>
+            <h3 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">{data.title}</h3>
             <p className="mt-1 text-sm text-slate-600">{data.summaryLine}</p>
           </div>
           <button
@@ -608,38 +585,22 @@ function CompletionFeedbackModal({
 
         <div className="mt-4 grid grid-cols-3 gap-3">
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3">
-            <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-emerald-700">
-              Points
-            </div>
-            <div className="mt-1 text-2xl font-extrabold text-emerald-900">
-              +{data.points}
-            </div>
+            <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-emerald-700">Points</div>
+            <div className="mt-1 text-2xl font-extrabold text-emerald-900">+{data.points}</div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-            <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500">
-              This week
-            </div>
-            <div className="mt-1 text-2xl font-extrabold text-slate-900">
-              {data.compliantDaysThisWeek}/{data.openDaysThisWeek}
-            </div>
+            <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500">This week</div>
+            <div className="mt-1 text-2xl font-extrabold text-slate-900">{data.compliantDaysThisWeek}/7</div>
           </div>
           <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-3">
-            <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-indigo-600">
-              Streak
-            </div>
-            <div className="mt-1 text-2xl font-extrabold text-indigo-900">
-              {data.streakDays}d
-            </div>
+            <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-indigo-600">Streak</div>
+            <div className="mt-1 text-2xl font-extrabold text-indigo-900">{data.streakDays}d</div>
           </div>
         </div>
 
         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">
-            Today
-          </div>
-          <div className="mt-1 text-sm font-semibold text-slate-900">
-            {data.completedTodayLabel}
-          </div>
+          <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">Today</div>
+          <div className="mt-1 text-sm font-semibold text-slate-900">{data.completedTodayLabel}</div>
           <div className="mt-1 text-xs text-slate-600">
             {formatDDMMYYYY(data.selectedDate)}
             {data.initials ? ` · ${data.initials}` : ""}
@@ -667,29 +628,24 @@ function CompletionFeedbackModal({
 /* ===================== Page ===================== */
 
 export default function ManagerDashboardPage() {
-  const {
-    orgId,
-    locationId,
-    loading: activeLocationLoading,
-  } = useActiveLocation();
+ const {
+  orgId,
+  locationId,
+  loading: activeLocationLoading,
+} = useActiveLocation();
 
-  const [locations, setLocations] = useState<LocationOption[]>([]);
-  const [locationLoading, setLocationLoading] = useState(false);
+const [locations, setLocations] = useState<LocationOption[]>([]);
+const [locationLoading, setLocationLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [selectedDateISO, setSelectedDateISO] = useState(nowISO);
-  const centeredDate = useMemo(
-    () => formatPrettyDate(selectedDateISO),
-    [selectedDateISO]
-  );
+  const centeredDate = useMemo(() => formatPrettyDate(selectedDateISO), [selectedDateISO]);
 
+  /* ===== KPI state ===== */
   const [calibrationDue, setCalibrationDue] = useState(false);
 
-  const [tempsSummary, setTempsSummary] = useState<TempSummary>({
-    today: 0,
-    fails7d: 0,
-  });
+  const [tempsSummary, setTempsSummary] = useState<TempSummary>({ today: 0, fails7d: 0 });
   const [cleaningTotal, setCleaningTotal] = useState(0);
   const [cleaningDoneTotal, setCleaningDoneTotal] = useState(0);
   const [incidentsToday, setIncidentsToday] = useState(0);
@@ -697,26 +653,18 @@ export default function ManagerDashboardPage() {
   const [trainingExpired, setTrainingExpired] = useState(0);
   const [trainingDueSoon, setTrainingDueSoon] = useState(0);
 
- const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>({
-  scorePct: 0,
-  signedOffDays: 0,
-  openDays: 0,
-  tempLogs: 0,
-  cleaningRuns: 0,
-  streak: 0,
-  signoffScorePct: 0,
-  tempScorePct: 0,
-  cleaningScorePct: 0,
-  compliantTempDays: 0,
-  dueCleaningTasks: 0,
-  completedCleaningTasks: 0,
-});
+  const [weeklyCompliance, setWeeklyCompliance] = useState<WeeklyComplianceState>({
+    scorePct: 0,
+    signedOffDays: 0,
+    tempLogs: 0,
+    cleaningRuns: 0,
+    streak: 0,
+  });
 
+  /* ===== Today activity tables ===== */
   const [todayTemps, setTodayTemps] = useState<TempLogRow[]>([]);
   const [cleaningActivity, setCleaningActivity] = useState<CleaningActivityRow[]>([]);
-  const [cleaningCategoryProgress, setCleaningCategoryProgress] = useState<
-    CleaningCategoryProgress[]
-  >([]);
+  const [cleaningCategoryProgress, setCleaningCategoryProgress] = useState<CleaningCategoryProgress[]>([]);
   const [tempFailsToday, setTempFailsToday] = useState<UnifiedIncidentRow[]>([]);
   const [incidentsHistory, setIncidentsHistory] = useState<UnifiedIncidentRow[]>([]);
 
@@ -725,10 +673,9 @@ export default function ManagerDashboardPage() {
   const [showAllCleaning, setShowAllCleaning] = useState(false);
   const [showAllIncidents, setShowAllIncidents] = useState(false);
 
+  /* ===== Day sign-offs ===== */
   const [signoffsToday, setSignoffsToday] = useState<SignoffRow[]>([]);
-  const [signoffSummary, setSignoffSummary] = useState<SignoffSummary>({
-    todayCount: 0,
-  });
+  const [signoffSummary, setSignoffSummary] = useState<SignoffSummary>({ todayCount: 0 });
   const [showAllSignoffs, setShowAllSignoffs] = useState(false);
 
   const [signoffOpen, setSignoffOpen] = useState(false);
@@ -736,9 +683,9 @@ export default function ManagerDashboardPage() {
   const [signoffNotes, setSignoffNotes] = useState("");
   const [signoffSaving, setSignoffSaving] = useState(false);
   const [completionFeedbackOpen, setCompletionFeedbackOpen] = useState(false);
-  const [completionFeedback, setCompletionFeedback] =
-    useState<CompletionFeedbackData | null>(null);
+  const [completionFeedback, setCompletionFeedback] = useState<CompletionFeedbackData | null>(null);
 
+  /* ===== Manager QC ===== */
   const [qcOpen, setQcOpen] = useState(false);
   const [teamOptions, setTeamOptions] = useState<TeamMemberOption[]>([]);
   const [qcReviews, setQcReviews] = useState<StaffQcReviewRow[]>([]);
@@ -747,8 +694,7 @@ export default function ManagerDashboardPage() {
   const [showAllQc, setShowAllQc] = useState(false);
   const [qcSummaryLoading, setQcSummaryLoading] = useState(false);
 
-  const [managerTeamMember, setManagerTeamMember] =
-    useState<TeamMemberOption | null>(null);
+  const [managerTeamMember, setManagerTeamMember] = useState<TeamMemberOption | null>(null);
 
   const [qcForm, setQcForm] = useState({
     staff_id: "",
@@ -757,6 +703,7 @@ export default function ManagerDashboardPage() {
     notes: "",
   });
 
+  /* ===== Individual staff assessment modal ===== */
   const [staffAssessOpen, setStaffAssessOpen] = useState(false);
   const [staffAssessLoading, setStaffAssessLoading] = useState(false);
   const [staffAssessErr, setStaffAssessErr] = useState<string | null>(null);
@@ -764,23 +711,27 @@ export default function ManagerDashboardPage() {
   const [staffAssessDays, setStaffAssessDays] = useState<number>(7);
   const [staffAssess, setStaffAssess] = useState<StaffAssessment | null>(null);
 
+  /* ===== Incident modal ===== */
   const [incidentOpen, setIncidentOpen] = useState(false);
+  const [incidentReviewOpen, setIncidentReviewOpen] = useState(false);
+  const [selectedIncident, setSelectedIncident] = useState<IncidentReviewRow | null>(null);
 
+  /* ===== Allergens ===== */
   const [allergenReviews, setAllergenReviews] = useState<AllergenReviewRow[]>([]);
   const [showAllAllergenReviews, setShowAllAllergenReviews] = useState(false);
 
   const [allergenLogs, setAllergenLogs] = useState<AllergenChangeLogRow[]>([]);
   const [showAllAllergenLogs, setShowAllAllergenLogs] = useState(false);
 
+  /* ===== Education & training ===== */
   const [trainingRows, setTrainingRows] = useState<TrainingRow[]>([]);
   const [showAllTraining, setShowAllTraining] = useState(false);
 
   const [trainingAreasRows, setTrainingAreasRows] = useState<TeamMemberOption[]>([]);
   const [showAllTrainingAreas, setShowAllTrainingAreas] = useState(false);
 
-  const [calibrationChecks, setCalibrationChecks] = useState<CalibrationCheckRow[]>(
-    []
-  );
+  /* ===== Calibration (simple) ===== */
+  const [calibrationChecks, setCalibrationChecks] = useState<CalibrationCheckRow[]>([]);
   const [showAllCalibration, setShowAllCalibration] = useState(false);
 
   const [calibrationOpen, setCalibrationOpen] = useState(false);
@@ -793,18 +744,20 @@ export default function ManagerDashboardPage() {
     thermometers_checked: false,
     notes: "",
   });
+async function handleLocationChange(nextLocationId: string | null) {
+  if (!orgId || !nextLocationId) return;
 
-  async function handleLocationChange(nextLocationId: string | null) {
-    if (!orgId || !nextLocationId) return;
+  try {
+    await setActiveLocationIdClient(nextLocationId, orgId);
 
-    try {
-      await setActiveLocationIdClient(nextLocationId, orgId);
-      window.dispatchEvent(new Event("focus"));
-    } catch (e) {
-      console.error(e);
-      setErr("Failed to switch location.");
-    }
+    // Force same-tab listeners/hooks to notice immediately.
+    window.dispatchEvent(new Event("focus"));
+  } catch (e) {
+    console.error(e);
+    setErr("Failed to switch location.");
   }
+}
+
 
   useEffect(() => {
     if (calibrationDue) {
@@ -813,42 +766,45 @@ export default function ManagerDashboardPage() {
   }, [calibrationDue]);
 
   useEffect(() => {
+    // Keep the calibration date pinned to selected day (unless user changes it manually later)
     setCalibrationForm((f) => ({ ...f, checked_on: selectedDateISO }));
   }, [selectedDateISO]);
 
+  /* ===== Actions dropdown (top bar) ===== */
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsBtnRef = useRef<HTMLButtonElement | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
   const [portalReady, setPortalReady] = useState(false);
-  const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | null>(
-    null
-  );
+const [actionsPos, setActionsPos] = useState<{ top: number; left: number } | null>(null);
+
+
 
   const lastStaffAssessKeyRef = useRef<string>("");
 
   useEffect(() => setPortalReady(true), []);
 
-  const updateActionsPos = () => {
-    const btn = actionsBtnRef.current;
-    if (!btn) return;
+ const updateActionsPos = () => {
+  const btn = actionsBtnRef.current;
+  if (!btn) return;
 
-    const r = btn.getBoundingClientRect();
-    const MENU_W = 224;
-    const MENU_H_EST = 320;
+  const r = btn.getBoundingClientRect();
 
-    const left = Math.min(
-      Math.max(8, r.left),
-      Math.max(8, window.innerWidth - MENU_W - 8)
-    );
+  // Keep menu fully on-screen on mobile.
+  const MENU_W = 224; // matches w-56 (14rem)
+  const MENU_H_EST = 320; // rough cap, avoids off-screen on short viewports
 
-    let top = r.bottom + 8;
+  const left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - MENU_W - 8));
 
-    if (top + MENU_H_EST > window.innerHeight - 8) {
-      top = Math.max(8, r.top - 8 - MENU_H_EST);
-    }
+  // Default: open below
+  let top = r.bottom + 8;
 
-    setActionsPos({ top, left });
-  };
+  // If it would overflow bottom, open above
+  if (top + MENU_H_EST > window.innerHeight - 8) {
+    top = Math.max(8, r.top - 8 - MENU_H_EST);
+  }
+
+  setActionsPos({ top, left });
+};
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -895,7 +851,7 @@ export default function ManagerDashboardPage() {
   }
 
   async function loadTeamOptions(locId?: string | null): Promise<TeamMemberOption[]> {
-    if (!orgId) return [];
+    if (!orgId) return[]
     const useLoc = locId ?? locationId ?? null;
 
     try {
@@ -939,6 +895,7 @@ export default function ManagerDashboardPage() {
       const userId = user.id;
       const email = (user.email ?? "").trim().toLowerCase();
 
+      // Helper: safe pick first row (avoids maybeSingle throwing when duplicates exist)
       const pickOne = async (q: any) => {
         const { data, error } = await q.limit(2);
         if (error) throw error;
@@ -947,6 +904,7 @@ export default function ManagerDashboardPage() {
         return rows[0] ?? null;
       };
 
+      // 1) Try by user_id (most reliable)
       const byUser = await pickOne(
         supabase
           .from("team_members")
@@ -961,6 +919,7 @@ export default function ManagerDashboardPage() {
         return;
       }
 
+      // 2) Fall back to email match (for older rows not linked yet)
       if (!email) {
         setManagerTeamMember(null);
         return;
@@ -980,6 +939,7 @@ export default function ManagerDashboardPage() {
         return;
       }
 
+      // If row isn't linked yet, link it now.
       if (!byEmail.user_id) {
         const upd = await supabase
           .from("team_members")
@@ -1001,7 +961,7 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  async function loadQcReviews() {
+async function loadQcReviews() {
     if (!orgId || !locationId) return;
     setQcLoading(true);
     try {
@@ -1072,15 +1032,11 @@ export default function ManagerDashboardPage() {
   async function addQcReview() {
     if (!orgId || !locationId) return;
     if (!qcForm.staff_id) return alert("Select staff.");
-    if (!managerTeamMember?.id)
-      return alert(
-        "Your login is not linked to a team member (team_members.user_id)."
-      );
+    if (!managerTeamMember?.id) return alert("Your login is not linked to a team member (team_members.user_id).");
     if (!qcForm.reviewed_on) return alert("Select date.");
 
     const rating = Number(qcForm.rating);
-    if (!Number.isFinite(rating) || rating < 1 || rating > 5)
-      return alert("Score must be 1–5.");
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) return alert("Score must be 1–5.");
 
     setQcSaving(true);
     try {
@@ -1119,11 +1075,7 @@ export default function ManagerDashboardPage() {
     if (!confirm("Delete this QC review?")) return;
 
     try {
-      const { error } = await supabase
-        .from("staff_qc_reviews")
-        .delete()
-        .eq("id", id)
-        .eq("org_id", orgId);
+      const { error } = await supabase.from("staff_qc_reviews").delete().eq("id", id).eq("org_id", orgId);
       if (error) throw error;
       await loadQcSummary();
       await loadQcReviews();
@@ -1156,9 +1108,7 @@ export default function ManagerDashboardPage() {
     if (!orgId || !locationId) return;
 
     const checked_on = calibrationForm.checked_on || selectedDateISO || nowISO;
-    const staff_initials = (calibrationForm.staff_initials || "")
-      .trim()
-      .toUpperCase();
+    const staff_initials = (calibrationForm.staff_initials || "").trim().toUpperCase();
     if (!staff_initials) return alert("Enter staff initials.");
 
     setCalibrationSaving(true);
@@ -1196,56 +1146,57 @@ export default function ManagerDashboardPage() {
     lastStaffAssessKeyRef.current = key;
 
     void loadStaffAssessment(staffAssessStaffId, staffAssessDays);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staffAssessOpen, staffAssessStaffId, staffAssessDays, selectedDateISO, orgId, locationId]);
+useEffect(() => {
+  if (!orgId) {
+    setLocations([]);
+    return;
+  }
 
-  useEffect(() => {
-    if (!orgId) {
-      setLocations([]);
-      return;
-    }
+  let cancelled = false;
 
-    let cancelled = false;
+  (async () => {
+    setLocationLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("locations")
+        .select("id,name")
+        .eq("org_id", orgId)
+        .order("name");
 
-    (async () => {
-      setLocationLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("locations")
-          .select("id,name")
-          .eq("org_id", orgId)
-          .order("name");
+      if (error) throw error;
+      if (cancelled) return;
 
-        if (error) throw error;
-        if (cancelled) return;
+      const locs: LocationOption[] =
+        data?.map((r: any) => ({
+          id: String(r.id),
+          name: r.name ?? "Unnamed",
+        })) ?? [];
 
-        const locs: LocationOption[] =
-          data?.map((r: any) => ({
-            id: String(r.id),
-            name: r.name ?? "Unnamed",
-          })) ?? [];
-
-        setLocations(locs);
-      } catch (e: any) {
-        console.error(e);
-        if (!cancelled) {
-          setErr(e?.message ?? "Failed to load locations.");
-        }
-      } finally {
-        if (!cancelled) {
-          setLocationLoading(false);
-        }
+      setLocations(locs);
+    } catch (e: any) {
+      console.error(e);
+      if (!cancelled) {
+        setErr(e?.message ?? "Failed to load locations.");
       }
-    })();
+    } finally {
+      if (!cancelled) {
+        setLocationLoading(false);
+      }
+    }
+  })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [orgId]);
+  return () => {
+    cancelled = true;
+  };
+}, [orgId]);
 
   useEffect(() => {
     if (!orgId) return;
     void loadLoggedInManager();
     if (locationId) void loadTeamOptions(locationId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, locationId]);
 
   useEffect(() => {
@@ -1268,6 +1219,7 @@ export default function ManagerDashboardPage() {
     if (!orgId || !locationId) return;
     void refreshAll();
     void loadQcReviews();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, locationId, selectedDateISO]);
 
   async function refreshAll() {
@@ -1276,7 +1228,8 @@ export default function ManagerDashboardPage() {
     setErr(null);
 
     try {
-      const d0 = new Date(`${selectedDateISO}T00:00:00`);
+      const d0 = new Date(selectedDateISO);
+      d0.setHours(0, 0, 0, 0);
       const d1 = new Date(d0);
       d1.setDate(d1.getDate() + 1);
 
@@ -1286,11 +1239,10 @@ export default function ManagerDashboardPage() {
       const ninetyDaysAgo = new Date(d0);
       ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 89);
 
-      const trainingBase = new Date(`${nowISO}T00:00:00`);
+      const trainingBase = new Date(nowISO);
+      trainingBase.setHours(0, 0, 0, 0);
       const thirtyDaysAhead = new Date(trainingBase);
       thirtyDaysAhead.setDate(thirtyDaysAhead.getDate() + 30);
-
-      const weekStartISO = startOfWeekISO(selectedDateISO);
 
       const [
         tempsTodayRes,
@@ -1357,9 +1309,7 @@ export default function ManagerDashboardPage() {
 
         supabase
           .from("incidents")
-          .select(
-            "id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at"
-          )
+          .select("id,happened_on,type,details,immediate_action,preventive_action,created_by,created_at,resolved_at,resolved_by,resolution_notes")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .gte("happened_on", isoDate(ninetyDaysAgo))
@@ -1373,6 +1323,7 @@ export default function ManagerDashboardPage() {
           .select("id", { count: "exact", head: true })
           .eq("org_id", orgId)
           .eq("location_id", locationId)
+          .is("resolved_at", null)
           .eq("happened_on", selectedDateISO),
 
         supabase
@@ -1380,6 +1331,7 @@ export default function ManagerDashboardPage() {
           .select("id", { count: "exact", head: true })
           .eq("org_id", orgId)
           .eq("location_id", locationId)
+          .is("resolved_at", null)
           .gte("happened_on", isoDate(sevenDaysAgo))
           .lte("happened_on", selectedDateISO),
 
@@ -1441,7 +1393,7 @@ export default function ManagerDashboardPage() {
           .select("signoff_on")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .gte("signoff_on", weekStartISO)
+          .gte("signoff_on", startOfWeekISO(selectedDateISO))
           .lte("signoff_on", selectedDateISO)
           .order("signoff_on", { ascending: false })
           .limit(20),
@@ -1451,7 +1403,7 @@ export default function ManagerDashboardPage() {
           .select("id")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .gte("at", `${weekStartISO}T00:00:00.000Z`)
+          .gte("at", `${startOfWeekISO(selectedDateISO)}T00:00:00.000Z`)
           .lte("at", `${selectedDateISO}T23:59:59.999Z`)
           .limit(5000),
 
@@ -1460,7 +1412,7 @@ export default function ManagerDashboardPage() {
           .select("id")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
-          .gte("run_on", weekStartISO)
+          .gte("run_on", startOfWeekISO(selectedDateISO))
           .lte("run_on", selectedDateISO)
           .limit(5000),
 
@@ -1473,9 +1425,7 @@ export default function ManagerDashboardPage() {
 
         supabase
           .from("allergen_change_logs")
-          .select(
-            "id, created_at, action, item_name, category_before, category_after, staff_initials"
-          )
+          .select("id, created_at, action, item_name, category_before, category_after, staff_initials")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .order("created_at", { ascending: false })
@@ -1483,9 +1433,7 @@ export default function ManagerDashboardPage() {
 
         supabase
           .from("calibration_checks")
-          .select(
-            "id, checked_on, staff_initials, cold_storage_checked, probes_checked, thermometers_checked, notes, created_at"
-          )
+          .select("id, checked_on, staff_initials, cold_storage_checked, probes_checked, thermometers_checked, notes, created_at")
           .eq("org_id", orgId)
           .eq("location_id", locationId)
           .gte("checked_on", isoDate(ninetyDaysAgo))
@@ -1522,8 +1470,7 @@ export default function ManagerDashboardPage() {
         fails7d: tempsFails7dRes.count ?? 0,
       });
 
-      const tRows: Array<{ expires_on: string | null }> =
-        (trainingsForKpiRes.data as any[]) ?? [];
+      const tRows: Array<{ expires_on: string | null }> = (trainingsForKpiRes.data as any[]) ?? [];
       let expired = 0;
       let dueSoon = 0;
       for (const t of tRows) {
@@ -1554,9 +1501,7 @@ export default function ManagerDashboardPage() {
             ? {
                 name: r.team_member.name ?? null,
                 initials: r.team_member.initials ?? null,
-                location_id: r.team_member.location_id
-                  ? String(r.team_member.location_id)
-                  : null,
+                location_id: r.team_member.location_id ? String(r.team_member.location_id) : null,
               }
             : null,
         }))
@@ -1579,17 +1524,15 @@ export default function ManagerDashboardPage() {
       const taskById = new Map<string, CleaningTask>();
       for (const t of tasks) taskById.set(t.id, t);
 
-      const runsRaw: CleaningTaskRun[] = ((cleaningRunsDayRes.data as any[]) ?? []).map(
-        (r: any) => ({
-          id: String(r.id),
-          org_id: String(r.org_id),
-          task_id: String(r.task_id),
-          run_on: String(r.run_on),
-          done_by: r.done_by ? String(r.done_by) : null,
-          done_at: r.done_at ? String(r.done_at) : null,
-          location_id: r.location_id ? String(r.location_id) : null,
-        })
-      );
+      const runsRaw: CleaningTaskRun[] = ((cleaningRunsDayRes.data as any[]) ?? []).map((r: any) => ({
+        id: String(r.id),
+        org_id: String(r.org_id),
+        task_id: String(r.task_id),
+        run_on: String(r.run_on),
+        done_by: r.done_by ? String(r.done_by) : null,
+        done_at: r.done_at ? String(r.done_at) : null,
+        location_id: r.location_id ? String(r.location_id) : null,
+      }));
 
       const dueThatDay = tasks.filter((t) => isDueOn(t, selectedDateISO));
       const runTaskIds = new Set<string>(runsRaw.map((r) => String(r.task_id)));
@@ -1636,7 +1579,11 @@ export default function ManagerDashboardPage() {
           details: r.details ?? null,
           immediate_action: r.immediate_action ?? null,
           corrective_action: r.preventive_action ?? null,
+          preventive_action: r.preventive_action ?? null,
           created_by: r.created_by ? String(r.created_by) : null,
+          resolved_at: r.resolved_at ? String(r.resolved_at) : null,
+          resolved_by: r.resolved_by ? String(r.resolved_by) : null,
+          resolution_notes: r.resolution_notes ?? null,
           source: "incident",
         }))
       );
@@ -1681,56 +1628,47 @@ export default function ManagerDashboardPage() {
           .filter(Boolean)
       );
 
-      const openDays = await countOpenDaysInRange({
-        orgId,
-        locationId,
-        startISO: weekStartISO,
-        endISO: selectedDateISO,
-      });
-
-      let weeklySignedOffDays = 0;
-      for (const iso of weeklySignedDates) {
-        const dayStatus = await getLocationDayStatus(orgId, locationId, iso);
-        if (dayStatus.isOpen) weeklySignedOffDays += 1;
-      }
-
+      const weeklySignedOffDays = weeklySignedDates.size;
       const weeklyTempLogsCount = ((weeklyTempLogsRes.data as any[]) ?? []).length;
       const weeklyCleaningRunsCount = ((weeklyCleaningRunsRes.data as any[]) ?? []).length;
 
       let streakDays = 0;
       const sortedSignedDates = Array.from(weeklySignedDates).sort();
       const latestSignedDate =
-        [...sortedSignedDates].reverse().find((d) => d <= selectedDateISO) ?? null;
+        [...sortedSignedDates]
+          .reverse()
+          .find((d) => d <= selectedDateISO) ?? null;
 
       if (latestSignedDate) {
-        streakDays = await calculateOpenDaySignoffStreak({
-          orgId,
-          locationId,
-          signedOffDays: weeklySignedDates,
-          startFromISO: latestSignedDate,
-          maxLookbackDays: 365,
-        });
+        let streakCursor = latestSignedDate;
+        while (weeklySignedDates.has(streakCursor)) {
+          streakDays += 1;
+          streakCursor = addDaysISO(streakCursor, -1);
+        }
       }
 
-  setWeeklyCompliance(
-  calculateWeeklyComplianceState({
-    signedOffDays: weeklySignedOffDays,
-    openDays,
-    tempLogs: weeklyTempLogsCount,
-    cleaningRuns: weeklyCleaningRunsCount,
-    streak: streakDays,
-  })
-);
+      const weeklyScoreRaw =
+        weeklySignedOffDays * 10 +
+        Math.min(weeklyTempLogsCount, 30) +
+        Math.min(weeklyCleaningRunsCount, 30);
+
+      const weeklyScorePct = clampPct(Math.round((weeklyScoreRaw / 130) * 100));
+
+      setWeeklyCompliance({
+        scorePct: weeklyScorePct,
+        signedOffDays: weeklySignedOffDays,
+        tempLogs: weeklyTempLogsCount,
+        cleaningRuns: weeklyCleaningRunsCount,
+        streak: streakDays,
+      });
+
       const arRows: any[] = (allergenReviewsRes.data as any[]) ?? [];
       setAllergenReviews(
         arRows.map((r) => ({
           id: String(r.id),
           last_reviewed: r.last_reviewed ? String(r.last_reviewed) : null,
           reviewer: r.reviewer ?? null,
-          interval_days:
-            r.interval_days != null && Number.isFinite(Number(r.interval_days))
-              ? Number(r.interval_days)
-              : 180,
+          interval_days: r.interval_days != null && Number.isFinite(Number(r.interval_days)) ? Number(r.interval_days) : 180,
           created_at: r.created_at ? String(r.created_at) : null,
         }))
       );
@@ -1751,14 +1689,12 @@ export default function ManagerDashboardPage() {
       setShowAllAllergenLogs(false);
 
       const calRows: any[] = (calibrationChecksRes.data as any[]) ?? [];
+
       const mappedCalRows: CalibrationCheckRow[] = calRows.map((r) => ({
         id: String(r.id),
         checked_on: String(r.checked_on),
         staff_initials: r.staff_initials ? String(r.staff_initials) : null,
-        all_equipment_calibrated:
-          !!r.cold_storage_checked &&
-          !!r.probes_checked &&
-          !!r.thermometers_checked,
+        all_equipment_calibrated: !!r.cold_storage_checked && !!r.probes_checked && !!r.thermometers_checked,
         notes: r.notes ?? null,
         created_at: r.created_at ? String(r.created_at) : null,
       }));
@@ -1766,15 +1702,20 @@ export default function ManagerDashboardPage() {
       setCalibrationChecks(mappedCalRows);
       setShowAllCalibration(false);
 
+      // 30-day due logic
       if (mappedCalRows.length === 0) {
         setCalibrationDue(true);
       } else {
         const latest = mappedCalRows[0];
-        const last = new Date(`${latest.checked_on}T00:00:00`);
+        const last = new Date(latest.checked_on);
+        last.setHours(0, 0, 0, 0);
+
         const due = new Date(last);
         due.setDate(due.getDate() + 30);
 
-        const today = new Date(`${selectedDateISO}T00:00:00`);
+        const today = new Date(selectedDateISO);
+        today.setHours(0, 0, 0, 0);
+
         setCalibrationDue(today > due);
       }
     } catch (e: any) {
@@ -1798,107 +1739,85 @@ export default function ManagerDashboardPage() {
     trainingExpired > 0 ? "danger" : trainingDueSoon > 0 ? "warn" : "ok";
 
   const tempsToRender = showAllTemps ? todayTemps : todayTemps.slice(0, 10);
-  const tempFailsToRender = showAllTempFails
-    ? tempFailsToday
-    : tempFailsToday.slice(0, 10);
-  const cleaningToRender = showAllCleaning
-    ? cleaningActivity
-    : cleaningActivity.slice(0, 10);
-  const incidentsToRender = showAllIncidents
-    ? incidentsHistory
-    : incidentsHistory.slice(0, 10);
+  const tempFailsToRender = showAllTempFails ? tempFailsToday : tempFailsToday.slice(0, 10);
+  const cleaningToRender = showAllCleaning ? cleaningActivity : cleaningActivity.slice(0, 10);
+  const incidentsToRender = showAllIncidents ? incidentsHistory : incidentsHistory.slice(0, 10);
   const qcToRender = showAllQc ? qcReviews : qcReviews.slice(0, 10);
-  const signoffsToRender = showAllSignoffs
-    ? signoffsToday
-    : signoffsToday.slice(0, 10);
+  const signoffsToRender = showAllSignoffs ? signoffsToday : signoffsToday.slice(0, 10);
 
-  const allergenReviewsToRender = showAllAllergenReviews
-    ? allergenReviews
-    : allergenReviews.slice(0, 10);
-  const allergenLogsToRender = showAllAllergenLogs
-    ? allergenLogs
-    : allergenLogs.slice(0, 10);
+  const allergenReviewsToRender = showAllAllergenReviews ? allergenReviews : allergenReviews.slice(0, 10);
+  const allergenLogsToRender = showAllAllergenLogs ? allergenLogs : allergenLogs.slice(0, 10);
 
   const trainingToRender = showAllTraining ? trainingRows : trainingRows.slice(0, 10);
-  const trainingAreasToRender = showAllTrainingAreas
-    ? trainingAreasRows
-    : trainingAreasRows.slice(0, 10);
+  const trainingAreasToRender = showAllTrainingAreas ? trainingAreasRows : trainingAreasRows.slice(0, 10);
 
-  const calibrationToRender = showAllCalibration
-    ? calibrationChecks
-    : calibrationChecks.slice(0, 10);
+  const calibrationToRender = showAllCalibration ? calibrationChecks : calibrationChecks.slice(0, 10);
 
   const cleaningAllDone = cleaningTotal > 0 && cleaningDoneTotal === cleaningTotal;
   const alreadySignedOff = signoffsToday.length > 0;
-async function buildDaySignoffFeedback(
-  initials: string
-): Promise<CompletionFeedbackData> {
-  if (!orgId || !locationId) {
-    return buildComplianceFeedback({
-      compliantDaysThisWeek: 1,
-      openDaysThisWeek: 1,
-      streakDays: 1,
+
+  async function buildDaySignoffFeedback(initials: string): Promise<CompletionFeedbackData> {
+    if (!orgId || !locationId) {
+      return {
+        title: "Day signed off",
+        points: 10,
+        compliantDaysThisWeek: 1,
+        streakDays: 1,
+        completedTodayLabel: "Day sign-off completed",
+        summaryLine: "Good job. The boring compliance work is done.",
+        selectedDate: selectedDateISO,
+        initials: initials || null,
+      };
+    }
+
+    const weekStart = startOfWeekISO(selectedDateISO);
+    const streakWindowStart = addDaysISO(selectedDateISO, -41);
+
+    const { data, error } = await supabase
+      .from("daily_signoffs")
+      .select("signoff_on")
+      .eq("org_id", orgId)
+      .eq("location_id", locationId)
+      .gte("signoff_on", streakWindowStart)
+      .lte("signoff_on", selectedDateISO)
+      .order("signoff_on", { ascending: false });
+
+    if (error) throw error;
+
+    const signedDates = new Set<string>(((data ?? []) as Array<{ signoff_on: string }>).map((row) => String(row.signoff_on)));
+
+    let streakDays = 0;
+    let cursor = selectedDateISO;
+    while (signedDates.has(cursor)) {
+      streakDays += 1;
+      cursor = addDaysISO(cursor, -1);
+    }
+
+    let compliantDaysThisWeek = 0;
+    let dayCursor = weekStart;
+    while (dayCursor <= selectedDateISO) {
+      if (signedDates.has(dayCursor)) compliantDaysThisWeek += 1;
+      dayCursor = addDaysISO(dayCursor, 1);
+    }
+
+    const summaryLine =
+      compliantDaysThisWeek >= 5
+        ? "Strong week. You’re staying on top of compliance."
+        : compliantDaysThisWeek >= 3
+        ? "Good momentum. Keep stacking completed days."
+        : "First steps count. Keep the streak alive tomorrow.";
+
+    return {
+      title: "Day signed off",
+      points: 10,
+      compliantDaysThisWeek,
+      streakDays,
+      completedTodayLabel: "All cleaning due today is complete and the day is signed off.",
+      summaryLine,
       selectedDate: selectedDateISO,
       initials: initials || null,
-      completedTodayLabel: "Day sign-off completed",
-    });
+    };
   }
-
-  const weekStart = startOfWeekISO(selectedDateISO);
-  const streakWindowStart = addDaysISO(selectedDateISO, -41);
-
-  const { data, error } = await supabase
-    .from("daily_signoffs")
-    .select("signoff_on")
-    .eq("org_id", orgId)
-    .eq("location_id", locationId)
-    .gte("signoff_on", streakWindowStart)
-    .lte("signoff_on", selectedDateISO)
-    .order("signoff_on", { ascending: false });
-
-  if (error) throw error;
-
-  const signedDates = new Set<string>(
-    ((data ?? []) as Array<{ signoff_on: string }>).map((row) =>
-      String(row.signoff_on)
-    )
-  );
-
-  const streakDays = await calculateOpenDaySignoffStreak({
-    orgId,
-    locationId,
-    signedOffDays: signedDates,
-    startFromISO: selectedDateISO,
-    maxLookbackDays: 365,
-  });
-
-  const openDaysThisWeek = await countOpenDaysInRange({
-    orgId,
-    locationId,
-    startISO: weekStart,
-    endISO: selectedDateISO,
-  });
-
-  let compliantDaysThisWeek = 0;
-  let dayCursor = weekStart;
-  while (dayCursor <= selectedDateISO) {
-    const dayStatus = await getLocationDayStatus(orgId, locationId, dayCursor);
-    if (dayStatus.isOpen && signedDates.has(dayCursor)) {
-      compliantDaysThisWeek += 1;
-    }
-    dayCursor = addDaysISO(dayCursor, 1);
-  }
-
-  return buildComplianceFeedback({
-    compliantDaysThisWeek,
-    openDaysThisWeek,
-    streakDays,
-    selectedDate: selectedDateISO,
-    initials: initials || null,
-    completedTodayLabel:
-      "All cleaning due today is complete and the day is signed off.",
-  });
-}
 
   async function createDaySignoff() {
     if (!orgId || !locationId) return;
@@ -1925,9 +1844,7 @@ async function buildDaySignoffFeedback(
 
       if (error) throw error;
 
-      const feedback = await buildDaySignoffFeedback(
-        signoffInitials.trim().toUpperCase()
-      );
+      const feedback = await buildDaySignoffFeedback(signoffInitials.trim().toUpperCase());
 
       setSignoffInitials("");
       setSignoffNotes("");
@@ -1943,7 +1860,7 @@ async function buildDaySignoffFeedback(
     }
   }
 
-  async function openStaffAssessmentFromActions() {
+    async function openStaffAssessmentFromActions() {
     if (!orgId || !locationId) return;
     setActionsOpen(false);
     setStaffAssessErr(null);
@@ -1956,7 +1873,7 @@ async function buildDaySignoffFeedback(
     setStaffAssessOpen(true);
   }
 
-  async function openQcFromActions() {
+async function openQcFromActions() {
     if (!orgId || !locationId) return;
     setActionsOpen(false);
     setQcForm((f) => ({
@@ -1964,11 +1881,7 @@ async function buildDaySignoffFeedback(
       reviewed_on: selectedDateISO || f.reviewed_on,
     }));
     setQcOpen(true);
-    await Promise.all([
-      loadTeamOptions(locationId),
-      loadLoggedInManager(),
-      loadQcReviews(),
-    ]);
+    await Promise.all([loadTeamOptions(locationId), loadLoggedInManager(), loadQcReviews()]);
   }
 
   async function loadStaffAssessment(staffId: string, days: number) {
@@ -1983,25 +1896,21 @@ async function buildDaySignoffFeedback(
       const initials = staff.initials?.trim().toUpperCase() || "";
       if (!initials) throw new Error("Staff initials are required for assessment.");
 
-      const end = new Date(`${selectedDateISO}T23:59:59.999`);
+      const end = new Date(selectedDateISO);
+      end.setHours(23, 59, 59, 999);
       const start = new Date(end);
       start.setDate(start.getDate() - (days - 1));
 
       const startIsoDate = isoDate(start);
       const endIsoDate = isoDate(end);
 
-      const qcStart = new Date(`${selectedDateISO}T00:00:00`);
+      const qcStart = new Date(selectedDateISO);
+      qcStart.setHours(0, 0, 0, 0);
       const tmp = new Date(qcStart);
       tmp.setDate(tmp.getDate() - 29);
       const qcStartIso = isoDate(tmp);
 
-      const [
-        cleaningRunsRes,
-        tempLogsRes,
-        tempFailsRes,
-        incidentsRes,
-        qcRes,
-      ] = await Promise.all([
+      const [cleaningRunsRes, tempLogsRes, tempFailsRes, incidentsRes, qcRes] = await Promise.all([
         supabase
           .from("cleaning_task_runs")
           .select("id", { count: "exact", head: true })
@@ -2050,23 +1959,13 @@ async function buildDaySignoffFeedback(
           .limit(500),
       ]);
 
-      const firstErr2 =
-        cleaningRunsRes.error ||
-        tempLogsRes.error ||
-        tempFailsRes.error ||
-        incidentsRes.error ||
-        qcRes.error;
+      const firstErr2 = cleaningRunsRes.error || tempLogsRes.error || tempFailsRes.error || incidentsRes.error || qcRes.error;
       if (firstErr2) throw firstErr2;
 
       const qcRows = (qcRes.data ?? []) as Array<{ rating: number }>;
       const qcCount30d = qcRows.length;
       const qcAvg30d =
-        qcCount30d > 0
-          ? Math.round(
-              (qcRows.reduce((a, r) => a + Number(r.rating || 0), 0) / qcCount30d) *
-                10
-            ) / 10
-          : null;
+        qcCount30d > 0 ? Math.round((qcRows.reduce((a, r) => a + Number(r.rating || 0), 0) / qcCount30d) * 10) / 10 : null;
 
       setStaffAssess({
         staffId,
@@ -2088,22 +1987,18 @@ async function buildDaySignoffFeedback(
   }
 
   return (
+  
     <div className="w-full px-3 sm:px-4 md:mx-auto md:max-w-[1100px]">
       <header className="py-2">
+
         <div className="text-center">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Today
-          </div>
-          <h1 className="mt-1 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-            {centeredDate}
-          </h1>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today</div>
+          <h1 className="mt-1 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">{centeredDate}</h1>
         </div>
       </header>
 
       {err && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
-          {err}
-        </div>
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">{err}</div>
       )}
 
       <section className="rounded-3xl border border-white/40 bg-white/80 p-3 sm:p-4 shadow-lg shadow-slate-900/5 backdrop-blur">
@@ -2116,39 +2011,18 @@ async function buildDaySignoffFeedback(
             sub={
               <>
                 Fails (7d):{" "}
-                <span
-                  className={cls(
-                    "font-semibold",
-                    tempsSummary.fails7d > 0 && "text-red-700"
-                  )}
-                >
-                  {tempsSummary.fails7d}
-                </span>
+                <span className={cls("font-semibold", tempsSummary.fails7d > 0 && "text-red-700")}>{tempsSummary.fails7d}</span>
+                
+                
+                
               </>
             }
           />
 
-          <KpiTile
-            title="Cleaning"
-            icon="🧼"
-            tone={cleaningTone}
-            value={`${cleaningDoneTotal}/${cleaningTotal}`}
-            sub="Tasks completed today"
-          />
-          <KpiTile
-            title="Incidents"
-            icon="⚠️"
-            tone={incidentsTone}
-            value={incidentsToday}
-            sub={`Last 7d: ${incidents7d}`}
-          />
-          <KpiTile
-            title="Training"
-            icon="🎓"
-            tone={trainingTone}
-            value={`${trainingExpired} expired`}
-            sub={`${trainingDueSoon} due in 30d`}
-          />
+          <KpiTile title="Cleaning" icon="🧼" tone={cleaningTone} value={`${cleaningDoneTotal}/${cleaningTotal}`} sub="Tasks completed today" />
+          <KpiTile title="Incidents" icon="⚠️" tone={incidentsTone} value={incidentsToday} sub={`Last 7d: ${incidents7d}`} />
+          <KpiTile title="Training" icon="🎓" tone={trainingTone} value={`${trainingExpired} expired`} sub={`${trainingDueSoon} due in 30d`} />
+         
         </div>
 
         <WeeklyComplianceSlimBar stats={weeklyCompliance} />
@@ -2156,20 +2030,18 @@ async function buildDaySignoffFeedback(
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold text-slate-600">Location</label>
-            <select
-              value={locationId ?? ""}
-              onChange={(e) => void handleLocationChange(e.target.value || null)}
-              className="h-9 rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-              disabled={
-                locationLoading || activeLocationLoading || locations.length === 0
-              }
-            >
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
+           <select
+  value={locationId ?? ""}
+  onChange={(e) => void handleLocationChange(e.target.value || null)}
+  className="h-9 rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
+  disabled={locationLoading || activeLocationLoading || locations.length === 0}
+>
+  {locations.map((l) => (
+    <option key={l.id} value={l.id}>
+      {l.name}
+    </option>
+  ))}
+</select>
           </div>
 
           <div className="flex items-center gap-2">
@@ -2211,10 +2083,7 @@ async function buildDaySignoffFeedback(
               ref={actionsBtnRef}
               type="button"
               onClick={() => setActionsOpen((v) => !v)}
-              className={cls(
-                "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm",
-                "bg-indigo-600 text-white hover:bg-indigo-700"
-              )}
+              className={cls("rounded-xl px-4 py-2 text-sm font-semibold shadow-sm", "bg-indigo-600 text-white hover:bg-indigo-700")}
             >
               Actions ▾
             </button>
@@ -2222,10 +2091,7 @@ async function buildDaySignoffFeedback(
             {portalReady && actionsOpen && actionsPos
               ? createPortal(
                   <>
-                    <div
-                      className="fixed inset-0 z-[9998]"
-                      onClick={() => setActionsOpen(false)}
-                    />
+                    <div className="fixed inset-0 z-[9998]" onClick={() => setActionsOpen(false)} />
                     <div
                       ref={actionsMenuRef}
                       className="fixed z-[9999] w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl max-h-[calc(100vh-16px)] overflow-y-auto"
@@ -2248,9 +2114,7 @@ async function buildDaySignoffFeedback(
                         disabled={!orgId || !locationId}
                         className={cls(
                           "w-full px-4 py-2 text-left text-sm font-semibold",
-                          !orgId || !locationId
-                            ? "text-slate-400 cursor-not-allowed"
-                            : "text-slate-800 hover:bg-slate-50"
+                          !orgId || !locationId ? "text-slate-400 cursor-not-allowed" : "text-slate-800 hover:bg-slate-50"
                         )}
                       >
                         Log calibration check
@@ -2270,9 +2134,7 @@ async function buildDaySignoffFeedback(
                         disabled={!orgId || !locationId}
                         className={cls(
                           "w-full px-4 py-2 text-left text-sm font-semibold",
-                          !orgId || !locationId
-                            ? "text-slate-400 cursor-not-allowed"
-                            : "text-slate-800 hover:bg-slate-50"
+                          !orgId || !locationId ? "text-slate-400 cursor-not-allowed" : "text-slate-800 hover:bg-slate-50"
                         )}
                       >
                         Staff QC (Manager QC)
@@ -2287,9 +2149,7 @@ async function buildDaySignoffFeedback(
                         disabled={!cleaningAllDone || alreadySignedOff}
                         className={cls(
                           "w-full px-4 py-2 text-left text-sm font-semibold",
-                          !cleaningAllDone || alreadySignedOff
-                            ? "text-slate-400 cursor-not-allowed"
-                            : "text-slate-800 hover:bg-slate-50"
+                          !cleaningAllDone || alreadySignedOff ? "text-slate-400 cursor-not-allowed" : "text-slate-800 hover:bg-slate-50"
                         )}
                       >
                         {alreadySignedOff ? "Signed off" : "Sign off day"}
@@ -2306,9 +2166,7 @@ async function buildDaySignoffFeedback(
                         disabled={loading || !orgId || !locationId}
                         className={cls(
                           "w-full px-4 py-2 text-left text-sm font-semibold",
-                          loading || !orgId || !locationId
-                            ? "text-slate-400 cursor-not-allowed"
-                            : "text-slate-700 hover:bg-slate-50"
+                          loading || !orgId || !locationId ? "text-slate-400 cursor-not-allowed" : "text-slate-700 hover:bg-slate-50"
                         )}
                       >
                         {loading ? "Refreshing…" : "Refresh"}
@@ -2322,14 +2180,11 @@ async function buildDaySignoffFeedback(
         </div>
       </section>
 
+      {/* Cleaning category progress */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Cleaning progress
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            By category (selected day)
-          </div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Cleaning progress</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">By category (selected day)</div>
         </div>
 
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
@@ -2360,22 +2215,12 @@ async function buildDaySignoffFeedback(
                       : "bg-red-100 text-red-800";
 
                   return (
-                    <tr
-                      key={r.category}
-                      className="border-t border-slate-100 text-slate-800"
-                    >
+                    <tr key={r.category} className="border-t border-slate-100 text-slate-800">
                       <td className="px-3 py-2 font-semibold">{r.category}</td>
                       <td className="px-3 py-2">{r.done}</td>
                       <td className="px-3 py-2">{r.total}</td>
                       <td className="px-3 py-2">
-                        <span
-                          className={cls(
-                            "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                            pill
-                          )}
-                        >
-                          {pct}%
-                        </span>
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>{pct}%</span>
                       </td>
                     </tr>
                   );
@@ -2386,14 +2231,11 @@ async function buildDaySignoffFeedback(
         </div>
       </section>
 
+      {/* Incidents */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Incidents
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Incident log & corrective actions (last 90 days)
-          </div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Incidents</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Incident log & corrective actions (last 90 days)</div>
         </div>
 
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
@@ -2406,36 +2248,68 @@ async function buildDaySignoffFeedback(
                 <th className="px-3 py-2">By</th>
                 <th className="px-3 py-2">Details</th>
                 <th className="px-3 py-2">Corrective</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
               {incidentsToRender.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
+                  <td colSpan={8} className="px-3 py-4 text-center text-slate-500">
                     No incidents logged.
                   </td>
                 </tr>
               ) : (
                 incidentsToRender.map((r) => (
                   <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {formatDDMMYYYY(r.happened_on)}
-                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.happened_on)}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {r.created_at
-                        ? new Date(r.created_at).toLocaleTimeString("en-GB", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
+                        ? new Date(r.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
                         : "—"}
                     </td>
                     <td className="px-3 py-2 font-semibold">{r.type ?? "Incident"}</td>
                     <td className="px-3 py-2">{r.created_by?.toUpperCase() ?? "—"}</td>
-                    <td className="px-3 py-2 max-w-[18rem] truncate">
-                      {r.details ?? "—"}
+                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.details ?? "—"}</td>
+                    <td className="px-3 py-2 max-w-[18rem] truncate">{r.corrective_action ?? "—"}</td>
+                    <td className="px-3 py-2">
+                      {r.resolved_at ? (
+                        <span className="inline-flex rounded-full bg-emerald-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-emerald-800">
+                          Resolved
+                        </span>
+                      ) : (
+                        <span className="inline-flex rounded-full bg-red-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-red-800">
+                          Open
+                        </span>
+                      )}
                     </td>
-                    <td className="px-3 py-2 max-w-[18rem] truncate">
-                      {r.corrective_action ?? "—"}
+                    <td className="px-3 py-2 text-right">
+                      {r.source === "incident" ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedIncident({
+                              id: r.id,
+                              happened_on: r.happened_on,
+                              created_at: r.created_at,
+                              type: r.type,
+                              details: r.details,
+                              immediate_action: r.immediate_action,
+                              preventive_action: r.preventive_action ?? r.corrective_action ?? null,
+                              created_by: r.created_by,
+                              resolved_at: r.resolved_at ?? null,
+                              resolved_by: r.resolved_by ?? null,
+                              resolution_notes: r.resolution_notes ?? null,
+                            });
+                            setIncidentReviewOpen(true);
+                          }}
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Open
+                        </button>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -2444,28 +2318,21 @@ async function buildDaySignoffFeedback(
           </table>
         </div>
 
-        <TableFooterToggle
-          total={incidentsHistory.length}
-          showingAll={showAllIncidents}
-          onToggle={() => setShowAllIncidents((v) => !v)}
-        />
+        <TableFooterToggle total={incidentsHistory.length} showingAll={showAllIncidents} onToggle={() => setShowAllIncidents((v) => !v)} />
       </section>
 
+           {/* Activity */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Today&apos;s activity
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Temps + cleaning (category-based)
-          </div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Today&apos;s activity</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Temps + cleaning (category-based)</div>
         </div>
 
+        {/* ✅ Key fix: min-w-0 on grid + children so tables can't blow out the card */}
         <div className="grid gap-4 md:grid-cols-2 min-w-0">
+          {/* LEFT COLUMN */}
           <div className="min-w-0">
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-              Temperature logs
-            </h3>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Temperature logs</h3>
 
             <div className="w-full overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
@@ -2493,17 +2360,13 @@ async function buildDaySignoffFeedback(
                         <td className="px-3 py-2">{r.staff}</td>
                         <td className="px-3 py-2">{r.area}</td>
                         <td className="px-3 py-2">{r.item}</td>
-                        <td className="px-3 py-2">
-                          {r.temp_c != null ? `${r.temp_c}°C` : "—"}
-                        </td>
+                        <td className="px-3 py-2">{r.temp_c != null ? `${r.temp_c}°C` : "—"}</td>
                         <td className="px-3 py-2">
                           {r.status ? (
                             <span
                               className={cls(
                                 "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                                r.status === "pass"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-red-100 text-red-800"
+                                r.status === "pass" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
                               )}
                             >
                               {r.status}
@@ -2519,12 +2382,9 @@ async function buildDaySignoffFeedback(
               </table>
             </div>
 
-            <TableFooterToggle
-              total={todayTemps.length}
-              showingAll={showAllTemps}
-              onToggle={() => setShowAllTemps((v) => !v)}
-            />
+            <TableFooterToggle total={todayTemps.length} showingAll={showAllTemps} onToggle={() => setShowAllTemps((v) => !v)} />
 
+            {/* Temp failures & corrective actions */}
             <h3 className="mt-4 mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
               Temp failures & corrective actions
             </h3>
@@ -2551,21 +2411,12 @@ async function buildDaySignoffFeedback(
                       <tr key={r.id} className="border-t border-slate-100 text-slate-800">
                         <td className="px-3 py-2 whitespace-nowrap">
                           {r.created_at
-                            ? new Date(r.created_at).toLocaleTimeString("en-GB", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
+                            ? new Date(r.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
                             : "—"}
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {r.created_by?.toUpperCase() ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 max-w-[18rem] truncate">
-                          {r.details ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 max-w-[18rem] truncate">
-                          {r.corrective_action ?? "—"}
-                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">{r.created_by?.toUpperCase() ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[18rem] truncate">{r.details ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[18rem] truncate">{r.corrective_action ?? "—"}</td>
                       </tr>
                     ))
                   )}
@@ -2573,17 +2424,12 @@ async function buildDaySignoffFeedback(
               </table>
             </div>
 
-            <TableFooterToggle
-              total={tempFailsToday.length}
-              showingAll={showAllTempFails}
-              onToggle={() => setShowAllTempFails((v) => !v)}
-            />
+            <TableFooterToggle total={tempFailsToday.length} showingAll={showAllTempFails} onToggle={() => setShowAllTempFails((v) => !v)} />
           </div>
 
+          {/* RIGHT COLUMN */}
           <div className="min-w-0">
-            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-              Cleaning runs
-            </h3>
+            <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Cleaning runs</h3>
 
             <div className="w-full overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
               <table className="min-w-full text-xs">
@@ -2608,14 +2454,10 @@ async function buildDaySignoffFeedback(
                         <td className="px-3 py-2">{r.time ?? "—"}</td>
                         <td className="px-3 py-2">
                           <div className="font-semibold">{r.task ?? "—"}</div>
-                          <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">
-                            {r.category}
-                          </div>
+                          <div className="text-[11px] text-slate-500 truncate max-w-[18rem]">{r.category}</div>
                         </td>
                         <td className="px-3 py-2">{r.staff ?? "—"}</td>
-                        <td className="px-3 py-2 max-w-[14rem] truncate">
-                          {r.notes ?? "—"}
-                        </td>
+                        <td className="px-3 py-2 max-w-[14rem] truncate">{r.notes ?? "—"}</td>
                       </tr>
                     ))
                   )}
@@ -2623,20 +2465,16 @@ async function buildDaySignoffFeedback(
               </table>
             </div>
 
-            <TableFooterToggle
-              total={cleaningActivity.length}
-              showingAll={showAllCleaning}
-              onToggle={() => setShowAllCleaning((v) => !v)}
-            />
+            <TableFooterToggle total={cleaningActivity.length} showingAll={showAllCleaning} onToggle={() => setShowAllCleaning((v) => !v)} />
           </div>
         </div>
       </section>
 
+
+      {/* Day sign-offs table */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Day sign-offs
-          </div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Day sign-offs</div>
           <div className="mt-0.5 text-sm font-semibold text-slate-900">
             Daily sign-offs for selected day · Total: {signoffSummary.todayCount}
           </div>
@@ -2664,16 +2502,10 @@ async function buildDaySignoffFeedback(
                   const t = r.created_at ? formatTimeHM(new Date(r.created_at)) : null;
                   return (
                     <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {formatDDMMYYYY(r.signoff_on)}
-                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.signoff_on)}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{t ?? "—"}</td>
-                      <td className="px-3 py-2 font-semibold whitespace-nowrap">
-                        {r.signed_by ? r.signed_by.toUpperCase() : "—"}
-                      </td>
-                      <td className="px-3 py-2 max-w-[28rem] truncate">
-                        {r.notes ?? "—"}
-                      </td>
+                      <td className="px-3 py-2 font-semibold whitespace-nowrap">{r.signed_by ? r.signed_by.toUpperCase() : "—"}</td>
+                      <td className="px-3 py-2 max-w-[28rem] truncate">{r.notes ?? "—"}</td>
                     </tr>
                   );
                 })
@@ -2682,44 +2514,32 @@ async function buildDaySignoffFeedback(
           </table>
         </div>
 
-        <TableFooterToggle
-          total={signoffsToday.length}
-          showingAll={showAllSignoffs}
-          onToggle={() => setShowAllSignoffs((v) => !v)}
-        />
+        <TableFooterToggle total={signoffsToday.length} showingAll={showAllSignoffs} onToggle={() => setShowAllSignoffs((v) => !v)} />
       </section>
 
+      {/* Manager QC Summary table */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="min-w-0">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-                Manager QC
-              </div>
-              <div className="mt-0.5 text-sm font-semibold text-slate-900">
-                Recent QC reviews (selected location)
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={async () => {
-                if (!orgId || !locationId) return;
-                setQcForm((f) => ({ ...f, reviewed_on: selectedDateISO || f.reviewed_on }));
-                setQcOpen(true);
-                await Promise.all([
-                  loadTeamOptions(locationId),
-                  loadLoggedInManager(),
-                  loadQcReviews(),
-                ]);
-              }}
-              className="shrink-0 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-            >
-              Open QC
-            </button>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Manager QC</div>
+            <div className="mt-0.5 text-sm font-semibold text-slate-900">Recent QC reviews (selected location)</div>
           </div>
-        </div>
 
+          <button
+            type="button"
+            onClick={async () => {
+              if (!orgId || !locationId) return;
+              setQcForm((f) => ({ ...f, reviewed_on: selectedDateISO || f.reviewed_on }));
+              setQcOpen(true);
+              await Promise.all([loadTeamOptions(locationId), loadLoggedInManager(), loadQcReviews()]);
+            }}
+             className="shrink-0 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+  >
+            Open QC
+          </button>
+        </div>
+</div>
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
           <table className="min-w-full text-xs">
             <thead className="bg-slate-50">
@@ -2755,28 +2575,13 @@ async function buildDaySignoffFeedback(
 
                   return (
                     <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {formatDDMMYYYY(r.reviewed_on)}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {tmLabel(r.staff ?? { initials: null, name: "—" })}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {tmLabel(r.manager ?? { initials: null, name: "—" })}
-                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.reviewed_on)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.staff ?? { initials: null, name: "—" })}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{tmLabel(r.manager ?? { initials: null, name: "—" })}</td>
                       <td className="px-3 py-2">
-                        <span
-                          className={cls(
-                            "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                            pill
-                          )}
-                        >
-                          {r.rating}/5
-                        </span>
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>{r.rating}/5</span>
                       </td>
-                      <td className="px-3 py-2 max-w-[24rem] truncate">
-                        {r.notes ?? "—"}
-                      </td>
+                      <td className="px-3 py-2 max-w-[24rem] truncate">{r.notes ?? "—"}</td>
                     </tr>
                   );
                 })
@@ -2785,27 +2590,18 @@ async function buildDaySignoffFeedback(
           </table>
         </div>
 
-        <TableFooterToggle
-          total={qcReviews.length}
-          showingAll={showAllQc}
-          onToggle={() => setShowAllQc((v) => !v)}
-        />
+        <TableFooterToggle total={qcReviews.length} showingAll={showAllQc} onToggle={() => setShowAllQc((v) => !v)} />
       </section>
 
+      {/* Education & training */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Education & training
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Training records + staff training areas (selected location)
-          </div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Education & training</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Training records + staff training areas (selected location)</div>
         </div>
 
         <div>
-          <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-            Training records
-          </h3>
+          <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training records</h3>
 
           <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
             <table className="min-w-full text-xs">
@@ -2830,17 +2626,15 @@ async function buildDaySignoffFeedback(
                 ) : (
                   trainingToRender.map((r) => {
                     const exp = r.expires_on ? safeDate(r.expires_on) : null;
-                    const base = safeDate(`${selectedDateISO}T00:00:00`) ?? new Date();
+                    const base = safeDate(selectedDateISO) ?? new Date();
+                    base.setHours(0, 0, 0, 0);
 
                     let statusLabel = "No expiry";
                     let pill = "bg-slate-100 text-slate-800";
 
                     if (exp) {
                       exp.setHours(0, 0, 0, 0);
-                      base.setHours(0, 0, 0, 0);
-                      const diffDays = Math.floor(
-                        (exp.getTime() - base.getTime()) / 86400000
-                      );
+                      const diffDays = Math.floor((exp.getTime() - base.getTime()) / 86400000);
 
                       if (diffDays < 0) {
                         statusLabel = "Expired";
@@ -2863,31 +2657,14 @@ async function buildDaySignoffFeedback(
 
                     return (
                       <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                        <td className="px-3 py-2 whitespace-nowrap font-semibold">
-                          {staffLabel}
-                        </td>
-                        <td className="px-3 py-2 max-w-[18rem] truncate">
-                          {r.type ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {formatDDMMYYYY(r.awarded_on)}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {formatDDMMYYYY(r.expires_on)}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {r.provider_name ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 max-w-[14rem] truncate">
-                          {r.course_key ?? "—"}
-                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap font-semibold">{staffLabel}</td>
+                        <td className="px-3 py-2 max-w-[18rem] truncate">{r.type ?? "—"}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.awarded_on)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.expires_on)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{r.provider_name ?? "—"}</td>
+                        <td className="px-3 py-2 max-w-[14rem] truncate">{r.course_key ?? "—"}</td>
                         <td className="px-3 py-2">
-                          <span
-                            className={cls(
-                              "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                              pill
-                            )}
-                          >
+                          <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
                             {statusLabel}
                           </span>
                         </td>
@@ -2899,19 +2676,13 @@ async function buildDaySignoffFeedback(
             </table>
           </div>
 
-          <TableFooterToggle
-            total={trainingRows.length}
-            showingAll={showAllTraining}
-            onToggle={() => setShowAllTraining((v) => !v)}
-          />
+          <TableFooterToggle total={trainingRows.length} showingAll={showAllTraining} onToggle={() => setShowAllTraining((v) => !v)} />
         </div>
 
         <div className="mt-6" />
 
         <div>
-          <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-            Training areas
-          </h3>
+          <h3 className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Training areas</h3>
 
           <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
             <table className="min-w-full text-xs">
@@ -2931,18 +2702,11 @@ async function buildDaySignoffFeedback(
                   </tr>
                 ) : (
                   trainingAreasToRender.map((t) => {
-                    const areas = Array.isArray(t.training_areas)
-                      ? t.training_areas
-                      : [];
+                    const areas = Array.isArray(t.training_areas) ? t.training_areas : [];
 
                     return (
                       <tr key={t.id} className="border-t border-slate-100 text-slate-800">
-                        <td className="px-3 py-2 whitespace-nowrap font-semibold">
-                          {tmLabel({
-                            initials: t.initials ?? null,
-                            name: t.name ?? null,
-                          })}
-                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap font-semibold">{tmLabel({ initials: t.initials ?? null, name: t.name ?? null })}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{t.role ?? "—"}</td>
                         <td className="px-3 py-2">
                           {areas.length === 0 ? (
@@ -2968,22 +2732,15 @@ async function buildDaySignoffFeedback(
             </table>
           </div>
 
-          <TableFooterToggle
-            total={trainingAreasRows.length}
-            showingAll={showAllTrainingAreas}
-            onToggle={() => setShowAllTrainingAreas((v) => !v)}
-          />
+          <TableFooterToggle total={trainingAreasRows.length} showingAll={showAllTrainingAreas} onToggle={() => setShowAllTrainingAreas((v) => !v)} />
         </div>
       </section>
 
+      {/* Allergens - Review history (org-level) */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Allergens
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Allergen review history (org)
-          </div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Allergens</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Allergen review history (org)</div>
         </div>
 
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
@@ -3010,20 +2767,20 @@ async function buildDaySignoffFeedback(
                   const interval = r.interval_days ?? 180;
 
                   let nextDue: string | null = null;
-                  let daysUntil = "—";
+                  let daysUntil: string = "—";
 
                   if (reviewed && interval && Number.isFinite(interval)) {
-                    const d = new Date(`${reviewed}T00:00:00`);
+                    const d = new Date(reviewed);
                     if (!Number.isNaN(d.getTime())) {
                       d.setDate(d.getDate() + interval);
-                      nextDue = formatLocalISODate(d);
+                      nextDue = d.toISOString().slice(0, 10);
 
-                      const base = new Date(`${selectedDateISO}T00:00:00`);
-                      const due = new Date(`${nextDue}T00:00:00`);
+                      const base = new Date(selectedDateISO);
+                      base.setHours(0, 0, 0, 0);
+                      const due = new Date(nextDue);
+                      due.setHours(0, 0, 0, 0);
 
-                      const diffDays = Math.floor(
-                        (due.getTime() - base.getTime()) / 86400000
-                      );
+                      const diffDays = Math.floor((due.getTime() - base.getTime()) / 86400000);
                       daysUntil = `${diffDays}`;
                     }
                   }
@@ -3039,23 +2796,12 @@ async function buildDaySignoffFeedback(
 
                   return (
                     <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {formatDDMMYYYY(reviewed)}
-                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(reviewed)}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{r.reviewer ?? "—"}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {interval ? `${interval} days` : "—"}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {formatDDMMYYYY(nextDue)}
-                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">{interval ? `${interval} days` : "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(nextDue)}</td>
                       <td className="px-3 py-2">
-                        <span
-                          className={cls(
-                            "inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase",
-                            pill
-                          )}
-                        >
+                        <span className={cls("inline-flex rounded-full px-2 py-[1px] text-[10px] font-extrabold uppercase", pill)}>
                           {daysUntil === "—" ? "—" : `${daysUntil}d`}
                         </span>
                       </td>
@@ -3067,21 +2813,14 @@ async function buildDaySignoffFeedback(
           </table>
         </div>
 
-        <TableFooterToggle
-          total={allergenReviews.length}
-          showingAll={showAllAllergenReviews}
-          onToggle={() => setShowAllAllergenReviews((v) => !v)}
-        />
+        <TableFooterToggle total={allergenReviews.length} showingAll={showAllAllergenReviews} onToggle={() => setShowAllAllergenReviews((v) => !v)} />
       </section>
 
+      {/* Allergen edit log */}
       <section className="mt-4 mb-6 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
         <div className="mb-3">
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-            Allergens
-          </div>
-          <div className="mt-0.5 text-sm font-semibold text-slate-900">
-            Allergen edit log (this location)
-          </div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Allergens</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">Allergen edit log (this location)</div>
         </div>
 
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white/90">
@@ -3106,22 +2845,12 @@ async function buildDaySignoffFeedback(
               ) : (
                 allergenLogsToRender.map((r) => (
                   <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {formatDDMMYYYY(r.created_at)}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {formatTimeHM(safeDate(r.created_at)) ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 max-w-[14rem] truncate">
-                      {r.item_name ?? "—"}
-                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.created_at)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{formatTimeHM(safeDate(r.created_at)) ?? "—"}</td>
+                    <td className="px-3 py-2 max-w-[14rem] truncate">{r.item_name ?? "—"}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{r.action ?? "—"}</td>
-                    <td className="px-3 py-2 max-w-[16rem] truncate">
-                      {(r.category_before ?? "—") + " → " + (r.category_after ?? "—")}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {r.staff_initials?.toUpperCase() ?? "—"}
-                    </td>
+                    <td className="px-3 py-2 max-w-[16rem] truncate">{(r.category_before ?? "—") + " → " + (r.category_after ?? "—")}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
                   </tr>
                 ))
               )}
@@ -3129,31 +2858,25 @@ async function buildDaySignoffFeedback(
           </table>
         </div>
 
-        <TableFooterToggle
-          total={allergenLogs.length}
-          showingAll={showAllAllergenLogs}
-          onToggle={() => setShowAllAllergenLogs((v) => !v)}
-        />
+        <TableFooterToggle total={allergenLogs.length} showingAll={showAllAllergenLogs} onToggle={() => setShowAllAllergenLogs((v) => !v)} />
       </section>
 
+      {/* Calibration checks (simple) */}
       <section className="mt-4 rounded-3xl border border-white/40 bg-white/80 p-4 shadow-md shadow-slate-900/5 backdrop-blur">
-        <div className="min-w-0">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">
-                Calibration
-              </div>
-              <div className="mt-0.5 text-sm font-semibold text-slate-900">
-                Calibration log (this location)
-              </div>
-            </div>
+      <div className="min-w-0">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-400">Calibration</div>
+            <div className="mt-0.5 text-sm font-semibold text-slate-900">Calibration log (this location)</div>
           </div>
+</div>
           <button
             type="button"
             onClick={openCalibrationFromActions}
             disabled={!orgId || !locationId}
             className={cls(
               "shrink-0 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50",
+  
               !orgId || !locationId ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50"
             )}
           >
@@ -3181,12 +2904,8 @@ async function buildDaySignoffFeedback(
               ) : (
                 calibrationToRender.map((r) => (
                   <tr key={r.id} className="border-t border-slate-100 text-slate-800">
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {formatDDMMYYYY(r.checked_on)}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {r.staff_initials?.toUpperCase() ?? "—"}
-                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.checked_on)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{r.staff_initials?.toUpperCase() ?? "—"}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {r.all_equipment_calibrated ? (
                         <span className="inline-flex rounded-full bg-emerald-100 px-2 py-[1px] text-[10px] font-extrabold uppercase text-emerald-800">
@@ -3206,11 +2925,7 @@ async function buildDaySignoffFeedback(
           </table>
         </div>
 
-        <TableFooterToggle
-          total={calibrationChecks.length}
-          showingAll={showAllCalibration}
-          onToggle={() => setShowAllCalibration((v) => !v)}
-        />
+        <TableFooterToggle total={calibrationChecks.length} showingAll={showAllCalibration} onToggle={() => setShowAllCalibration((v) => !v)} />
       </section>
 
       <CompletionFeedbackModal
@@ -3219,30 +2934,21 @@ async function buildDaySignoffFeedback(
         onClose={() => setCompletionFeedbackOpen(false)}
       />
 
+      {/* Sign-off modal */}
       {signoffOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setSignoffOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setSignoffOpen(false)}>
           <div
-            className={cls(
-              "mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
-            )}
+            className={cls("mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur")}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <div className="text-base font-semibold">Sign off day</div>
                 <div className="mt-0.5 text-xs text-slate-500">
-                  {formatDDMMYYYY(selectedDateISO)} ·{" "}
-                  {locations.find((l) => l.id === locationId)?.name ?? "—"}
+                  {formatDDMMYYYY(selectedDateISO)} · {locations.find((l) => l.id === locationId)?.name ?? "—"}
                 </div>
               </div>
-              <button
-                onClick={() => setSignoffOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-                aria-label="Close"
-              >
+              <button onClick={() => setSignoffOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
                 ✕
               </button>
             </div>
@@ -3254,9 +2960,7 @@ async function buildDaySignoffFeedback(
             )}
 
             {alreadySignedOff && (
-              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                This day is already signed off.
-              </div>
+              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">This day is already signed off.</div>
             )}
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -3264,23 +2968,17 @@ async function buildDaySignoffFeedback(
                 <label className="mb-1 block text-xs text-slate-500">Initials</label>
                 <input
                   value={signoffInitials}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    setSignoffInitials(e.target.value.toUpperCase())
-                  }
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSignoffInitials(e.target.value.toUpperCase())}
                   placeholder="WS"
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                 />
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-500">
-                  Notes (optional)
-                </label>
+                <label className="mb-1 block text-xs text-slate-500">Notes (optional)</label>
                 <input
                   value={signoffNotes}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    setSignoffNotes(e.target.value)
-                  }
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSignoffNotes(e.target.value)}
                   placeholder="Any corrective actions / comments…"
                   className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
                 />
@@ -3309,21 +3007,16 @@ async function buildDaySignoffFeedback(
         </div>
       )}
 
+      {/* Calibration modal (simple) */}
       {calibrationOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/30"
-          onClick={() => setCalibrationOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 bg-black/30" onClick={() => setCalibrationOpen(false)}>
           <div
             className="mx-auto mt-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-lg backdrop-blur"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
               <div className="text-base font-semibold">Log calibration</div>
-              <button
-                onClick={() => setCalibrationOpen(false)}
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-              >
+              <button onClick={() => setCalibrationOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">
                 ✕
               </button>
             </div>
@@ -3334,9 +3027,7 @@ async function buildDaySignoffFeedback(
                 <input
                   type="date"
                   value={calibrationForm.checked_on}
-                  onChange={(e) =>
-                    setCalibrationForm((f) => ({ ...f, checked_on: e.target.value }))
-                  }
+                  onChange={(e) => setCalibrationForm((f) => ({ ...f, checked_on: e.target.value }))}
                   className="h-10 w-full rounded-xl border border-slate-300 px-3 text-sm"
                 />
               </div>
@@ -3345,34 +3036,18 @@ async function buildDaySignoffFeedback(
                 <label className="text-xs text-slate-500">Initials</label>
                 <input
                   value={calibrationForm.staff_initials}
-                  onChange={(e) =>
-                    setCalibrationForm((f) => ({
-                      ...f,
-                      staff_initials: e.target.value.toUpperCase(),
-                    }))
-                  }
+                  onChange={(e) => setCalibrationForm((f) => ({ ...f, staff_initials: e.target.value.toUpperCase() }))}
                   className="h-10 w-full rounded-xl border border-slate-300 px-3 text-sm"
                 />
               </div>
 
               <div className="space-y-2">
-                <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
-                  Calibration checks
-                </div>
+                <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Calibration checks</div>
 
                 {[
-                  {
-                    key: "cold_storage_checked",
-                    label: "Cold storage units calibrated",
-                  },
-                  {
-                    key: "probes_checked",
-                    label: "Temperature probes calibrated",
-                  },
-                  {
-                    key: "thermometers_checked",
-                    label: "Infrared / handheld thermometers calibrated",
-                  },
+                  { key: "cold_storage_checked", label: "Cold storage units calibrated" },
+                  { key: "probes_checked", label: "Temperature probes calibrated" },
+                  { key: "thermometers_checked", label: "Infrared / handheld thermometers calibrated" },
                 ].map((item) => (
                   <label key={item.key} className="flex items-center gap-2">
                     <input
@@ -3395,19 +3070,14 @@ async function buildDaySignoffFeedback(
                 <textarea
                   rows={3}
                   value={calibrationForm.notes}
-                  onChange={(e) =>
-                    setCalibrationForm((f) => ({ ...f, notes: e.target.value }))
-                  }
+                  onChange={(e) => setCalibrationForm((f) => ({ ...f, notes: e.target.value }))}
                   className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setCalibrationOpen(false)}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold"
-              >
+              <button onClick={() => setCalibrationOpen(false)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold">
                 Cancel
               </button>
 
@@ -3423,6 +3093,7 @@ async function buildDaySignoffFeedback(
         </div>
       )}
 
+      {/* Incident modal – with defaultInitials */}
       {incidentOpen && orgId && locationId && (
         <IncidentModal
           open={incidentOpen}
@@ -3435,6 +3106,21 @@ async function buildDaySignoffFeedback(
         />
       )}
 
+      {incidentReviewOpen && orgId && locationId && (
+        <IncidentReviewModal
+          open={incidentReviewOpen}
+          incident={selectedIncident}
+          orgId={orgId}
+          locationId={locationId}
+          onClose={() => {
+            setIncidentReviewOpen(false);
+            setSelectedIncident(null);
+          }}
+          onSaved={refreshAll}
+        />
+      )}
+
+      {/* Staff QC modal */}
       {portalReady && qcOpen
         ? createPortal(
             <>
@@ -3444,9 +3130,7 @@ async function buildDaySignoffFeedback(
                   <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
                     <div>
                       <div className="text-lg font-extrabold text-slate-900">Staff QC</div>
-                      <div className="text-sm text-slate-500">
-                        Manager QC reviews for this location
-                      </div>
+                      <div className="text-sm text-slate-500">Manager QC reviews for this location</div>
                     </div>
                     <button
                       type="button"
@@ -3465,18 +3149,14 @@ async function buildDaySignoffFeedback(
                     ) : null}
 
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/40 p-4">
-                      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                        Add review
-                      </div>
+                      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Add review</div>
 
                       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
                         <div className="sm:col-span-1">
                           <div className="text-xs font-semibold text-slate-600">Staff</div>
                           <select
                             value={qcForm.staff_id}
-                            onChange={(e) =>
-                              setQcForm((f) => ({ ...f, staff_id: e.target.value }))
-                            }
+                            onChange={(e) => setQcForm((f) => ({ ...f, staff_id: e.target.value }))}
                             className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
                           >
                             <option value="">Select…</option>
@@ -3493,12 +3173,7 @@ async function buildDaySignoffFeedback(
                           <input
                             type="date"
                             value={qcForm.reviewed_on}
-                            onChange={(e) =>
-                              setQcForm((f) => ({
-                                ...f,
-                                reviewed_on: e.target.value || nowISO,
-                              }))
-                            }
+                            onChange={(e) => setQcForm((f) => ({ ...f, reviewed_on: e.target.value || nowISO }))}
                             className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
                           />
                         </div>
@@ -3507,9 +3182,7 @@ async function buildDaySignoffFeedback(
                           <div className="text-xs font-semibold text-slate-600">Score (1–5)</div>
                           <select
                             value={String(qcForm.rating)}
-                            onChange={(e) =>
-                              setQcForm((f) => ({ ...f, rating: Number(e.target.value) }))
-                            }
+                            onChange={(e) => setQcForm((f) => ({ ...f, rating: Number(e.target.value) }))}
                             className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm"
                           >
                             {[1, 2, 3, 4, 5].map((n) => (
@@ -3521,14 +3194,10 @@ async function buildDaySignoffFeedback(
                         </div>
 
                         <div className="sm:col-span-3">
-                          <div className="text-xs font-semibold text-slate-600">
-                            Notes (optional)
-                          </div>
+                          <div className="text-xs font-semibold text-slate-600">Notes (optional)</div>
                           <textarea
                             value={qcForm.notes}
-                            onChange={(e) =>
-                              setQcForm((f) => ({ ...f, notes: e.target.value }))
-                            }
+                            onChange={(e) => setQcForm((f) => ({ ...f, notes: e.target.value }))}
                             className="mt-1 h-28 w-full resize-none rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm"
                           />
                         </div>
@@ -3547,9 +3216,7 @@ async function buildDaySignoffFeedback(
                             disabled={qcSaving || !managerTeamMember?.id}
                             className={cls(
                               "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm",
-                              qcSaving || !managerTeamMember?.id
-                                ? "bg-indigo-300 text-white cursor-not-allowed"
-                                : "bg-indigo-600 text-white hover:bg-indigo-700"
+                              qcSaving || !managerTeamMember?.id ? "bg-indigo-300 text-white cursor-not-allowed" : "bg-indigo-600 text-white hover:bg-indigo-700"
                             )}
                           >
                             {qcSaving ? "Saving…" : "Add"}
@@ -3559,15 +3226,9 @@ async function buildDaySignoffFeedback(
                     </div>
 
                     <div className="mt-5 flex items-center justify-between">
-                      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">
-                        Recent QC reviews
-                      </div>
+                      <div className="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-500">Recent QC reviews</div>
                       {qcReviews.length > 10 ? (
-                        <button
-                          type="button"
-                          onClick={() => setShowAllQc((v) => !v)}
-                          className="text-sm font-semibold text-indigo-700 hover:underline"
-                        >
+                        <button type="button" onClick={() => setShowAllQc((v) => !v)} className="text-sm font-semibold text-indigo-700 hover:underline">
                           {showAllQc ? "Show less" : "Show all"}
                         </button>
                       ) : null}
@@ -3596,27 +3257,11 @@ async function buildDaySignoffFeedback(
                             ) : (
                               qcToRender.map((r) => (
                                 <tr key={r.id} className="border-t border-slate-100">
-                                  <td className="px-3 py-2 whitespace-nowrap">
-                                    {formatDDMMYYYY(r.reviewed_on)}
-                                  </td>
-                                  <td className="px-3 py-2 whitespace-nowrap">
-                                    {tmLabel({
-                                      initials: r.staff?.initials ?? null,
-                                      name: r.staff?.name ?? null,
-                                    })}
-                                  </td>
-                                  <td className="px-3 py-2 whitespace-nowrap">
-                                    {tmLabel({
-                                      initials: r.manager?.initials ?? null,
-                                      name: r.manager?.name ?? null,
-                                    })}
-                                  </td>
-                                  <td className="px-3 py-2 whitespace-nowrap font-semibold">
-                                    {r.rating}
-                                  </td>
-                                  <td className="px-3 py-2 min-w-[220px]">
-                                    {r.notes ?? "—"}
-                                  </td>
+                                  <td className="px-3 py-2 whitespace-nowrap">{formatDDMMYYYY(r.reviewed_on)}</td>
+                                  <td className="px-3 py-2 whitespace-nowrap">{tmLabel({ initials: r.staff?.initials ?? null, name: r.staff?.name ?? null })}</td>
+                                  <td className="px-3 py-2 whitespace-nowrap">{tmLabel({ initials: r.manager?.initials ?? null, name: r.manager?.name ?? null })}</td>
+                                  <td className="px-3 py-2 whitespace-nowrap font-semibold">{r.rating}</td>
+                                  <td className="px-3 py-2 min-w-[220px]">{r.notes ?? "—"}</td>
                                   <td className="px-3 py-2 text-right">
                                     <button
                                       type="button"
@@ -3641,23 +3286,17 @@ async function buildDaySignoffFeedback(
           )
         : null}
 
+      {/* Staff assessment modal */}
       {portalReady && staffAssessOpen
         ? createPortal(
             <>
-              <div
-                className="fixed inset-0 z-[9998] bg-black/30"
-                onClick={() => setStaffAssessOpen(false)}
-              />
+              <div className="fixed inset-0 z-[9998] bg-black/30" onClick={() => setStaffAssessOpen(false)} />
               <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3">
                 <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
                   <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
                     <div>
-                      <div className="text-lg font-extrabold text-slate-900">
-                        Staff assessment
-                      </div>
-                      <div className="text-sm text-slate-500">
-                        Quick performance snapshot
-                      </div>
+                      <div className="text-lg font-extrabold text-slate-900">Staff assessment</div>
+                      <div className="text-sm text-slate-500">Quick performance snapshot</div>
                     </div>
                     <button
                       type="button"
@@ -3670,9 +3309,7 @@ async function buildDaySignoffFeedback(
 
                   <div className="p-5">
                     {staffAssessErr ? (
-                      <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">
-                        {staffAssessErr}
-                      </div>
+                      <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">{staffAssessErr}</div>
                     ) : null}
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -3710,61 +3347,35 @@ async function buildDaySignoffFeedback(
 
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/40 p-4">
                       {staffAssessLoading ? (
-                        <div className="text-sm font-semibold text-slate-600">
-                          Loading…
-                        </div>
+                        <div className="text-sm font-semibold text-slate-600">Loading…</div>
                       ) : staffAssess ? (
                         <div className="grid grid-cols-2 gap-3 text-sm">
                           <div className="rounded-xl bg-white p-3">
-                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">
-                              Cleaning runs
-                            </div>
-                            <div className="mt-1 text-2xl font-extrabold text-slate-900">
-                              {staffAssess.cleaningRuns}
-                            </div>
+                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">Cleaning runs</div>
+                            <div className="mt-1 text-2xl font-extrabold text-slate-900">{staffAssess.cleaningRuns}</div>
                           </div>
                           <div className="rounded-xl bg-white p-3">
-                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">
-                              Temp logs
-                            </div>
-                            <div className="mt-1 text-2xl font-extrabold text-slate-900">
-                              {staffAssess.tempLogs}
-                            </div>
+                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">Temp logs</div>
+                            <div className="mt-1 text-2xl font-extrabold text-slate-900">{staffAssess.tempLogs}</div>
                           </div>
                           <div className="rounded-xl bg-white p-3">
-                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">
-                              Temp fails
-                            </div>
-                            <div className="mt-1 text-2xl font-extrabold text-slate-900">
-                              {staffAssess.tempFails}
-                            </div>
+                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">Temp fails</div>
+                            <div className="mt-1 text-2xl font-extrabold text-slate-900">{staffAssess.tempFails}</div>
                           </div>
                           <div className="rounded-xl bg-white p-3">
-                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">
-                              Incidents
-                            </div>
-                            <div className="mt-1 text-2xl font-extrabold text-slate-900">
-                              {staffAssess.incidents}
-                            </div>
+                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">Incidents</div>
+                            <div className="mt-1 text-2xl font-extrabold text-slate-900">{staffAssess.incidents}</div>
                           </div>
                           <div className="col-span-2 rounded-xl bg-white p-3">
-                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">
-                              QC average (30d)
-                            </div>
+                            <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">QC average (30d)</div>
                             <div className="mt-1 text-2xl font-extrabold text-slate-900">
-                              {staffAssess.qcAvg30d != null
-                                ? `${staffAssess.qcAvg30d} / 5`
-                                : "—"}{" "}
-                              <span className="text-sm font-semibold text-slate-500">
-                                ({staffAssess.qcCount30d} reviews)
-                              </span>
+                              {staffAssess.qcAvg30d != null ? `${staffAssess.qcAvg30d} / 5` : "—"}{" "}
+                              <span className="text-sm font-semibold text-slate-500">({staffAssess.qcCount30d} reviews)</span>
                             </div>
                           </div>
                         </div>
                       ) : (
-                        <div className="text-sm text-slate-600">
-                          Select a staff member to see stats.
-                        </div>
+                        <div className="text-sm text-slate-600">Select a staff member to see stats.</div>
                       )}
                     </div>
                   </div>
@@ -3774,9 +3385,8 @@ async function buildDaySignoffFeedback(
             document.body
           )
         : null}
-    </div>
+
+      </div>
+    
   );
 }
-
-
-
