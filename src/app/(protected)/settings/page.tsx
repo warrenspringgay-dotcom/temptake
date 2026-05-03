@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseBrowser";
+import PushNotificationSetup from "@/components/PushNotificationSetup";
 
 const cls = (...parts: Array<string | false | null | undefined>) =>
   parts.filter(Boolean).join(" ");
@@ -238,6 +239,7 @@ export default function SettingsPage() {
 
   return (
     <>
+    
       <div className="mx-auto max-w-3xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
         {/* HEADER */}
         <div className="flex items-start justify-between gap-3">
@@ -278,7 +280,9 @@ export default function SettingsPage() {
             {success}
           </div>
         )}
-
+<section className="space-y-4">
+  <PushNotificationSetup />
+</section>
         {/* PROFILE SECTION */}
         <form
           onSubmit={handleSaveProfile}
