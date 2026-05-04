@@ -854,9 +854,32 @@ export default function RoutineRunModal({
         onClose();
         return;
       }
+const { data: insertedRows, error } = await supabase
+  .from("food_temp_logs")
+  .insert(rows)
+  .select("id,status,area,note,temp_c,target_key,location_id");
 
-      const { error } = await supabase.from("food_temp_logs").insert(rows);
+if (!error) {
+  const failedRows = (insertedRows ?? []).filter(
+    (row: any) => String(row.status ?? "").toLowerCase() === "fail"
+  );
 
+  const firstFailedRow = failedRows[0];
+
+  if (failedRows.length > 0 && rows[0]?.org_id && firstFailedRow?.location_id) {
+    await fetch("/api/push/temp-fail-alert", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        orgId: rows[0].org_id,
+        locationId: firstFailedRow.location_id,
+        failedRows,
+      }),
+    });
+  }
+}
       if (error) {
         alert(error.message);
         return;
