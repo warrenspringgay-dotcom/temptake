@@ -20,7 +20,6 @@ function useAutoClear(
 }
 
 function hasCapsLock(e: React.KeyboardEvent<HTMLInputElement>) {
-  // Some browsers return null for getModifierState
   try {
     return e.getModifierState && e.getModifierState("CapsLock");
   } catch {
@@ -48,14 +47,12 @@ export default function SettingsPage() {
   const [showConfirmPw, setShowConfirmPw] = useState(false);
   const [capsWarning, setCapsWarning] = useState(false);
 
-  // Password error modal state
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [passwordErrors, setPasswordErrors] = useState<string[]>([]);
 
   useAutoClear(success, () => setSuccess(null));
   useAutoClear(error, () => setError(null), 6500);
 
-  /* Load user info */
   useEffect(() => {
     let cancelled = false;
 
@@ -75,9 +72,7 @@ export default function SettingsPage() {
 
         const userEmail = user.email ?? "";
         const name =
-          user.user_metadata?.full_name ||
-          user.user_metadata?.name ||
-          "";
+          user.user_metadata?.full_name || user.user_metadata?.name || "";
 
         if (cancelled) return;
 
@@ -97,12 +92,12 @@ export default function SettingsPage() {
   }, []);
 
   const trimmedFullName = useMemo(() => fullName.trim(), [fullName]);
+
   const profileDirty = useMemo(
     () => trimmedFullName !== (initialFullName ?? "").trim(),
     [trimmedFullName, initialFullName]
   );
 
-  /* Update profile */
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -152,9 +147,7 @@ export default function SettingsPage() {
       errs.push("Password must include at least one number.");
     }
     if (!/[^A-Za-z0-9]/.test(pw)) {
-      errs.push(
-        "Password must include at least one special character (e.g. !, ?, @, #)."
-      );
+      errs.push("Password must include at least one special character.");
     }
     if (/\s/.test(pw)) {
       errs.push("Password cannot contain spaces.");
@@ -186,7 +179,6 @@ export default function SettingsPage() {
     return validatePassword(newPassword, confirmPassword).length === 0;
   }, [newPassword, confirmPassword]);
 
-  /* Change password */
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -228,7 +220,6 @@ export default function SettingsPage() {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
 
-      // Let your auth guard redirect, but be safe:
       if (typeof window !== "undefined") window.location.href = "/login";
     } catch (e: any) {
       setError(e?.message || "Failed to sign out.");
@@ -239,9 +230,7 @@ export default function SettingsPage() {
 
   return (
     <>
-    
       <div className="mx-auto max-w-3xl space-y-6 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur sm:p-6">
-        {/* HEADER */}
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
@@ -251,7 +240,7 @@ export default function SettingsPage() {
               Settings
             </h1>
             <p className="mt-1 text-xs text-slate-500">
-              Manage your account details and password.
+              Manage your account, password and notification preferences.
             </p>
           </div>
 
@@ -269,21 +258,20 @@ export default function SettingsPage() {
           </button>
         </div>
 
-        {/* Alerts */}
         {error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
           </div>
         )}
+
         {success && (
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
             {success}
           </div>
         )}
-<section className="space-y-4">
-  <PushNotificationSetup />
-</section>
-        {/* PROFILE SECTION */}
+
+        <PushNotificationSetup />
+
         <form
           onSubmit={handleSaveProfile}
           className="space-y-4 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm"
@@ -368,7 +356,6 @@ export default function SettingsPage() {
           </div>
         </form>
 
-        {/* PASSWORD SECTION */}
         <form
           onSubmit={handleChangePassword}
           className="space-y-4 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm"
@@ -379,8 +366,7 @@ export default function SettingsPage() {
                 Change password
               </h2>
               <p className="mt-1 text-xs text-slate-500">
-                Strong password required for compliance and safety. Annoying, but
-                effective.
+                Strong password required for compliance and safety.
               </p>
             </div>
 
@@ -439,7 +425,6 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Live checklist */}
           <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
               Password checklist
@@ -481,14 +466,9 @@ export default function SettingsPage() {
           >
             {savingPassword ? "Changing…" : "Change password"}
           </button>
-
-          <p className="text-[11px] text-slate-500">
-            Tip: Use a password manager. Humans are famously terrible at this.
-          </p>
         </form>
       </div>
 
-      {/* Password criteria error modal */}
       {passwordModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3"
