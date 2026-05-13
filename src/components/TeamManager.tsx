@@ -33,14 +33,6 @@ const TRAINING_AREAS: { key: TrainingArea; label: string; short: string }[] = [
   { key: "management", label: "Management", short: "Management" },
 ];
 
-const HIGHFIELD_COURSES = [
-  { key: "food_safety_level_2", label: "Food Safety Level 2" },
-  { key: "food_safety_level_1", label: "Food Safety Level 1" },
-  { key: "introduction_to_allergens", label: "Introduction to Allergens" },
-] as const;
-
-type HighfieldCourseKey = (typeof HIGHFIELD_COURSES)[number]["key"];
-
 type Member = {
   id: string;
   org_id?: string;
@@ -100,11 +92,15 @@ type MemberTrainingSummary = {
   assigned: number;
 };
 
+type MemberTrainingExpiry = {
+  label: string;
+  date: string | null;
+  tone: "ok" | "warn" | "danger" | "neutral";
+};
+
 type TrainingFormState = {
   id?: string;
   course: string;
-  courseKey: string;
-  provider: "Highfield" | "Other";
   providerName: string;
   status: TrainingStatus;
   assigned_on: string;
@@ -150,6 +146,12 @@ function pillClassSelected(selected: boolean) {
     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
 }
 
+function todayISODate() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10);
+}
+
 function addMonthsISODate(months: number) {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -157,9 +159,9 @@ function addMonthsISODate(months: number) {
   return d.toISOString().slice(0, 10);
 }
 
-function todayISODate() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
+function addDaysLocal(baseISO: string, days: number) {
+  const d = new Date(`${baseISO}T00:00:00`);
+  d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
 }
 
@@ -201,14 +203,7 @@ function ModalPortal({ children }: { children: React.ReactNode }) {
 }
 
 function certTitle(c: TrainingCert) {
-  const providerEnum = c.provider_name ?? null;
-  const providerLabel =
-    providerEnum === "Other"
-      ? c.course_key
-        ? `Provider: ${c.course_key}`
-        : "Provider: Other"
-      : "Provider: Highfield";
-
+  const providerLabel = c.course_key ? `Provider: ${c.course_key}` : c.provider_name ? `Provider: ${c.provider_name}` : "Provider: —";
   const courseLabel = c.type ?? "—";
   return `${providerLabel} · ${courseLabel}`;
 }
@@ -268,15 +263,14 @@ function trainingStatusPillClass(status?: TrainingStatus | null) {
 }
 
 function defaultTrainingForm(): TrainingFormState {
+  const today = todayISODate();
   return {
     course: "Food Safety Level 2",
-    courseKey: "food_safety_level_2",
-    provider: "Highfield",
     providerName: "",
-    status: "assigned",
-    assigned_on: todayISODate(),
-    awarded_on: "",
-    expires_on: "",
+    status: "completed",
+    assigned_on: today,
+    awarded_on: today,
+    expires_on: addYearsISO(today, 2),
     certificate_url: "",
     notes: "",
   };
@@ -331,26 +325,53 @@ function trainingSummaryForRecords(records: TrainingCert[]): MemberTrainingSumma
   return { valid, expiring, expired, inProgress, assigned };
 }
 
-function addDaysLocal(baseISO: string, days: number) {
-  const d = new Date(`${baseISO}T00:00:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+function trainingExpiryForRecords(records: TrainingCert[]): MemberTrainingExpiry {
+  const today = todayISODate();
+
+  const expiryRows = records
+    .filter((r) => r.status !== "cancelled")
+    .map((r) => ({
+      expiry: r.certificate_expiry_date || r.expires_on || null,
+      status: r.status ?? null,
+    }))
+    .filter((r) => !!r.expiry)
+    .sort((a, b) => String(a.expiry).localeCompare(String(b.expiry)));
+
+  if (!expiryRows.length) {
+    return { label: "No expiry recorded", date: null, tone: "neutral" };
+  }
+
+  const expired = expiryRows.filter((r) => String(r.expiry) < today);
+  if (expired.length) {
+    const latestExpired = expired[expired.length - 1];
+    return {
+      label: `Expired ${formatDate(latestExpired.expiry)}`,
+      date: latestExpired.expiry,
+      tone: "danger",
+    };
+  }
+
+  const next = expiryRows[0];
+  const in30 = addDaysLocal(today, 30);
+
+  return {
+    label: `Expires ${formatDate(next.expiry)}`,
+    date: next.expiry,
+    tone: String(next.expiry) <= in30 ? "warn" : "ok",
+  };
 }
 
-function isTrainingStillActive(c: TrainingCert) {
-  const today = todayISODate();
-  const expiry = c.certificate_expiry_date || c.expires_on;
-
-  if (c.status === "assigned" || c.status === "invited" || c.status === "in_progress") {
-    return true;
+function trainingExpiryClass(tone: MemberTrainingExpiry["tone"]) {
+  switch (tone) {
+    case "danger":
+      return "text-rose-700";
+    case "warn":
+      return "text-amber-700";
+    case "ok":
+      return "text-emerald-700";
+    default:
+      return "text-slate-700";
   }
-
-  if (c.status === "completed") {
-    if (!expiry) return true;
-    return expiry >= today;
-  }
-
-  return false;
 }
 
 function normalizeLocationId(value: string | null | undefined) {
@@ -363,11 +384,7 @@ function normalizeLocationId(value: string | null | undefined) {
 export default function TeamManager() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const {
-    orgId,
-    locationId,
-    loading: activeLocationLoading,
-  } = useActiveLocation();
+  const { orgId, locationId, loading: activeLocationLoading } = useActiveLocation();
 
   const safeLocationId = useMemo(() => normalizeLocationId(locationId), [locationId]);
 
@@ -404,16 +421,12 @@ export default function TeamManager() {
   const [editCertsLoading, setEditCertsLoading] = useState(false);
   const [editCerts, setEditCerts] = useState<TrainingCert[]>([]);
 
-  const [editTrainingForm, setEditTrainingForm] = useState<TrainingFormState>(
-    defaultTrainingForm()
-  );
+  const [editTrainingForm, setEditTrainingForm] = useState<TrainingFormState>(defaultTrainingForm());
   const [editCertFile, setEditCertFile] = useState<File | null>(null);
   const [editCertSaving, setEditCertSaving] = useState(false);
-  const [assigningCourseKey, setAssigningCourseKey] = useState<string | null>(null);
 
-  const [memberTrainingSummary, setMemberTrainingSummary] = useState<
-    Record<string, MemberTrainingSummary>
-  >({});
+  const [memberTrainingSummary, setMemberTrainingSummary] = useState<Record<string, MemberTrainingSummary>>({});
+  const [memberTrainingExpiry, setMemberTrainingExpiry] = useState<Record<string, MemberTrainingExpiry>>({});
 
   async function loadPinStatusForMembers(oid: string, memberIds: string[]) {
     if (!oid || memberIds.length === 0) return new Set<string>();
@@ -497,9 +510,7 @@ export default function TeamManager() {
       setPinInput("");
       setPinMsg("PIN saved.");
 
-      setRows((prev) =>
-        prev.map((m) => (m.id === editing.id ? { ...m, pin_set: true } : m))
-      );
+      setRows((prev) => prev.map((m) => (m.id === editing.id ? { ...m, pin_set: true } : m)));
     } finally {
       setPinSaving(false);
       window.setTimeout(() => setPinMsg(null), 2000);
@@ -509,6 +520,7 @@ export default function TeamManager() {
   async function loadTrainingSummaryForMembers(oid: string, memberIds: string[]) {
     if (!oid || !memberIds.length) {
       setMemberTrainingSummary({});
+      setMemberTrainingExpiry({});
       return;
     }
 
@@ -522,6 +534,7 @@ export default function TeamManager() {
     if (error) {
       console.warn("[team] training summary load failed:", error.message);
       setMemberTrainingSummary({});
+      setMemberTrainingExpiry({});
       return;
     }
 
@@ -542,11 +555,15 @@ export default function TeamManager() {
     }
 
     const summaries: Record<string, MemberTrainingSummary> = {};
+    const expiries: Record<string, MemberTrainingExpiry> = {};
     for (const id of memberIds) {
-      summaries[id] = trainingSummaryForRecords(grouped[id] ?? []);
+      const records = grouped[id] ?? [];
+      summaries[id] = trainingSummaryForRecords(records);
+      expiries[id] = trainingExpiryForRecords(records);
     }
 
     setMemberTrainingSummary(summaries);
+    setMemberTrainingExpiry(expiries);
   }
 
   async function load() {
@@ -554,6 +571,7 @@ export default function TeamManager() {
       setRows([]);
       setIsOwner(false);
       setMemberTrainingSummary({});
+      setMemberTrainingExpiry({});
       setLoading(false);
       return;
     }
@@ -575,9 +593,7 @@ export default function TeamManager() {
 
       let qMembers = supabase
         .from("team_members")
-        .select(
-          "id, org_id, location_id, user_id, login_enabled, initials, name, email, role, phone, active, notes, training_areas"
-        )
+        .select("id, org_id, location_id, user_id, login_enabled, initials, name, email, role, phone, active, notes, training_areas")
         .eq("org_id", orgId)
         .order("name", { ascending: true });
 
@@ -638,9 +654,7 @@ export default function TeamManager() {
             user_id: userId,
             login_enabled: true,
           })
-          .select(
-            "id, org_id, location_id, user_id, login_enabled, initials, name, email, role, phone, active, notes, training_areas"
-          )
+          .select("id, org_id, location_id, user_id, login_enabled, initials, name, email, role, phone, active, notes, training_areas")
           .maybeSingle();
 
         if (!insErr && inserted) {
@@ -648,12 +662,8 @@ export default function TeamManager() {
             {
               id: String((inserted as any).id),
               org_id: String((inserted as any).org_id),
-              location_id: (inserted as any).location_id
-                ? String((inserted as any).location_id)
-                : null,
-              user_id: (inserted as any).user_id
-                ? String((inserted as any).user_id)
-                : null,
+              location_id: (inserted as any).location_id ? String((inserted as any).location_id) : null,
+              user_id: (inserted as any).user_id ? String((inserted as any).user_id) : null,
               login_enabled: !!(inserted as any).login_enabled,
               initials: (inserted as any).initials ?? null,
               name: (inserted as any).name ?? "",
@@ -713,6 +723,7 @@ export default function TeamManager() {
   useEffect(() => {
     if (activeLocationLoading) return;
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeLocationLoading, orgId, safeLocationId]);
 
   useEffect(() => {
@@ -721,9 +732,7 @@ export default function TeamManager() {
 
     const needle = staffParam.trim().toUpperCase();
 
-    const match =
-      rows.find((m) => m.id === staffParam) ??
-      rows.find((m) => safeInitials(m).toUpperCase() === needle);
+    const match = rows.find((m) => m.id === staffParam) ?? rows.find((m) => safeInitials(m).toUpperCase() === needle);
 
     if (!match) return;
 
@@ -733,6 +742,7 @@ export default function TeamManager() {
     void loadCertsForMember(match);
 
     router.replace("/team");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, rows, router]);
 
   useEffect(() => {
@@ -744,11 +754,7 @@ export default function TeamManager() {
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return rows;
-    return rows.filter((r) =>
-      [r.initials, r.name, r.email, r.role]
-        .filter(Boolean)
-        .some((s) => (s ?? "").toLowerCase().includes(term))
-    );
+    return rows.filter((r) => [r.initials, r.name, r.email, r.role].filter(Boolean).some((s) => (s ?? "").toLowerCase().includes(term)));
   }, [rows, q]);
 
   function closeViewCard() {
@@ -790,7 +796,6 @@ export default function TeamManager() {
     setPinSet(false);
     setPinLoading(false);
     setPinSaving(false);
-    setAssigningCourseKey(null);
 
     setEditOpen(true);
   }
@@ -814,7 +819,6 @@ export default function TeamManager() {
 
     setEditTrainingForm(defaultTrainingForm());
     setEditCertFile(null);
-    setAssigningCourseKey(null);
 
     await Promise.all([
       loadEditCertsForMember(m),
@@ -827,9 +831,7 @@ export default function TeamManager() {
   function toggleArea(area: TrainingArea) {
     if (!editing) return;
     const current = normalizeAreas(editing.training_areas);
-    const next = current.includes(area)
-      ? current.filter((x) => x !== area)
-      : [...current, area];
+    const next = current.includes(area) ? current.filter((x) => x !== area) : [...current, area];
     setEditing({ ...editing, training_areas: next });
   }
 
@@ -877,11 +879,7 @@ export default function TeamManager() {
   }): Promise<string> {
     const { orgId, locationId, email, payload } = params;
 
-    let selectQuery = supabase
-      .from("team_members")
-      .select("id")
-      .eq("org_id", orgId)
-      .ilike("email", email);
+    let selectQuery = supabase.from("team_members").select("id").eq("org_id", orgId).ilike("email", email);
 
     if (locationId) {
       selectQuery = selectQuery.or(`location_id.eq.${locationId},location_id.is.null`);
@@ -904,11 +902,7 @@ export default function TeamManager() {
       return String(existing.id);
     }
 
-    const { data: inserted, error: insErr } = await supabase
-      .from("team_members")
-      .insert(payload)
-      .select("id")
-      .single();
+    const { data: inserted, error: insErr } = await supabase.from("team_members").insert(payload).select("id").single();
 
     if (insErr) throw insErr;
     return String(inserted.id);
@@ -955,10 +949,7 @@ export default function TeamManager() {
 
       await load();
     } catch (e: any) {
-      alert(
-        e?.message ??
-          "Invite failed. If this email already exists in the system, you can’t invite it again."
-      );
+      alert(e?.message ?? "Invite failed. If this email already exists in the system, you can’t invite it again.");
     } finally {
       setSendingInviteFromEdit(false);
     }
@@ -975,9 +966,7 @@ export default function TeamManager() {
       const trainingAreas = normalizeAreas(editing.training_areas);
 
       const initialsToSave = requireInitialsOrDerive(editing);
-      if (!initialsToSave) {
-        return alert("Initials are required (or enter a name we can derive from).");
-      }
+      if (!initialsToSave) return alert("Initials are required (or enter a name we can derive from).");
 
       const emailNormalized = cleanEmail(editing.email);
       const memberLocationId = safeLocationId;
@@ -996,11 +985,7 @@ export default function TeamManager() {
 
         if (isOwner) updatePayload.role = roleValue;
 
-        const { error } = await supabase
-          .from("team_members")
-          .update(updatePayload)
-          .eq("id", editing.id)
-          .eq("org_id", orgId);
+        const { error } = await supabase.from("team_members").update(updatePayload).eq("id", editing.id).eq("org_id", orgId);
 
         if (error) throw error;
 
@@ -1019,14 +1004,8 @@ export default function TeamManager() {
 
         setSendingInviteOnSave(true);
 
-        const res = await inviteTeamMemberServer({
-          email: emailNormalized,
-          role: roleValue,
-        });
-
-        if (!res.ok) {
-          throw new Error(res.message ?? "Failed to send invite.");
-        }
+        const res = await inviteTeamMemberServer({ email: emailNormalized, role: roleValue });
+        if (!res.ok) throw new Error(res.message ?? "Failed to send invite.");
 
         const payload: any = {
           org_id: orgId,
@@ -1042,13 +1021,7 @@ export default function TeamManager() {
           login_enabled: true,
         };
 
-        const memberId = await ensureMemberRowByEmail({
-          orgId,
-          locationId: memberLocationId,
-          email: emailNormalized,
-          payload,
-        });
-
+        const memberId = await ensureMemberRowByEmail({ orgId, locationId: memberLocationId, email: emailNormalized, payload });
         await syncTrainingTracking(memberId, trainingAreas);
 
         alert("Invite sent. They’ll get an email to set their password and log in.");
@@ -1078,10 +1051,7 @@ export default function TeamManager() {
         .single();
 
       if (error) throw error;
-
-      if (inserted?.id) {
-        await syncTrainingTracking(String(inserted.id), trainingAreas);
-      }
+      if (inserted?.id) await syncTrainingTracking(String(inserted.id), trainingAreas);
 
       setEditOpen(false);
       setEditing(null);
@@ -1112,9 +1082,7 @@ export default function TeamManager() {
     try {
       const { data, error } = await supabase
         .from("trainings")
-        .select(
-          "id,type,awarded_on,expires_on,certificate_url,notes,provider_name,course_key,status,assigned_on,started_on,completed_on,learner_email,learner_first_name,learner_last_name,certificate_issue_date,certificate_expiry_date,external_learner_id,external_enrolment_id,licence_state,sync_source,last_synced_at"
-        )
+        .select("id,type,awarded_on,expires_on,certificate_url,notes,provider_name,course_key,status,assigned_on,started_on,completed_on,learner_email,learner_first_name,learner_last_name,certificate_issue_date,certificate_expiry_date,external_learner_id,external_enrolment_id,licence_state,sync_source,last_synced_at")
         .eq("team_member_id", m.id)
         .is("archived_at", null)
         .order("created_at", { ascending: false })
@@ -1136,9 +1104,7 @@ export default function TeamManager() {
     try {
       const { data, error } = await supabase
         .from("trainings")
-        .select(
-          "id,type,awarded_on,expires_on,certificate_url,notes,provider_name,course_key,status,assigned_on,started_on,completed_on,learner_email,learner_first_name,learner_last_name,certificate_issue_date,certificate_expiry_date,external_learner_id,external_enrolment_id,licence_state,sync_source,last_synced_at"
-        )
+        .select("id,type,awarded_on,expires_on,certificate_url,notes,provider_name,course_key,status,assigned_on,started_on,completed_on,learner_email,learner_first_name,learner_last_name,certificate_issue_date,certificate_expiry_date,external_learner_id,external_enrolment_id,licence_state,sync_source,last_synced_at")
         .eq("team_member_id", m.id)
         .is("archived_at", null)
         .order("created_at", { ascending: false })
@@ -1157,57 +1123,44 @@ export default function TeamManager() {
   async function saveTrainingRecord() {
     if (!editing) return;
     if (!orgId) return alert("No organisation found.");
+    if (!editing.id) return alert("Save the team member first.");
 
     const course = (editTrainingForm.course ?? "").trim();
-    if (!course) return alert("Course is required.");
+    if (!course) return alert("Course/training name is required.");
 
-    const provider_name: "Highfield" | "Other" =
-      editTrainingForm.provider === "Other" ? "Other" : "Highfield";
-
-    const course_key =
-      provider_name === "Highfield"
-        ? editTrainingForm.courseKey
-        : (editTrainingForm.providerName ?? "").trim() || null;
-
+    const providerLabel = (editTrainingForm.providerName ?? "").trim() || null;
     const status = editTrainingForm.status;
     const assigned_on = (editTrainingForm.assigned_on ?? "").trim() || todayISODate();
 
     setEditCertSaving(true);
 
     try {
-      let certificate_url: string | null =
-        (editTrainingForm.certificate_url ?? "").trim() || null;
+      let certificate_url: string | null = (editTrainingForm.certificate_url ?? "").trim() || null;
 
       if (editCertFile) {
         const up = await uploadTrainingCertificateServer({ file: editCertFile });
-        if (!up?.url && !up?.path) {
-          throw new Error("Certificate upload failed (no URL/path returned).");
-        }
+        if (!up?.url && !up?.path) throw new Error("Certificate upload failed (no URL/path returned).");
         certificate_url = up.url || certificate_url;
       }
 
       const awarded_on =
-        status === "completed" || status === "expired"
-          ? (editTrainingForm.awarded_on ?? "").trim() || todayISODate()
-          : null;
+        status === "completed" || status === "expired" ? (editTrainingForm.awarded_on ?? "").trim() || todayISODate() : null;
 
       const expires_on =
         status === "completed" || status === "expired"
-          ? (editTrainingForm.expires_on ?? "").trim() ||
-            (awarded_on ? addYearsISO(awarded_on, 2) : null)
+          ? (editTrainingForm.expires_on ?? "").trim() || (awarded_on ? addYearsISO(awarded_on, 2) : null)
           : null;
 
       const nameParts = editing.name.trim().split(/\s+/).filter(Boolean);
       const learner_first_name = nameParts[0] ?? null;
-      const learner_last_name =
-        nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
+      const learner_last_name = nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
 
       await createTrainingServer({
         id: editTrainingForm.id,
         teamMemberId: editing.id,
         type: course,
-        course_key,
-        provider_name,
+        course_key: providerLabel,
+        provider_name: "Other",
         status,
         assigned_on,
         completed_on: awarded_on,
@@ -1219,13 +1172,8 @@ export default function TeamManager() {
         learner_email: cleanEmail(editing.email) || null,
         learner_first_name,
         learner_last_name,
-        licence_state:
-          status === "completed"
-            ? "consumed"
-            : status === "cancelled"
-            ? "cancelled"
-            : "assigned",
-        sync_source: provider_name === "Highfield" ? "highfield" : "manual",
+        licence_state: status === "completed" ? "consumed" : status === "cancelled" ? "cancelled" : "assigned",
+        sync_source: "manual",
         notes: (editTrainingForm.notes ?? "").trim() || null,
       });
 
@@ -1245,9 +1193,7 @@ export default function TeamManager() {
     setEditTrainingForm({
       id: c.id,
       course: c.type ?? "",
-      courseKey: c.course_key ?? "",
-      provider: c.provider_name === "Other" ? "Other" : "Highfield",
-      providerName: c.provider_name === "Other" ? c.course_key ?? "" : "",
+      providerName: c.course_key ?? (c.provider_name && c.provider_name !== "Other" ? c.provider_name : ""),
       status: c.status ?? "completed",
       assigned_on: c.assigned_on ?? todayISODate(),
       awarded_on: c.awarded_on ?? c.completed_on ?? "",
@@ -1256,56 +1202,6 @@ export default function TeamManager() {
       notes: c.notes ?? "",
     });
     setEditCertFile(null);
-  }
-
-  async function quickAssignTraining(
-    member: Member,
-    courseKey: HighfieldCourseKey,
-    label: string
-  ) {
-    if (!orgId) return alert("No organisation found.");
-
-    const hasExisting = editCerts.some(
-      (c) =>
-        c.provider_name === "Highfield" &&
-        c.course_key === courseKey &&
-        isTrainingStillActive(c)
-    );
-
-    if (hasExisting) {
-      alert(`${label} is already assigned or active for this team member.`);
-      return;
-    }
-
-    setAssigningCourseKey(courseKey);
-
-    try {
-      const nameParts = member.name.trim().split(/\s+/).filter(Boolean);
-      const learner_first_name = nameParts[0] ?? null;
-      const learner_last_name = nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
-
-      await createTrainingServer({
-        teamMemberId: member.id,
-        type: label,
-        course_key: courseKey,
-        provider_name: "Highfield",
-        status: "assigned",
-        assigned_on: todayISODate(),
-        learner_email: cleanEmail(member.email) || null,
-        learner_first_name,
-        learner_last_name,
-        licence_state: "assigned",
-        sync_source: "highfield",
-        notes: null,
-      });
-
-      await Promise.all([loadEditCertsForMember(member), load()]);
-      alert(`${label} assigned.`);
-    } catch (e: any) {
-      alert(e?.message ?? "Failed to assign training.");
-    } finally {
-      setAssigningCourseKey(null);
-    }
   }
 
   async function openCard(m: Member) {
@@ -1327,16 +1223,11 @@ export default function TeamManager() {
         <div className="flex flex-wrap items-center gap-2">
           <div>
             <h1 className="text-lg font-semibold text-slate-900">Team</h1>
-            <div className="mt-1 text-xs text-slate-500">
-              Add team members, set access, and keep a quick view of training health.
-            </div>
+            <div className="mt-1 text-xs text-slate-500">Add team members, set access, and keep a quick view of training health.</div>
           </div>
 
           <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
-            <Link
-              href="/team/absences"
-              className="whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
+            <Link href="/team/absences" className="whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
               Staff absences
             </Link>
 
@@ -1348,10 +1239,7 @@ export default function TeamManager() {
             />
 
             {isOwner && (
-              <button
-                onClick={openAdd}
-                className="whitespace-nowrap rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-              >
+              <button onClick={openAdd} className="whitespace-nowrap rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
                 + Add member
               </button>
             )}
@@ -1360,9 +1248,7 @@ export default function TeamManager() {
       </div>
 
       {activeLocationLoading || loading ? (
-        <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
-          Loading…
-        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">Loading…</div>
       ) : filtered.length ? (
         <div className="grid gap-4 lg:grid-cols-2">
           {filtered.map((m) => {
@@ -1370,13 +1256,8 @@ export default function TeamManager() {
             const roleLabel = prettyRole(m.role);
             const activeLabel = m.active ? "Active" : "Inactive";
             const areas = normalizeAreas(m.training_areas);
-            const trainingSummary = memberTrainingSummary[m.id] ?? {
-              valid: 0,
-              expiring: 0,
-              expired: 0,
-              inProgress: 0,
-              assigned: 0,
-            };
+            const trainingSummary = memberTrainingSummary[m.id] ?? { valid: 0, expiring: 0, expired: 0, inProgress: 0, assigned: 0 };
+            const trainingExpiry = memberTrainingExpiry[m.id] ?? { label: "No expiry recorded", date: null, tone: "neutral" as const };
 
             const hasLinkedLogin = !!m.user_id;
             const loginLabel = hasLinkedLogin
@@ -1393,59 +1274,41 @@ export default function TeamManager() {
               <div
                 key={m.id}
                 className={`flex h-full flex-col rounded-2xl border border-slate-200 bg-white/90 p-3 text-sm text-slate-900 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
-                  highlightId === m.id
-                    ? "animate-pulse bg-emerald-50/80 ring-1 ring-emerald-300/60"
-                    : ""
+                  highlightId === m.id ? "animate-pulse bg-emerald-50/80 ring-1 ring-emerald-300/60" : ""
                 }`}
               >
                 <div className="mb-2 flex items-start justify-between gap-2">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
-                      {initials}
-                    </div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">{initials}</div>
                     <div>
-                      <button
-                        className="text-sm font-semibold text-slate-900 hover:text-emerald-700"
-                        onClick={() => void openCard(m)}
-                      >
+                      <button className="text-sm font-semibold text-slate-900 hover:text-emerald-700" onClick={() => void openCard(m)}>
                         {m.name || "Unnamed"}
                       </button>
                       <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">
-                          {roleLabel}
-                        </span>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">{roleLabel}</span>
 
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                            m.active
-                              ? "border border-emerald-100 bg-emerald-50 text-emerald-700"
-                              : "border border-slate-100 bg-slate-50 text-slate-500"
-                          }`}
-                        >
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${m.active ? "border border-emerald-100 bg-emerald-50 text-emerald-700" : "border border-slate-100 bg-slate-50 text-slate-500"}`}>
                           {activeLabel}
                         </span>
 
-                        <span
-                          className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${loginLabel.cls}`}
-                          title={loginLabel.text}
-                        >
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${loginLabel.cls}`} title={loginLabel.text}>
                           {loginLabel.text}
                         </span>
 
-                        <span
-                          className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${pinLabel.cls}`}
-                          title={pinLabel.text}
-                        >
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${pinLabel.cls}`} title={pinLabel.text}>
                           {pinLabel.text}
                         </span>
 
+                        {trainingSummary.expired > 0 && (
+                          <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-800">Training expired · {trainingSummary.expired}</span>
+                        )}
+
+                        {trainingSummary.expiring > 0 && (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">Training due soon · {trainingSummary.expiring}</span>
+                        )}
+
                         {trainingSummary.inProgress > 0 && (
-                          <span
-                            className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-800"
-                            title={`${trainingSummary.inProgress} training record${
-                              trainingSummary.inProgress === 1 ? "" : "s"
-                            } currently in progress`}
-                          >
+                          <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-800" title={`${trainingSummary.inProgress} training record${trainingSummary.inProgress === 1 ? "" : "s"} currently in progress`}>
                             Training in progress {trainingSummary.inProgress > 1 ? `· ${trainingSummary.inProgress}` : ""}
                           </span>
                         )}
@@ -1457,15 +1320,7 @@ export default function TeamManager() {
                     items={[
                       { label: "View card", onClick: () => void openCard(m) },
                       { label: "Edit", onClick: () => void openEdit(m) },
-                      ...(isOwner
-                        ? [
-                            {
-                              label: "Delete",
-                              onClick: () => void remove(m.id),
-                              variant: "danger" as const,
-                            },
-                          ]
-                        : []),
+                      ...(isOwner ? [{ label: "Delete", onClick: () => void remove(m.id), variant: "danger" as const }] : []),
                     ]}
                   />
                 </div>
@@ -1476,11 +1331,7 @@ export default function TeamManager() {
                       const meta = TRAINING_AREAS.find((x) => x.key === a);
                       if (!meta) return null;
                       return (
-                        <span
-                          key={a}
-                          className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800"
-                          title={meta.label}
-                        >
+                        <span key={a} className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800" title={meta.label}>
                           {meta.short}
                         </span>
                       );
@@ -1492,8 +1343,8 @@ export default function TeamManager() {
 
                 <div className="space-y-3 text-xs text-slate-800">
                   <div className="flex justify-between gap-2">
-                    <span className="text-slate-500">Email</span>
-                    <span className="max-w-[70%] truncate text-right">{m.email ?? "—"}</span>
+                    <span className="text-slate-500">Training expiry</span>
+                    <span className={`max-w-[70%] truncate text-right font-medium ${trainingExpiryClass(trainingExpiry.tone)}`}>{trainingExpiry.label}</span>
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-slate-500">Phone</span>
@@ -1505,24 +1356,14 @@ export default function TeamManager() {
                   </div>
                 </div>
 
-                {m.notes && (
-                  <div className="mt-2 rounded-xl bg-slate-50 px-2 py-1.5 text-xs text-slate-600">
-                    {m.notes}
-                  </div>
-                )}
+                {m.notes && <div className="mt-2 rounded-xl bg-slate-50 px-2 py-1.5 text-xs text-slate-600">{m.notes}</div>}
 
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                  <button
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-                    onClick={() => void openEdit(m)}
-                  >
+                  <button className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50" onClick={() => void openEdit(m)}>
                     Edit profile
                   </button>
 
-                  <button
-                    className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
-                    onClick={() => void openCard(m)}
-                  >
+                  <button className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800" onClick={() => void openCard(m)}>
                     View profile →
                   </button>
                 </div>
@@ -1531,86 +1372,47 @@ export default function TeamManager() {
           })}
         </div>
       ) : (
-        <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">
-          No team members yet.
-        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 text-center text-sm text-slate-500">No team members yet.</div>
       )}
 
       {editOpen && editing && (
         <ModalPortal>
-          <div
-            className="fixed inset-0 z-50 overflow-y-auto bg-black/30 p-4 sm:p-6"
-            onClick={() => setEditOpen(false)}
-          >
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/30 p-4 sm:p-6" onClick={() => setEditOpen(false)}>
             <div
-              className="
-                mx-auto w-[min(1100px,calc(100vw-2rem))]
-                max-h-[calc(100dvh-2rem)] overflow-y-auto
-                rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur
-              "
+              className="mx-auto w-[min(1100px,calc(100vw-2rem))] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white/90 p-4 text-slate-900 shadow-lg backdrop-blur"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-3 border-b border-slate-200 bg-white/90 px-4 pb-3 pt-4 backdrop-blur">
                 <div className="flex items-center justify-between">
-                  <div className="text-base font-semibold">
-                    {editing.id ? "Edit member" : "Add member"}
-                  </div>
-                  <button
-                    onClick={() => setEditOpen(false)}
-                    className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-                  >
-                    ✕
-                  </button>
+                  <div className="text-base font-semibold">{editing.id ? "Edit member" : "Add member"}</div>
+                  <button onClick={() => setEditOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">✕</button>
                 </div>
               </div>
 
-              {!safeLocationId ? (
-                <div className="mb-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                  No active location selected. This member will be saved as org-wide.
-                </div>
-              ) : null}
+              {!safeLocationId ? <div className="mb-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">No active location selected. This member will be saved as org-wide.</div> : null}
 
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="space-y-3">
                   <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="mb-1 block text-xs text-slate-500">Initials</label>
-                      <input
-                        className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                        value={editing.initials ?? ""}
-                        onChange={(e) => setEditing({ ...editing, initials: e.target.value })}
-                        placeholder="WS"
-                      />
-                      <p className="mt-1 text-[11px] text-slate-500">
-                        Required (auto-derived from name if left blank).
-                      </p>
+                      <input className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3" value={editing.initials ?? ""} onChange={(e) => setEditing({ ...editing, initials: e.target.value })} placeholder="WS" />
+                      <p className="mt-1 text-[11px] text-slate-500">Required (auto-derived from name if left blank).</p>
                     </div>
 
                     <div className="col-span-2">
                       <label className="mb-1 block text-xs text-slate-500">Name *</label>
-                      <input
-                        className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                        value={editing.name}
-                        onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                      />
+                      <input className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
                     </div>
                   </div>
 
                   {!editing.id && (
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
                       <label className="flex items-start gap-3 text-sm text-slate-800">
-                        <input
-                          type="checkbox"
-                          className="mt-1 accent-emerald-600"
-                          checked={allowLogin}
-                          onChange={(e) => setAllowLogin(e.target.checked)}
-                        />
+                        <input type="checkbox" className="mt-1 accent-emerald-600" checked={allowLogin} onChange={(e) => setAllowLogin(e.target.checked)} />
                         <span>
                           <span className="font-semibold">Allow user to log in</span>
-                          <div className="mt-0.5 text-[11px] text-slate-600">
-                            If enabled, we’ll send them an invite email on Save. If disabled, this is a
-                            staff record only.
-                          </div>
+                          <div className="mt-0.5 text-[11px] text-slate-600">If enabled, we’ll send them an invite email on Save. If disabled, this is a staff record only.</div>
                         </span>
                       </label>
                     </div>
@@ -1618,27 +1420,14 @@ export default function TeamManager() {
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="mb-1 block text-xs text-slate-500">
-                        Email{!editing.id && allowLogin ? " *" : ""}
-                      </label>
-                      <input
-                        className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                        value={editing.email ?? ""}
-                        onChange={(e) => setEditing({ ...editing, email: e.target.value })}
-                        placeholder="team@example.com"
-                      />
-                      {!editing.id && allowLogin && (
-                        <p className="mt-1 text-[11px] text-slate-600">Required to send invite.</p>
-                      )}
+                      <label className="mb-1 block text-xs text-slate-500">Email{!editing.id && allowLogin ? " *" : ""}</label>
+                      <input className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3" value={editing.email ?? ""} onChange={(e) => setEditing({ ...editing, email: e.target.value })} placeholder="team@example.com" />
+                      {!editing.id && allowLogin && <p className="mt-1 text-[11px] text-slate-600">Required to send invite.</p>}
                     </div>
 
                     <div>
                       <label className="mb-1 block text-xs text-slate-500">Phone</label>
-                      <input
-                        className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3"
-                        value={editing.phone ?? ""}
-                        onChange={(e) => setEditing({ ...editing, phone: e.target.value })}
-                      />
+                      <input className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3" value={editing.phone ?? ""} onChange={(e) => setEditing({ ...editing, phone: e.target.value })} />
                     </div>
                   </div>
 
@@ -1646,31 +1435,18 @@ export default function TeamManager() {
                     <div>
                       <label className="mb-1 block text-xs text-slate-500">Role</label>
                       {isOwner ? (
-                        <select
-                          className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm"
-                          value={(editing.role ?? "staff").toLowerCase()}
-                          onChange={(e) => setEditing({ ...editing, role: e.target.value })}
-                        >
+                        <select className="h-10 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-sm" value={(editing.role ?? "staff").toLowerCase()} onChange={(e) => setEditing({ ...editing, role: e.target.value })}>
                           <option value="staff">Staff</option>
                           <option value="manager">Manager</option>
                           <option value="owner">Owner</option>
                         </select>
                       ) : (
-                        <input
-                          className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm"
-                          value={prettyRole(editing.role ?? "staff")}
-                          disabled
-                        />
+                        <input className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm" value={prettyRole(editing.role ?? "staff")} disabled />
                       )}
                     </div>
 
                     <label className="mt-6 flex items-center gap-2 text-sm text-slate-800">
-                      <input
-                        type="checkbox"
-                        className="accent-emerald-600"
-                        checked={!!editing.active}
-                        onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
-                      />
+                      <input type="checkbox" className="accent-emerald-600" checked={!!editing.active} onChange={(e) => setEditing({ ...editing, active: e.target.checked })} />
                       Active
                     </label>
                   </div>
@@ -1680,23 +1456,13 @@ export default function TeamManager() {
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <div className="text-sm font-semibold text-slate-900">Absences</div>
-                          <div className="mt-0.5 text-[11px] text-slate-600">
-                            View and log holiday, sickness and other leave for this team member.
-                          </div>
+                          <div className="mt-0.5 text-[11px] text-slate-600">View and log holiday, sickness and other leave for this team member.</div>
                         </div>
-
-                        <Link
-                          href={`/team/absences?teamMemberId=${editing.id}`}
-                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                        >
-                          Open absences
-                        </Link>
+                        <Link href={`/team/absences?teamMemberId=${editing.id}`} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Open absences</Link>
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-500">
-                      Save the member first to manage absences.
-                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-500">Save the member first to manage absences.</div>
                   )}
 
                   {editing.id ? (
@@ -1704,30 +1470,17 @@ export default function TeamManager() {
                       <div className="flex items-center justify-between gap-2">
                         <div>
                           <div className="text-sm font-semibold text-slate-900">Workstation PIN</div>
-                          <div className="mt-0.5 text-[11px] text-slate-600">
-                            Used on shared devices to select operator.
-                          </div>
+                          <div className="mt-0.5 text-[11px] text-slate-600">Used on shared devices to select operator.</div>
                         </div>
 
-                        <span
-                          className={[
-                            "rounded-full border px-2 py-0.5 text-[10px] font-medium",
-                            pinLoading
-                              ? "border-slate-200 bg-slate-50 text-slate-600"
-                              : pinSet
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                              : "border-amber-200 bg-amber-50 text-amber-800",
-                          ].join(" ")}
-                        >
+                        <span className={["rounded-full border px-2 py-0.5 text-[10px] font-medium", pinLoading ? "border-slate-200 bg-slate-50 text-slate-600" : pinSet ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"].join(" ")}>
                           {pinLoading ? "Checking…" : pinSet ? "PIN set" : "No PIN"}
                         </span>
                       </div>
 
                       <div className="mt-3 grid gap-2 sm:grid-cols-2">
                         <div>
-                          <label className="mb-1 block text-[11px] font-medium text-slate-600">
-                            New PIN
-                          </label>
+                          <label className="mb-1 block text-[11px] font-medium text-slate-600">New PIN</label>
                           <input
                             inputMode="numeric"
                             value={pinInput}
@@ -1741,63 +1494,32 @@ export default function TeamManager() {
                               if (e.key === "Enter") void setOrResetPin();
                             }}
                           />
-                          {pinMsg ? (
-                            <div className="mt-1 text-[11px] text-rose-700">{pinMsg}</div>
-                          ) : (
-                            <div className="mt-1 text-[11px] text-slate-500">
-                              4–8 digits. Setting this resets lockouts.
-                            </div>
-                          )}
+                          {pinMsg ? <div className="mt-1 text-[11px] text-rose-700">{pinMsg}</div> : <div className="mt-1 text-[11px] text-slate-500">4–8 digits. Setting this resets lockouts.</div>}
                         </div>
 
                         <div className="flex items-end justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void loadPinStatusForMember(orgId ?? "", editing.id)}
-                            className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                            disabled={!orgId || pinLoading}
-                          >
-                            Refresh
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => void setOrResetPin()}
-                            disabled={!isOwner || pinSaving || pinInput.replace(/\D+/g, "").length < 4}
-                            className="h-10 rounded-xl bg-emerald-600 px-4 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                          >
+                          <button type="button" onClick={() => void loadPinStatusForMember(orgId ?? "", editing.id)} className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50" disabled={!orgId || pinLoading}>Refresh</button>
+                          <button type="button" onClick={() => void setOrResetPin()} disabled={!isOwner || pinSaving || pinInput.replace(/\D+/g, "").length < 4} className="h-10 rounded-xl bg-emerald-600 px-4 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">
                             {pinSaving ? "Saving…" : pinSet ? "Reset PIN" : "Set PIN"}
                           </button>
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-500">
-                      Save the member first to set a PIN.
-                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-500">Save the member first to set a PIN.</div>
                   )}
 
                   {canInviteInEdit && (
                     <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
                       <div className="text-sm font-semibold text-slate-900">Login access</div>
-                      <div className="mt-0.5 text-[11px] text-slate-700">
-                        This staff member doesn’t currently have a linked login.
-                      </div>
+                      <div className="mt-0.5 text-[11px] text-slate-700">This staff member doesn’t currently have a linked login.</div>
 
                       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                         <div className="text-[11px] text-slate-700">
-                          Email:{" "}
-                          <span className="font-semibold">
-                            {cleanEmail(editing.email) ? cleanEmail(editing.email) : "Missing"}
-                          </span>
+                          Email: <span className="font-semibold">{cleanEmail(editing.email) ? cleanEmail(editing.email) : "Missing"}</span>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => void sendInviteForExistingMember()}
-                          disabled={sendingInviteFromEdit}
-                          className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
-                        >
+                        <button type="button" onClick={() => void sendInviteForExistingMember()} disabled={sendingInviteFromEdit} className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
                           {sendingInviteFromEdit ? "Sending invite…" : "Send invite"}
                         </button>
                       </div>
@@ -1810,49 +1532,23 @@ export default function TeamManager() {
                       {TRAINING_AREAS.map((a) => {
                         const selected = normalizeAreas(editing.training_areas).includes(a.key);
                         return (
-                          <button
-                            key={a.key}
-                            type="button"
-                            onClick={() => toggleArea(a.key)}
-                            className={[
-                              "rounded-full border px-3 py-1 text-xs font-medium transition",
-                              pillClassSelected(selected),
-                            ].join(" ")}
-                            title={a.label}
-                          >
+                          <button key={a.key} type="button" onClick={() => toggleArea(a.key)} className={["rounded-full border px-3 py-1 text-xs font-medium transition", pillClassSelected(selected)].join(" ")} title={a.label}>
                             {a.short}
                           </button>
                         );
                       })}
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      Tap to toggle. This is separate from purchased courses.
-                    </p>
+                    <p className="mt-1 text-[11px] text-slate-500">Tap to toggle. This is separate from training records.</p>
                   </div>
 
                   <div>
                     <label className="mb-1 block text-xs text-slate-500">Notes</label>
-                    <textarea
-                      className="min-h-[70px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2"
-                      value={editing.notes ?? ""}
-                      onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
-                    />
+                    <textarea className="min-h-[70px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2" value={editing.notes ?? ""} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} />
                   </div>
 
                   <div className="flex justify-end gap-2 pt-1">
-                    <button
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                      onClick={() => setEditOpen(false)}
-                      type="button"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-                      onClick={() => void saveMember()}
-                      disabled={sendingInviteOnSave}
-                      type="button"
-                    >
+                    <button className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => setEditOpen(false)} type="button">Cancel</button>
+                    <button className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60" onClick={() => void saveMember()} disabled={sendingInviteOnSave} type="button">
                       {sendingInviteOnSave ? "Sending invite…" : "Save"}
                     </button>
                   </div>
@@ -1862,37 +1558,11 @@ export default function TeamManager() {
                   {editing.id ? (
                     <div className="rounded-2xl border border-slate-200 bg-white/80 p-3">
                       <div className="mb-3 flex items-center justify-between gap-2">
-                        <div className="text-sm font-semibold text-slate-900">Training</div>
-                        <button
-                          onClick={() => void loadEditCertsForMember(editing)}
-                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-                          type="button"
-                        >
-                          Refresh
-                        </button>
-                      </div>
-
-                      <div className="mb-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
-                        <div className="mb-2 text-xs font-semibold text-slate-800">
-                          Quick assign Highfield
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">Training</div>
+                          <div className="mt-0.5 text-[11px] text-slate-600">Manually record course details, certificate dates and expiry evidence.</div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          {HIGHFIELD_COURSES.map((course) => (
-                            <button
-                              key={course.key}
-                              type="button"
-                              onClick={() =>
-                                void quickAssignTraining(editing, course.key, course.label)
-                              }
-                              disabled={assigningCourseKey === course.key}
-                              className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
-                            >
-                              {assigningCourseKey === course.key
-                                ? "Assigning…"
-                                : course.label}
-                            </button>
-                          ))}
-                        </div>
+                        <button onClick={() => void loadEditCertsForMember(editing)} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50" type="button">Refresh</button>
                       </div>
 
                       {editCertsLoading ? (
@@ -1900,67 +1570,25 @@ export default function TeamManager() {
                       ) : editCerts.length ? (
                         <div className="space-y-2">
                           {editCerts.map((c) => (
-                            <div
-                              key={c.id}
-                              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
-                            >
+                            <div key={c.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                               <div className="flex items-start justify-between gap-2">
                                 <div>
-                                  <div className="text-xs font-semibold text-slate-900">
-                                    {certTitle(c)}
-                                  </div>
+                                  <div className="text-xs font-semibold text-slate-900">{certTitle(c)}</div>
                                   <div className="mt-1 flex flex-wrap items-center gap-1">
-                                    <span
-                                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${trainingStatusPillClass(
-                                        c.status
-                                      )}`}
-                                    >
-                                      {prettyTrainingStatus(c.status)}
-                                    </span>
-                                    {c.licence_state ? (
-                                      <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-700">
-                                        Licence: {c.licence_state}
-                                      </span>
-                                    ) : null}
+                                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${trainingStatusPillClass(c.status)}`}>{prettyTrainingStatus(c.status)}</span>
+                                    {c.licence_state ? <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-700">Licence: {c.licence_state}</span> : null}
                                   </div>
                                 </div>
 
                                 <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    className="text-[11px] font-medium text-slate-700 hover:text-slate-900"
-                                    onClick={() => loadTrainingIntoForm(c)}
-                                  >
-                                    Edit
-                                  </button>
-                                  {c.certificate_url ? (
-                                    <a
-                                      href={c.certificate_url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
-                                    >
-                                      View →
-                                    </a>
-                                  ) : null}
+                                  <button type="button" className="text-[11px] font-medium text-slate-700 hover:text-slate-900" onClick={() => loadTrainingIntoForm(c)}>Edit</button>
+                                  {c.certificate_url ? <a href={c.certificate_url} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800">View →</a> : null}
                                 </div>
                               </div>
 
-                              <div className="mt-1 text-[11px] text-slate-600">
-                                Assigned: {formatDate(c.assigned_on)} · Completed:{" "}
-                                {formatDate(c.completed_on || c.awarded_on)} · Expires:{" "}
-                                {formatDate(c.certificate_expiry_date || c.expires_on)}
-                              </div>
-
-                              {c.learner_email ? (
-                                <div className="mt-1 text-[11px] text-slate-600">
-                                  Learner: {c.learner_email}
-                                </div>
-                              ) : null}
-
-                              {c.notes ? (
-                                <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
-                              ) : null}
+                              <div className="mt-1 text-[11px] text-slate-600">Assigned: {formatDate(c.assigned_on)} · Completed: {formatDate(c.completed_on || c.awarded_on)} · Expires: {formatDate(c.certificate_expiry_date || c.expires_on)}</div>
+                              {c.learner_email ? <div className="mt-1 text-[11px] text-slate-600">Learner: {c.learner_email}</div> : null}
+                              {c.notes ? <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div> : null}
                             </div>
                           ))}
                         </div>
@@ -1969,93 +1597,18 @@ export default function TeamManager() {
                       )}
 
                       <div className="mt-3 grid gap-2 lg:grid-cols-2">
-                        <div className="lg:col-span-2 grid grid-cols-2 gap-2">
-                          <label className="block">
-                            <span className="mb-1 block text-[11px] font-medium text-slate-600">
-                              Provider
-                            </span>
-                            <select
-                              className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                              value={editTrainingForm.provider}
-                              onChange={(e) => {
-                                const provider = e.target.value as "Highfield" | "Other";
-                                setEditTrainingForm((p) => ({
-                                  ...p,
-                                  provider,
-                                  course:
-                                    provider === "Highfield" ? "Food Safety Level 2" : p.course,
-                                  courseKey:
-                                    provider === "Highfield" ? "food_safety_level_2" : "",
-                                  providerName: provider === "Highfield" ? "" : p.providerName,
-                                }));
-                              }}
-                            >
-                              <option value="Highfield">Highfield</option>
-                              <option value="Other">Other</option>
-                            </select>
-                          </label>
+                        <label className="block lg:col-span-2">
+                          <span className="mb-1 block text-[11px] font-medium text-slate-600">Course / training name</span>
+                          <input className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs" value={editTrainingForm.course} onChange={(e) => setEditTrainingForm((p) => ({ ...p, course: e.target.value }))} placeholder="e.g. Food Safety Level 2" />
+                        </label>
 
-                          {editTrainingForm.provider === "Highfield" ? (
-                            <label className="block">
-                              <span className="mb-1 block text-[11px] font-medium text-slate-600">
-                                Course
-                              </span>
-                              <select
-                                className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                                value={editTrainingForm.courseKey}
-                                onChange={(e) => {
-                                  const selected = HIGHFIELD_COURSES.find(
-                                    (c) => c.key === e.target.value
-                                  );
-                                  setEditTrainingForm((p) => ({
-                                    ...p,
-                                    courseKey: e.target.value,
-                                    course: selected?.label ?? p.course,
-                                  }));
-                                }}
-                              >
-                                {HIGHFIELD_COURSES.map((c) => (
-                                  <option key={c.key} value={c.key}>
-                                    {c.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          ) : (
-                            <label className="block">
-                              <span className="mb-1 block text-[11px] font-medium text-slate-600">
-                                Course name
-                              </span>
-                              <input
-                                className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                                value={editTrainingForm.course}
-                                onChange={(e) =>
-                                  setEditTrainingForm((p) => ({ ...p, course: e.target.value }))
-                                }
-                                placeholder="e.g. CIEH Level 2 Food Safety"
-                              />
-                            </label>
-                          )}
-                        </div>
-
-                        {editTrainingForm.provider === "Other" ? (
-                          <input
-                            className="lg:col-span-2 h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                            value={editTrainingForm.providerName}
-                            onChange={(e) =>
-                              setEditTrainingForm((p) => ({
-                                ...p,
-                                providerName: e.target.value,
-                              }))
-                            }
-                            placeholder="Provider name"
-                          />
-                        ) : null}
+                        <label className="block lg:col-span-2">
+                          <span className="mb-1 block text-[11px] font-medium text-slate-600">Provider / awarding body</span>
+                          <input className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs" value={editTrainingForm.providerName} onChange={(e) => setEditTrainingForm((p) => ({ ...p, providerName: e.target.value }))} placeholder="e.g. Highfield, CIEH, In-house" />
+                        </label>
 
                         <label className="block">
-                          <span className="mb-1 block text-[11px] font-medium text-slate-600">
-                            Status
-                          </span>
+                          <span className="mb-1 block text-[11px] font-medium text-slate-600">Status</span>
                           <select
                             className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
                             value={editTrainingForm.status}
@@ -2064,17 +1617,8 @@ export default function TeamManager() {
                               setEditTrainingForm((p) => ({
                                 ...p,
                                 status,
-                                awarded_on:
-                                  status === "completed" || status === "expired"
-                                    ? p.awarded_on || todayISODate()
-                                    : "",
-                                expires_on:
-                                  status === "completed" || status === "expired"
-                                    ? p.expires_on ||
-                                      (p.awarded_on
-                                        ? addYearsISO(p.awarded_on, 2)
-                                        : addYearsISO(todayISODate(), 2))
-                                    : "",
+                                awarded_on: status === "completed" || status === "expired" ? p.awarded_on || todayISODate() : "",
+                                expires_on: status === "completed" || status === "expired" ? p.expires_on || (p.awarded_on ? addYearsISO(p.awarded_on, 2) : addYearsISO(todayISODate(), 2)) : "",
                               }));
                             }}
                           >
@@ -2088,133 +1632,50 @@ export default function TeamManager() {
                         </label>
 
                         <label className="block">
-                          <span className="mb-1 block text-[11px] font-medium text-slate-600">
-                            Assigned date
-                          </span>
-                          <input
-                            type="date"
-                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                            value={editTrainingForm.assigned_on}
-                            onChange={(e) =>
-                              setEditTrainingForm((p) => ({
-                                ...p,
-                                assigned_on: e.target.value,
-                              }))
-                            }
-                          />
+                          <span className="mb-1 block text-[11px] font-medium text-slate-600">Assigned date</span>
+                          <input type="date" className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs" value={editTrainingForm.assigned_on} onChange={(e) => setEditTrainingForm((p) => ({ ...p, assigned_on: e.target.value }))} />
                         </label>
 
                         <div className="space-y-1">
-                          <label className="block text-[11px] font-medium text-slate-600">
-                            Completion date
-                          </label>
+                          <label className="block text-[11px] font-medium text-slate-600">Completion date</label>
                           <input
                             type="date"
                             className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs disabled:bg-slate-50"
                             value={editTrainingForm.awarded_on}
-                            disabled={
-                              !(
-                                editTrainingForm.status === "completed" ||
-                                editTrainingForm.status === "expired"
-                              )
-                            }
+                            disabled={!(editTrainingForm.status === "completed" || editTrainingForm.status === "expired")}
                             onChange={(e) => {
                               const awarded = e.target.value;
-                              setEditTrainingForm((p) => ({
-                                ...p,
-                                awarded_on: awarded,
-                                expires_on: awarded ? addYearsISO(awarded, 2) : "",
-                              }));
+                              setEditTrainingForm((p) => ({ ...p, awarded_on: awarded, expires_on: awarded ? addYearsISO(awarded, 2) : "" }));
                             }}
                           />
                         </div>
 
                         <div className="space-y-1">
-                          <label className="block text-[11px] font-medium text-slate-600">
-                            Expiry date
-                          </label>
-                          <input
-                            type="date"
-                            className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs disabled:bg-slate-50"
-                            value={editTrainingForm.expires_on}
-                            disabled={
-                              !(
-                                editTrainingForm.status === "completed" ||
-                                editTrainingForm.status === "expired"
-                              )
-                            }
-                            onChange={(e) =>
-                              setEditTrainingForm((p) => ({
-                                ...p,
-                                expires_on: e.target.value,
-                              }))
-                            }
-                          />
+                          <label className="block text-[11px] font-medium text-slate-600">Expiry date</label>
+                          <input type="date" className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs disabled:bg-slate-50" value={editTrainingForm.expires_on} disabled={!(editTrainingForm.status === "completed" || editTrainingForm.status === "expired")} onChange={(e) => setEditTrainingForm((p) => ({ ...p, expires_on: e.target.value }))} />
                         </div>
 
-                        <input
-                          className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                          value={editTrainingForm.certificate_url}
-                          onChange={(e) =>
-                            setEditTrainingForm((p) => ({
-                              ...p,
-                              certificate_url: e.target.value,
-                            }))
-                          }
-                          placeholder="Certificate URL (optional)"
-                        />
+                        <input className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs" value={editTrainingForm.certificate_url} onChange={(e) => setEditTrainingForm((p) => ({ ...p, certificate_url: e.target.value }))} placeholder="Certificate URL (optional)" />
 
                         <div>
                           <label className="block">
-                            <span className="mb-1 block text-[11px] font-medium text-slate-600">
-                              Certificate file (PDF or photo)
-                            </span>
-                            <input
-                              type="file"
-                              accept=".pdf,image/*"
-                              className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 pt-1 text-xs"
-                              onChange={(e) => {
-                                const f = e.target.files?.[0] ?? null;
-                                setEditCertFile(f);
-                              }}
-                            />
-                            {editCertFile ? (
-                              <span className="mt-1 block text-[10px] text-slate-600">
-                                Selected: <span className="font-medium">{editCertFile.name}</span>
-                              </span>
-                            ) : (
-                              <span className="mt-1 block text-[10px] text-slate-500">
-                                PDF preferred.
-                              </span>
-                            )}
+                            <span className="mb-1 block text-[11px] font-medium text-slate-600">Certificate file (PDF or photo)</span>
+                            <input type="file" accept=".pdf,image/*" className="h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 pt-1 text-xs" onChange={(e) => setEditCertFile(e.target.files?.[0] ?? null)} />
+                            {editCertFile ? <span className="mt-1 block text-[10px] text-slate-600">Selected: <span className="font-medium">{editCertFile.name}</span></span> : <span className="mt-1 block text-[10px] text-slate-500">PDF preferred.</span>}
                           </label>
                         </div>
 
-                        <input
-                          className="lg:col-span-2 h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs"
-                          value={editTrainingForm.notes}
-                          onChange={(e) =>
-                            setEditTrainingForm((p) => ({ ...p, notes: e.target.value }))
-                          }
-                          placeholder="Notes (optional)"
-                        />
+                        <input className="lg:col-span-2 h-9 w-full rounded-xl border border-slate-300 bg-white/80 px-3 text-xs" value={editTrainingForm.notes} onChange={(e) => setEditTrainingForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes (optional)" />
 
                         <div className="lg:col-span-2 flex justify-end">
-                          <button
-                            onClick={() => void saveTrainingRecord()}
-                            disabled={editCertSaving}
-                            className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                            type="button"
-                          >
-                            {editCertSaving ? "Saving…" : "Save training"}
+                          <button onClick={() => void saveTrainingRecord()} disabled={editCertSaving} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60" type="button">
+                            {editCertSaving ? "Saving…" : editTrainingForm.id ? "Update training" : "Save training"}
                           </button>
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-500">
-                      Save the member first to add training.
-                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-500">Save the member first to add training.</div>
                   )}
                 </div>
               </div>
@@ -2226,10 +1687,7 @@ export default function TeamManager() {
       {viewOpen && viewFor && (
         <ModalPortal>
           <div className="fixed inset-0 z-50 bg-black/30" onClick={closeViewCard}>
-            <div
-              className="mx-auto mt-16 max-h-[calc(100dvh-6rem)] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur"
-              onClick={(e) => e.stopPropagation()}
-            >
+            <div className="mx-auto mt-16 max-h-[calc(100dvh-6rem)] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white/90 text-slate-900 shadow-lg backdrop-blur" onClick={(e) => e.stopPropagation()}>
               <div className="bg-slate-900 px-4 py-3 text-white">
                 <div className="text-sm opacity-80">Team member</div>
                 <div className="text-xl font-semibold">{viewFor.name}</div>
@@ -2237,67 +1695,32 @@ export default function TeamManager() {
               </div>
 
               <div className="space-y-2 p-4 text-sm">
-                <div>
-                  <span className="font-medium">Initials:</span>{" "}
-                  {viewFor.initials ?? safeInitials(viewFor) ?? "—"}
-                </div>
-                <div>
-                  <span className="font-medium">Role:</span> {prettyRole(viewFor.role)}
-                </div>
-                <div>
-                  <span className="font-medium">Email:</span> {viewFor.email ?? "—"}
-                </div>
-                <div>
-                  <span className="font-medium">Phone:</span> {viewFor.phone ?? "—"}
-                </div>
-                <div>
-                  <span className="font-medium">Login:</span>{" "}
-                  {viewFor.user_id ? "Enabled" : viewFor.login_enabled ? "Invite pending" : "Not enabled"}
-                </div>
-                <div>
-                  <span className="font-medium">Workstation PIN:</span>{" "}
-                  {viewFor.pin_set ? "Set" : "Not set"}
-                </div>
+                <div><span className="font-medium">Initials:</span> {viewFor.initials ?? safeInitials(viewFor) ?? "—"}</div>
+                <div><span className="font-medium">Role:</span> {prettyRole(viewFor.role)}</div>
+                <div><span className="font-medium">Email:</span> {viewFor.email ?? "—"}</div>
+                <div><span className="font-medium">Phone:</span> {viewFor.phone ?? "—"}</div>
+                <div><span className="font-medium">Login:</span> {viewFor.user_id ? "Enabled" : viewFor.login_enabled ? "Invite pending" : "Not enabled"}</div>
+                <div><span className="font-medium">Workstation PIN:</span> {viewFor.pin_set ? "Set" : "Not set"}</div>
                 <div>
                   <span className="font-medium">Training areas:</span>{" "}
-                  {normalizeAreas(viewFor.training_areas).length
-                    ? normalizeAreas(viewFor.training_areas)
-                        .map((k) => TRAINING_AREAS.find((a) => a.key === k)?.label ?? k)
-                        .join(", ")
-                    : "—"}
+                  {normalizeAreas(viewFor.training_areas).length ? normalizeAreas(viewFor.training_areas).map((k) => TRAINING_AREAS.find((a) => a.key === k)?.label ?? k).join(", ") : "—"}
                 </div>
-                <div>
-                  <span className="font-medium">Notes:</span> {viewFor.notes ?? "—"}
-                </div>
+                <div><span className="font-medium">Notes:</span> {viewFor.notes ?? "—"}</div>
 
                 <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <div className="text-sm font-semibold text-slate-900">Absences</div>
-                      <div className="mt-0.5 text-[11px] text-slate-600">
-                        Open this staff member’s absence log.
-                      </div>
+                      <div className="mt-0.5 text-[11px] text-slate-600">Open this staff member’s absence log.</div>
                     </div>
-
-                    <Link
-                      href={`/team/absences?teamMemberId=${viewFor.id}`}
-                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Open absences
-                    </Link>
+                    <Link href={`/team/absences?teamMemberId=${viewFor.id}`} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Open absences</Link>
                   </div>
                 </div>
 
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="text-sm font-semibold text-slate-900">Training</div>
-                    <button
-                      onClick={() => void loadCertsForMember(viewFor)}
-                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-                      type="button"
-                    >
-                      Refresh
-                    </button>
+                    <button onClick={() => void loadCertsForMember(viewFor)} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50" type="button">Refresh</button>
                   </div>
 
                   {certsLoading ? (
@@ -2305,50 +1728,19 @@ export default function TeamManager() {
                   ) : certs.length ? (
                     <div className="space-y-2">
                       {certs.map((c) => (
-                        <div
-                          key={c.id}
-                          className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
-                        >
+                        <div key={c.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                           <div className="flex items-start justify-between gap-2">
                             <div>
-                              <div className="text-xs font-semibold text-slate-900">
-                                {certTitle(c)}
-                              </div>
+                              <div className="text-xs font-semibold text-slate-900">{certTitle(c)}</div>
                               <div className="mt-1 flex flex-wrap items-center gap-1">
-                                <span
-                                  className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${trainingStatusPillClass(
-                                    c.status
-                                  )}`}
-                                >
-                                  {prettyTrainingStatus(c.status)}
-                                </span>
+                                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${trainingStatusPillClass(c.status)}`}>{prettyTrainingStatus(c.status)}</span>
                               </div>
                             </div>
-
-                            {c.certificate_url ? (
-                              <a
-                                href={c.certificate_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
-                              >
-                                View →
-                              </a>
-                            ) : null}
+                            {c.certificate_url ? <a href={c.certificate_url} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800">View →</a> : null}
                           </div>
-                          <div className="mt-1 text-[11px] text-slate-600">
-                            Assigned: {formatDate(c.assigned_on)} · Completed:{" "}
-                            {formatDate(c.completed_on || c.awarded_on)} · Expires:{" "}
-                            {formatDate(c.certificate_expiry_date || c.expires_on)}
-                          </div>
-                          {c.learner_email ? (
-                            <div className="mt-1 text-[11px] text-slate-600">
-                              Learner: {c.learner_email}
-                            </div>
-                          ) : null}
-                          {c.notes ? (
-                            <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div>
-                          ) : null}
+                          <div className="mt-1 text-[11px] text-slate-600">Assigned: {formatDate(c.assigned_on)} · Completed: {formatDate(c.completed_on || c.awarded_on)} · Expires: {formatDate(c.certificate_expiry_date || c.expires_on)}</div>
+                          {c.learner_email ? <div className="mt-1 text-[11px] text-slate-600">Learner: {c.learner_email}</div> : null}
+                          {c.notes ? <div className="mt-1 text-[11px] text-slate-600">{c.notes}</div> : null}
                         </div>
                       ))}
                     </div>
@@ -2359,23 +1751,8 @@ export default function TeamManager() {
               </div>
 
               <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
-                <button
-                  onClick={() => {
-                    closeViewCard();
-                    void openEdit(viewFor);
-                  }}
-                  className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-                  type="button"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={closeViewCard}
-                  className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-                  type="button"
-                >
-                  Close
-                </button>
+                <button onClick={() => { closeViewCard(); void openEdit(viewFor); }} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50" type="button">Edit</button>
+                <button onClick={closeViewCard} className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700" type="button">Close</button>
               </div>
             </div>
           </div>
