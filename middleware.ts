@@ -15,6 +15,7 @@ const PUBLIC_PATHS = new Set<string>([
   "/privacy",
   "/terms",
   "/cookies",
+  "/redcar",
   "/food-hygiene-app",
   "/templates",
   "/cafe-food-safety-app",
