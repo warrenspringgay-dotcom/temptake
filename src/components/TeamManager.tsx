@@ -424,6 +424,7 @@ export default function TeamManager() {
   const [editTrainingForm, setEditTrainingForm] = useState<TrainingFormState>(defaultTrainingForm());
   const [editCertFile, setEditCertFile] = useState<File | null>(null);
   const [editCertSaving, setEditCertSaving] = useState(false);
+  const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null);
 
   const [memberTrainingSummary, setMemberTrainingSummary] = useState<Record<string, MemberTrainingSummary>>({});
   const [memberTrainingExpiry, setMemberTrainingExpiry] = useState<Record<string, MemberTrainingExpiry>>({});
@@ -1064,15 +1065,53 @@ export default function TeamManager() {
   }
 
   async function remove(id: string) {
-    if (!isOwner) return alert("Only the owner can delete team members.");
-    if (!confirm("Delete this team member?")) return;
+    if (!orgId) return alert("No organisation found.");
+    if (!isOwner) return alert("Only the owner/admin can delete team members.");
+    if (!id) return;
+
+    const target = rows.find((m) => m.id === id) ?? (editing?.id === id ? editing : null);
+    const label = target?.name?.trim() || "this team member";
+
+    if (authUserId && target?.user_id && String(target.user_id) === String(authUserId)) {
+      return alert("You can’t delete your own linked team profile while you are logged in.");
+    }
+
+    if (target?.role && ["owner", "admin"].includes(String(target.role).toLowerCase())) {
+      const ok = confirm(
+        `${label} is marked as ${prettyRole(target.role)}. Deleting an owner/admin profile can remove access and audit context. Continue?`
+      );
+      if (!ok) return;
+    }
+
+    if (!confirm(`Delete ${label}? This removes their team profile from this organisation.`)) {
+      return;
+    }
+
+    setDeletingMemberId(id);
 
     try {
-      const { error } = await supabase.from("team_members").delete().eq("id", id);
+      const { error } = await supabase
+        .from("team_members")
+        .delete()
+        .eq("id", id)
+        .eq("org_id", orgId);
+
       if (error) throw error;
+
+      if (editing?.id === id) {
+        setEditOpen(false);
+        setEditing(null);
+      }
+
+      if (viewFor?.id === id) {
+        closeViewCard();
+      }
+
       await load();
     } catch (e: any) {
       alert(e?.message ?? "Delete failed.");
+    } finally {
+      setDeletingMemberId(null);
     }
   }
 
@@ -1546,11 +1585,37 @@ export default function TeamManager() {
                     <textarea className="min-h-[70px] w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2" value={editing.notes ?? ""} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} />
                   </div>
 
-                  <div className="flex justify-end gap-2 pt-1">
-                    <button className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => setEditOpen(false)} type="button">Cancel</button>
-                    <button className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60" onClick={() => void saveMember()} disabled={sendingInviteOnSave} type="button">
-                      {sendingInviteOnSave ? "Sending invite…" : "Save"}
-                    </button>
+                  <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      {editing.id && isOwner ? (
+                        <button
+                          className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                          onClick={() => void remove(editing.id)}
+                          disabled={deletingMemberId === editing.id}
+                          type="button"
+                        >
+                          {deletingMemberId === editing.id ? "Deleting…" : "Delete team member"}
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <div className="flex justify-end gap-2">
+                      <button
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                        onClick={() => setEditOpen(false)}
+                        type="button"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                        onClick={() => void saveMember()}
+                        disabled={sendingInviteOnSave || deletingMemberId === editing.id}
+                        type="button"
+                      >
+                        {sendingInviteOnSave ? "Sending invite…" : "Save"}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1750,9 +1815,36 @@ export default function TeamManager() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/80 p-3">
-                <button onClick={() => { closeViewCard(); void openEdit(viewFor); }} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50" type="button">Edit</button>
-                <button onClick={closeViewCard} className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700" type="button">Close</button>
+              <div className="flex flex-col gap-2 border-t border-slate-200 bg-slate-50/80 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  {isOwner ? (
+                    <button
+                      onClick={() => void remove(viewFor.id)}
+                      disabled={deletingMemberId === viewFor.id}
+                      className="rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                      type="button"
+                    >
+                      {deletingMemberId === viewFor.id ? "Deleting…" : "Delete team member"}
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    onClick={() => { closeViewCard(); void openEdit(viewFor); }}
+                    className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                    type="button"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={closeViewCard}
+                    className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+                    type="button"
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
             </div>
           </div>
