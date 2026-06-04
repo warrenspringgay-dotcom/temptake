@@ -145,7 +145,7 @@ export default function RedcarLandingPage() {
             <div className="absolute -inset-4 rounded-[2.5rem] bg-orange-500/10 blur-2xl" />
             <div className="relative overflow-hidden rounded-[2rem] border border-orange-100 bg-slate-950 shadow-2xl shadow-slate-900/20">
               <img
-                src="/redcar/temptake-tablet-allergens.jpg"
+                src="/temptake-tablet-allergens.jpg"
                 alt="TempTake app running on a tablet in a food business kitchen"
                 className="h-full min-h-[360px] w-full object-cover"
               />
