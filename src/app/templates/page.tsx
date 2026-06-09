@@ -3,10 +3,17 @@ import Link from "next/link";
 export const metadata = {
   title: "TempTake · Free Food Safety Templates",
   description:
-    "Download free food safety templates for restaurants, takeaways and commercial kitchens, including cleaning rotas, temperature logs and compliance checklists.",
+    "Download free food safety templates for restaurants, takeaways and commercial kitchens, including cleaning rotas, temperature logs, risk assessments and compliance checklists.",
 };
 
 const templates = [
+  {
+    title: "Risk Assessment Templates",
+    href: "/templates/risk-assessments",
+    description:
+      "Kitchen safety, allergen and manual handling risk assessment templates for food businesses. Free download",
+    badge: "Available now",
+  },
   {
     title: "Kitchen Cleaning Rota Template",
     href: "/templates/kitchen-cleaning-rota",
@@ -32,49 +39,48 @@ const templates = [
     title: "Delivery Temperature Log Sheet",
     href: "/templates/delivery-temperature-log",
     description:
-      "A simple log for recording food holdings for deliveries. Free download",
+      "A simple log for recording food delivery temperatures and accepted/rejected deliveries. Free download",
     badge: "Available now",
   },
   {
     title: "Hot Holding Temperature Log Sheet",
     href: "/templates/hot-holding-temperature-log",
     description:
-      "An easy to use temperature log sheet specifically for hot holds. Free download",
+      "An easy-to-use temperature log sheet specifically for hot holding checks. Free download",
     badge: "Available now",
   },
   {
-    title: "Food cooling sheet",
+    title: "Food Cooling Sheet",
     href: "/templates/food-cooling-log",
-    description:
-      "A sheet to help track and log food cooling. Free download",
+    description: "A sheet to help track and log food cooling. Free download",
     badge: "Available now",
   },
-   {
-    title: "Temperature probe calibration log",
+  {
+    title: "Temperature Probe Calibration Log",
     href: "/templates/probe-calibration-log",
     description:
       "A sheet to periodically log temperature probe calibrations. Free download",
     badge: "Available now",
   },
-   {
-    title: "Kitchen opening checklist",
+  {
+    title: "Kitchen Opening Checklist",
     href: "/templates/kitchen-opening-checklist",
     description:
-      "A must checklist to complete to be compliant. Free download",
+      "A practical checklist to complete when opening your kitchen for the day. Free download",
     badge: "Available now",
   },
   {
-    title: "Kitchen closing checklist",
+    title: "Kitchen Closing Checklist",
     href: "/templates/kitchen-closing-checklist",
     description:
-      "An easy checklist for when you close your kitchen down for the shift. Free download",
+      "An easy checklist for closing your kitchen down at the end of a shift. Free download",
     badge: "Available now",
   },
   {
-    title: "Daily food safety diary",
+    title: "Daily Food Safety Diary",
     href: "/templates/daily-food-safety-diary",
     description:
-      "A sheet you should be filling out every shift. Free download",
+      "A daily food safety diary sheet for recording key checks each shift. Free download",
     badge: "Available now",
   },
 ];
@@ -95,9 +101,9 @@ export default function TemplatesPage() {
 
             <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-600">
               Download practical food safety templates for busy kitchens,
-              including cleaning rotas, temperature logs and inspection
-              checklists. Built for real-world restaurants, takeaways and small
-              food businesses.
+              including cleaning rotas, temperature logs, risk assessments and
+              inspection checklists. Built for real-world restaurants, takeaways
+              and small food businesses.
             </p>
           </div>
         </div>
@@ -110,8 +116,8 @@ export default function TemplatesPage() {
           </h2>
           <p className="mt-3 text-base leading-7 text-slate-600">
             These templates are designed to be easy to print, simple to use and
-            practical enough for real kitchen teams. A rare outbreak of useful
-            internet behaviour.
+            practical enough for real kitchen teams. Start with the free
+            paperwork, then move into TempTake when you want less admin.
           </p>
         </div>
 
@@ -121,7 +127,7 @@ export default function TemplatesPage() {
 
             const cardInner = (
               <div className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-slate-300 hover:shadow-md">
-                <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="mb-4 flex items-start justify-between gap-3">
                   <h3 className="text-lg font-semibold text-slate-900">
                     {template.title}
                   </h3>
@@ -147,7 +153,7 @@ export default function TemplatesPage() {
                       "inline-flex items-center text-sm font-medium",
                       isAvailable
                         ? "text-emerald-700"
-                        : "text-slate-400 cursor-not-allowed",
+                        : "cursor-not-allowed text-slate-400",
                     ].join(" ")}
                   >
                     {isAvailable ? "View template" : "Coming soon"}
@@ -177,14 +183,14 @@ export default function TemplatesPage() {
 
               <p className="mt-4 text-base leading-7 text-slate-600">
                 TempTake helps restaurants and takeaways manage cleaning rotas,
-                temperature records and food safety checks digitally. Use the
-                free templates now, then move to a cleaner system when you are
-                ready to stop drowning in paper.
+                temperature records, allergen checks, staff training and food
+                safety records digitally. Use the free templates now, then move
+                to a cleaner system when you are ready to stop drowning in paper.
               </p>
 
               <div className="mt-6">
                 <Link
-                  href="/signup"
+                  href="/signup?source=templates&utm_source=templates_page&utm_medium=website&utm_campaign=free_templates"
                   className="inline-flex items-center rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
                 >
                   Start free trial
